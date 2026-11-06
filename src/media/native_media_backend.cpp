@@ -60,10 +60,9 @@ bool validateMediaPreviewBinding(const MediaPreviewBinding& binding,
       return false;
     }
     const MediaTrackDescriptor* track = selectedVideo(binding);
-    // The nonempty-record requirement is INVERTED for the codecs that carry no
-    // out-of-band configuration record: an empty record is their only correct
-    // descriptor, so demanding one refuses every ProRes, Motion JPEG and MPEG-2
-    // track a preview lane can decode perfectly well.
+    // Codecs that carry an out-of-band configuration record need a nonempty
+    // one. Codecs that carry none (ProRes, Motion JPEG, MPEG-2) must have an
+    // empty record: that is their only correct descriptor.
     if (track == nullptr || track->kind != MediaTrackKind::Video ||
         !track->video || track->codec == MediaCodec::Unknown ||
         (mediaCodecFacts(track->codec).carriesConfigurationRecord

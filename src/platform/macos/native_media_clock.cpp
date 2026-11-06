@@ -47,7 +47,7 @@ constexpr double kMaximumBoundaryDisplacementSeconds = 1.0e-4;
 // before the predicted end of the interval it follows. That overlap is
 // quantization, not a rewrite of played output, and it is admitted only while
 // it stays inside the displacement bound. A coarse host clock yields zero
-// slack, which is exactly the historical exact-adjacency rule.
+// slack, which reduces to exact adjacency.
 [[nodiscard]] std::uint64_t quantizationSlackTicks(
     std::uint64_t ticksPerSecond) noexcept {
   return static_cast<std::uint64_t>(kMaximumBoundaryDisplacementSeconds *
@@ -326,7 +326,6 @@ NativeMediaClockSnapshot NativeMediaClock::sample() const noexcept {
           state.pendingSegment.firstHostTicks;
       snapshot.pendingEndHostTicks = state.pendingSegment.endHostTicks;
       snapshot.pendingMediaStart = state.pendingSegment.mediaStart;
-      snapshot.pendingMediaEnd = state.pendingSegment.mediaEnd;
       if (hostTicks >= state.pendingSegment.firstHostTicks) {
         selected = &state.pendingSegment;
       }
@@ -359,7 +358,6 @@ NativeMediaClockSnapshot NativeMediaClock::sample() const noexcept {
     snapshot.segmentEndMediaSeconds = selected->mediaEnd;
     snapshot.rate = segment_rate;
     snapshot.segmentBounded = true;
-    snapshot.segmentExhausted = hostTicks >= selected->endHostTicks;
     snapshot.mediaSeconds = evaluateLinear(
         selected->mediaStart, selected->firstHostTicks, hostTicks,
         host_clock_.ticksPerSecond, segment_rate, true,
@@ -609,8 +607,8 @@ bool NativeMediaClock::prepareSegmentState(
         return displacement <= kMaximumBoundaryDisplacementSeconds;
       };
 
-  // These are bit-exact double comparisons in admission logic, which is the
-  // shape of the 0.6x clock bug — but the operands are not independently
+  // These are bit-exact double comparisons in admission logic, which usually
+  // signals a float-equality bug — but the operands are not independently
   // computed floats. Both sides come from mediaTimeSecondsAtFrame(), a pure
   // correctly-rounded 128-bit rational->double, evaluated at the SAME integer
   // frame index (the producer requires prior_end_frame_ == streamFrameStart
@@ -952,7 +950,7 @@ bool NativeMediaClock::runAtHostTicks(
   next.generation = current.generation;
   next.anchorHostTicks = hostTicks;
   next.anchorMediaSeconds = current.anchorMediaSeconds;
-  if (!current.running) next.exactAnchor = current.exactAnchor;
+  next.exactAnchor = current.exactAnchor;
   next.rate = rate;
   next.valid = true;
   next.running = true;

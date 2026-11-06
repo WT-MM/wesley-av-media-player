@@ -79,8 +79,7 @@ CFDictionaryRef makeNumberDictionary(const void **keys, const std::int32_t *valu
   return dictionary;
 }
 
-// The project's first CVPixelBufferPool. Depth is a hard cap rather than a
-// hint: allocation goes through CVPixelBufferPoolCreatePixelBufferWithAux-
+// Depth is a hard cap rather than a hint: allocation goes through CVPixelBufferPoolCreatePixelBufferWithAux-
 // Attributes with kCVPixelBufferPoolAllocationThresholdKey, so an accounting
 // mistake surfaces as kCVReturnWouldExceedAllocationThreshold on the very next
 // frame instead of as unbounded IOSurface growth behind NativeSurfaceBudget.
@@ -441,17 +440,14 @@ bool SoftwareVp8Decoder::configure(const VideoStreamConfiguration &configuration
   vpx_codec_dec_cfg_t config{};
   // One thread, and the reasoning is a measurement rather than an argument.
   // VP8's multithreaded decode parallelises across token partitions, and an
-  // ordinary ffmpeg-muxed stream carries one, so MEASURED 2026-08-20 over 1800
-  // frames of 1920x1080 the threads=1 and threads=2 arms are identical: 1.69
-  // and 1.72 ms per frame, alternated, inside run-to-run noise. A live-app
-  // comparison did appear to favour threads=2 by 3-4 points of one core and
-  // was rejected because the isolated arm disagreed and the difference sat
-  // inside this machine's measured drift.
+  // ordinary ffmpeg-muxed stream carries one, so over 1800 frames of
+  // 1920x1080 the threads=1 and threads=2 arms measure identical: 1.69 and
+  // 1.72 ms per frame, alternated, inside run-to-run noise.
   //
   // The decode runs synchronously on the dispatcher worker. That thread's
   // audio lane has 16 ring slabs (>= 370 ms at 44.1 kHz) of producer
-  // headroom, which absorbs a 1.7 ms per-frame stall without an underrun --
-  // confirmed live at 0 clock underruns across every 60 s arm.
+  // headroom, which absorbs a 1.7 ms per-frame stall without an underrun
+  // (0 clock underruns measured live across 60 s runs).
   config.threads = 1;
   config.w = static_cast<unsigned int>(configuration.codedSize.width);
   config.h = static_cast<unsigned int>(configuration.codedSize.height);
@@ -573,9 +569,10 @@ SoftwareVp8Decoder::submitCMSampleBuffer(CMSampleBufferRef sample,
 
   const bool keyFrame = sampleIsKeyFrame(sample);
   if (impl.awaitingKeyFrame && !keyFrame) {
-    // Same rule VideoToolboxDecoder applies after a flush: without the key
-    // frame this decode began on, a delta frame would be reconstructed
-    // against references that belong to a retired timeline.
+    // Without the key frame this decode began on, a delta frame would be
+    // reconstructed against references that belong to a retired timeline.
+    // VideoToolboxDecoder applies the same rule after a flush but REJECTS the
+    // delta frame with an error; here it is accepted and counted as dropped.
     ++impl.droppedFrames;
     return VideoDecodeSubmitResult::Accepted;
   }

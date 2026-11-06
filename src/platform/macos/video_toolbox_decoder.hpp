@@ -48,8 +48,8 @@ struct VideoToolboxDecoderFrameRefConSlotStats {
 
 // Selects the zero-copy GPU import contract requested from CoreVideo. OpenGL
 // adds CGL IOSurface texture compatibility while retaining Metal compatibility,
-// so an opt-in native OpenGL presenter can fail back without changing the
-// decoded-frame ownership contract.
+// so the Qt GL presenter and the preview lane share the decoded-frame
+// ownership contract.
 //
 // DisplayLayer is for presenters that hand the decoded surface straight to a
 // CoreAnimation display layer and never sample it from this process. That
@@ -157,7 +157,8 @@ struct VideoToolboxDecoderOptions {
   // to fall back without silently corrupting presentation order; an INFERRED
   // depth above it is clamped to it instead. See CodecReorderDepthOrigin.
   std::size_t maxPendingPresentationFrames{8};
-  // Metal is the established decoder output contract. The dormant OpenGL mode
+  // Metal is only the default; production constructs OpenGL (the GL presenter
+  // and the preview lane) or DisplayLayer (the layer presenter). OpenGL
   // additionally guarantees CGLTexImageIOSurface2D-compatible IOSurfaces and
   // validates the exact two-plane NV12/P010 layout before delivery.
   VideoToolboxOutputInterop outputInterop{VideoToolboxOutputInterop::Metal};
@@ -195,8 +196,7 @@ struct VideoToolboxDecoderStats {
   std::uint64_t deliveredFrames{0};
   std::uint64_t droppedFrames{0};
   std::uint64_t backpressuredSubmissions{0};
-  // Retained for source compatibility with the former lossy callback path.
-  // Owner-progressive delivery never increments this counter.
+  // Always zero: owner-progressive delivery never drops on sink backpressure.
   std::uint64_t sinkBackpressureDrops{0};
   std::uint64_t sinkBackpressureRetries{0};
   // EOS tail backpressure is lossless: the decoder retains the canonical
@@ -234,8 +234,9 @@ struct VideoToolboxDecoderMemoryFacts {
 };
 static_assert(std::is_trivially_copyable_v<VideoToolboxDecoderMemoryFacts>);
 
-// H.264/HEVC VideoToolbox decoder. Input packets must use the length-prefixed
-// NAL representation described by the supplied avcC/hvcC configuration atom.
+// VideoToolbox decoder for every video codec the facts table names except VP8.
+// Input packets must match the supplied codec configuration record
+// (length-prefixed NAL units for avcC/hvcC); record-less codecs carry none.
 // Generic packet/configuration byte spans are copied before API calls return
 // and are rejected above fixed 8 MiB / 256 KiB bounds. AVFoundation callers may
 // instead submit a ready, single-access-unit CMSampleBuffer directly; that
@@ -264,9 +265,10 @@ public:
   [[nodiscard]] VideoDecodeSubmitResult
   submit(const CompressedVideoPacket &packet, std::string *error) override;
   // Platform-specific zero-copy ingress for AVAssetReader. `sample` must be a
-  // ready, single-sample H.264/HEVC CMSampleBuffer whose block buffer is no
-  // larger than 8 MiB. Its selected avcC/hvcC atom must be nonempty, no larger
-  // than 256 KiB, and byte-for-byte equal to the configured atom; compatible
+  // ready, single-sample CMSampleBuffer whose block buffer is no larger than
+  // 8 MiB. Its configuration atom must be nonempty, no larger than 256 KiB,
+  // and byte-for-byte equal to the configured atom (an avcC may differ only
+  // in its hint-only extension; record-less codecs carry none); compatible
   // direct formats reuse the configured VideoToolbox session and are not
   // retained as a second decoder-owned format description. The caller keeps
   // the +1 sample reference alive until this method returns and may release it

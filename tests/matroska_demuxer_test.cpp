@@ -303,8 +303,8 @@ constexpr std::array<std::uint8_t, 12> kSampleVp9Keyframe{
 constexpr std::array<std::uint8_t, 12> kSampleVpcC{
     0x01, 0x00, 0x00, 0x00, 0x00, 0x29, 0x82, 0x02, 0x02, 0x02, 0x00, 0x00};
 
-// The first ten bytes of the first coded frame of
-// scratchpad/fixtures/vp8_vorbis60.webm, a 1920x1080 key frame: the three-byte
+// The first ten bytes of the first coded frame of an ffmpeg-encoded
+// 1920x1080 VP8 WebM, a key frame: the three-byte
 // frame tag, the 9d 01 2a start code, and the two 14-bit dimension fields.
 constexpr std::array<std::uint8_t, 10> kSampleVp8Keyframe{
     0x10, 0xb1, 0x03, 0x9d, 0x01, 0x2a, 0x80, 0x07, 0x38, 0x04};
@@ -2291,11 +2291,10 @@ void testCodecAdmissionAndSelection() {
            "requireAudio rejects a document whose audio codec is unsupported");
   }
   {
-    // THE headline change of the audio sweep. AAC's CodecDelay used to be
-    // refused outright, which is why every AAC track FFmpeg *encodes* -- as
-    // opposed to copies -- fell back as a whole file. 21,333,333 ns is one
-    // 1024-frame access unit at 48 kHz, which is the only priming AAC-LC can
-    // have, and it is now honoured as an exact head trim.
+    // Every AAC track FFmpeg *encodes* -- as opposed to copies -- carries a
+    // CodecDelay. 21,333,333 ns is one 1024-frame access unit at 48 kHz,
+    // which is the only priming AAC-LC can have, and it is honoured as an
+    // exact head trim.
     FixtureSpec spec;
     spec.audioCodecDelayNanoseconds = 21'333'333;
     const PreparedFixture prepared = prepareFixture(spec);
@@ -2709,9 +2708,8 @@ void expectAccuratePlan(const MatroskaPreparedAsset& asset, MediaTime target,
               order && *order != wam::media::MediaTimeOrder::Greater &&
               ceiling && plan.audioWindow.presentationStart == *ceiling;
     // decodeStart names the first access unit the audio cursor actually
-    // emits, which is the planned ordinal itself. It used to name the first AU
-    // of the Block containing it, which disagreed with the cursor on any
-    // mid-Block landing.
+    // emits, which is the planned ordinal itself, not the first AU of the
+    // Block containing it (those disagree on any mid-Block landing).
     const std::uint64_t audibleOrdinal =
         static_cast<std::uint64_t>(
             *wam::media::exactAudioFrameIndex(*ceiling, kAudioSampleRate)) /
@@ -3872,16 +3870,13 @@ void testMalformedDocuments() {
   {
     // The anti-polyglot gate, stated directly.
     //
-    // Preparation no longer parses to EOF on an admitted file, and the three
-    // facts it used to take from the parser's end-of-file DocumentSummary
-    // (one document, one Segment, nothing trailing) are now the PRECONDITION
-    // for taking that path: it runs only when one known-size Segment ends
-    // exactly at reader.size(). Everything else -- including every byte of
-    // trailing content, whether or not it parses as a document -- takes the
-    // unmodified whole-document path and keeps its historical verdict.
+    // Preparation does not parse to EOF on an admitted file. One document,
+    // one Segment and nothing trailing are the PRECONDITION for that path: it
+    // runs only when one known-size Segment ends exactly at reader.size().
+    // Everything else -- including every byte of trailing content, whether
+    // or not it parses as a document -- takes the whole-document path.
     //
-    // One appended byte is the smallest witness of that, and it is the shape a
-    // relocated-and-simplified proof would most plausibly have let through.
+    // One appended byte is the smallest witness of that.
     for (const std::byte trailing :
          {std::byte{0x00}, std::byte{0x1A}, std::byte{0xFF}}) {
       const Fixture fixture = buildFixture({});
@@ -4138,10 +4133,9 @@ void testCursorOwnershipAndMoves() {
 
 // GStreamer's matroskamux does exactly this: the wild screencast that exposed
 // it carried Duration 491295.376732 against TimestampScale 1 ms. A fractional
-// tick count used to fall out of the exact integral-tick path into the seconds
-// conversion, which fails closed -- 491.295376732 s has no exact
-// int32-timescale rational -- so the whole container was refused with
-// InvalidTimeline and the file fell back to mpv.
+// tick count must not fall out of the exact integral-tick path into the
+// seconds conversion, which fails closed -- 491.295376732 s has no exact
+// int32-timescale rational -- and would refuse the whole container.
 //
 // The fraction is resolved at the timeline's own resolution: one nanosecond.
 void testFractionalDuration() {
@@ -4299,11 +4293,10 @@ void testLocalFilePreparation() {
 
 }  // namespace
 
-// 5.1 AAC-LC is now ADMITTED. It used to be refused because the whole output
-// chain is stereo (NativePcmRing::kChannels == 2) and AudioConverter's own
-// downmix was measured wrong for the codecs in this sweep; the player now
-// decodes the full native layout and folds it to stereo itself with exact
-// BS.775 coefficients. The descriptor must state six channels and, crucially,
+// 5.1 AAC-LC is ADMITTED. The output chain is stereo (NativePcmRing::kChannels
+// == 2) and AudioConverter's own downmix was measured wrong for these codecs,
+// so the player decodes the full native layout and folds it to stereo itself
+// with exact BS.775 coefficients. The descriptor must state six channels and, crucially,
 // NO channel layout tag -- this demuxer knows a channel count but not
 // AudioToolbox's per-codec channel ORDER, and the platform layer reads the
 // authoritative order back from the decoder.
@@ -4335,11 +4328,10 @@ void testMultichannelAacAdmitted() {
          "a multichannel descriptor states no channel layout tag at all");
 }
 
-// How the remaining refusal FEELS. Preparation used to complete a full-file
-// cluster-metadata walk before it ever read the track header, and that walk
-// issues four unbuffered pread(2) calls per element: on the 1.9 GiB movie that
-// produced this defect, 3,030,956 reads and seconds of dead window before the
-// fallback engaged, growing with file size. Every fact behind the refusal is
+// How the remaining refusal FEELS. A full-file cluster-metadata walk issues
+// four unbuffered pread(2) calls per element: on a 1.9 GiB movie, 3,030,956
+// reads and seconds of dead window before the fallback engaged, growing with
+// file size. Every fact behind the refusal is
 // stated in Tracks, at the head of the file. Pinning "not one byte at or after
 // the first Cluster was read" says that in a way no fixture size can dilute,
 // and fails loudly if the cheap pre-admission pass in prepareMatroska is ever
@@ -4609,8 +4601,7 @@ void testContainerColourMapping() {
 // This is fixture-only coverage on purpose, and the reason is recorded rather
 // than hidden: ffmpeg's matroska muxer writes NO MasteringMetadata, MaxCLL or
 // MaxFALL on a `-c copy` remux of an MP4 that demonstrably carries all three
-// (measured 2026-08-27 with an EBML dump). No tool available to this session
-// produces a real .mkv with these elements, so the synthetic fixture is the
+// (measured with an EBML dump). No available tool produces a real .mkv with these elements, so the synthetic fixture is the
 // only thing that reaches this path.
 void testHdrMetadataPresenceIsModelledNotRefused() {
   {

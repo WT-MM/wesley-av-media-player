@@ -59,8 +59,7 @@ audioCodecPrecedesStreamOrigin(MediaCodec codec) noexcept {
   // (1105 frames from every ffmpeg mux).
   case MediaCodec::Mp3:
   // AAC states one 1024-frame access unit of encoder priming whenever the mux
-  // encoded rather than copied the track. Honouring it exactly is what
-  // replaced the historic whole-file fallback for CodecDelay-bearing AAC.
+  // encoded rather than copied the track.
   case MediaCodec::Aac:
     return true;
   default:
@@ -78,8 +77,7 @@ audioCodecPrecedesStreamOrigin(MediaCodec codec) noexcept {
 // or lets the clock free-run past the end of the stream.
 //
 // This is deliberately a SEPARATE predicate from
-// audioCodecPrecedesStreamOrigin, which the two roles shared until this sweep.
-// They are genuinely different questions and the codec sets differ at both
+// audioCodecPrecedesStreamOrigin. They are genuinely different questions and the codec sets differ at both
 // ends: FLAC states an exact duration (STREAMINFO carries the total sample
 // count) but starts at origin, while AAC precedes the origin but reaches this
 // pipeline from AVFoundation as well as from Matroska -- and an AVFoundation
@@ -105,8 +103,8 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
   // count -- so the container's duration IS the decoded sample count, exactly.
   // Nothing decodes it, so there is no shortfall for it to be approximate by.
   // The caller still requires the stated duration to land on a whole frame
-  // before it takes the ceiling, so a container that states something else is
-  // simply left with today's behaviour.
+  // before it takes the ceiling, so a container that states something else
+  // gets no exact ceiling.
   case MediaCodec::Pcm:
   // ADPCM retains the container's exact frame ceiling, including final-block trim.
   case MediaCodec::AdpcmIma:
@@ -123,7 +121,7 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
 // Nanoseconds cannot express an arbitrary frame count: gcd(48000, 1e9) = 16000
 // and gcd(44100, 1e9) = 100, so at every rate only some frame counts land on an
 // integer nanosecond. Demanding an exact multiple would reject most real files
-// -- measured, not theorised, in the Opus work. One nanosecond is a small
+// -- measured, not theorised. One nanosecond is a small
 // fraction of a frame at every admitted rate, so the nearest whole frame count
 // is unique and recovers the muxer's own integer exactly. The residual is
 // bounded at one nanosecond so a value that was never a rounded frame count is
@@ -134,10 +132,8 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
 // nanosecond, or a result beyond maximumFrames.
 //
 // This is the rate-generic form of the identical arithmetic in
-// opusFramesFromNanoseconds and vorbisFramesFromNanoseconds. Those two are left
-// exactly as they are: their bounds are codec-specific and their proofs are
-// already landed, so this shared copy serves the codecs added by this sweep
-// rather than re-deriving theirs.
+// opusFramesFromNanoseconds and vorbisFramesFromNanoseconds, which keep their
+// own codec-specific bounds; this shared copy serves the other codecs.
 [[nodiscard]] constexpr std::optional<std::uint32_t>
 matroskaFramesFromNanoseconds(std::int64_t nanoseconds,
                               std::uint32_t sampleRate,

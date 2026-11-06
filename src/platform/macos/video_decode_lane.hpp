@@ -22,19 +22,23 @@ namespace wam::macos {
 // Every method here is the same method the consumer already called on
 // VideoToolboxDecoder, with the same signature and the same result type, so
 // the consumer's state machine, its stats proofs and its EOS/flush/retire
-// lifecycle are untouched. That is deliberate: a VP8 stage that changed the
-// seam would have to re-prove all of it.
+// lifecycle are the same for every backend (VideoToolbox, libvpx VP8, and
+// libavcodec when WAM_ENABLE_AVCODEC_STAGE is defined). A backend that changed
+// the seam would have to re-prove all of it.
 //
-// SELECTION HAPPENS ONCE, IN configure(), keyed on the CoreMedia codec type
-// the consumer already computed from the track. After that the only per-call
-// cost is one predictable test of a member pointer that never changes for the
-// life of a generation -- not a lookup, not a virtual call, and nothing that
+// SELECTION HAPPENS ONCE, IN configure(). With the libavcodec stage built it
+// walks nativeVideoDecodePlan()'s candidates in order, and each VideoToolbox
+// candidate overwrites requireHardwareDecode/preferHardwareDecode with its own
+// hardware/software choice; otherwise it keys on the CoreMedia codec type
+// (VP8 to libvpx, everything else to VideoToolbox). After that the only
+// per-call cost is one or two predictable tests of member pointers that never
+// change for the life of a generation -- not a lookup, not a virtual call, and nothing that
 // runs per pixel or per sample beyond that test. See
 // docs/AGENT_PERFORMANCE_PRINCIPLES.md, "Dispatch at the top, not in the
 // loop".
 //
-// The software backend is constructed lazily, so a session that never plays
-// VP8 pays one null pointer for this class.
+// Software backends are constructed lazily, so a session that never selects
+// one pays only null pointers for them.
 class VideoDecodeLane final {
 public:
   explicit VideoDecodeLane(VideoToolboxDecoderOptions options = {})
@@ -45,7 +49,6 @@ public:
   VideoDecodeLane(VideoDecodeLane &&) = delete;
   VideoDecodeLane &operator=(VideoDecodeLane &&) = delete;
 
-  // True when this build can decode VP8 at all.
   [[nodiscard]] static bool softwareVp8Available() noexcept {
     return SoftwareVp8Decoder::available();
   }
@@ -57,8 +60,8 @@ public:
     close();
     software_.reset();
     avcodec_.reset();
-    plan_ = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), true, hardwareCapability);
-    for (auto& candidate : plan_.candidates) {
+    const auto plan = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), true, hardwareCapability);
+    for (const auto& candidate : plan.candidates) {
       if (candidate.refusal != media::DecodeRefusal::None) continue;
       auto configured = configuration;
       switch (candidate.implementation) {
@@ -67,14 +70,12 @@ public:
         configured.requireHardwareDecode = candidate.implementation == media::DecodeImplementation::VideoToolboxHardware;
         configured.preferHardwareDecode = configured.requireHardwareDecode;
         if (videoToolbox_.configure(configured, sink, error)) {
-          plan_.implementation = candidate.implementation;
           std::fprintf(stderr, "WAM: native decoder stage=%s codec=%08x\n",
               videoToolbox_.stats().usingHardwareAcceleratedDecoder ? "VideoToolboxHardware" : "VideoToolboxSoftware", configuration.codec);
           if (error) error->clear();
           return true;
         }
         videoToolbox_.close();
-        candidate.refusal = media::DecodeRefusal::AppleCodecUnavailable;
         break;
       case media::DecodeImplementation::Libavcodec: {
         const auto codec = media::mediaCodecForCoreMediaType(configuration.codec);
@@ -94,7 +95,6 @@ public:
         }
         avcodec_ = std::make_unique<SoftwareAvcodecVideoDecoder>(options_);
         if (!avcodec_->configure(configured, sink, error)) return false;
-        plan_.implementation = candidate.implementation;
         std::fprintf(stderr, "WAM: native decoder stage=Libavcodec codec=%08x\n", configuration.codec);
         if (error) error->clear();
         return true;
@@ -102,14 +102,12 @@ public:
       case media::DecodeImplementation::Libvpx:
         software_ = std::make_unique<SoftwareVp8Decoder>(options_);
         if (!software_->configure(configured, sink, error)) return false;
-        plan_.implementation = candidate.implementation;
         std::fprintf(stderr, "WAM: native decoder stage=Libvpx codec=%08x\n", configuration.codec);
         if (error) error->clear();
         return true;
       default: break;
       }
     }
-    plan_.implementation = media::DecodeImplementation::None;
     if (error) *error = "NativeDecodePlanExhausted";
     return false;
 #else
@@ -243,8 +241,8 @@ public:
                                 : videoToolbox_.takeLastError();
   }
 
-  // True only while a software generation is active. Telemetry and the
-  // consumer's own diagnostics use it; nothing on the frame path does.
+  // True once a software backend has been selected. Only tests call it;
+  // nothing on the frame path does.
   [[nodiscard]] bool usesSoftwareDecode() const noexcept {
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
     if (avcodec_) return true;
@@ -258,7 +256,6 @@ private:
   std::unique_ptr<SoftwareVp8Decoder> software_;
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   std::unique_ptr<SoftwareAvcodecVideoDecoder> avcodec_;
-  media::DecodePlan plan_{};
 #endif
 };
 

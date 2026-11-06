@@ -423,8 +423,7 @@ struct NativePreviewFrameLane::Impl final {
       // software fails VTDecompressionSessionCreate with -12906 on a stream the
       // main playback lane decodes perfectly well. Both facts come from the
       // shared table, so this lane and the main video consumer cannot answer
-      // either question differently, and the codec type in particular cannot
-      // fall through to HEVC for a codec no arm names.
+      // either question differently.
       const media::MediaCodecFacts& codecFacts =
           media::mediaCodecFacts(track->codec);
       const VideoStreamConfiguration configuration{

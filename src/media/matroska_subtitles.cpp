@@ -135,9 +135,9 @@ class SubtitleFileReader final : public SeekableByteReader {
     return true;
   }
 
-  // dev + ino + size + mtime, matching the identity the demuxer settled on
-  // after st_ctime proved to move for xattr and Spotlight writes that change
-  // no content byte (see the 2026-08-17 handoff addendum).
+  // dev + ino + size + mtime, matching the demuxer's identity check. st_ctime
+  // is excluded because xattr and Spotlight writes move it without changing
+  // any content byte.
   [[nodiscard]] bool unchanged() const noexcept {
 #if defined(_WIN32)
     struct _stati64 status {};
@@ -441,7 +441,8 @@ class BitmapCueVisitor final : public Visitor {
     // Unlike a text Block, a bitmap Block with no duration is NOT dropped: both
     // formats carry their own end -- PGS as a later display set that clears the
     // screen, VobSub as a stop command -- so a missing BlockDuration is normal
-    // and the decoder resolves it. The duration is passed down as a hint.
+    // and the decoder resolves it. VobSub receives the duration as a hint; PGS
+    // ignores it.
     std::int64_t duration = 0;
     if (group.duration) {
       duration = static_cast<std::int64_t>(*group.duration) * scale;

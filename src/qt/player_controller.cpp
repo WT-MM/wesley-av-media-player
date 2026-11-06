@@ -9,7 +9,7 @@
 #include "subtitle_bitmap_provider.hpp"
 #include "subtitle_sources.hpp"
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
 #include "native_playback_owner.hpp"
 #include "platform/macos/native_embedding_support.hpp"
@@ -21,7 +21,7 @@
 #include <QFile>
 #include <QFileInfo>
 // playbackSourceClass's synchronous mount probe, and only it, needs these.
-#if !(defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK))
+#if !(defined(WAM_HAS_MACOS_NATIVE_PLAYBACK))
 #include <QStorageInfo>
 #if defined(Q_OS_MACOS)
 #include <sys/mount.h>
@@ -86,7 +86,7 @@ constexpr std::uint64_t kOpenCommandReplyIdMask = (1ULL << 61) - 1ULL;
 constexpr std::uint64_t kScrubCommandReplyIdMask = kOpenCommandReplyIdMask;
 constexpr std::uint64_t kScrubCommandReplyMask =
     kCommandReplyNamespaceMask | (1ULL << 61);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 constexpr std::uint64_t kFallbackStopCommandReplyNamespace = 3ULL << 62;
 #endif
 
@@ -156,7 +156,7 @@ PlaybackSourceClass playbackSourceClass(const QUrl &source) {
   if (!source.isLocalFile())
     return PlaybackSourceClass::Network;
 
-#if !(defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK))
+#if !(defined(WAM_HAS_MACOS_NATIVE_PLAYBACK))
   const QString local_path = source.toLocalFile();
   const QStorageInfo storage(local_path);
   if (storage.isValid() &&
@@ -622,7 +622,7 @@ std::int64_t readTrackSelection(const mpv_event_property *property) {
 
 PlayerController::PlayerController(QObject *parent)
     : QObject(parent), core_(std::make_shared<PlayerCore>(this)) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   native_playback_ = std::make_unique<NativePlaybackOwner>(*this);
   // Playing media is a user-initiated activity even when WAM is not the
   // frontmost application. Track the transport with the platform assertion so
@@ -635,7 +635,7 @@ PlayerController::PlayerController(QObject *parent)
     // count over those holds (see native_playback_owner.mm). Edge-triggering
     // here is what makes each window contribute at most one: with N windows
     // playing, a pause in one must not end the assertion the other N-1 still
-    // need, and a bare boolean latch did exactly that.
+    // need.
     const bool holding = playing();
     if (holding == macos_activity_held_)
       return;
@@ -704,7 +704,7 @@ PlayerController::~PlayerController() {
   caption_service_->cancel();
   // Swift teardown and subprocess joins must not block window destruction.
   std::thread([service = std::move(caption_service_)] { service->wait(); }).detach();
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   native_playback_.reset();
   if (macos_activity_held_) {
     macos_activity_held_ = false;
@@ -728,7 +728,7 @@ bool PlayerController::provisionMpvFallbackRuntime(
 }
 
 bool PlayerController::available() const {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // Native playback remains available even when the optional compatibility
   // engine is dormant or a bundle-local fallback failed to initialize.
   return native_playback_ != nullptr;
@@ -815,8 +815,8 @@ bool PlayerController::initializePlaybackEngine() {
   observe(ObservedProperty::Mute, "mute", MPV_FORMAT_FLAG);
   observe(ObservedProperty::Rate, "speed", MPV_FORMAT_DOUBLE);
   // sub-visibility is deliberately NOT observed: it is pinned off above and is
-  // no longer the user's caption switch. captionsVisible now means "a subtitle
-  // source is selected", which is app state on both routes.
+  // not the user's caption switch. captionsVisible means "a subtitle source is
+  // selected", which is app state on both routes.
   observe(ObservedProperty::Path, "path", MPV_FORMAT_STRING);
   observe(ObservedProperty::MediaTitle, "media-title", MPV_FORMAT_STRING);
   observe(ObservedProperty::PreservePitch, "audio-pitch-correction",
@@ -850,7 +850,7 @@ void PlayerController::openFileDialog() { emit openFileDialogRequested(); }
 bool PlayerController::open(const QUrl &source) {
   if (source.isEmpty())
     return false;
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (!native_playback_)
     return false;
   // Burn pointer/preview completion ownership before the owner drains any
@@ -915,7 +915,7 @@ bool PlayerController::open(const QUrl &source) {
 #endif
 }
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
   invalidateNativeSeekIntents();
   if (captioning_) {
@@ -958,16 +958,11 @@ void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
 }
 
 bool PlayerController::nativeRouteAdmissionAllowed() const noexcept {
-  // The native engine now serves the advertised pitch-preserved window, so a
-  // non-unit speed no longer routes the file away from it. Anything outside
-  // that window still does: the compatibility engine has no such bound.
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // The native engine serves the advertised pitch-preserved window. A rate
+  // outside it routes to the compatibility engine, which has no such bound.
   return native_protocol::routeForRate(rate_) ==
              native_protocol::RateRoute::NativeVersion1 &&
          video_item_;
-#else
-  return rate_ == 1.0 && video_item_;
-#endif
 }
 
 bool PlayerController::beginRoutedFallbackOpen(
@@ -1053,7 +1048,7 @@ bool PlayerController::resetRoutedFallbackCoreAfterRelease(
 #endif
 
 void PlayerController::play() {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_) {
     if (nativeRouteActive() && native_scrub_intent_) {
       // A native seek converges while physically paused. Keep play/pause as
@@ -1117,7 +1112,7 @@ void PlayerController::play() {
 }
 
 void PlayerController::pause() {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_) {
     if (nativeRouteActive() && native_scrub_intent_) {
       setNativeScrubPauseIntent(true);
@@ -1180,7 +1175,7 @@ void PlayerController::stop() {
   }
   invalidateScrubGesture();
   invalidateNativeSeekIntents();
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_) {
     static_cast<void>(native_playback_->stop());
     return;
@@ -1205,7 +1200,7 @@ void PlayerController::finishStopUi(bool stop_compatibility_engine) {
   render_recovery_.reset();
   render_recovery_attempt_.reset();
   startup_playback_sync_.reset();
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   routed_fallback_open_.reset();
 #endif
   redirect_ranges_.clear();
@@ -1270,16 +1265,9 @@ double PlayerController::exactNativeSeekTarget(double seconds) const noexcept {
   // this rule rather than adding one, and would drift from it.
   //
   // The guard is exactly one grid step, which is the whole of what the
-  // preflight's strict inequality needs. It was briefly 1/8 s, to hide a
-  // separate defect: a target inside the last frame's presentation interval
-  // was accepted and drawn, end of stream then overtook the commit, and the
-  // commit's own post-promotion SetRunState was refused by the just-ended
-  // session -- retiring the whole native route with "Native playback rejected
-  // an internal lifecycle command". That was never a seek-arithmetic problem;
-  // it was NativeMediaSession latching Ended inside the commit handshake,
-  // before the run command the commit protocol promises. Fixed there
-  // (commitRunStatePending), so the last frame is reachable again and the
-  // final 1/8 s of every clip is no longer dead to the scrubber.
+  // preflight's strict inequality needs. End of stream overtaking a commit
+  // that lands in the last frame is NativeMediaSession's concern
+  // (commitRunStatePending), not seek arithmetic, so no wider guard is needed.
   constexpr double kSeekGrid = 64.0;
   const double bounded = boundedSeekTarget(seconds);
   if (!std::isfinite(bounded) || bounded <= 0.0)
@@ -1556,7 +1544,7 @@ PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent,
   return NativeSeekDispatch::Consumed;
 }
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 PlayerController::NativePreviewSubmission
 PlayerController::submitNativePreviewFrame(
     void *context, const NativePreviewIntent &intent) noexcept {
@@ -1781,7 +1769,7 @@ void PlayerController::publishSeekTarget(double target) {
 }
 
 void PlayerController::beginScrub() {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     if (!beginNativeScrubIntent())
       return;
@@ -1839,7 +1827,7 @@ void PlayerController::beginScrub() {
 }
 
 void PlayerController::seekTo(double seconds) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     // Native accurate seek requires an exactly representable rational target;
     // exactNativeSeekTarget owns that rule for every native entry point, and
@@ -1899,7 +1887,7 @@ void PlayerController::previewSeekTo(double seconds) {
     return;
   }
 #endif
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     // Audio-only binding: the session refused the preview handoff for this
     // whole gesture at pointer-down. Track the drag in the time readout --
@@ -1970,7 +1958,7 @@ void PlayerController::previewSeekTo(double seconds) {
 }
 
 void PlayerController::endScrub(double seconds) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     std::optional<NativeSeekIntent> intent;
     if (native_scrub_intent_) {
@@ -2230,7 +2218,7 @@ void PlayerController::finishScrubGesture(bool restore_transport) {
 void PlayerController::invalidateScrubGesture() { finishScrubGesture(false); }
 
 void PlayerController::seekRelative(double seconds) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     if (std::isfinite(seconds))
       seekTo(position_ + seconds);
@@ -2271,7 +2259,7 @@ void PlayerController::stepFrame(int direction) {
     return;
   }
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     // An audio-only generation proves no frame geometry and has nothing to
     // step; say so rather than seeking by a made-up interval.
@@ -2360,7 +2348,7 @@ void PlayerController::publishNativeFrameGeometry(double start_seconds,
 void PlayerController::toggleMute() { setMuted(!muted_); }
 
 void PlayerController::setMuted(bool muted) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const bool native_owned =
       native_playback_ && native_playback_->setMuted(muted);
 #else
@@ -2386,7 +2374,7 @@ void PlayerController::setVolume(double volume) {
   // has decided it should not.
   const double normalized =
       std::clamp(volume, kMinimumVolume, maximum_volume_);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const bool native_owned =
       native_playback_ &&
       native_playback_->setGain(static_cast<float>(normalized));
@@ -2524,7 +2512,7 @@ void PlayerController::setRate(double rate) {
   if (!std::isfinite(rate))
     return;
   const double bounded = std::round(std::clamp(rate, kMinimumRate, kMaximumRate) * 64.0) / 64.0;
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     if (!native_playback_->setRate(bounded)) {
       setLastNotice(
@@ -2561,8 +2549,8 @@ void PlayerController::setCaptionsVisible(bool visible) {
   // press brings back the same track rather than an arbitrary one.
   //
   // captionsVisible is therefore derived state -- "something is selected" --
-  // on both routes. It is no longer mpv's sub-visibility flag, which is pinned
-  // off because WAM draws the text itself.
+  // on both routes. It is not mpv's sub-visibility flag, which is pinned off
+  // because WAM draws the text itself.
   if (!subtitles_)
     return;
   if (!visible) {
@@ -2600,7 +2588,7 @@ int PlayerController::activeSubtitleTrack() const {
 }
 
 bool PlayerController::nativeRouteActive() const {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   return native_playback_ != nullptr && native_playback_->nativeOwnsTransport();
 #else
   return false;
@@ -2811,7 +2799,8 @@ void PlayerController::buildNativeSubtitleSources() {
       source.filePath = *local;
       source.language = QString::fromStdString(track.language);
       // tkhd's enabled flag is the closest thing MP4 has to Matroska's
-      // default flag; a disabled track is listed but not auto-selected.
+      // default flag, but it is not used as one: every MP4 text track is
+      // listed and none is auto-selected.
       source.defaultFlag = false;
       source.forcedFlag = false;
       source.label = subtitleSourceLabel(
@@ -2982,7 +2971,7 @@ bool PlayerController::attachSubtitleSource(const std::filesystem::path &path,
 void PlayerController::toggleFullscreen() { emit fullscreenToggleRequested(); }
 
 void PlayerController::setPreservePitch(bool preserve) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     // The native stretch stage serves both modes: pitch preserved is a zero
     // pitch offset on the time-stretch unit, varispeed is an offset of
@@ -3213,10 +3202,9 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   options.input = *input;
   options.in_seconds = trim_in_;
   options.out_seconds = trim_out_;
-  // Export retiming is its own decision. Reading rate_ here used to bake the
-  // current *viewing* speed into every export, so reviewing a clip at 2x
-  // silently shipped a 2x cut; Quick Edit now owns an explicit export speed
-  // that starts at 1x, and the live transport no longer reaches this path.
+  // Export retiming is its own decision: Quick Edit owns an explicit export
+  // speed that starts at 1x, and the live viewing rate (rate_) never reaches
+  // this path, so reviewing a clip at 2x does not ship a 2x cut.
   options.speed = export_speed_;
   options.preserve_pitch = export_preserve_pitch_;
   options.prefer_hardware_encoder = true;
@@ -3414,7 +3402,6 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
 void PlayerController::cancelCaptioning() {
   if (!captioning_)
     return;
-  emit cancelCaptioningRequested();
   caption_cancel_reason_ = QStringLiteral("Caption generation cancelled.");
   caption_service_->cancel();
   setCaptionStatus(QStringLiteral("Cancelling caption generation…"));
@@ -3580,7 +3567,7 @@ bool PlayerController::attachSubtitleFile(
                 subtitle) == attached_subtitle_files_.end()) {
     attached_subtitle_files_.push_back(subtitle);
   }
-  // Deliberately NOT setCaptionsVisible(true) any more: selecting the source
+  // Deliberately NOT setCaptionsVisible(true): selecting the source
   // is what turns subtitles on, and doing both would fight over which track
   // the switch restores.
   return true;
@@ -3590,7 +3577,7 @@ void PlayerController::drainMpvEvents() {
   if (!engineReady())
     return;
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   struct NativeDrainScope final {
     NativePlaybackOwner *owner{nullptr};
     explicit NativeDrainScope(NativePlaybackOwner *value) : owner(value) {
@@ -3612,7 +3599,7 @@ void PlayerController::drainMpvEvents() {
     if (event->event_id == MPV_EVENT_COMMAND_REPLY) {
       const std::uint64_t reply_namespace =
           event->reply_userdata & kCommandReplyNamespaceMask;
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
       if (native_playback_ &&
           reply_namespace == kFallbackStopCommandReplyNamespace) {
         native_playback_->fallbackStopCommandReply(event->reply_userdata,
@@ -3635,7 +3622,7 @@ void PlayerController::drainMpvEvents() {
       }
     }
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // A retained compatibility handle is dormant during native playback.
     // Ignore its stale file/property stream, while the exact Stop command
     // reply above and idle observation below remain admitted during fallback
@@ -3695,7 +3682,7 @@ void PlayerController::drainMpvEvents() {
       case ObservedProperty::Idle: {
         const bool idle = readFlag(property, true);
         applyObservedIdle(idle);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
         if (native_playback_)
           native_playback_->fallbackIdleChanged(idle);
 #endif
@@ -3744,9 +3731,9 @@ void PlayerController::drainMpvEvents() {
       }
       case ObservedProperty::CaptionsVisible:
         // Retained so the enumerator stays exhaustively handled. mpv's
-        // sub-visibility is pinned off (WAM draws subtitles itself) and is no
-        // longer observed, so this can only be reached by an mpv-side change
-        // WAM did not ask for, which must not move the user's selection.
+        // sub-visibility is pinned off (WAM draws subtitles itself) and is
+        // not observed, so this can only be reached by an mpv-side change WAM
+        // did not ask for, which must not move the user's selection.
         break;
       case ObservedProperty::Path: {
         const QUrl observed_source = urlFromMpvPath(readString(property));
@@ -3843,14 +3830,13 @@ void PlayerController::drainMpvEvents() {
 }
 
 void PlayerController::requestVideoUpdate() {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // On the CALayer presentation route the frame is already on screen: the
   // AVSampleBufferDisplayLayer sitting below Qt's view was handed the decoded
   // IOSurface and WindowServer composites it directly. The Qt video item has
   // nothing to paint, so dirtying the scene here would buy a full scene-graph
   // render+swap per frame for no pixels -- measured at ~30 render passes per
   // second, against zero when the item stops updating and the chrome is hidden.
-  // That is the pivot's headline cost, so it is not spent.
   //
   // The route flag is process-wide, but the suppression is NOT: it is only
   // correct for a window whose own playback the native route owns. WAM is a
@@ -3868,7 +3854,7 @@ void PlayerController::requestVideoUpdate() {
 }
 
 bool PlayerController::needsRenderContext() const {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   return engineReady() && native_playback_ &&
          native_playback_->needsFallbackRenderContext() &&
          !requested_source_.isEmpty();
@@ -3917,7 +3903,7 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
   if (argument.isEmpty()) {
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open an empty media location."));
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     notifyRoutedFallbackOpenFailed();
 #endif
     return false;
@@ -3925,7 +3911,7 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
 
   const QUrl display_source = displayUrlForSource(source);
   PlaybackSourceClass source_class = playbackSourceClass(display_source);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (routed_fallback_open_) {
     source_class = routed_fallback_open_->source_class;
   }
@@ -3953,7 +3939,7 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open media: %1")
                      .arg(mpvErrorDetail(core_.get(), result)));
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     notifyRoutedFallbackOpenFailed();
 #endif
     return false;
@@ -4133,7 +4119,7 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open media: %1")
                      .arg(mpvErrorDetail(core_.get(), error)));
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     notifyRoutedFallbackOpenFailed();
 #endif
     return;
@@ -4181,7 +4167,7 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
   pending_source_.clear();
   pending_request_serial_ = 0;
   open_attempt_.reset();
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_ && routed_fallback_open_) {
     const RoutedFallbackOpen lineage = *routed_fallback_open_;
     routed_fallback_open_.reset();
@@ -4524,12 +4510,12 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
     last_error_playlist_entry_id_ = end.playlist_entry_id;
     QString failure = QStringLiteral("Could not open this file: %1")
                           .arg(mpvErrorDetail(core_.get(), end.error));
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     if (native_playback_)
       failure = native_playback_->playbackFailureText(failure);
 #endif
     setLastError(failure);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     if (native_playback_)
       native_playback_->fallbackPlaybackFailed();
 #endif
@@ -4599,9 +4585,9 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
     // is the one hook that fires on a first open and on every fallback the
     // router takes. The dwidth/dheight observations usually land just before
     // this, but they land inside the open and can be dropped by the path
-    // check above while mpv still has the outgoing file; this is the reliable
-    // second look, and updateVideoDisplaySize dedupes so the common case
-    // where both agree costs one comparison.
+    // check in applyObservedDisplaySize while mpv still has the outgoing file;
+    // this is the reliable second look, and updateVideoDisplaySize dedupes so
+    // the common case where both agree costs one comparison.
     applyObservedDisplaySize();
   }
   restoreRenderRecovery();
@@ -4663,12 +4649,10 @@ void PlayerController::applyObservedDisplaySize() {
   if (!core_ || !engineReady() || open_attempt_)
     return;
   // Deliberately NOT gated on acceptsPlaybackObservation(), which every other
-  // observation here does use. Measured: mpv announces dwidth/dheight exactly
-  // once per file, during the open, while that gate is still closed -- and it
-  // never announces them again, because the value has not changed since. So
-  // gating here did not defer the size, it discarded the only announcement
-  // there was, and the fallback route stayed at (0, 0) for the whole session,
-  // which is the very defect this feeder exists to fix.
+  // observation here does use. mpv announces dwidth/dheight once per file,
+  // during the open, while that gate is still closed, and never again unless
+  // the value changes. Gating here would discard the only announcement there
+  // is and leave the fallback route's size at (0, 0) for the whole session.
   //
   // The hazard the gate guards against -- a previous file's value landing on
   // the current one -- is checked directly instead, and more precisely: the
@@ -5361,7 +5345,7 @@ void PlayerController::abandonPendingOpen() {
 
 void PlayerController::handleRenderInvalidated(
     std::uint64_t retired_render_stamp) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const std::shared_ptr<PlayerCore> notifying_core = core_;
   if (native_playback_)
     native_playback_->fallbackRenderStateChanged();
@@ -5523,13 +5507,13 @@ void PlayerController::handleRenderInitializationFailure(
     return;
   }
   last_reported_render_failure_stamp_ = render_stamp;
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const bool routed_fallback_failure = routed_fallback_open_.has_value();
   if (routed_fallback_failure)
     abandonPendingOpen();
 #endif
   setLastError(error);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (routed_fallback_failure)
     notifyRoutedFallbackOpenFailed();
 #endif
@@ -5537,7 +5521,7 @@ void PlayerController::handleRenderInitializationFailure(
 
 void PlayerController::attachVideoItem(MpvVideoItem *item) {
   video_item_ = item;
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_)
     native_playback_->attachSurface(item);
 #endif
@@ -5546,7 +5530,7 @@ void PlayerController::attachVideoItem(MpvVideoItem *item) {
 }
 
 void PlayerController::detachVideoItem(MpvVideoItem *item) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   invalidateNativeSeekIntents();
   if (native_playback_)
     native_playback_->detachSurface(item);

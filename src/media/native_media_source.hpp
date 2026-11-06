@@ -91,103 +91,86 @@ enum class MediaCodec : std::uint8_t {
   Opus,
   Vorbis,
   Pcm,
-  // Appended 2026-08-20 under the SESSION_HANDOFF amendment that authorises an
-  // APPEND-ONLY addition to this otherwise frozen enum. Every value above keeps
-  // its existing ordinal; Vp8 takes the next one. VP8 has no hardware decoder
+  // This enum is APPEND-ONLY: new values go at the end and every existing
+  // value keeps its ordinal. VP8 has no hardware decoder
   // on any Apple platform and is decoded by the libvpx software stage, which is
   // why it is the only video codec here that is not a VideoToolbox codec.
   Vp8,
-  // Appended 2026-08-20 under the same APPEND-ONLY amendment. Every value
-  // above keeps its existing ordinal. All three are decoded by AudioToolbox:
-  // Apple ships licensed AC-3 and E-AC-3 decoders ('ac-3' / 'ec-3') and a FLAC
-  // decoder ('flac'), all three reported by
-  // kAudioFormatProperty_DecodeFormatIDs on this platform. MP3 needed no new
-  // enumerator -- Mp3 already existed above and was simply never reachable
-  // from Matroska.
+  // All three are decoded by AudioToolbox: Apple ships licensed AC-3 and
+  // E-AC-3 decoders ('ac-3' / 'ec-3') and a FLAC decoder ('flac'), all three
+  // reported by kAudioFormatProperty_DecodeFormatIDs on this platform.
   Ac3,
   Eac3,
   Flac,
-  // Appended 2026-08-20 under the same APPEND-ONLY amendment, for
-  // MPEG-2-in-Transport-Stream. Every value above keeps its existing ordinal.
-  // VideoToolbox decodes MPEG-2 on Apple Silicon through a SOFTWARE decoder --
+  // MPEG-2 video, carried in Transport Stream. VideoToolbox decodes MPEG-2 on
+  // Apple Silicon through a SOFTWARE decoder --
   // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG2Video) is 0 and
-  // UsingHardwareAcceleratedVideoDecoder is unavailable, measured 2026-08-20 --
-  // so this is the second video codec here that is not a hardware VideoToolbox
-  // codec, alongside Vp8. It needs NO codec configuration record: the sequence
+  // UsingHardwareAcceleratedVideoDecoder is unavailable -- so it is not a
+  // hardware VideoToolbox codec. It needs NO codec configuration record: the sequence
   // header is in-band and CMVideoFormatDescriptionCreate takes a null
   // extensions dictionary.
   Mpeg2Video,
-  // Appended 2026-08-20 under the same APPEND-ONLY amendment, for MPEG-4
-  // Part 2 video (ISO/IEC 14496-2, CoreMedia 'mp4v') in Matroska. Every value
-  // above keeps its existing ordinal. The name is the codec family's ISO name
+  // MPEG-4 Part 2 video (ISO/IEC 14496-2, CoreMedia 'mp4v') in Matroska.
+  // The name is the codec family's ISO name
   // deliberately: only SIMPLE PROFILE is admitted, because Apple's
   // VideoToolbox decoder refuses Advanced Simple Profile -- the Xvid/DivX
   // profile -- at VTDecompressionSessionCreate with codecBadDataErr (-8969),
-  // measured 2026-08-20, with AVFoundation reproducing the identical failure
+  // with AVFoundation reproducing the identical failure
   // on a plain mp4v MP4. Naming this enumerator Mpeg4Asp would name the one
   // profile it cannot carry. Like Mpeg2Video and Vp8 it is not a hardware
   // codec (VTIsHardwareDecodeSupported is 0); unlike Mpeg2Video it DOES need
   // a configuration record, and the record is the esds the Matroska demuxer
   // synthesizes around the CodecPrivate headers.
   Mpeg4Visual,
-  // Appended 2026-09-04 under SESSION_HANDOFF amendment 11, for Apple ProRes
-  // and Motion JPEG in QuickTime/MP4. Every value above keeps its existing
-  // ordinal.
-  //
-  // ProRes is the FIRST codec here whose VideoToolbox decoder is genuinely
-  // HARDWARE on this machine: VTIsHardwareDecodeSupported is 1 and a created
+  // Apple ProRes in QuickTime/MP4. Its VideoToolbox decoder is genuinely
+  // HARDWARE on Apple Silicon: VTIsHardwareDecodeSupported is 1 and a created
   // session reports UsingHardwareAcceleratedVideoDecoder = TRUE for all six
-  // FourCCs, measured 2026-09-04 in scratchpad/vtprobe.mm. Like Mpeg2Video it
+  // FourCCs. Like Mpeg2Video it
   // carries NO codec configuration record -- a QuickTime ProRes sample
   // description has no parameter-set atom, and CMVideoFormatDescriptionCreate
   // takes a null extensions dictionary.
   //
-  // ONE enumerator deliberately names only the ProRes 422 FAMILY -- 'apco'
+  // This enumerator deliberately names only the ProRes 422 FAMILY -- 'apco'
   // (Proxy), 'apcs' (LT), 'apcn' (422) and 'apch' (HQ). That is exactly the
-  // set VideoToolbox decodes interchangeably: measured 2026-09-04 in
-  // scratchpad/vtflavor.mm, a session created from ANY 422-family format
-  // description decodes samples of ANY other 422-family flavor, while a
-  // 422-family session fed 4444 samples fails with -12916 and vice versa. The
-  // 4444 family ('ap4h', 'ap4x') is therefore a SECOND decode family that this
-  // single enumerator cannot name honestly, and it is refused by name at
-  // admission rather than silently mis-dispatched. See the ProRes 4444 note in
-  // scratchpad/prores_mjpeg_report.md for the amendment that would admit it.
+  // set VideoToolbox decodes interchangeably: a session created from ANY
+  // 422-family format description decodes samples of ANY other 422-family
+  // flavor, while a 422-family session fed 4444 samples fails with -12916 and
+  // vice versa. The 4444 family ('ap4h', 'ap4x') is therefore a SECOND decode
+  // family with its own enumerator, ProRes4444, rather than being
+  // mis-dispatched through this one.
   ProRes,
   // Motion JPEG ('jpeg'). Decoded by VideoToolbox's SOFTWARE JPEG decoder --
   // VTIsHardwareDecodeSupported reports 1 but a created session reports no
   // UsingHardwareAcceleratedVideoDecoder property at all, the same signature
   // Mpeg2Video and Mpeg4Visual show. Carries no configuration record either.
   //
-  // Admitted for 4:2:0 chroma ONLY. Measured 2026-09-04: Apple's JPEG video
+  // Admitted for 4:2:0 chroma ONLY. Apple's JPEG video
   // decoder fails 4:2:2, 4:4:4 and grayscale JPEG with kVTAllocationFailedErr
   // (-12904), and AVAssetImageGenerator reports "Cannot Decode" for the same
   // files, while ImageIO decodes the identical bytes -- so the limit is the
   // video decoder's, not the media's. The chroma gate lives upstream on the
   // JPEG frame header, exactly as inspectMpeg4VisualHeaders() gates profile.
   Mjpeg,
-  // Appended 2026-09-04 under SESSION_HANDOFF amendment 12, for the two ADPCM
-  // families that real WAV files carry: IMA/DVI ADPCM ('ms\0\x11', the format
-  // of game clips and old voice recorders) and Microsoft ADPCM ('ms\0\x02').
-  // Every value above keeps its existing ordinal.
+  // The two ADPCM families that real WAV files carry: IMA/DVI ADPCM
+  // ('ms\0\x11', the format of game clips and old voice recorders) and
+  // Microsoft ADPCM ('ms\0\x02').
   //
   // TWO enumerators rather than one, because they are two different decoders
   // with two different bitstreams; a single AdpcmWav enumerator would have to
   // be disambiguated by format tag at every site that dispatches on it, which
   // is precisely the mis-dispatch the ProRes 422/4444 note above refuses.
   //
-  // These are the first codecs admitted here whose AudioToolbox decode was
-  // proven BIT-EXACT against ffmpeg rather than merely close: measured
-  // 2026-09-04 on 4-second linear-CHIRP fixtures at 44.1 kHz, mono and stereo,
-  // both families -- produced frames equal the container's declared frame count
-  // exactly (delta 0), the chirp cross-correlation lag against ffmpeg's decode
-  // is 0 frames, and every one of the 176,958-177,567 decoded frames matches
+  // Their AudioToolbox decode is BIT-EXACT against ffmpeg, not merely close:
+  // on linear-CHIRP inputs at 44.1 kHz, mono and stereo, both families produce
+  // exactly the container's declared frame count, the chirp cross-correlation
+  // lag against ffmpeg's decode is 0 frames, and every decoded frame matches
   // ffmpeg's to the bit (max |diff| = 0). A chirp is load-bearing here and a
   // tone would not be: a steady tone correlates nearly as well at a whole-period
   // offset as at zero, so it can "prove" an alignment that is wrong by a period.
   //
   // Structurally they are CONSTANT-bit-rate inputs -- mBytesPerPacket 1024 with
   // mFramesPerPacket 1012-2041, and CoreMedia attaches no packet descriptions --
-  // so they are carried by the CBR input-proc arm amendment 7 added for LPCM
+  // so they are carried by the CBR input-proc arm used for LPCM
   // and by the packet-table synthesis path beside it, with no new converter
   // machinery. Both state mBitsPerChannel = 0 and mBytesPerFrame = 0, which is
   // why they are NOT spelled as MediaCodec::Pcm: that enumerator means linear
@@ -305,23 +288,22 @@ struct MediaVideoFormat {
   // color/chroma metadata and ICC/gamma/alpha metadata that the current
   // renderer does not implement. Known values remain available above.
   //
-  // AMENDED 2026-08-27 (amendment 6): this no longer covers HDR mastering
-  // metadata. BT.2020 primaries, the PQ and HLG transfers, the BT.2020 NCL
-  // matrix, and the two HDR volume/light descriptions are now MODELLED facts
-  // rather than an opaque "unsupported" bit, because the presentation path
-  // carries them correctly end to end -- see the three bools appended below.
+  // It does not cover HDR colour: BT.2020 primaries, the PQ and HLG
+  // transfers, the BT.2020 NCL matrix, and the two HDR volume/light
+  // descriptions are MODELLED facts rather than an opaque "unsupported" bit,
+  // because the presentation path carries them correctly end to end -- see the
+  // presence bools below.
   bool unsupportedColorMetadataPresent{false};
   bool dolbyVisionConfigurationPresent{false};
-  // Exact result of parsing avcC/hvcC and its SPS. Native v1 admits only the
-  // two YUV 4:2:0 values; Unsupported is an immutable fallback proof.
+  // Exact result of parsing the codec configuration (for example avcC/hvcC and
+  // its SPS). Unsupported is an immutable fallback proof.
   MediaVideoSampleFormat sampleFormat{MediaVideoSampleFormat::Unknown};
 
-  // APPENDED 2026-08-27 under amendment 6. Every field above keeps its
-  // existing position and default, so aggregate initialization and the
-  // defaulted operator== are unchanged for callers that do not set these.
+  // These follow every older field so aggregate initialization and the
+  // defaulted operator== are unchanged for callers that do not set them.
   //
-  // These are PRESENCE facts, deliberately not payloads. Measured on this
-  // platform (scratchpad/color_probe.mm): VideoToolbox copies the container's
+  // These are PRESENCE facts, deliberately not payloads. On this platform
+  // VideoToolbox copies the container's
   // MasteringDisplayColorVolume and ContentLightLevelInfo verbatim onto the
   // decoded CVPixelBuffer, and CMVideoFormatDescriptionCreateForImageBuffer --
   // which is how native_layer_video_output builds the layer's format
@@ -331,10 +313,10 @@ struct MediaVideoFormat {
   // is only whether the metadata exists, so that is all this records.
   bool masteringDisplayColorVolumePresent{false};
   bool contentLightLevelInfoPresent{false};
-  // Not admitted today: no fixture in the corpus carries it and its
-  // presentation effect could not be verified, so it keeps a named refusal.
-  // Modelled separately from unsupportedColorMetadataPresent so that a later
-  // session can admit it without re-deriving the whole opaque bit.
+  // Admitted only as the single qualified HLG payload that
+  // mediaVideoColorAdmitted() checks; any other ambient-viewing payload is
+  // refused. Modelled separately from unsupportedColorMetadataPresent so that
+  // check does not have to re-derive the whole opaque bit.
   bool ambientViewingEnvironmentPresent{false};
   std::uint64_t ambientViewingEnvironmentPayload{0};
   bool fullRangeVideo{false};
@@ -601,12 +583,10 @@ struct MediaSourceLimits {
   static constexpr std::size_t kHardMaximumDecodedAudioBytes{
       4096U * 8U * sizeof(float)};
   static constexpr std::size_t kHardMaximumTrackTextBytes{1024};
-  // Revised 2026-08-21 from 1920x1080 / 2,073,600 px under SESSION_HANDOFF
-  // amendment 3. This is the only value revision the freeze has taken; every
-  // prior amendment was append-only. 4096x2320 is the 4K-class envelope: it
-  // covers DCI 4K (4096x2160), UHD (3840x2160), and the taller-than-UHD
-  // desktop capture geometries screen recorders produce (the motivating file
-  // is 3418x1843), while 9,502,720 px is exactly 4096*2320 rather than an
+  // 4096x2320 is the 4K-class envelope: it covers DCI 4K (4096x2160), UHD
+  // (3840x2160), and the taller-than-UHD desktop capture geometries screen
+  // recorders produce (for example 3418x1843), while 9,502,720 px is exactly
+  // 4096*2320 rather than an
   // independently chosen number. Every byte budget derived from this ceiling
   // restates its own arithmetic where it lives:
   //   native_surface_budget.hpp   process-wide decoded-surface byte budget
@@ -617,8 +597,8 @@ struct MediaSourceLimits {
   static constexpr std::uint64_t kHardMaximumCodedPixels{
       4096ULL * 2320ULL};
 
-  // Amendment 8 (2026-09-03). The envelope is a RECTANGLE, not a width and a
-  // height. Read per-axis, the two constants above refuse 2160x3840 -- an
+  // The envelope is a RECTANGLE, not a width and a
+  // height. Read per-axis, the two constants above would refuse 2160x3840 -- an
   // ordinary portrait 4K phone video -- because its long axis is its height,
   // even though its 8,294,400 px is comfortably under the 9,502,720 px budget
   // and its decoded surface costs exactly what its landscape transpose costs.
@@ -628,17 +608,15 @@ struct MediaSourceLimits {
   //     min(w,h) <= kHardMaximumCodedHeight  (2320, the shortest axis)
   //     w * h    <= kHardMaximumCodedPixels  (9,502,720, unchanged)
   //
-  // The pixel budget does not move, so every byte budget DERIVED from it is
-  // arithmetically untouched; only transposed shapes become admissible. This
-  // is not a widening to arbitrary shapes -- 4096x4096 still fails on
-  // min(w,h) -- and the constants keep their names and values so no frozen
-  // signature or ordering moves. What changed is that the axis a bound
-  // applies to is now decided by the shape, not by the field's name.
+  // Every byte budget DERIVED from the pixel budget is therefore independent
+  // of orientation. This does not admit arbitrary shapes -- 4096x4096 still
+  // fails on min(w,h). The axis a bound applies to is decided by the shape,
+  // not by the field's name.
   //
   // NOTE the one derivation that is NOT a pure function of the pixel count:
   // native_surface_budget.hpp's row-alignment slack scales with a surface's
-  // HEIGHT, and the tallest admissible surface is now 4096 rows rather than
-  // 2320. That header re-derives its own arithmetic and re-asserts it.
+  // HEIGHT, and the tallest admissible surface is 4096 rows, not 2320. That
+  // header re-derives its own arithmetic and re-asserts it.
   //
   // Division rather than multiplication for the area test: `w <= P / h` is
   // exactly equivalent to `w * h <= P` over positive integers, and cannot
@@ -686,7 +664,7 @@ struct MediaSourceLimits {
   std::uint32_t maximumCodedHeight{kHardMaximumCodedHeight};
   std::uint64_t maximumCodedPixels{kHardMaximumCodedPixels};
 
-  // The same amendment-8 rule against THIS instance's (possibly tightened)
+  // The same rectangle rule against THIS instance's (possibly tightened)
   // bounds. A caller that tightens to 1920x1080 is asking for "no axis over
   // 1920, no second axis over 1080", which admits 1080x1920 -- the tightening
   // is a smaller rectangle, still orientation-agnostic, never an expansion.
@@ -738,8 +716,7 @@ struct MediaSourceOpenOptions {
 enum class MediaSourceBackendKind : std::uint8_t {
   AVFoundation,
   Matroska,
-  // Appended 2026-08-20 under the same APPEND-ONLY amendment. MPEG-2 Transport
-  // Stream is demuxed by src/media/mpegts_demuxer.*; unlike the two above it
+  // MPEG-2 Transport Stream is demuxed by src/media/mpegts_demuxer.*; unlike the two above it
   // carries an explicit PES DTS, which is why its media source keys the A/V
   // merge on real decode timestamps rather than on a synthetic ordering lead.
   MpegTs,
@@ -916,15 +893,13 @@ static_assert(std::is_trivially_copyable_v<MediaSourceStats>);
 [[nodiscard]] bool mediaVideoHasSquarePixels(
     const MediaVideoFormat& video) noexcept;
 
-// THE colour-admission rule for the native presentation contract. Added
-// 2026-08-27 under amendment 6, which admits BT.2020/PQ/HLG once the
-// presentation path carries colour correctly end to end.
+// THE colour-admission rule for the native presentation contract.
 //
-// It exists as ONE function because the rule had been restated independently
-// in avfoundation_media_source.mm (`supportedModeledColor`) and in
-// native_video_consumer.mm (`supportedVideoTrack`), and the two drifting apart
-// turns a clean Unsupported verdict into a mid-startup Failed one: the source
-// admits a descriptor the consumer then refuses. Both now call this.
+// It is ONE function because source admission in avfoundation_media_source.mm
+// (`supportedModeledColor`) and native_video_consumer.mm
+// (`supportedVideoTrack`) must agree: if they drift apart, a clean Unsupported
+// verdict becomes a mid-startup Failed one, because the source admits a
+// descriptor the consumer then refuses. Both call this.
 //
 // WHAT IS ADMITTED, and why it is safe rather than optimistic. VideoToolbox
 // attaches the stream's own colorimetry to every decoded surface -- primaries,
@@ -936,16 +911,21 @@ static_assert(std::is_trivially_copyable_v<MediaSourceStats>);
 // described surface and WindowServer performs the tone mapping. Nothing here
 // is a promise about a renderer this player would have to write.
 //
-//   primaries : Unknown (untagged), BT.709, BT.2020
+//   primaries : Unknown (untagged), BT.601, BT.709, BT.2020
 //   transfer  : Unknown (untagged), BT.709, PQ (ST 2084), HLG (BT.2100)
 //   matrix    : Unknown (untagged), BT.601, BT.709, BT.2020 NCL
 //   depth     : untagged, 8, or 10
 //
-// STILL REFUSED, by name: explicitly tagged BT.601 *primaries* (SMPTE C /
-// EBU 3213), sRGB and every other explicit transfer, any OtherExplicit value,
-// Dolby Vision configurations, ambient-viewing-environment metadata, and the
-// opaque unsupportedColorMetadataPresent bit (gamma, ICC, alpha, alternative
-// and log transfer characteristics, out-of-envelope bit depths).
+// 8-bit 4:4:4 is further limited to limited-range video with BT.709 transfer
+// and matched BT.709 or BT.601 primaries and matrix. Ambient-viewing-
+// environment metadata is admitted only as the qualified HLG payload on
+// limited-range BT.2020 / HLG / BT.2020 NCL 10-bit 4:2:0.
+//
+// STILL REFUSED, by name: sRGB and every other explicit transfer, any
+// OtherExplicit value, Dolby Vision configurations, any other
+// ambient-viewing-environment metadata, and the opaque
+// unsupportedColorMetadataPresent bit (gamma, ICC, alpha, alternative and log
+// transfer characteristics, out-of-envelope bit depths).
 [[nodiscard]] bool mediaVideoColorAdmitted(
     const MediaVideoFormat& video) noexcept;
 
@@ -967,11 +947,14 @@ struct MediaDisplaySize {
 // One track's display size, which is what window geometry -- aspect lock,
 // aspect snap, Actual Size, fit-to-screen -- has to be shaped from.
 //
-// displayWidth/displayHeight are preferred over the coded size and the coded
-// size is only a fallback for a backend that left them unset, never an
-// alternative: an anamorphic track's coded size is a different aspect ratio
-// from the picture, and shaping a window with it letterboxes the very video
-// the window was supposed to hug. AVFoundation fills the display pair from
+// For square pixels, displayWidth/displayHeight are preferred over the coded
+// size and the coded size is only a fallback for a backend that left them
+// unset. For non-square pixels the integral display fields are only hints: the
+// size is reconstructed exactly from the clean aperture (or the coded size)
+// with its width scaled by the pixel aspect ratio, because an anamorphic
+// track's coded size is a different aspect ratio from the picture, and
+// shaping a window with it letterboxes the very video the window was supposed
+// to hug. AVFoundation fills the display pair from
 // CMVideoFormatDescriptionGetPresentationDimensions with pixel aspect ratio
 // and clean aperture already applied; the Matroska and MPEG-TS demuxers fill
 // it with their admitted (square-pixel, uncropped) geometry.

@@ -162,7 +162,7 @@ struct TsPacketHeader {
 // 16 bytes of scalars plus nine one-byte facts, padded to the 8-byte alignment
 // the 64-bit PCR base demands. At the 188-byte packet size this is 17% of a
 // packet's worth of metadata per packet and is produced on the stack, never
-// stored: the index below keeps 24-byte entries, not headers.
+// stored: the demuxer's index keeps 24-byte entries, not headers.
 static_assert(sizeof(TsPacketHeader) == 32);
 static_assert(alignof(TsPacketHeader) == 8);
 static_assert(std::is_trivially_copyable_v<TsPacketHeader>);
@@ -359,9 +359,9 @@ enum class ProgramGrade : std::uint8_t {
   Complete = 2,   // routable video and routable audio
 };
 
-// Routable, not merely present: a video-kind stream whose codec is Unknown used
-// to win the selection and then fail admission, taking the whole file to
-// fallback while a complete program sat untouched in the same PAT.
+// Routable, not merely present: a video-kind stream whose codec is Unknown does
+// not count, so it cannot win the selection and then fail admission, taking the
+// whole file to fallback while a complete program sits in the same PAT.
 [[nodiscard]] ProgramGrade
 gradeProgram(const ProgramMapTable& table) noexcept;
 
@@ -454,9 +454,9 @@ struct AccessUnitScan {
   // This exists to separate ABSENCE OF EVIDENCE from EVIDENCE OF ABSENCE. The
   // cursor scans only a bounded prefix of each access unit, so a keyFrame of
   // false can mean either "this picture is not a random access point" or "the
-  // prefix ended before the picture started". Those are opposite facts and
-  // conflating them is what turned a 4,977-byte HDR SEI prologue into "this
-  // file has no random access point" -- see kMpegTsAccessUnitProbeBytes.
+  // prefix ended before the picture started". Those are opposite facts, and
+  // conflating them turns a long HDR SEI prologue into "this file has no
+  // random access point" -- see kMpegTsAccessUnitProbeBytes.
   // A caller that sees `!sliceInProbe` must not treat `keyFrame` as a verdict.
   bool sliceInProbe{false};
 
@@ -605,9 +605,7 @@ adtsSampleRateForIndex(std::uint8_t index) noexcept;
 //
 // DVB and most European captures carry AAC in the LOAS sync layer rather than
 // in ADTS. The payload is the SAME raw AAC access unit the ADTS path strips
-// its header off -- proved byte-for-byte against ADTS twins of the same encode
-// on all six specimens of this lane's matrix, 1,629/1,629 access units -- so
-// everything downstream of the framing (the ES_Descriptor cookie, the 1024
+// its header off, so everything downstream of the framing (the ES_Descriptor cookie, the 1024
 // frame grid, the audio-authoritative clock) is reused UNCHANGED. Only the
 // framing differs, and it differs in one way that matters:
 //

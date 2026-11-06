@@ -77,7 +77,7 @@ struct BitmapCue {
   std::int32_t y{0};
   BitmapImage image;
   // PGS composition-object forced flag / VobSub forced-display. Drives the
-  // existing forced-subtitle policy unchanged.
+  // forced-subtitle policy.
   bool forced{false};
 
   [[nodiscard]] bool covers(std::int64_t t) const noexcept {
@@ -149,7 +149,7 @@ bool cropToOpaqueBounds(BitmapCue* cue) noexcept;
 // objects at once, and each is its own cue.
 void finalizeBitmapCues(std::vector<BitmapCue>* cues);
 
-// Indices of every cue covering `t`, appended to `out`. Unlike text cues, more
+// Indices of every cue covering `t`, written to `out` (cleared first). Unlike text cues, more
 // than one bitmap cue can be on screen at once, so this returns a set rather
 // than a single index. Cues must be sorted by start.
 void bitmapCuesAt(const std::vector<BitmapCue>& cues, std::int64_t t,

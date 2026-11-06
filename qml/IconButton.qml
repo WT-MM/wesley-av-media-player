@@ -73,9 +73,7 @@ AbstractButton {
         // declaring a smaller width/height here does nothing -- Control's
         // resizeContent() overwrites it, and every path below is therefore
         // authored in normalised coordinates across the whole button box.
-        // The sizes that used to be declared here were inert, which is why
-        // the play triangle's 0.055-of-a-box offset rendered ~2x larger
-        // than it was drawn to be. Keep every glyph's ink box centred on
+        // Keep every glyph's ink box centred on
         // (0.5, 0.5) unless there is a stated optical reason not to.
 
         onPaint: {
@@ -94,8 +92,7 @@ AbstractButton {
                 // side, though, so a mechanically centred one reads as
                 // sitting left; the whole box is nudged right by 6% of the
                 // glyph's own width (0.43 * 0.06 = 0.026) to land it
-                // optically centred in the circle. That is a deliberate
-                // ~1pt bias, not the ~2.5pt the old [0.34, 0.77] box gave.
+                // optically centred in the circle -- a deliberate ~1pt bias.
                 const playInk = 0.43;
                 const playLeft = 0.5 - playInk / 2 + playInk * 0.06;
                 ctx.beginPath();

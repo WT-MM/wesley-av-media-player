@@ -10,8 +10,7 @@
 // that links no GUI at all. The QML side supplies the raw wheel fields and the
 // controller turns the returned step into volume/scrub calls.
 //
-// WHAT QT DELIVERS ON macOS (measured on Qt 6.11.1; see the notes on each
-// field below and scratchpad/scroll_volume_report.md for the raw capture):
+// WHAT QT DELIVERS ON macOS (measured on Qt 6.11.1):
 //
 //   * A trackpad produces a non-null pixelDelta -- NSEvent's scrollingDelta
 //     verbatim -- and an angleDelta that is exactly twice it. A real wheel
@@ -65,7 +64,7 @@ struct ScrollStep {
 class ScrollGestureModel {
 public:
   // ---- Feel constants. These are the whole "how does it feel" surface; they
-  // are public so the unit test and the report can name them exactly.
+  // are public so the unit test can name them exactly.
 
   // Volume. A comfortable trackpad swipe is ~250 px of pixelDelta, so a full
   // 0 -> 100% sweep is two swipes and 0 -> 200% is four.

@@ -17,16 +17,13 @@
 namespace wam::macos {
 
 // Internal boundary shared by the MPEG-TS CoreMedia consumers, mirroring
-// `matroska_sample_builder.hpp`: the main media source and any future preview
+// `matroska_sample_builder.hpp`: the main media source and the scrub preview
 // source must hand VideoToolbox the byte-identical format description and the
 // identically assembled sample buffer, because the decoder compares the
 // description it was configured with against the one every sample carries.
 //
 // Nothing here is part of the shipping surface of `mpegts_media_source.hpp`;
 // this header is included only by MPEG-TS backend translation units.
-
-[[nodiscard]] const char* mpegTsDemuxErrorNameForMessage(
-    media::mpegts::MpegTsDemuxError error) noexcept;
 
 // The neutral header owns no FileChanged status, so a mid-stream identity
 // change has to travel as a MediaSourceFailure. Naming the demuxer error
@@ -47,8 +44,8 @@ namespace wam::macos {
 //    divergence here would be a divergence the decoder sees.
 //  * MPEG-2 needs NO extensions dictionary at all. Its sequence header is
 //    in-band and `CMVideoFormatDescriptionCreate` accepts a null extensions
-//    argument -- measured in scratchpad/vt_mpeg2_probe.mm, where a session
-//    built this way decoded 60 access units 1:1.
+//    argument; a VideoToolbox session built this way decodes access units
+//    1:1.
 [[nodiscard]] CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
     const media::MediaTrackDescriptor& track) noexcept;
 
@@ -126,8 +123,9 @@ struct MpegTsSampleBuildInputs {
   CMFormatDescriptionRef format{nullptr};
   media::MediaCodec codec{media::MediaCodec::Unknown};
   bool video{true};
-  // Video only: the exact repack workspace. Annex-B to AVCC cannot size its
-  // output before the input is assembled, so the gather lands here first. See
+  // Gather workspace for H.264/HEVC video and for audio. Annex-B to AVCC
+  // cannot size its output before the input is assembled, so the gather lands
+  // here first. See
   // the note in the implementation for the copy the shape costs and why it is
   // deliberately not optimized away unmeasured.
   std::vector<std::byte>* workspace{nullptr};

@@ -38,7 +38,6 @@ endif()
 message(STATUS "Apple SpeechAnalyzer caption backend: ${WAM_HAS_SPEECH_ANALYZER}")
 # CaptionService is also compiled directly into controller fixtures.
 link_libraries(wam_caption_runtime)
-add_compile_definitions(WAM_CAPTION_ABI=1)
 
 if(APPLE)
   add_library(wam_caption_prompt STATIC "${PROJECT_SOURCE_DIR}/src/qt/caption_download_prompt.mm")

@@ -11,7 +11,7 @@
 
 namespace wam::media::matroska {
 
-// Phase-A Matroska parsing is deliberately independent of Apple and Qt
+// Matroska parsing is deliberately independent of Apple and Qt
 // frameworks. Readers must either fill the complete destination or return
 // false. The parser never requests more than kHardMaximumReadBytes at once.
 class SeekableByteReader {
@@ -189,8 +189,7 @@ struct ParseOptions {
   // A CueTrackPositions entry names a random access point for exactly ONE
   // track. Proving one costs a walk from its Cluster's data start to the
   // CueRelativePosition it names, which for a subtitle cue is typically deep
-  // in the Block chain -- measured on a 2.2 GB HEVC movie, 3,087 of its 3,847
-  // cues belong to subtitle tracks and their proofs alone are 95% of
+  // in the Block chain. On a subtitle-heavy file those proofs can dominate
   // preparation's reads, for an index the demuxer never builds.
   //
   // Setting this false, WITH trackConstraints supplied, keeps every cheap
@@ -201,7 +200,7 @@ struct ParseOptions {
   // absoluteBlockOffset, which already means "not checked".
   //
   // Default true: a caller that has not said which tracks it will read gets
-  // every cue proven, exactly as before.
+  // every cue proven.
   bool proveUnselectedTrackCues{true};
 };
 
@@ -283,9 +282,10 @@ enum class VisitorAction : std::uint8_t {
 
 // The two DocTypes this demuxer admits. WebM is Matroska: the same EBML
 // element grammar, the same Cluster/Block layout, and the same timestamp
-// model, restricted to a smaller codec set. That restriction is already
-// enforced by the codec allow-lists in matroska_demuxer.cpp, so the parser
-// needs no separate WebM profile -- only permission to read the name.
+// model, restricted to a smaller codec set. The demuxer applies that
+// restriction to audio tracks itself (audioCodecAllowedInDocument in
+// matroska_demuxer.cpp), so the parser needs no separate WebM profile -- only
+// permission to read the name.
 enum class EbmlDocumentType : std::uint8_t {
   Matroska,
   Webm,

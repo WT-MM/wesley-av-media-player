@@ -830,7 +830,7 @@ void removeLastByteFromAvcPps(std::vector<std::uint8_t> &record) {
 
 void testApiAndHardBounds() {
   static_assert(kMaximumVideoCodecConfigurationBytes == 256U * 1024U);
-  // The 4K-class v1 envelope (revised 2026-08-21 from 1920x1080/2,073,600).
+  // The 4K-class v1 envelope.
   static_assert(kMaximumVideoCodecWidth == 4096U);
   static_assert(kMaximumVideoCodecHeight == 2320U);
   static_assert(kMaximumVideoCodecPixels == 4096ULL * 2320ULL);
@@ -1903,9 +1903,8 @@ synthesizedVpcC(const VideoCodecConfigurationFacts &facts) {
   return bytes;
 }
 
-// The first ten bytes of the first coded frame of
-// scratchpad/fixtures/vp8_vorbis60.webm (1920x1080) and of
-// scratchpad/fixtures/vp8_vorbis.webm (640x360), both key frames. A Matroska
+// The first ten bytes of the first coded frame of two ffmpeg-encoded VP8
+// WebM fixtures (1920x1080 and 640x360), both key frames. A Matroska
 // Block payload is byte-identical to the elementary-stream frame, so this is
 // exactly what the demuxer hands the bitstream parser.
 const std::vector<std::uint8_t> kRealVp8Keyframe1080p{

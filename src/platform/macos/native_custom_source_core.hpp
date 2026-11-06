@@ -35,7 +35,8 @@ namespace wam::macos {
 //                 CursorReadResult, CursorEnd, CursorCancelled, CursorFailure,
 //                 DemuxStatus, DemuxError, Plan, PrepareOutcome, PlanOutcome,
 //                 CancellationToken
-//                 prepare(path, options, token)
+//                 prepare(path, options, token)  (unless Derived supplies
+//                                        prepareAsset with the same shape)
 //                 adoptContext(path, options, asset)
 //                 noteCursorCreationAttempt(context) / noteCursorStarted(context)
 //                 videoOrigin(asset)     the first video access unit's time, or
@@ -55,8 +56,7 @@ namespace wam::macos {
 //                 resetContainerFacts()            close-time reset (optional)
 //
 // Everything resolves at compile time. There is no virtual call, no
-// std::function and no allocation introduced on the per-sample path: readNext
-// and stage are the same instructions they were as two hand-written copies.
+// std::function and no allocation introduced on the per-sample path.
 template <class Derived, class Traits>
 class NativeCustomSourceCore {
  public:

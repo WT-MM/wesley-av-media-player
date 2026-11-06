@@ -143,14 +143,13 @@ struct QtGlVideoItemMemoryFacts {
 };
 static_assert(std::is_trivially_copyable_v<QtGlVideoItemMemoryFacts>);
 
-// Default-off Qt Quick integration for IOSurface-backed VideoToolbox output.
+// Qt Quick integration for IOSurface-backed VideoToolbox output.
 // It deliberately uses Qt's existing OpenGL scene-graph backend so the
 // shipping libmpv fallback does not need a cross-API copy. The node binds the
 // IOSurface's NV12/P010 planes as GL_TEXTURE_RECTANGLE views and converts YUV
 // directly into Qt's active render target in one draw.
 //
-// The item is never registered or selected by default WAM. The explicit
-// activation build option can compile it without creating a runtime owner.
+// MpvVideoItem constructs one as its child; it is not registered as a QML type.
 // submitFrame() belongs on the GUI thread. OpenGL imports, draws, fences, and
 // destruction happen on the scene-graph render thread or the private shared-
 // context retirement service.

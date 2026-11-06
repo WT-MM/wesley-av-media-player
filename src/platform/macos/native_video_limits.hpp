@@ -7,13 +7,13 @@
 
 namespace wam::macos::native_video_limits {
 
-// One compressed H.264/HEVC access unit. AVFoundation-backed submissions keep
+// One compressed video access unit. AVFoundation-backed submissions keep
 // the original CMSampleBuffer storage and do not create an application payload
 // copy, but every retained unit is still charged against this logical bound.
 inline constexpr std::size_t kMaximumCompressedVideoAccessUnitBytes =
     8ULL * 1024ULL * 1024ULL;
 
-// The native lane retains one selected avcC or hvcC atom. This is therefore
+// The native lane retains one selected codec configuration record. This is therefore
 // both the per-codec limit and the aggregate codec-configuration limit for one
 // active native video attempt.
 inline constexpr std::size_t kMaximumVideoCodecConfigurationBytes =
@@ -32,9 +32,11 @@ inline constexpr std::size_t kMaximumRetainedVideoCodecConfigurationBytes =
 // its configured session and does not cache their format description as a
 // second logically distinct configuration.
 
-// The integrated pipeline admits two VideoToolbox submissions and may hold one
-// AVAssetReader sample while waiting for decoder capacity. This is a logical
-// retained-source envelope, not three application payload copies.
+// A logical retained-source envelope: two decoder submissions plus one sample
+// held while waiting for decoder capacity, not three application payload
+// copies. Only the static_assert below references it; it is NOT the live
+// decoder in-flight bound (NativeVideoConsumer::kMaximumDecoderInFlightFrames,
+// and VideoToolboxDecoder's own default).
 inline constexpr std::size_t kMaximumPipelineInFlightAccessUnits = 2;
 inline constexpr std::size_t kMaximumPipelineRetainedAccessUnits =
     kMaximumPipelineInFlightAccessUnits + 1;
@@ -62,11 +64,10 @@ static_assert(kMaximumTransientVideoCodecConfigurationBytes ==
 //
 // This relation constrains only a generation that HAS a selected audio track.
 // For such a generation the media clock is audio-authoritative: presentation
-// time advances only while the audio renderer consumes real samples, and the
-// video consumer deliberately manufactures neither synthetic silence nor a
-// fallback timer. A video tail extending past the end of the selected audio
-// could therefore never be advanced, which is why native v1 requires the
-// selected audio duration to cover the selected video duration.
+// time advances only while the audio renderer consumes samples, and the video
+// consumer deliberately manufactures no fallback timer. Native v1 therefore
+// requires the selected audio duration to cover the selected video duration,
+// within the bounded shortfall below.
 //
 // A source with NO audio track at all is a different shape, not a violation of
 // this rule: NativeSilentTimebase publishes media time from the host clock, so
@@ -90,18 +91,14 @@ static_assert(kMaximumTransientVideoCodecConfigurationBytes ==
 // ShortfallMilliseconds, and keep routing a genuinely short audio track (a
 // music bed under a long video, a truncated download) to fallback.
 //
-// 2026-08-27. The paragraph above described a tail the clock could not
-// present, so the bound was the largest tail native v1 could leave UNPRESENTED
-// -- 250 ms, a hold on four to six final frames at the moment playback ends.
-// That is no longer what the bound means. The audio-authoritative clock now
+// The bound does not size an unpresented tail. The audio-authoritative clock
 // advances across container-declared silence: past the end of the selected
 // audio the render callback emits zeros, publishes the elapsed interval as
 // media time exactly as a rendered one, and the video tail draws on schedule
 // until end-of-stream at the video end. See MediaAudioGenerationWindow::
 // presentationEnd and NativeAudioRenderCore::activate().
 //
-// So the bound no longer sizes a defect; it sizes a POLICY -- how much
-// declared trailing silence is a container artefact worth playing through
+// So the bound sizes a POLICY -- how much declared trailing silence is a container artefact worth playing through
 // rather than a genuinely mismatched pair of tracks. The measured artefacts
 // above (a priming edit plus a trimmed final frame, ~70 ms) sit far inside it;
 // real muxes of feature-length video reach the high hundreds of milliseconds.

@@ -270,9 +270,7 @@ NativePreviewBeginOutcome MatroskaPreviewSource::begin(
 
     // No back-walk. planGeneration() is const, cursor free, and resolves the
     // target against the selected-video Cue index, so actualDecodeStart is a
-    // random access point by construction. This is the whole reason the
-    // Matroska preview needs no equivalent of the AVFoundation full-sync
-    // cursor walk.
+    // random access point by construction.
     const media::matroska::MatroskaPlanOutcome planned =
         impl_->asset->planGeneration(request.target,
                                      media::MediaSeekMode::Accurate,

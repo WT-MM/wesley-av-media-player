@@ -270,7 +270,7 @@ enum class RateRoute : std::uint8_t {
 
 // Rates inside the advertised pitch-preserved window are served natively; the
 // engine snaps them onto the exact 1/64 admission grid. Anything outside the
-// window (or non-finite) still routes to the compatibility engine, which has
+// window (or non-finite) routes to the compatibility engine, which has
 // no such bound. No epsilon is permitted at this boundary: admission is
 // decided on the exact snapped rational, not on a tolerance around a double.
 [[nodiscard]] constexpr RateRoute routeForRate(double rate) noexcept {
@@ -298,7 +298,7 @@ struct PreparedDescriptor {
   // source. Consumers must treat zero as "unknown" and leave geometry alone,
   // never as a real size -- which is why validity below does not require a
   // nonzero pair even when hasVideo is true. The Qt layer republishes this as
-  // PlayerController::videoDisplayWidth/Height; see
+  // PlayerController::videoDisplaySize; see
   // src/qt/native_playback_owner.mm's Prepared arm.
   media::MediaRational displayWidth{};
   media::MediaRational displayHeight{};
@@ -489,7 +489,7 @@ enum class PrepareDisposition : std::uint8_t {
 
 [[nodiscard]] constexpr bool valid(const PreparedDescriptor &value) noexcept {
   // At least one lane must exist; neither is individually required. A
-  // video-less source produces no draw proof, and the contract no longer asks
+  // video-less source produces no draw proof, and the contract does not ask
   // for one: an audio-only generation's progress proof is the audio clock,
   // which is the authority in every other generation too. A source with
   // neither lane could not produce a single sample.
@@ -559,7 +559,7 @@ enum class PrepareDisposition : std::uint8_t {
 }
 
 [[nodiscard]] constexpr bool valid(const AudioClockProof &value) noexcept {
-  // `paused` is NOT required here any more. A running sample is a legitimate
+  // `paused` is NOT required here. A running sample is a legitimate
   // proof shape: it is the UI playhead observation for an audio-only
   // generation, which draws no frames and therefore has no frame PTS to use
   // instead. Every consumer that genuinely needs a settled, paused clock --
@@ -605,8 +605,7 @@ frameCoversPosition(const VideoDrawProof &frame,
          valid(value.gesture) && valid(value.request) &&
          validPosition(value.targetSeconds) && valid(value.audioClock) &&
          // A commit lands the transport paused at the target, so its clock
-         // proof must be a settled paused sample -- the requirement that used
-         // to live inside valid(AudioClockProof) and is stated here now.
+         // proof must be a settled paused sample.
          value.audioClock.paused && valid(value.videoDraw) &&
          sameCommand(value.stamp, value.audioClock.stamp) &&
          sameCommand(value.stamp, value.videoDraw.stamp) &&

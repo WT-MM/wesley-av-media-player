@@ -16,14 +16,14 @@ namespace {
 using namespace wam::media::matroska;
 
 
-// The first syncframe of scratchpad/fixtures/sw/c_ac3.mkv, byte for byte as
-// ffmpeg muxed it: 48 kHz, 192 kbit/s (frmsizecod 20 -> 768 bytes), bsid 8,
+// The first syncframe of an ffmpeg-encoded AC-3 Matroska fixture, byte for
+// byte as ffmpeg muxed it: 48 kHz, 192 kbit/s (frmsizecod 20 -> 768 bytes), bsid 8,
 // acmod 2 (stereo), no LFE.
 constexpr std::array<std::uint8_t, 8> kRealAc3Header{
     0x0B, 0x77, 0xF0, 0x08, 0x14, 0x40, 0x43, 0xE1};
 constexpr std::size_t kRealAc3FrameBytes{768};
 
-// The first syncframe of c_eac3.mkv: strmtyp 0, substreamid 0, frmsiz 383
+// The first syncframe of the matching E-AC-3 fixture: strmtyp 0, substreamid 0, frmsiz 383
 // (-> 768 bytes), fscod 0, numblkscod 3 (six blocks), acmod 2, no LFE.
 constexpr std::array<std::uint8_t, 8> kRealEac3Header{
     0x0B, 0x77, 0x01, 0x7F, 0x34, 0x87, 0xC0, 0x00};
@@ -259,7 +259,7 @@ void testPerPacketMatch() {
 
 // The trim identity, stated as the arithmetic the demuxer performs.
 void testTrimArithmetic() {
-  // scratchpad/fixtures/sw/c_ac3.mkv: 188 packets, CodecDelay 256 frames, no
+  // The AC-3 fixture: 188 packets, CodecDelay 256 frames, no
   // DiscardPadding, and the 32 frames AudioToolbox never flushes.
   constexpr std::uint64_t kPackets = 188;
   constexpr std::uint64_t kDecoded = kPackets * kAc3SamplesPerAccessUnit;

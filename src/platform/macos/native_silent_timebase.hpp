@@ -26,8 +26,8 @@ namespace wam::macos {
 //
 // The surface deliberately mirrors the subset of NativeAudioSession that
 // NativeMediaSession actuates through its SessionAudioControl table, so the
-// session's Start / SetRunState / CommitSeek / Ended chains are unchanged: they
-// keep issuing the same calls and validating the same clock proofs. Gain and
+// session's Start / SetRunState / CommitSeek / Ended chains need no silent
+// branch: they issue the same calls and validate the same clock proofs. Gain and
 // mute are accepted and discarded because a silent generation has no PCM to
 // scale, and the owner must not have to special-case a user volume gesture.
 //

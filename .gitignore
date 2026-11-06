@@ -1,4 +1,5 @@
 /build/
+/Testing/
 /build-bench/
 /build-native/
 /build-perf/
@@ -29,9 +30,6 @@ CMakeUserPresets.json
 *.log
 .DS_Store
 
-# prototype build artifacts
-prototypes/**/build/
-prototypes/**/layerproto
 SESSION_HANDOFF.md
 
 # Agent worktrees and local tool state

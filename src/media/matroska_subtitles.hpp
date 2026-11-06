@@ -19,18 +19,17 @@
 // no business anywhere near that. This pair therefore sits directly on the
 // public matroska_ebml parser and opens its OWN pread-backed descriptor, so:
 //
-//   * matroska_demuxer.{hpp,cpp} are byte-unchanged, and the mutation-checked
-//     "refuses a multichannel file without reading inside any Cluster" test
-//     cannot regress because nothing it covers was touched;
+//   * the demuxer shares no code path with subtitle reading, so its
+//     "refuses a multichannel file without reading inside any Cluster"
+//     guarantee is unaffected by anything here;
 //   * a subtitle read can never block, starve, stall or reorder an audio or
 //     video read, because it does not share a descriptor, a thread, a buffer
 //     or a lock with them;
 //   * admission is unaffected: an unreadable or absent subtitle track degrades
 //     to "no subtitle tracks", never to a playback failure.
 //
-// Bitmap subtitles (S_HDMV/PGS, S_VOBSUB) ARE in scope as of the bitmap
-// subtitle work: they are reported as tracks like any other and are read by
-// loadMatroskaBitmapSubtitleTrack below, which runs on this same private
+// Bitmap subtitles (S_HDMV/PGS, S_VOBSUB) are reported as tracks like any
+// other and are read by loadMatroskaBitmapSubtitleTrack below, which runs on this same private
 // descriptor and obeys the same "never disturb playback" rule. A track is
 // either a text track or a bitmap track, never both -- `codec` and
 // `bitmapCodec` are mutually exclusive and exactly one is set.
@@ -44,7 +43,7 @@ struct SubtitleTrackInfo {
   subtitles::BitmapCodec bitmapCodec{subtitles::BitmapCodec::Unknown};
   // TrackEntry/Language, ISO 639-2 ("eng", "fre"). "und" when absent.
   // LanguageBCP47 (0x22B59D) is deliberately NOT consulted; the EBML parser
-  // does not collect it today and Language is present on every real mux.
+  // does not collect it and Language is present on every real mux.
   std::string language;
   // TrackEntry/Name, decoded from its ByteRange. Empty when absent.
   std::string name;

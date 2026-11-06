@@ -102,8 +102,7 @@ std::mutex& gSessionMutex = gSessionMutexStorage.get();
 // session is still charged -- it still owns its AudioUnit, its converter, its
 // PCM ring and the callback contexts the device may still be inside -- so the
 // count is live plus quarantined and never exceeds
-// kMaximumConcurrentPlayerWindows. This is the old single `bool
-// gSessionClaimed` widened from one window to N.
+// kMaximumConcurrentPlayerWindows.
 int gRetainedSessions{0};
 // One quarantine slot per admissible player window, so every open window's
 // graph can be held at once and none is ever dropped for want of a slot. A
@@ -183,12 +182,6 @@ void assignError(std::string* error, const char* message) noexcept {
   return true;
 }
 
-[[nodiscard]] bool supportedRate(double rate,
-                                 std::uint32_t* exactRate) noexcept {
-  return exactRate != nullptr &&
-         nativeAudioSampleRateSupported(rate, exactRate);
-}
-
 // The same whitelist NativeAudioConverter admits by, asked one layer earlier so
 // an inadmissible track produces a clean fallback rather than a converter
 // failure part-way through graph construction.
@@ -219,21 +212,20 @@ void assignError(std::string* error, const char* message) noexcept {
 // Whether this track's stated duration is the exact decoded sample count, and
 // therefore usable as the frame the generation must stop publishing at.
 //
-// Until this sweep the answer was the SAME predicate as the one above, because
-// the two codecs that needed either needed both. They are genuinely different
-// questions and the sets now differ at both ends: FLAC states an exact
-// duration but starts at the origin, and AAC precedes the origin but reaches
-// this pipeline from AVFoundation as well as from Matroska.
+// This is a different question from codecStartsBeforeStreamOrigin, and the
+// sets differ at both ends: FLAC states an exact duration but starts at the
+// origin, and AAC precedes the origin but reaches this pipeline from
+// AVFoundation as well as from Matroska.
 //
-// AAC is the reason for the second clause. Only the Matroska descriptor states
-// a decoded sample count; an AVFoundation track's duration is the container's
-// own number, which is not required to be a whole number of frames at all. The
-// ceiling is therefore taken only when the stated duration IS an exact whole
-// frame count -- which the Matroska path always produces by construction, and
-// which an approximate container duration cannot fake into being wrong: if it
-// is not exact the track simply keeps today's behaviour instead of failing the
-// whole session, and if it is exact then it is the true end of the track and
-// stopping there is right.
+// AAC (and the software codecs) are the reason for the second clause. Only
+// the Matroska descriptor states a decoded sample count; an AVFoundation
+// track's duration is the container's own number, which is not required to be
+// a whole number of frames at all. The ceiling is therefore taken only when the
+// stated duration IS an exact whole frame count -- which the Matroska path
+// always produces by construction, and which an approximate container duration
+// cannot fake into being wrong: if it is not exact the track simply takes no
+// ceiling instead of failing the whole session, and if it is exact then it is
+// the true end of the track and stopping there is right.
 [[nodiscard]] bool codecStatesExactDecodedDuration(
     const media::MediaTrackDescriptor& track, std::uint32_t sampleRate) noexcept {
   if (!media::audioCodecStatesExactDecodedDuration(track.codec)) {
@@ -244,11 +236,6 @@ void assignError(std::string* error, const char* message) noexcept {
   std::int64_t ceilingFrame = 0;
   return exactFrame(track.duration, sampleRate, &ceilingFrame) &&
          ceilingFrame > 0;
-}
-
-[[nodiscard]] bool supportedLayout(const media::MediaAudioFormat& audio)
-    noexcept {
-  return audioChannelLayoutAdmitted(audio);
 }
 
 [[nodiscard]] bool validCallTable(
@@ -330,7 +317,7 @@ void assignError(std::string* error, const char* message) noexcept {
       // An audio window that begins at or before the movie time the audio
       // media begins can only be the stream origin: there is nothing earlier
       // for it to be. mediaStart is the origin for every source that declares
-      // no silence before its audio, so this is the prior rule verbatim there.
+      // no silence before its audio.
       !audioDecodeAgainstMediaStart ||
       timeline.audioWindow.startsAtStreamOrigin !=
           (*audioDecodeAgainstMediaStart !=
@@ -433,9 +420,9 @@ void assignError(std::string* error, const char* message) noexcept {
     return std::nullopt;
   }
   if (trimAfterCeiling) {
-    // The demuxer states an Opus track's duration as the exact decoded sample
-    // count after both trims, so it is the frame the generation must stop
-    // publishing at. A track that cannot state it exactly is not admitted
+    // The source states the track's duration as the exact decoded sample
+    // count (for Opus, after both trims), so it is the frame the generation
+    // must stop publishing at. A track that cannot state it exactly is not admitted
     // natively at all rather than played a few milliseconds long.
     std::int64_t ceilingFrame = 0;
     if (!presentationCeiling.valid() ||
@@ -450,7 +437,7 @@ void assignError(std::string* error, const char* message) noexcept {
   // generation's presentation must reach when the selected audio stops short
   // of the selected video; the frames between the last real PCM frame and it
   // are declared silence, exactly like the leading span. Absent (the default)
-  // it stays zero and the generation ends at its own audio end, as before.
+  // it stays zero and the generation ends at its own audio end.
   if (timeline.audioWindow.presentationEnd.valid()) {
     std::int64_t endFrame = 0;
     std::int64_t audioEndFrame = 0;
@@ -490,8 +477,8 @@ void assignError(std::string* error, const char* message) noexcept {
       track.audio->channels == 0 ||
       track.audio->channels > media::kMaximumDownmixSourceChannels ||
       !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
-      !supportedLayout(*track.audio) ||
-      !supportedRate(track.audio->sampleRate, &sampleRate) ||
+      !audioChannelLayoutAdmitted(*track.audio) ||
+      !nativeAudioSampleRateSupported(track.audio->sampleRate, &sampleRate) ||
       track.codecConfiguration.size() >
           media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes ||
       (media::softwareAudioCodec(track.codec)
@@ -508,11 +495,6 @@ void assignError(std::string* error, const char* message) noexcept {
                          track.duration);
 }
 
-[[nodiscard]] bool sameTimeline(
-    const media::NativeMediaGenerationTimeline& lhs,
-    const media::NativeMediaGenerationTimeline& rhs) noexcept {
-  return lhs == rhs;
-}
 
 // The gain wire admits VLC-style amplification above unity. The ceiling is
 // the render core's own kMaximumGain so the session can never publish a gain
@@ -628,7 +610,7 @@ struct NativeAudioSessionControl final {
   std::int64_t presentationFloorFrame{0};
   // Container-declared silence facts for the active generation. Both are zero
   // for every source that declares none, and every expression that reads them
-  // then reduces to the prior arithmetic verbatim.
+  // then reduces to the no-silence arithmetic.
   std::int64_t mediaOriginFrame{0};
   std::uint64_t leadInSilenceFrames{0};
   std::int64_t presentationEndFrame{0};
@@ -739,9 +721,8 @@ namespace {
 
 // Gives one session's slot in the process envelope back, after that session
 // proved a Done close. claimHeld makes this single-shot per graph, which the
-// count now depends on: the envelope used to be a bool, where a second release
-// was a no-op, and is now an integer, where a second release would invent a
-// slot and let N + 1 sessions live at once. A session that closes Done while
+// count depends on: a second release would invent a slot and let N + 1
+// sessions live at once. A session that closes Done while
 // sitting in quarantine also vacates its slot here -- the registry only holds
 // graphs that still owe a Done close.
 void releaseClaim(NativeAudioSessionControl& control) noexcept {
@@ -1110,14 +1091,14 @@ enum class DeviceReconcile : std::uint8_t {
   Failed,
 };
 
-// The owner-thread half of the StreamFormat listener, and the reason a
-// notification no longer ends native audio. The listener revoked render
+// The owner-thread half of the StreamFormat listener, so a notification does
+// not by itself end native audio. The listener revoked render
 // admission without knowing whether the device actually changed; this decides.
 //
 // A rate that really moved fails closed, exactly as start()'s own revalidation
-// does. An unchanged rate is recovered by reusing the pause-suspend lever's
-// machinery verbatim: freeze the graph, take the output to a proved stop, then
-// start it again. Reuse is not incidental. A device that stops under a running
+// does. An unchanged rate is recovered with the same sequence as the
+// pause-suspend lever: freeze the graph, take the output to a proved stop, then
+// start it again. The sequence is not incidental. A device that stops under a running
 // graph must not leave the authoritative clock free-running across the silent
 // gap, and settlePausedAfterStop() is what reconciles the callback-local
 // running fact and forces the next callback to establish a fresh host-tick
@@ -1216,10 +1197,8 @@ enum class DeviceReconcile : std::uint8_t {
       std::numeric_limits<std::uint64_t>::max()) {
     ++control.deviceChangeRecoveries;
   }
-  // Always on, and one grep-able line. A device notification used to end
-  // native audio outright and report nothing; a recovery that leaves no trace
-  // would make the same class of problem just as invisible the next time.
-  // Bounded: one line per notification, and notifications are rare.
+  // Always on, and one grep-able line: a recovery that leaves no trace would
+  // make device-change problems invisible. Bounded: one line per notification, and notifications are rare.
   std::fprintf(stderr,
                "WAM: audio device republished its format; native audio "
                "recovered (notifications=%llu recoveries=%llu)\n",
@@ -1262,13 +1241,11 @@ failRetire(NativeAudioSessionControl& control,
   return progress;
 }
 
-// The clock a pause may act on: published, valid, and carrying a generation.
 [[nodiscard]] bool
 clockPausable(const NativeMediaClockSnapshot& clock) noexcept {
   return clock.publicationCurrent && clock.valid && clock.generation != 0;
 }
 
-// The clock an accepted pause must show.
 [[nodiscard]] bool clockPaused(const NativeMediaClockSnapshot& clock) noexcept {
   return clock.publicationCurrent && clock.valid && !clock.running;
 }
@@ -1283,15 +1260,12 @@ clockInvalidatedTo(const NativeMediaClockSnapshot& clock,
          clock.generation == invalidation;
 }
 
-// A converter that owns nothing: no configuration, no prepared sample, no
-// retained payload lease.
 [[nodiscard]] bool
 converterRetired(const NativeAudioConverterStats& converter) noexcept {
   return !converter.configured && !converter.samplePrepared &&
          !converter.sampleRetained;
 }
 
-// The output an accepted close must show.
 [[nodiscard]] bool
 outputClosedCleanly(const NativeAudioOutputFacts& output) noexcept {
   return !output.configured && !output.started && output.stopped &&
@@ -1566,9 +1540,9 @@ NativeAudioSession::quarantineFacts() noexcept {
   result.recoveries =
       gQuarantineRecoveries.load(std::memory_order_relaxed);
   std::lock_guard<std::mutex> lock(gSessionMutex);
-  // claimed means "the envelope is holding at least one session", which is
-  // what the single-claim bool meant; quarantined means "at least one slot is
-  // occupied", i.e. there is still a graph the owner must drive to Done.
+  // claimed means "the envelope is holding at least one session"; quarantined
+  // means "at least one slot is occupied", i.e. there is still a graph the
+  // owner must drive to Done.
   // Neither reports occupancy, because callers act by looping recovery rather
   // than by counting.
   result.claimed = gRetainedSessions != 0;
@@ -2231,14 +2205,14 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
   }
   if (control.completedFlushRetired == retiredGeneration &&
       control.completedFlushTarget == nextGeneration &&
-      sameTimeline(control.timeline, timeline) &&
+      control.timeline == timeline &&
       control.generation == nextGeneration) {
     return media::NativeMediaConsumerProgress::Done;
   }
   if (control.lifecycle == SessionLifecycle::Flush) {
     if (control.lifecycleRetired != retiredGeneration ||
         control.lifecycleTarget != nextGeneration ||
-        !sameTimeline(control.lifecycleTimeline, timeline)) {
+        control.lifecycleTimeline != timeline) {
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
   } else {
@@ -2577,53 +2551,10 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.outputSuspended =
       control.outputSuspension == OutputSuspension::Suspended;
   result.converter = control.converter.stats();
-  result.converterDrained = result.converter.drained;
-  result.memory.generation = control.generation;
-  result.memory.converterGeneration = result.converter.generation;
-  result.memory.ringGeneration = ring.generation;
-  result.memory.converterRetainedPayloadBytes =
-      result.converter.retainedPayloadBytes;
-  result.memory.peakConverterRetainedPayloadBytes =
-      result.converter.peakRetainedPayloadBytes;
-  result.memory.ringUnreadPcmBytes = ring.unreadPcmBytes;
-  result.memory.peakRingUnreadPcmBytes = ring.peakUnreadPcmBytes;
-  result.memory.generationCoherent =
-      result.memory.ringGeneration == result.memory.generation &&
-      (result.memory.converterRetainedPayloadBytes == 0 ||
-       result.memory.converterGeneration == result.memory.generation);
   if (control.output != nullptr) {
     result.output = control.output->facts();
   }
   return result;
-}
-
-bool NativeAudioSession::resetMemoryHighWater(
-    media::MediaGeneration expectedGeneration) noexcept {
-  if (control_ == nullptr || expectedGeneration == 0) {
-    return false;
-  }
-  NativeAudioSessionControl& control = *control_;
-  if (!control.configured ||
-      control.state != NativeAudioSessionState::Ready ||
-      control.generation != expectedGeneration || control.output == nullptr) {
-    return false;
-  }
-  const NativeAudioConverterStats converter = control.converter.stats();
-  const NativePcmRing::Stats ring = control.ring.stats();
-  const NativeAudioOutputFacts output = control.output->facts();
-  if (converter.generation != expectedGeneration ||
-      ring.generation != expectedGeneration || output.started ||
-      !output.stopped || !output.callbackQuiescent) {
-    return false;
-  }
-
-  // Both generation checks were preflighted under the serialized stopped-owner
-  // contract, so the two noexcept leaf resets cannot partially fail.
-  const bool converterReset =
-      control.converter.resetRetainedPayloadByteHighWater(expectedGeneration);
-  const bool ringReset =
-      control.ring.resetUnreadPcmByteHighWater(expectedGeneration);
-  return converterReset && ringReset;
 }
 
 } // namespace wam::macos

@@ -79,16 +79,17 @@ static_assert(!nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
   return "Unknown";
 }
 
-// One always-on stderr line per terminal native failure.
+// One always-on stderr line for a terminal native failure. Called at the open,
+// start and steady-state failure sites; other failures (clock, audio output)
+// publish through publishFailure() without it.
 //
-// The user-visible text is chosen from protocol::FailureReason, which is a
-// deliberately small vocabulary: every terminal dispatcher failure collapses
-// onto Protocol (open-status Failed) or Decode (a Failed step), so a field
-// report says only "Native playback rejected an internal command" and names
-// neither the seam that refused nor why. This line restores the three facts
-// that a single reproduction then makes fully diagnostic: which stage of the
-// session ran (open/start/steady), which NativeMediaDispatcherFailure class
-// actually fired, and the refusing seam's own error text.
+// protocol::FailureReason is a deliberately small vocabulary: every terminal
+// dispatcher failure collapses onto Protocol (open-status Failed) or Decode (a
+// Failed step), so the reason alone names neither the seam that refused nor
+// why. This line restores the three facts that a single reproduction then
+// makes fully diagnostic: which stage of the session ran (open/start/steady),
+// which NativeMediaDispatcherFailure class actually fired, and the refusing
+// seam's own error text.
 //
 // It is one line per terminal failure -- a session publishes at most a
 // handful in its whole lifetime -- so it is not env-gated. stderr is used
@@ -109,7 +110,7 @@ void logNativeFailure(const char* stage, protocol::FailureReason reason,
     }
     // An empty error field is the one thing this line must never print: it
     // costs a reproduction to learn what a single word would have said. The
-    // dispatcher now names the refusing step itself, so the remaining empty
+    // dispatcher names the refusing step itself, so the remaining empty
     // cases are the ones where the dispatcher is not the failing party at
     // all -- it was never created, or it never failed and the session did.
     // Say which, rather than say nothing.
@@ -252,14 +253,14 @@ exactFrameTime(CMTime time) noexcept {
 }
 
 
-// Intercepts AVFoundation's immutable Ready descriptor before Dispatcher can
-// configure either port. Native v1's exact selected A/V and duration relation
-// are therefore a pure admission decision: a rejected source never reaches a
-// consumer configure() call.
 struct NativeMediaSessionCancellation final {
   std::atomic<MediaGeneration> generation{0};
 };
 
+// Intercepts the backend source's immutable Ready descriptor before Dispatcher
+// can configure either port. Native v1's exact selected A/V and duration
+// relation are therefore a pure admission decision: a rejected source never
+// reaches a consumer configure() call.
 class NativeV1AdmissionSource final : public media::MediaSource, public media::AudioTrackRetrySource {
  public:
   explicit NativeV1AdmissionSource(
@@ -280,7 +281,6 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
     if (!source_->armOperation(generation)) {
       return false;
     }
-    armedGeneration_.store(generation, std::memory_order_release);
     if (cancellation_->generation.load(std::memory_order_acquire) ==
         generation) {
       source_->requestCancel(generation);
@@ -380,7 +380,6 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
   std::unique_ptr<media::MediaSource> source_;
   std::shared_ptr<NativeMediaSessionCancellation> cancellation_;
   std::shared_ptr<NativeTrackedVideoOutput> output_;
-  std::atomic<MediaGeneration> armedGeneration_{0};
 };
 
 struct NativeMediaSessionChildLifetime final {
@@ -421,8 +420,7 @@ struct SessionAudioControl {
   // Diagnostic-only, optional; see SessionVideoControl::metrics.
   bool (*metrics)(void*, NativeMediaSessionMetrics*) noexcept{nullptr};
   // Optional wake-rate lever: stops the output device for a settled pause.
-  // Deliberately last so a route that owns no AudioUnit -- the silent
-  // timebase -- keeps its existing aggregate initializer and leaves this
+  // A route that owns no AudioUnit -- the silent timebase -- leaves this
   // null, which progressAudioSuspend() reads as "nothing to idle".
   NativeAudioSessionProgress (*suspendForPause)(void*) noexcept{nullptr};
   // Optional playback rate, applied as an exact rational together with the
@@ -435,7 +433,7 @@ struct SessionAudioControl {
 
 // Paired-measurement seam for the pause-suspend lever. Read once per process.
 // Setting WAM_AUDIO_PAUSE_SUSPEND=0 keeps the output AudioUnit running through
-// a pause exactly as it did before this change, so a baseline arm and a
+// a pause, so a baseline arm and a
 // treatment arm can be taken from ONE binary. Rebuilding between arms would
 // confound the treatment with every other difference two builds can carry, on
 // a machine whose ambient load and default audio device both drift. Any other
@@ -559,8 +557,8 @@ void NativeMediaSessionWake::notify() noexcept {
 namespace {
 
 // Bounded floor for the audio-less heartbeat. It matches the ordinary
-// CoreAudio device period this route replaces, so an armed silent generation
-// pays no more worker wakes than the AudioUnit callback used to deliver, and a
+// CoreAudio device period, so an armed silent generation pays no more worker
+// wakes than an AudioUnit callback would deliver, and a
 // video due tick that lands sooner still wins.
 constexpr std::uint64_t kHostPacedFloorNanos = 10ULL * 1000ULL * 1000ULL;
 
@@ -1024,7 +1022,6 @@ struct NativeMediaSession::Impl final {
       }
       publicActiveGeneration = command.targetGeneration.value;
       requestedRunStamp = command.stamp;
-      issuedRunStamp = command.stamp;
       appliedRunStamp = command.stamp;
       publicRequestedRunStamp = command.stamp;
       publicIssuedRunStamp = command.stamp;
@@ -1113,8 +1110,7 @@ struct NativeMediaSession::Impl final {
     }
     liveIssueActive = true;
     if (runIssue != nullptr) {
-      issuedRunStamp = runIssue->stamp;
-      publicIssuedRunStamp = issuedRunStamp;
+      publicIssuedRunStamp = runIssue->stamp;
     }
     return true;
   }
@@ -1361,7 +1357,7 @@ struct NativeMediaSession::Impl final {
       // neutral demuxer moves files AVFoundation could also have opened: both
       // are safe because the selected source still applies its own exact codec
       // envelope and reports Unsupported for anything outside it, which keeps
-      // the existing fallback path as the single rejection route.
+      // the fallback path as the single rejection route.
       std::unique_ptr<media::MediaSource> backendSource;
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
       backendSource = createRoutedMediaSource();
@@ -2006,9 +2002,6 @@ struct NativeMediaSession::Impl final {
       if (progress == NativePreviewFramePumpProgress::Progress) {
         continue;
       }
-      if (progress == NativePreviewFramePumpProgress::Idle) {
-        return;
-      }
       return;
     }
     dependencies.wake->notify();
@@ -2298,9 +2291,9 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
     }
 #else
     // Backend-neutral admission proof. The dispatcher republishes the exact
-    // immutable context the source admitted at Ready, so the session no longer
-    // needs a concrete AVFoundation observer to state this identity and the
-    // same check covers a Matroska generation unchanged.
+    // immutable context the source admitted at Ready, so the session needs no
+    // concrete backend observer to state this identity and the same check
+    // covers every backend.
     std::shared_ptr<const media::MediaSourcePreparedContext>
         admittedAssetContext = dispatcher->preparedContext();
     if (admittedAssetContext == nullptr ||
@@ -2576,11 +2569,10 @@ if (result != NativeAudioSessionProgress::Done) {
         clock.mediaSeconds,
         true,
         clock.rate};
-    // protocol::valid(proof) is what now decides the rate: it admits exactly
-    // the advertised pitch-preserved window and nothing else. Pinning the
-    // literal unit rate here would have refused every proof the moment the
-    // engine gained a rate at all, and a paused clock reports the DECLARED
-    // rate, which is the playback rate.
+    // protocol::valid(proof) decides the rate: it admits exactly the
+    // advertised pitch-preserved window and nothing else. Pinning the literal
+    // unit rate here would refuse every non-unit proof, and a paused clock
+    // reports the DECLARED rate, which is the playback rate.
     if (!clock.publicationCurrent || !clock.valid || clock.running ||
         clock.generation != command.generation.value ||
         !protocol::valid(proof)) {
@@ -2592,34 +2584,24 @@ if (result != NativeAudioSessionProgress::Done) {
 
   // Idles the output AudioUnit once a pause has fully settled. Every render
   // callback is a real-time-thread wake, and a paused callback does nothing
-  // but memset zeroes, so a paused session was paying ~47 wakes/s forever to
-  // produce silence. NativeAudioSession::suspendOutputForPause() stops the
+  // but memset zeroes, so a paused session with a running output pays ~47
+  // wakes/s to produce silence. NativeAudioSession::suspendOutputForPause() stops the
   // device without touching generation, stream cursor, ring or clock;
   // setPaused(false) restarts it on exactly the retained PCM.
   //
-  // Deliberately not done inside setPaused(true). Measured on this machine's
-  // built-in output at a 1024-frame period, AudioOutputUnitStop blocks its
+  // Deliberately not done inside setPaused(true). Measured on a built-in
+  // output at a 1024-frame period, AudioOutputUnitStop blocks its
   // caller for ~16 ms and AudioOutputUnitStart for ~11 ms; that is free once
   // per user-initiated pause and is not free per committed scrub position,
   // where progressCommitSeek() pauses, seeks, starts and re-pauses the output
   // for every target. So the gate below is a full "nothing else wants the
-  // output" proof:
-  //
-  //   startedPublished        - the output is actually running to begin with
-  //   !runPending             - the applied run state is settled, not in
-  //                             flight, so this cannot race a resume
-  //   appliedPaused           - that settled state is paused
-  //   !audioProofPending      - the paused clock proof has already been
-  //                             published, which means the render callback's
-  //                             own pause boundary already froze the clock.
-  //                             That is what makes the stop exactly
-  //                             clock-neutral: settleStopped()'s clock.pause()
-  //                             then takes NativeMediaClock's already-paused
-  //                             early return and moves nothing.
-  //   !commitPending / preview- a seek commit or a preview handoff starts the
-  //                             output again within milliseconds
-  //   !endingLatched/!ended   - progressEnded() owns the stop on that path and
-  //                             already performs it before publishing Ended
+  // output" proof. A commit or preview in flight would start the output again
+  // within milliseconds, and progressEnded() owns the stop on the ending path.
+  // !audioProofPending means the paused clock proof has already been
+  // published, so the render callback's own pause boundary already froze the
+  // clock. That is what makes the stop exactly clock-neutral:
+  // settleStopped()'s clock.pause() then takes NativeMediaClock's
+  // already-paused early return and moves nothing.
   //
   // Quiescing and Invalid are both benign: the output re-arms the wake seam
   // before returning Quiescing, so the exiting callback brings the worker
@@ -3457,7 +3439,7 @@ if (result != NativeAudioSessionProgress::Done) {
         }
         acceptPublishedCommands();
         // A rejected GUI enqueue retains its observations. Retry once through
-        // the existing event-driven wake, then again only when real session
+        // the event-driven wake, then again only when real session
         // work wakes this worker; never poll or invoke the controller inline.
         queueObservations();
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
@@ -3709,10 +3691,10 @@ if (result != NativeAudioSessionProgress::Done) {
   media::NativeVideoConsumer* videoObserver{nullptr};
   media::NativeAudioConsumer* audioObserver{nullptr};
   std::shared_ptr<const media::MediaSourceDescriptor> descriptorSnapshot;
-  // Neutral backend identity. Native v1 admits more than one demux backend
-  // (AVFoundation and Matroska), so the session holds the contract's prepared
-  // context rather than one backend's concrete asset context. The preview lane
-  // is still AVFoundation-only and recovers its concrete type by cast below.
+  // Neutral backend identity. Native v1 admits several demux backends, so the
+  // session holds the contract's prepared context rather than one backend's
+  // concrete asset context; createNativePreviewSource() selects the preview
+  // reader from its backendKind().
   std::shared_ptr<const media::MediaSourcePreparedContext> assetContextSnapshot;
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   bool (*previewBindingObserver)(
@@ -3743,7 +3725,7 @@ if (result != NativeAudioSessionProgress::Done) {
   // metrics() is the only reader and may run on any thread. These deliberately
   // sit outside `mutex` so an idle metrics sampler never contends with command
   // admission, and outside the worker's unsynchronised owner fields so no
-  // existing single-threaded invariant is weakened. metricsArmed is written
+  // single-threaded invariant is weakened. metricsArmed is written
   // only by metrics(); until it is set the worker skips publishMetrics()
   // entirely, which is what keeps a metrics-free run bit-for-bit unchanged.
   std::atomic<bool> metricsArmed{false};
@@ -3827,7 +3809,6 @@ if (result != NativeAudioSessionProgress::Done) {
   MediaGeneration directVideoRetiredGeneration{0};
   MediaGeneration directAudioRetiredGeneration{0};
   protocol::Stamp requestedRunStamp{};
-  protocol::Stamp issuedRunStamp{};
   protocol::Stamp appliedRunStamp{};
   protocol::Stamp endingStamp{};
   std::optional<protocol::SetRunState> audioProofPending;

@@ -192,7 +192,7 @@ struct LibavformatCursor::Impl {
     }
     return true;
   }
-  static bool needsRouting(const std::filesystem::path& path, Cancellation cancellation, bool complete) {
+  static bool needsRouting(const std::filesystem::path& path, Cancellation cancellation) {
   Impl probe;
   probe.cancellation = cancellation;
   probe.fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
@@ -201,7 +201,7 @@ struct LibavformatCursor::Impl {
     return false;
   probe.extent = probe.identity.st_size;
   std::string error;
-  return probe.inspectTail(error) && (probe.extent < probe.identity.st_size || (complete && probe.fragmented));
+  return probe.inspectTail(error) && (probe.extent < probe.identity.st_size || probe.fragmented);
   }
   bool inspectTail(std::string &error) {
     std::array<unsigned char, 16> box{};
@@ -275,11 +275,8 @@ std::string LibavformatCursor::runtimeFailure() {
   runtime.load(error);
   return error;
 }
-bool LibavformatCursor::requiresTailRecovery(const std::filesystem::path& path, Cancellation cancellation) {
-  return Impl::needsRouting(path,cancellation,false);
-}
 bool LibavformatCursor::requiresExactDemuxTimeline(const std::filesystem::path& path, Cancellation cancellation) {
-  return Impl::needsRouting(path,cancellation,true);
+  return Impl::needsRouting(path,cancellation);
 }
 LibavformatCursor::LibavformatCursor() = default;
 LibavformatCursor::~LibavformatCursor() = default;
@@ -543,8 +540,5 @@ const char *LibavformatCursor::codecName(unsigned i) const noexcept {
   default:
     return "unmapped codec";
   }
-}
-std::uint64_t LibavformatCursor::trimmedBytes() const noexcept {
-  return impl_ ? impl_->identity.st_size - impl_->extent : 0;
 }
 } // namespace wam::media

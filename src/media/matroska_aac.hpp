@@ -33,7 +33,8 @@ enum class AacLcAdmissionError : std::uint8_t {
 
 // The retained bytes are the exact Matroska CodecPrivate payload. Admission is
 // intentionally narrower than general MPEG-4 AudioSpecificConfig: AAC-LC,
-// 44.1/48 kHz, mono/stereo, and 1024 samples per access unit only.
+// 44.1/48 kHz, channelConfiguration 1..6, and 1024 samples per access unit
+// only.
 struct AacLcConfiguration {
   std::array<std::byte, kAacLcMaximumAudioSpecificConfigBytes>
       audioSpecificConfig{};
@@ -85,10 +86,8 @@ struct AacFrameGridPosition {
   MediaTime origin{};
   std::uint64_t accessUnitOrdinal{0};
   std::uint32_t sampleRate{0};
-  // Appended with an AAC-LC default so every existing aggregate initialiser
-  // keeps its exact meaning. Opus reuses this grid with its own packet
-  // duration (and a nonzero origin of -CodecDelay), which is the only reason
-  // the constant became a field.
+  // Defaults to AAC-LC. Opus reuses this grid with its own packet duration
+  // (and a nonzero origin of -CodecDelay).
   std::uint32_t samplesPerAccessUnit{kAacLcSamplesPerAccessUnit};
 };
 

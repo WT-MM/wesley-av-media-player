@@ -11,19 +11,16 @@
 namespace wam::macos {
 
 // A COUNT, not a size: how many distinct decoded IOSurfaces ONE native
-// playback session may hold at one instant. Nothing about it moves with the
-// coded ceiling -- the lease ledgers in native_video_consumer.hpp are the same
-// ledgers at any resolution -- so this value is unchanged by the 4K-class
-// revision.
+// playback session may hold at one instant. It does not move with the coded
+// ceiling -- the lease ledgers in native_video_consumer.hpp are the same
+// ledgers at any resolution.
 //
-// This was the whole process's allowance until WAM became a multi-window
-// player. It could not stay that: a second window's session legitimately wants
-// its own complement, and sharing one ten-surface pool between two sessions
-// starved the second one -- measured, a second 1080p window drew 4.6 fps
-// against the first window's 30 while both reported healthy clocks, because
-// the pool ran out and the route simply could not lease a surface to decode
-// into. The per-session complement is unchanged; what changed is that the
-// PROCESS pool is now N of them. See the process constants below.
+// It is per session, not per process: a second window's session needs its own
+// complement, and one ten-surface pool shared between two sessions starves the
+// second (a second 1080p window drew 4.6 fps against the first window's 30
+// while both reported healthy clocks, because the route could not lease a
+// surface to decode into). The PROCESS pool is N of these; see the process
+// constants below.
 inline constexpr std::uint64_t kNativeSurfaceBudgetMaximumSurfaces = 10;
 
 // Surface payload and alignment bounds at 9,502,720 pixels and 4096 rows:
@@ -44,13 +41,12 @@ inline constexpr std::uint64_t kNativeSurfaceBudgetMaximumSurfaces = 10;
 inline constexpr std::uint64_t kNativeSurfaceBudgetWorstCaseSurfacePayloadBytes =
     media::MediaSourceLimits::kHardMaximumCodedPixels * 3ULL;
 
-// The tallest surface the envelope admits. Under the amendment-8 rectangle
-// rule either dimension may carry the longest axis, so this is the
-// LONGEST-axis bound and not the field named "Height" -- a transposed
-// 2320x4096 frame is admissible and has 4096 luma rows. Deriving this from
-// kHardMaximumCodedHeight (as it did when only landscape shapes existed)
-// would now under-derive the slack by 679,320 B per surface and quietly make
-// the byte budget too small for the very shapes the amendment admits.
+// The tallest surface the envelope admits. Either dimension may carry the
+// longest axis, so this is the LONGEST-axis bound and not the field named
+// "Height" -- a transposed 2320x4096 frame is admissible and has 4096 luma
+// rows. Deriving this from kHardMaximumCodedHeight would under-derive the
+// slack by 679,320 B per surface and make the byte budget too small for
+// those shapes.
 inline constexpr std::uint64_t kNativeSurfaceBudgetWorstCaseSurfaceRows =
     static_cast<std::uint64_t>(
         media::MediaSourceLimits::kHardMaximumCodedWidth);

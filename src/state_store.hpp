@@ -33,9 +33,9 @@ struct PersistentState {
   bool window_hugs_video = true;
   // Live playback only: when true, speeds other than 1x keep the original
   // pitch (time stretching); when false they behave like classic varispeed,
-  // where pitch rises and falls with the speed. Default on, which is the
-  // behavior every route already had. Quick Edit's export-scoped preserve
-  // pitch is a separate, per-export choice and is deliberately not this.
+  // where pitch rises and falls with the speed. Default on. Quick Edit's
+  // export-scoped preserve pitch is a separate, per-export choice and is
+  // deliberately not this.
   bool preserve_pitch = true;
   // Pointer-scroll gestures over the video surface: vertical scroll changes
   // that window's volume, horizontal scroll sweeps its timeline. Default on,
@@ -43,8 +43,8 @@ struct PersistentState {
   // the transport's own controls are unaffected either way.
   bool scroll_gestures = true;
   // The ceiling every window's volume may be raised to, in percent. The
-  // Preferences window offers 100/125/150/200/300/400 and the default is 200,
-  // which is the behavior every route already had. Bounded to [100, 400]:
+  // Preferences window offers 100/125/150/200/300/400 and the default is 200.
+  // Bounded to [100, 400]:
   // 100 disables amplification entirely and 400 is the native gain stage's
   // own kMaximumGain (+12 dB), which nothing may exceed.
   int maximum_volume = 200;

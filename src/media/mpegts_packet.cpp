@@ -423,7 +423,6 @@ MediaCodec codecForStreamType(std::uint8_t streamType, bool ac3Descriptor,
       // '.mp3' format tag; MediaCodec::Mp3 is the family, not the layer.
       return MediaCodec::Mp3;
     case static_cast<std::uint8_t>(TsStreamType::Mpeg2Video):
-      // Appended to MediaCodec 2026-08-20 under the SESSION_HANDOFF amendment.
       // VideoToolbox decodes this through a software decoder and needs no
       // out-of-band configuration record.
       return MediaCodec::Mpeg2Video;
@@ -446,10 +445,10 @@ MediaCodec codecForStreamType(std::uint8_t streamType, bool ac3Descriptor,
     default:
       break;
   }
-  // MPEG-1 video (0x01), MPEG-4 part 2 (0x10) and DTS (0x82) still have no
-  // route. That remains a deliberate, recorded gap: the demuxer reports the raw
-  // stream type in its verdict so the seam above refuses by name instead of
-  // silently dropping a track.
+  // MPEG-1 video (0x01), MPEG-4 part 2 (0x10) and DTS (0x82) have no route.
+  // That is a deliberate gap: the demuxer reports the raw stream type in its
+  // verdict so the seam above refuses by name instead of silently dropping a
+  // track.
   static_cast<void>(ac3Descriptor);
   static_cast<void>(eac3Descriptor);
   static_cast<void>(registrationAc3);
@@ -695,9 +694,9 @@ AccessUnitScan scanMpeg2AccessUnit(std::span<const std::byte> unit) noexcept {
 
   scan.keyFrame = sawIntraPicture || (scan.hasSequenceHeader &&
                                       sawGroupOfPictures);
-  // The empirical VideoToolbox probe is the authority here: a cold MPEG-2
-  // decompression session needs the in-band sequence header. An I-picture
-  // without one is an intra picture, not a random access point.
+  // A cold VideoToolbox MPEG-2 decompression session needs the in-band
+  // sequence header, so an I-picture without one is an intra picture, not a
+  // random access point.
   scan.decodableFromCold = scan.hasSequenceHeader && scan.keyFrame;
   scan.hasParameterSets = scan.hasSequenceHeader;
   if (scan.hasSequenceHeader && sequenceStart < unit.size()) {
@@ -1015,7 +1014,7 @@ std::uint32_t mpeg2FrameDurationTicks(std::uint8_t frameRateCode) noexcept {
   // 13818-2 Table 6-4, expressed exactly against the 90 kHz grid.
   switch (frameRateCode) {
     case 1:
-      return 3'754;  // 24000/1001 -> 90000*1001/24000 = 3753.75, see below
+      return 3'754;  // 24000/1001 -> 90000*1001/24000 = 3753.75, rounded
     case 2:
       return 3'750;  // 24
     case 3:
@@ -1027,7 +1026,7 @@ std::uint32_t mpeg2FrameDurationTicks(std::uint8_t frameRateCode) noexcept {
     case 6:
       return 1'800;  // 50
     case 7:
-      return 1'502;  // 60000/1001 -> 1501.5, see below
+      return 1'502;  // 60000/1001 -> 1501.5, rounded half up
     case 8:
       return 1'500;  // 60
     default:
@@ -1614,11 +1613,10 @@ bool parseAc3SyncFrame(std::span<const std::byte> bytes,
   // average bit rate exact.
   //
   // Omitting this is not a rounding error, it is a hard framing failure: a
-  // real 128 kb/s 44.1 kHz stream alternates 556 and 558 bytes (measured on
-  // fixtures/ac3.es -- sync words at 0, 556, 1114, 1672, 2228, ... and
-  // frmsizecod alternating 16, 17, 17, 16, 17), so a parser that always
-  // reports the even size walks off the sync word on the second frame of every
-  // PES payload and the whole audio track is refused.
+  // 128 kb/s 44.1 kHz stream alternates 556 and 558 bytes (frmsizecod 16 and
+  // 17), so a parser that always reports the even size walks off the sync word
+  // on the second frame of every PES payload and the whole audio track is
+  // refused.
   const std::uint32_t oddWord =
       fscod == 1 ? static_cast<std::uint32_t>(frmsizecod & 1U) : 0U;
   const std::uint32_t words =
@@ -1675,9 +1673,7 @@ bool parseEac3SyncFrame(std::span<const std::byte> bytes,
   // the sync word -- where AC-3 has crc1 and a frmsizecod TABLE INDEX, E-AC-3
   // has strmtyp/substreamid and an explicit frmsiz WORD COUNT. Reading one as
   // the other yields a plausible-looking frame length that is simply wrong,
-  // which is exactly why every E-AC-3 transport stream was being dropped: the
-  // legacy parser "succeeded" on garbage and the frame walk then failed to
-  // divide the PES into whole frames.
+  // and the frame walk then fails to divide the PES into whole frames.
   const std::uint8_t bsid =
       static_cast<std::uint8_t>((byteAt(bytes, 5) >> 3) & 0x1FU);
   if (bsid != kEac3BitstreamId) {

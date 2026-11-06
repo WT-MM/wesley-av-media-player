@@ -90,8 +90,7 @@ class PlayerController final : public QObject {
   //
   // An empty QSize means "not known" -- audio-only media, no media, or an open
   // that has not reached Prepared yet. It exists because MacWindowChrome's
-  // AVURLAsset probe, which is what qml/Main.qml asked first and still asks
-  // first, cannot demux Matroska/WebM/MPEG-TS and answers (0, 0) for every one
+  // AVURLAsset probe, which qml/Main.qml asks first, cannot demux Matroska/WebM/MPEG-TS and answers (0, 0) for every one
   // of them; Main.qml falls back to this when it does.
   Q_PROPERTY(QSizeF videoDisplaySize READ videoDisplaySize NOTIFY
                  videoDisplaySizeChanged)
@@ -467,7 +466,6 @@ signals:
   void fullscreenToggleRequested();
   void exportSelectionRequested(double trim_in, double trim_out);
   void generateCaptionsRequested();
-  void cancelCaptioningRequested();
   void openSubtitleFileDialogRequested();
 
 private:
@@ -486,7 +484,7 @@ private:
     bool playback_restarted = false;
   };
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   struct RoutedFallbackOpen {
     std::uint64_t attempt = 0;
     std::uint64_t serial = 0;
@@ -766,7 +764,7 @@ private:
   [[nodiscard]] NativeSeekDispatch
   dispatchNativeSeekIntent(const NativeSeekIntent &intent, void *context,
                            NativeSeekSubmitter submitter);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // The production NativePreviewSubmitter: `context` is the NativePlaybackOwner
   // and the mapping from its PreviewDisposition to NativePreviewSubmission is
   // stated here once, for the demand, presented and failed entry points alike.
@@ -879,7 +877,7 @@ private:
   [[nodiscard]] bool engineReady() const;
   [[nodiscard]] bool needsRenderContext() const;
   bool initializePlaybackEngine();
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   void prepareRoutedOpenIntent(const QUrl &source);
   [[nodiscard]] bool nativeRouteAdmissionAllowed() const noexcept;
   [[nodiscard]] bool
@@ -934,7 +932,7 @@ private:
 
   std::shared_ptr<PlayerCore> core_;
   std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> fallback_runtime_;
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   std::shared_ptr<PlayerCore> fallback_reset_core_;
   std::unique_ptr<NativePlaybackOwner> native_playback_;
   std::optional<RoutedFallbackOpen> routed_fallback_open_;
@@ -1012,7 +1010,6 @@ private:
   QSizeF video_display_size_;
   media::MediaDisplaySize exact_video_display_size_;
   double volume_ = 1.0;
-  // Default 200%, the user-confirmed default for the Preferences setting.
   double maximum_volume_ = 2.0;
   double rate_ = 1.0;
   double trim_in_ = 0.0;
@@ -1032,7 +1029,7 @@ private:
   // See beginTeardown(): silences user-facing errors once this controller's
   // window is on its way out.
   bool tearing_down_ = false;
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // Whether THIS controller currently contributes a hold to the process-wide
   // macOS playback activity assertion. The assertion is reference counted over
   // every window's hold, so each window has to know whether it is already

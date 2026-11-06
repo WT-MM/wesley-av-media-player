@@ -14,8 +14,8 @@ namespace wam::macos {
 // The render path runs the output unit's CLIENT format at the track's own
 // rate; the device keeps its nominal rate and the output unit's own sample-rate
 // converter bridges the two at the input-scope boundary. That converter is the
-// stage every 44.1 kHz file already plays through on a 48 kHz device, and it
-// was measured (2026-09-05, scratchpad/resample) to carry every rate below:
+// stage every 44.1 kHz file plays through on a 48 kHz device, and it was
+// measured to carry every rate below:
 // the DefaultOutput unit accepts the client format, pulls the client domain
 // contiguously (sampleTime 0, 160, 320 ... at 8 kHz), and declares a constant
 // 16-client-frame group delay that chirp alignment against ffmpeg's aresample
@@ -25,7 +25,7 @@ namespace wam::macos {
 //
 // The set is exactly what was proven end to end, sample-exact, and nothing
 // else: 88.2 and 64 kHz are integral rates that were NOT proven and stay
-// refused (the frozen converter test pins 88.2 kHz as unsupported). A rate
+// refused (the converter test pins 88.2 kHz as unsupported). A rate
 // outside this family is refused at admission, by name, before any resource
 // is entered.
 inline constexpr std::array<std::uint32_t, 11> kNativeAudioSampleRates{

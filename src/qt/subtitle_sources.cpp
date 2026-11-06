@@ -37,9 +37,8 @@ QString originName(SubtitleSources::Origin origin) {
 //
 // A label is built from the track's own Name, then its language, then its
 // ordinal (subtitleSourceLabel in player_controller.cpp). Two same-language
-// tracks with no Name -- an extremely common shape; the file that produced
-// this defect carries two English SRT tracks, neither named -- therefore both
-// render as exactly "English", and the menu offers the user two identical rows
+// tracks with no Name -- an extremely common shape -- therefore both
+// render as exactly "English", and the menu would offer the user two identical rows
 // with nothing to choose between and no way to tell which one the container
 // prefers.
 //
@@ -124,7 +123,7 @@ void SubtitleSources::setEmbeddedTracks(std::vector<Source> tracks) {
   //
   // But keep them only if the incoming list does not already have them. On the
   // compatibility route a `sub-add`ed file IS an mpv track, so it comes back in
-  // track-list and carrying the old copy forward listed it twice.
+  // track-list and carrying the old copy forward would list it twice.
   std::vector<Source> kept;
   for (const Source &source : sources_) {
     if (source.origin == Origin::Embedded)
@@ -141,11 +140,9 @@ void SubtitleSources::setEmbeddedTracks(std::vector<Source> tracks) {
   for (Source &source : kept)
     sources_.push_back(std::move(source));
   // Ids are the menu's own 1..N ordering, reassigned on every rebuild rather
-  // than handed out from a running counter. A running counter made the ids
-  // depend on how many times the list happened to be rebuilt -- so the same
-  // track was id 1 on a native open and id 2 after a fallback flip, and any
-  // id held across that (a scripted selection, a menu item mid-rebuild) named
-  // the wrong track or nothing. The caller re-resolves its selection through
+  // than handed out from a running counter, so they never depend on how many
+  // times the list happened to be rebuilt (a native open followed by a
+  // fallback flip). The caller re-resolves its selection through
   // matches() after this, which is what makes renumbering safe.
   // Before the ids, because Source::matches() compares the label: a selection
   // held across a rebuild must be re-resolved against the same label it was
@@ -351,7 +348,7 @@ void SubtitleSources::beginNativeLoad(int id) {
           media::mp4::loadMp4SubtitleTrack(path, mp4Track);
       // Restated as the Matroska load the apply path already understands, so
       // the cue lane below stays single-shaped. Style spans are dropped here:
-      // the overlay is Text.PlainText by design (see the report's deferrals).
+      // the overlay is Text.PlainText by design.
       media::matroska::SubtitleTrackLoad load;
       load.cues = std::move(mp4Load.cues);
       load.ok = mp4Load.ok;
@@ -497,8 +494,8 @@ QString SubtitleSources::textAt(double seconds) noexcept {
   hint_ = index;
   // Only build the QString when the cue actually turns over. This is called
   // on every published position -- about thirty times a second on the native
-  // route -- and converting the same UTF-8 payload again on each of those was
-  // an allocation and a decode per frame for a line that had not changed.
+  // route -- and converting the same UTF-8 payload again on each of those
+  // would be an allocation and a decode per frame for a line that had not changed.
   cached_text_ = index < 0 ? QString()
                            : QString::fromStdString(
                                  cues_[static_cast<std::size_t>(index)].text);

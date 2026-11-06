@@ -343,8 +343,7 @@ void testApplyIsInertOnAnInvalidMatrix() {
 // channel k of a layout, a signal that is exactly 1.0 on k and 0.0 elsewhere
 // was pushed through `ffmpeg -ac 2 -c:a pcm_f32le`, and because the downmix is
 // a memoryless linear map the resulting (L, R) pair IS column k, exactly, with
-// no fitting and no tolerance (scratchpad/audio_gaps/probe_matrix.py,
-// 2026-09-04, ffmpeg 9.0.1).
+// no fitting and no tolerance (measured with ffmpeg 9.0.1).
 //
 // The comparison is on the BIT PATTERN, not a tolerance, because that is the
 // actual claim: a tolerance test would still pass if someone replaced the

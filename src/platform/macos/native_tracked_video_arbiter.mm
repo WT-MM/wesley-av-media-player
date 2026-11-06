@@ -374,18 +374,12 @@ class NativeTrackedVideoArbiter::MainOutput final
                : progress;
   }
 
-  // A pure facade fact: the arbiter neither samples nor converts the surface,
-  // so the answer is whatever the wrapped presenter can consume. Forwarding is
-  // what keeps the decoder's format contract keyed on the real presenter rather
-  // than on the wrapper that happens to sit in front of it.
+  // Capability facts are forwarded: the arbiter neither samples, converts nor
+  // draws the surface, so only the wrapped presenter can answer them.
   [[nodiscard]] bool presentsDecodedSurfacesDirectly() const noexcept override {
     return state_->output->presentsDecodedSurfacesDirectly();
   }
 
-  // Forwarded for the same reason and with the same care: the arbiter draws
-  // nothing, so whether a rotation can be presented is the wrapped presenter's
-  // answer. Answering it here would let the wrapper claim a capability the
-  // real presenter does not have.
   bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept override {
     return state_->output->setPresentationDisplaySize(size);
   }

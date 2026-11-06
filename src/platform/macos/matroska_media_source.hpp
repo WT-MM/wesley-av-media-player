@@ -59,10 +59,6 @@ struct MatroskaSourceTraits {
   // either cap.
   static constexpr std::int64_t kVideoMergeLeadNanoseconds{250'000'000};
 
-  [[nodiscard]] static PrepareOutcome prepare(
-      const std::filesystem::path& path,
-      const media::MediaSourceOpenOptions& options,
-      CancellationToken cancellation) noexcept;
   [[nodiscard]] static std::shared_ptr<const AssetContext> adoptContext(
       const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,

@@ -656,16 +656,13 @@ void verifyCloseProgressIsTerminal() {
   WAM_CHECK(closed.retainedFrames == 0);
   WAM_CHECK(closed.drawnFrames == 1);
   WAM_CHECK(closed.supersededFrames == 0);
-  // This assertion previously read `closed.generation == 1` and was labelled a
-  // deliberate "DIVERGENCE FROM THE GL ROUTE". It was not a divergence, it was
-  // the bug: NativeVideoConsumer::retire() gates terminal retirement on
-  // `outputFacts.generation == invalidationGeneration`, so an output that never
-  // advanced acceptedGeneration during close could never satisfy it. Every
-  // terminal retirement of the layer route therefore failed, which surfaced as
-  // "Native playback could not retire safely" on any warm file replacement,
-  // with the old media still playing. closeProgress() now moves the output onto
-  // the invalidation generation exactly as flushProgress() moves it onto the
-  // flush target, and exactly as NativeQtGlOutput already did.
+  // NativeVideoConsumer::retire() gates terminal retirement on
+  // `outputFacts.generation == invalidationGeneration`, so an output that did
+  // not advance acceptedGeneration during close could never retire ("Native
+  // playback could not retire safely" on a warm file replacement).
+  // closeProgress() moves the output onto the invalidation generation exactly
+  // as flushProgress() moves it onto the flush target, and exactly as
+  // NativeQtGlOutput does.
   WAM_CHECK(closed.generation == 2);
 
   // Restate that as the exact predicate the owner applies, so a future change
@@ -850,11 +847,8 @@ void verifyRetainedLeaseCeilingAndRelease() {
 // RAP, so when the trim does not land exactly on a frame boundary the picture
 // covering movie time zero carries a NEGATIVE movie stamp. The consumer models
 // this deliberately -- it retires by the presentation floor, not by sign, and
-// submits the straddling frame. This output used to reject any negative
-// presentation time outright, so such a file died on the default route with
-// "tracked video output refused the frame submission" while the scene-graph
-// route, which has no sign check, played it. Specimen:
-// slide_assets/trimmed_autorollout.mp4 (elst media_time=475417 @ 90000).
+// submits the straddling frame, so this output must not reject a negative
+// presentation time outright (the scene-graph route has no sign check either).
 //
 // The contract proved here: a straddling frame is ACCEPTED, a frame that ends
 // at or before the origin is still REFUSED (it is genuinely never visible), and

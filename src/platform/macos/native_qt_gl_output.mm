@@ -618,8 +618,8 @@ struct NativeQtGlOutput::State
   // item. acceptedGeneration inherits the item's cross-adapter history so a
   // successor can never display stale pixels, but the tracked consumer's
   // ledger is per-session and starts its first arm from 0. Comparing an arm
-  // against the inherited item history instead of this ledger is what made a
-  // second in-process open fail its first arm on a reused item.
+  // against the inherited item history instead of this ledger would fail the
+  // first arm of a second in-process open on a reused item.
   std::uint64_t trackedRetiredGeneration{0};
   bool trackedFlushPending{false};
   bool trackedClosePending{false};
@@ -1438,14 +1438,11 @@ NativeQtGlOutput::~NativeQtGlOutput() {
     // The last adapter owner has just been dropped, so this adapter is
     // exactly retired: the wake gate is closed and drained, every queued GUI
     // callback holds only weak State and is about to become inert, and no
-    // caller can reach this object again. That is the retirement boundary the
-    // item's output lease describes, so hand the lease back here rather than
-    // at the GuiContext's deferred QObject deletion. Deferred deletion is
-    // still required for the QObject itself, but it cannot run before the
-    // event loop is re-entered, and an in-process reopen creates the
-    // successor adapter in the very call stack that destroyed this one.
-    // Released outside the State mutex: the handoff applies any owed terminal
-    // invalidation to the item first, and item calls must not run under it.
+    // caller can reach this object again. Hand the output lease back at this
+    // boundary (see releaseOutputLeaseOnRetirementNoexcept for why not at
+    // deferred QObject deletion). Released outside the State mutex: the
+    // handoff applies any owed terminal invalidation to the item first, and
+    // item calls must not run under it.
     if (state_->guiContext) {
       state_->guiContext->releaseOutputLeaseOnRetirementNoexcept();
     }

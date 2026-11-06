@@ -25,8 +25,9 @@ Slider {
     to: 1
     value: displayPosition
     // Match WAM's global/VLC-style transport shortcuts even while the
-    // timeline owns keyboard focus. A duration-relative step made the same
-    // Right Arrow key seek by a different amount after clicking the scrubber.
+    // timeline owns keyboard focus. A duration-relative step would make the
+    // same Right Arrow key seek by a different amount after clicking the
+    // scrubber.
     stepSize: 5
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
@@ -52,11 +53,10 @@ Slider {
             normalized = 1 - normalized;
         // Interpolate directly instead of through Slider.valueAt(): valueAt()
         // rounds its result through stepSize, and stepSize is the five-second
-        // keyboard step. Routing pointer motion through it quantized every drag
-        // onto five-second stops -- a twenty-pixel pointer move jumped a whole
-        // five seconds, the handle never sat where the pointer was, and a
-        // four-second drag produced only five distinct preview targets. Keyboard
-        // stepping still uses stepSize; only pointer scrubbing is continuous.
+        // keyboard step; routing pointer motion through it would quantize every
+        // drag onto five-second stops and the handle would never sit where the
+        // pointer is. Keyboard stepping uses stepSize; only pointer scrubbing
+        // is continuous.
         return from + (to - from) * normalized;
     }
 

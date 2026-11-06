@@ -81,11 +81,9 @@ std::string statusError(const char *operation, OSStatus status) {
 // here. (HEVC always states sps_max_num_reorder_pics, so its depth is always
 // Declared; the parser's inferred flag stays false for it.) Colour is
 // admitted at its widest: it is the source's question, settled before any
-// stream reaches this decoder under limits at least this strict. Measured
-// 2026-09-05 over 23 real hvcC records: the parser and the reader this
-// replaced agreed on every record the parser admits, and the one it refuses
-// (P3 primaries) is refused by the AVFoundation source before any decoder
-// sees it.
+// stream reaches this decoder under limits at least this strict. A record the
+// parser refuses here (P3 primaries) is refused by the AVFoundation source
+// before any decoder sees it.
 [[nodiscard]] media::VideoCodecConfigurationLimits
 reorderDepthLimits() noexcept {
   media::VideoCodecConfigurationLimits limits;
@@ -148,7 +146,7 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
     // Stating 1 rather than 0 costs one retained frame on a stream that codes
     // no B pictures at all, which both of this project's MPEG-2 fixtures are
     // (ffmpeg's mpeg2video encoder defaults to max_b_frames = 0, so `-g 12`
-    // produces a flat I-P-P-...-P GOP, measured 2026-08-20). That cost is one
+    // produces a flat I-P-P-...-P GOP). That cost is one
     // frame of startup hold at SD rates and is the right side to be wrong on:
     // understating the depth reorders output, while overstating it by one
     // delays it by one frame.
@@ -333,10 +331,6 @@ struct AsyncDecodeState {
   CMTime lastDeliveredPresentationTime{kCMTimeInvalid};
   bool discarding{false};
   bool callbackFailedClosed{false};
-  // Set under deliveryMutex + mutex before FinishDelayedFrames. Once set,
-  // callbacks continue restoring decode/PTS order and retiring admission, but
-  // retain every resulting frame for owner-progressive EOS draining.
-  bool endOfStreamBegun{false};
   AsyncError lastError;
   const VideoToolboxDecoderProgressHandler progressHandler;
 #if defined(WAM_NATIVE_VIDEO_TESTING)
@@ -549,7 +543,6 @@ void resetPresentationState(
     state->currentCompressedBytes = 0;
     state->lastDeliveredPresentationTime = kCMTimeInvalid;
     state->callbackFailedClosed = false;
-    state->endOfStreamBegun = false;
   }
   // Release decoder surfaces outside the state mutex, then return the empty
   // vector's pre-reserved storage before another callback can enter.
@@ -788,10 +781,6 @@ bool validateDecodedDimensions(CVPixelBufferRef pixelBuffer,
   return true;
 }
 
-// (The single-expected-value variant was removed 2026-08-27: after amendment 6
-// every colour attachment this file validates admits a SET of values, so the
-// one-value form had no caller left.)
-
 bool attachmentIsAbsentOrOneOfStrings(
     CVBufferRef buffer, CFStringRef key,
     std::initializer_list<CFStringRef> expected, const char *diagnostic,
@@ -872,20 +861,20 @@ bool validateDecodedSdrColorAttachments(CVPixelBufferRef pixelBuffer,
   // rejecting them here would fail every untagged SD clip while accepting the
   // identical untagged HD one. An explicitly tagged BT.601 stream never gets
   // this far: the media source marks that unsupported at admission.
-  // AMENDMENT 6. BT.2020 primaries and the PQ/HLG transfers are admitted, and
-  // the two HDR volume/light attachments are no longer refused -- they are the
-  // payload the presentation path DELIVERS. Measured on this platform
-  // (scratchpad/color_probe.mm): VideoToolbox attaches the stream's own
-  // primaries/transfer/matrix to every decoded surface, copies
+  // BT.2020 primaries and the PQ/HLG transfers are admitted, and the two HDR
+  // volume/light attachments are not refused -- they are the payload the
+  // presentation path DELIVERS. On this platform VideoToolbox attaches the
+  // stream's own primaries/transfer/matrix to every decoded surface, copies
   // MasteringDisplayColorVolume and ContentLightLevelInfo across verbatim, and
   // resolves a matching CGColorSpace ("Rec. ITU-R BT.2100 PQ"/"... HLG"), all
   // of which CMVideoFormatDescriptionCreateForImageBuffer reproduces into the
   // format description native_layer_video_output enqueues with. Refusing them
-  // here discarded exactly the information WindowServer tone-maps from.
+  // here would discard exactly the information WindowServer tone-maps from.
   //
   // Everything genuinely unrepresentable keeps its named refusal below:
-  // gamma, ICC, alternative and log transfer characteristics, ambient viewing
-  // environment, content colour volume, and the macOS 15 post-decode classes.
+  // gamma, ICC, alternative and log transfer characteristics, any ambient
+  // viewing environment other than the qualified HLG payload, content colour
+  // volume, and the macOS 15 post-decode classes.
   if (!attachmentIsAbsentOrOneOfStrings(
           pixelBuffer, kCVImageBufferColorPrimariesKey,
           {kCVImageBufferColorPrimaries_ITU_R_709_2,
@@ -1230,8 +1219,6 @@ void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
   notifyProgress(state);
 }
 
-// The codec a CoreMedia four-character code names here, or Unknown for one this
-// decoder has no enumerator for.
 [[nodiscard]] media::MediaCodec namedCodec(CMVideoCodecType codec) noexcept {
   return media::mediaCodecForCoreMediaType(static_cast<std::uint32_t>(codec));
 }
@@ -1263,7 +1250,7 @@ bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
          !media::mediaCodecFacts(named).carriesConfigurationRecord;
 }
 
-// Both ProRes identities require a recordless hardware session.
+// True for either ProRes identity (the 422 family or 4444).
 bool codecIsProResFamily(CMVideoCodecType codec) noexcept {
   return namedCodec(codec) == media::MediaCodec::ProRes ||
          namedCodec(codec) == media::MediaCodec::ProRes4444;
@@ -1274,36 +1261,33 @@ bool codecIsProResFamily(CMVideoCodecType codec) noexcept {
 // session's destination attributes even on the display-layer route that
 // otherwise leaves the decoder free to pick.
 //
-// This is a property of the DECODER's native output format and nothing else.
-// It was previously expressed as codecCarriesNoConfigurationRecord(), which
-// was true of MPEG-2 for an unrelated reason and happened to select the right
-// codec while MPEG-2 was the only legacy decoder here. MPEG-4 Part 2 broke
-// that coincidence: it carries a configuration record AND decodes to `2vuy`.
+// This is a property of the DECODER's native output format and nothing else,
+// and is not the same question as codecCarriesNoConfigurationRecord(): MPEG-4
+// Part 2 carries a configuration record AND decodes to `2vuy`.
 //
-// Both of Apple's legacy software decoders behave the same way, measured
-// 2026-08-20: an unpinned session decodes to `2vuy`
+// Both of Apple's legacy software decoders behave the same way: an unpinned
+// session decodes to `2vuy`
 // (kCVPixelFormatType_422YpCbCr8, packed 4:2:2) and a pinned one decodes the
 // same bytes to `420v`. Nothing downstream accepts a packed 4:2:2 surface --
 // the display layer, the Metal mapper and the OpenGL importer are all
 // bi-planar -- so an unpinned session fails the output-surface contract on its
 // very first frame ("output pixel format 846624121 did not match the bounded
-// native decode contract 875704438"). That is exactly the failure MPEG-4
-// Part 2 hit before it was named here.
+// native decode contract 875704438").
 //
 // Pinning costs the same per-frame VTPixelTransferSession the non-display-layer
 // contracts already pay. It is affordable for both codecs for the same reason:
 // MPEG-2-in-TS is SD, and MPEG-4 Part 2 Simple Profile is an SD-era profile
 // whose levels stop at SD resolutions.
 // ProRes is the third and fourth case, and it is the same fact one more time.
-// Measured 2026-09-04 (scratchpad/vtprobe.mm): an unpinned ProRes session
+// An unpinned ProRes session
 // decodes to 'sv22' for the 422 family and 'sv44'/'y416' for 4444 -- private
 // Apple surface formats that appear in no public CoreVideo header and that
 // nothing downstream accepts. A pinned session decodes the same bytes to
 // exactly the requested format, including 'x420', on every flavor.
 //
 // Motion JPEG is the one codec here that would ALMOST survive unpinned: its
-// natural output is '420f', the full-range 4:2:0 twin amendment 9 already
-// admits. It is pinned anyway so that its output format is a decision this
+// natural output is '420f', the full-range 4:2:0 twin the display-layer
+// output contract already admits. It is pinned anyway so that its output format is a decision this
 // file makes rather than a property of whichever JPEG happens to be playing --
 // the same reason every other legacy decoder is pinned.
 bool codecNeedsPinnedOutputPixelFormat(CMVideoCodecType codec) noexcept {
@@ -1502,8 +1486,7 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
     return paramErr;
   }
   if (codecCarriesNoConfigurationRecord(configuration.codec)) {
-    // A null extensions dictionary, not an empty one. Proved in
-    // scratchpad/vt_mpeg2_probe.mm.
+    // A null extensions dictionary, not an empty one.
     const OSStatus status = CMVideoFormatDescriptionCreate(
         kCFAllocatorDefault, configuration.codec, configuration.codedSize.width,
         configuration.codedSize.height, nullptr, descriptionOut);
@@ -1566,8 +1549,7 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
         // untagged, and an untagged PQ surface presents as SDR. See
         // VideoStreamConfiguration::colorPrimaries for the measurement.
         //
-        // A stream with no modelled colour writes no key and gets a
-        // byte-identical description to the one it got before this existed.
+        // A stream with no modelled colour writes no key.
         if (configuration.colorPrimaries != nullptr) {
           CFDictionarySetValue(mutableExtensions,
                                kCMFormatDescriptionExtension_ColorPrimaries,
@@ -1608,9 +1590,9 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
   return status;
 }
 
-// The stream's OWN coded depth, read from its configuration record. Split out
-// from requestedPixelFormat() 2026-08-27 because the two questions came apart:
-// the requested OUTPUT depth can now exceed the coded depth for an HDR stream,
+// The stream's OWN coded depth, read from its configuration record. Kept
+// separate from requestedPixelFormat() because the requested OUTPUT depth can
+// exceed the coded depth for an HDR stream,
 // and only the difference between them justifies pinning the format on the
 // display-layer interop.
 bool codedDepthIsTenBit(
@@ -1669,7 +1651,7 @@ bool codedDepthIsTenBit(
 //
 // It is the coded depth, EXCEPT that a PQ or HLG stream always asks for a
 // 10-bit surface. That is a presentation requirement, not a decode one:
-// measured 2026-08-27 on this platform, AVSampleBufferDisplayLayer presents an
+// measured on this platform, AVSampleBufferDisplayLayer presents an
 // 8-bit PQ-tagged surface as if it were SDR even though the surface carries
 // correct primaries, a correct transfer and a resolved "Rec. ITU-R BT.2100 PQ"
 // CGColorSpace, while the identical picture on a 10-bit surface is presented
@@ -1896,7 +1878,6 @@ struct VideoToolboxDecoder::Impl {
   // -layer interop, which otherwise deliberately leaves it unpinned -- see
   // createSessionLocked().
   bool hdrOutputSurfaceRequired{false};
-  std::size_t codecReorderFrames{0};
   std::uint64_t retirementRetiredGeneration{0};
   std::uint64_t retirementInvalidationGeneration{0};
   bool retirementStarted{false};
@@ -2060,7 +2041,7 @@ struct VideoToolboxDecoder::Impl {
     // because their native output is packed 4:2:2 and nothing downstream
     // accepts it. See codecNeedsPinnedOutputPixelFormat() for the measurement
     // and for why that predicate is not the same question as "does this codec
-    // carry a configuration record", which is what this condition used to ask.
+    // carry a configuration record".
     const CMVideoCodecType sessionCodec =
         formatDescription != nullptr
             ? CMFormatDescriptionGetMediaSubType(formatDescription)
@@ -2069,8 +2050,7 @@ struct VideoToolboxDecoder::Impl {
     // takes whatever the decoder produced because it never samples the
     // surface -- but for a PQ/HLG stream the surface's DEPTH is exactly what
     // decides whether the system presents it through the HDR path at all
-    // (measured 2026-08-27; see VideoStreamConfiguration::
-    // highDynamicRangeTransfer). An unpinned session hands back the coded
+    // (see VideoStreamConfiguration::highDynamicRangeTransfer). An unpinned session hands back the coded
     // depth, which for an 8-bit PQ stream is an 8-bit surface presented as
     // SDR, and the request in outputPixelFormat then disagrees with what
     // arrives and fails the output-surface contract instead. Pinning makes
@@ -2444,7 +2424,6 @@ struct VideoToolboxDecoder::Impl {
         // below without repeating FinishDelayedFrames.
       } else {
         ended = true;
-        async->endOfStreamBegun = true;
         newlyBegun = true;
       }
     }
@@ -2826,7 +2805,7 @@ bool VideoToolboxDecoder::configure(
   // ceiling the specification substitutes for a statement the stream never
   // made, so it is clamped to the bound instead of refused. Understating a
   // stream that really did need more cannot present frames out of order:
-  // collectCompletedDecodes() compares every completed frame against the last
+  // collectCompletedDecodesLocked() compares every completed frame against the last
   // one delivered and fails the decoder closed before publishing an older one.
   // See CodecReorderDepthOrigin for why the inference is unusable as a refusal
   // criterion in the first place.
@@ -2871,7 +2850,6 @@ bool VideoToolboxDecoder::configure(
   // display-layer interop is deliberately left free to use.
   impl_->hdrOutputSurfaceRequired = configuration.highDynamicRangeTransfer &&
                                     !codedDepthIsTenBit(configuration);
-  impl_->codecReorderFrames = admittedReorderFrames;
   impl_->resetEndOfStreamLocked();
   impl_->awaitingKeyFrame = true;
   {
@@ -2900,9 +2878,9 @@ bool VideoToolboxDecoder::configure(
     impl_->async->endOfStreamBackpressureRetries = 0;
     impl_->async->surfaceBudgetRejections = 0;
     impl_->async->outOfOrderDrops = 0;
-    impl_->async->codecReorderFrames = impl_->codecReorderFrames;
+    impl_->async->codecReorderFrames = admittedReorderFrames;
     impl_->async->maxRetainedFrames =
-        impl_->options.maxInFlightFrames + impl_->codecReorderFrames;
+        impl_->options.maxInFlightFrames + admittedReorderFrames;
     impl_->async->peakPendingPresentationFrames = 0;
     impl_->async->nextSubmissionSequence = 0;
     impl_->async->nextCompletionSequence = 0;
@@ -2922,7 +2900,6 @@ bool VideoToolboxDecoder::configure(
     impl_->async->expectedCodedDimensions = configuration.codedSize;
     impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
     impl_->async->callbackFailedClosed = false;
-    impl_->async->endOfStreamBegun = false;
     impl_->async->lastError.reset();
 #if defined(WAM_NATIVE_VIDEO_TESTING)
     impl_->async->failNextAllocationPoint.reset();
@@ -3600,7 +3577,6 @@ bool VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
     assignError(error, "test decoder ordering state is not empty");
     return false;
   }
-  decoder.impl_->codecReorderFrames = reorderFrames;
   if (reorderFrames >
       std::numeric_limits<std::size_t>::max() -
           decoder.impl_->options.maxInFlightFrames) {
@@ -3803,7 +3779,6 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     decoder.impl_->awaitingKeyFrame = false;
     decoder.impl_->outputPixelFormat =
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-    decoder.impl_->codecReorderFrames = 0;
     decoder.impl_->async->sink = &sink;
     decoder.impl_->async->generation = generation;
     decoder.impl_->async->inFlight = 0;
@@ -3837,16 +3812,13 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     decoder.impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
     decoder.impl_->async->discarding = false;
     decoder.impl_->async->callbackFailedClosed = false;
-    decoder.impl_->async->endOfStreamBegun = false;
     decoder.impl_->async->endOfStreamBackpressureRetries = 0;
     decoder.impl_->async->sinkBackpressureRetries = 0;
     decoder.impl_->async->surfaceBudgetRejections = 0;
     decoder.impl_->async->lastError.reset();
-#if defined(WAM_NATIVE_VIDEO_TESTING)
     decoder.impl_->async->failNextAllocationPoint.reset();
     decoder.impl_->async->permitSyntheticCallbackFrame = true;
     decoder.impl_->async->permitSyntheticOutputSurface = false;
-#endif
   }
   sink.flush(generation);
   return true;

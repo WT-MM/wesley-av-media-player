@@ -10,8 +10,8 @@ import QtQuick
 //
 // It still drives a real PlayerController, because that is the object the
 // settings live on -- and since they are mirrored, ANY live controller is an
-// equally valid view of them. `liveController` therefore latches the most
-// recently focused non-null one instead of following focus into null.
+// equally valid view of them. `liveController` follows the focused one,
+// including into null when no window is open (see onFocusChanged below).
 PreferencesWindow {
     id: prefs
 

@@ -37,12 +37,12 @@ inline constexpr std::size_t kSoftwareVp8DecoderOwnedSurfaces = 1;
 // surface leaves the compositor, and a pool recycles a buffer only when that
 // last reference is gone.
 //
-// MEASURED 2026-08-20, live, 1920x1080 at 30 fps, 1800 delivered frames on the
-// default CALayer route. The instrument is the pool's own allocation
-// threshold, which is exact: CVPixelBufferPoolCreatePixelBufferWithAux-
-// Attributes refuses when the pool has already ALLOCATED that many buffers,
-// and recycling a free one is not an allocation -- so an ascending probe
-// reports precisely how many buffers the pool has ever had to hold at once.
+// Measured live at 1920x1080, 30 fps, 1800 delivered frames on the default
+// CALayer route. The instrument is the pool's own allocation threshold, which
+// is exact: CVPixelBufferPoolCreatePixelBufferWithAuxAttributes refuses when
+// the pool has already ALLOCATED that many buffers, and recycling a free one
+// is not an allocation -- so an ascending probe reports precisely how many
+// buffers the pool has ever had to hold at once.
 //
 //   threshold that satisfied the request : 1:1795  2:1  3:1  4:1  5:1  6:1
 //                                          7:0     8:0
@@ -50,13 +50,10 @@ inline constexpr std::size_t kSoftwareVp8DecoderOwnedSurfaces = 1;
 // That is a five-step warm-up ramp to six buffers and then 1795 pure
 // recycles: the pool needed a SIXTH buffer exactly once, needed a seventh
 // never, and allocated nothing at all after the ramp. One surface beyond
-// WAM's five leases is also exactly what native_video_consumer.hpp's
-// kMaximumTrackedOutputSurfaceOwnership note already records from the other
-// direction ("Phase A measured renderer retention at max 1 (median 1) in
-// decoded mode"), so the two independent measurements agree.
-//
-// (An earlier depth-5 run confirmed the same fact destructively: it played
-// cleanly for 1482 frames and then could not vend a sixth surface.)
+// WAM's five leases matches the renderer retention recorded in
+// native_video_consumer.hpp's kMaximumTrackedOutputSurfaceOwnership note.
+// A depth-5 pool plays cleanly for a while and then cannot vend a sixth
+// surface.
 inline constexpr std::size_t kSoftwareVp8RendererRetainedSurfaces = 1;
 
 // Every VP8 surface in the process comes from this one pool, so the pool's
@@ -84,8 +81,8 @@ inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
 
 // MEMORY, stated because these buffers are app-attributable and the surface
 // budget is a contract rather than a knob. The DEPTH above is a count and does
-// not move with the coded ceiling; the BYTES behind it do, so they are
-// re-derived here whenever the ceiling changes rather than carried forward.
+// not move with the coded ceiling; the BYTES behind it do, so re-derive them
+// here whenever the ceiling changes.
 //
 // NV12 is 1.5 bytes per pixel (VP8 is 8-bit only: RFC 6386 defines no
 // high-bit-depth profile, so this route never allocates P010). Sizes are
@@ -98,15 +95,16 @@ inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
 //   3840x2160  (8,294,400 px)   surface 12,441,600 B   pool (x6)   74.6 MB
 //   4096x2320  (9,502,720 px)   surface 14,254,080 B   pool (x6)   85.5 MB
 //
-// The ceiling row plus IOSurface stride/page alignment is what
+// The ceiling row plus IOSurface stride/page alignment
+// (kNativeSurfaceBudgetSurfaceAlignmentSlackBytes) is what
 // native_video_consumer.hpp asserts against kNativeSurfaceBudgetMaximumBytes:
-// 6 * (14,254,080 + 920,168) = 91,045,488 B against 288 MiB, leaving 210.9 MB.
-// Against kNativeSurfaceBudgetMaximumSurfaces (10) the depth still leaves four
-// surfaces -- that half of the accounting is a count and did not move.
+// 6 * (14,254,080 + 1,599,488) = 95,121,408 B against 384 MiB, leaving
+// 307.5 MB. Against kNativeSurfaceBudgetMaximumSurfaces (10) the depth leaves
+// four surfaces.
 //
 // That is the entire decoded-surface cost of a VP8 generation -- VideoToolbox
 // holds nothing at all while VP8 plays, so this route's share of the
-// process-wide budget is not shared with anything.
+// session's budget is not shared with anything.
 //
 // Only the five WAM-held leases ever take a NativeSurfaceBudget token; the
 // renderer's one is a CoreVideo reference this process no longer leases, which

@@ -78,10 +78,8 @@ struct MpegTsSourceTraits {
 // and both are consequences of the same container fact:
 //
 //  1. **Transport Stream carries a real DTS**, so the A/V merge keys on the
-//     actual decode timestamp -- the AVFoundation shape -- and this source has
-//     NO synthetic `kVideoMergeLeadNanoseconds` ordering lead. Copying that
-//     constant across would reintroduce, in the opposite direction, the exact
-//     defect it was invented to work around for a container that has no DTS.
+//     actual decode timestamp and there is no synthetic ordering lead (see
+//     MpegTsSourceTraits::mergeOrderKey).
 //  2. **Transport Stream states no per-frame audio timeline.** A PES header
 //     carries a 90 kHz timestamp, and 90 kHz does not divide a 44.1 kHz frame
 //     grid, so the container's own stamp is a rounded value that cannot be

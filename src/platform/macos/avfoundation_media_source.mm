@@ -305,14 +305,13 @@ struct AudioPrimingPlan {
 // lane's own read-ahead (kLaneReadAheadEvents == 24 events, ~0.8 s at 30 fps),
 // so the video decoder is never starved between two audio events. 256 ms is
 // about a fifth of the ring and about a third of the video read-ahead, and it
-// is ~12 AAC access units -- the same order as the 1-2 units a normally
-// interleaved container already vends, so the healthy path is unchanged.
+// is ~12 AAC access units, well above the 1-2 units a normally interleaved
+// container vends.
 constexpr double kMaximumStagedAudioSeconds = 0.256;
 
 // How many access units of the given per-unit duration fit inside
 // kMaximumStagedAudioSeconds. Returns 0 when the duration is not usable, and
-// the caller then applies no time bound at all, so behaviour is exactly what it
-// was before the bound existed.
+// the caller then applies no time bound at all.
 [[nodiscard]] CMItemCount audioUnitsWithinStagedDuration(
     CMTime perUnitDuration) noexcept {
   if (!CMTIME_IS_NUMERIC(perUnitDuration)) {
@@ -356,9 +355,7 @@ constexpr double kMaximumStagedAudioSeconds = 0.256;
 // 384004 bytes. Native v1 states its own bound on both counts
 // (MediaSourceLimits::maximumAudioSampleCount / maximumAudioSampleBytes)
 // because a staged sample is one unit of backpressure and one converter fill,
-// so the reader's batch is re-cut to fit before anything else touches it. That
-// bound is what refused .wav and .aiff at admission with "compressed sample
-// exceeds native memory bounds"; nothing about LPCM was ever the problem.
+// so the reader's batch is re-cut to fit before anything else touches it.
 //
 // This states a LENGTH only. Nothing here computes a timestamp: the actual cut
 // is CMSampleBufferCopySampleBufferForRange, which re-bases the packet
@@ -377,10 +374,9 @@ constexpr double kMaximumStagedAudioSeconds = 0.256;
 // container's interleaving, not of the codec: a normally interleaved MP4 vends
 // 1-2 AAC units (~21-43 ms), but a NON-interleaved one -- the whole audio track
 // written as a single contiguous run -- vends 140 units at once, 2.9867 s, more
-// than twice the ring's guaranteed capacity. Measured on such a file, video went
-// dark for ~1.5 s out of every 2.9867 s and 58% of frames were retired late
-// while the audio clock ran perfectly. Bounding the staged duration is what
-// makes the capacity-one rule's own precondition true.
+// than twice the ring's guaranteed capacity, and video starves while the audio
+// clock runs on. Bounding the staged duration is what makes the capacity-one
+// rule's own precondition true.
 //
 // Returns zero when the batch cannot be cut exactly -- a variable-size codec
 // whose packet descriptions are missing, or a single access unit already over
@@ -531,12 +527,10 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
   // consumes directly; aliases, custom, reserved, and variable-count layouts
   // still fail closed above.
   //
-  // MULTICHANNEL (2026-08-27). Wider layouts are admitted exactly when the
-  // shared downmix stage can state the fold for them. This is the same
-  // predicate the converter already applies (native_audio_converter.mm
-  // supportedChannelLayout) and the same one the Matroska route has used since
-  // v0.4.4, so both container routes now agree by construction instead of by
-  // coincidence. The decision is made on the TAG'S EXPANSION -- label by
+  // Wider layouts are admitted exactly when the shared downmix stage can state
+  // the fold for them (multichannelLayoutTagAdmitted, the same predicate
+  // audioChannelLayoutAdmitted applies for the converter and the other
+  // routes). The decision is made on the TAG'S EXPANSION -- label by
   // label, never by channel index -- because AudioToolbox emits a different
   // channel ORDER per codec family for the identical 5.1 content (see the
   // table in native_audio_channel_map.hpp). Nothing here folds anything: the
@@ -765,8 +759,7 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
 // audioMovieTimelineFactsFor above analyses the SHAPE of a segment list and
 // nothing audio-specific, so it answers this for a video track too. It is
 // spelled out separately because the video lane wants only this one fact: the
-// first movie time at which a picture exists. Fails safe to the origin, which
-// makes every caller behave exactly as it did before this existed.
+// first movie time at which a picture exists. Fails safe to the origin.
 [[nodiscard]] CMTime trackMediaStartOnMovieTimeline(NSArray* segments) noexcept {
   const auto facts = audioMovieTimelineFactsFor(segments);
   if (!facts || !exactEditTime(facts->mediaStart) ||
@@ -800,21 +793,19 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
 // each decoded frame at that buffer's OUTPUT stamp, so a video lane that
 // publishes the input stamp states its compressed samples on one timeline and
 // receives its decoded frames on another. The two differ by exactly this shift,
-// and the shift is zero only when the container carries no edit list -- which
-// is why an ordinary no-edit file never showed the defect, and why a
-// head-trimmed edit list (measured: -0.801917 s on a 24000-timescale file)
-// lands decoded frames at negative movie times the consumer then refuses.
+// which is zero only when the container carries no edit list; on a
+// head-trimmed edit list the input stamps would land decoded frames at
+// negative movie times the consumer refuses.
 //
 // Every other quantity a compressed sample is measured against is already the
 // MOVIE timeline -- the seek target, the presentation floor, the reader's time
-// range, the descriptor duration -- so the input stamp was the one statement in
-// this route on the wrong clock.
+// range, the descriptor duration -- so compressed samples are restated onto it
+// too.
 //
 // The shift is the container's own exact rational, so a stamp that cannot carry
 // it exactly is refused rather than rounded: that is what keeps the frame grid
 // exact. A non-numeric stamp (a compressed access unit legitimately carries no
-// decode stamp) and a stamp in a later epoch are both returned unchanged, so
-// the exactness gates downstream still see precisely what they saw before.
+// decode stamp) and a stamp in a later epoch are both returned unchanged.
 [[nodiscard]] std::optional<CMTime> restatedOnMovieTimeline(
     CMTime stamp, CMTime shift) noexcept {
   if (!CMTIME_IS_NUMERIC(stamp) || stamp.epoch != 0) {
@@ -928,10 +919,6 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   return restated;
 }
 
-// clampedSyncStartWithinTimelineContract now lives in
-// avfoundation_media_source.hpp, because the preview lane needs the identical
-// answer; see the rationale there.
-
 // The movie time a sync search must run from when the requested target lands
 // inside a track's leading EMPTY EDIT, or empty to fail closed.
 //
@@ -956,8 +943,7 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
 // container. See audioDecoderLeadInShift for what turns on it. Kept to the
 // three codecs that state a nonzero decoder lead-in, because it is only their
 // arithmetic this decides; every other extension is a container and answers
-// false. This is the same extension-only discrimination the route selection in
-// native_media_session.mm already makes.
+// false.
 [[nodiscard]] bool bareAudioElementaryStream(
     const std::filesystem::path& path) noexcept {
   std::string extension = path.extension().string();
@@ -1028,45 +1014,6 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   return refuse("AdpcmWaveFormatFactsUnavailable");
 }
 
-// The EXTRA movie-timeline shift a selected audio track needs, on top of the
-// one its container's edit list already states, so that the DECODER's output
-// lands where the container says the content is.
-//
-// Every route that reaches this converter has to place access unit 0 exactly
-// `leadIn` frames BEFORE the presentation origin, because the converter labels
-// the decoder's first output frame `packet0 + leadIn` and the session then
-// proves the first published frame against the presentation floor. Matroska
-// gets it for free from CodecDelay; MPEG-TS applies it itself in
-// mpegts_media_source.mm. AVFoundation is the third case, and it is the only
-// one where the answer depends on what the file IS.
-//
-// MEASURED, by reading the media edit AVFoundation reports for the same 20 s
-// content in four carriers (scratchpad/aprobe.mm):
-//
-//   beep.mp3      raw MPEG stream   src.start =  576  -- LAME encoder delay
-//   mp3in.mov     QuickTime movie   src.start = 1105  -- 576 encoder + 529
-//                                                        DECODER, i.e. exactly
-//                                                        the CodecDelay ffmpeg
-//                                                        writes to Matroska
-//   beep.ac3      raw AC-3 stream   src.start =    0  -- nothing stated
-//   av_ac3.mov    QuickTime movie   src.start =  256  -- the AC-3 decoder delay
-//
-// So a REAL container edit already expresses the whole offset from the packet
-// grid to the presentation timeline, decoder delay included, and must be left
-// exactly alone. A bare elementary stream has no edit list at all: what
-// AVFoundation reports for one is either nothing, or -- for MP3 -- a segment it
-// synthesises from the file's own Xing/LAME tag, which describes the ENCODER
-// and nothing else. That is the case, and the only case, where the decoder
-// lead-in still has to be subtracted here.
-//
-// Proved with scratchpad/syncproof.mm against a fixture whose first 1 kHz beep
-// starts at exactly frame 48000. Before: the beep published at 48529 on a raw
-// stereo MP3 (529 late) and a raw AC-3 was refused outright as "audio session:
-// Converter" because its first published frame landed 256 frames past the
-// floor. After: 48000 on both, and both .mov carriers unchanged at 48000.
-// FLAC, LPCM and AAC state a zero lead-in and are untouched by construction.
-//
-// Empty means the arithmetic is not exactly representable, which fails closed.
 [[nodiscard]] std::optional<media::Mp3LameGapless> mp3LsfGapless(
     const MediaTrackDescriptor& audio, const std::filesystem::path& path) {
   if (audio.codec != MediaCodec::Mp3 || !audio.audio ||
@@ -1096,6 +1043,35 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   return result;
 }
 
+// The EXTRA movie-timeline shift a selected audio track needs, on top of the
+// one its container's edit list already states, so that the DECODER's output
+// lands where the container says the content is.
+//
+// Every route that reaches this converter has to place access unit 0 exactly
+// `leadIn` frames BEFORE the presentation origin, because the converter labels
+// the decoder's first output frame `packet0 + leadIn` and the session then
+// proves the first published frame against the presentation floor. Matroska
+// gets it for free from CodecDelay; MPEG-TS applies it itself in
+// mpegts_media_source.mm. AVFoundation is the third case, and it is the only
+// one where the answer depends on what the file IS.
+//
+// MEASURED, by reading the media edit AVFoundation reports for the same
+// content in different carriers: a raw MPEG audio stream states
+// src.start = 576 (the LAME encoder delay); the same audio in a QuickTime
+// movie states 1105 (576 encoder + 529 DECODER, exactly the CodecDelay ffmpeg
+// writes to Matroska); a raw AC-3 stream states 0; AC-3 in a QuickTime movie
+// states 256 (the AC-3 decoder delay).
+//
+// So a REAL container edit already expresses the whole offset from the packet
+// grid to the presentation timeline, decoder delay included, and must be left
+// exactly alone. A bare elementary stream has no edit list at all: what
+// AVFoundation reports for one is either nothing, or -- for MP3 -- a segment it
+// synthesises from the file's own Xing/LAME tag, which describes the ENCODER
+// and nothing else. That is the case, and the only case, where the decoder
+// lead-in still has to be subtracted here. FLAC, LPCM and AAC state a zero
+// lead-in and are untouched by construction.
+//
+// Empty means the arithmetic is not exactly representable, which fails closed.
 [[nodiscard]] std::optional<CMTime> audioDecoderLeadInShift(
     const MediaTrackDescriptor& audio,
     const std::filesystem::path& path) noexcept {
@@ -1275,18 +1251,16 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   if (stringEquals(value, kCMFormatDescriptionColorPrimaries_ITU_R_709_2)) {
     return media::MediaColorPrimaries::Bt709;
   }
-  // Amendment 6: BT.2020 primaries are a MODELLED fact now, not an opaque
-  // "unsupported metadata" bit. mediaVideoColorAdmitted() owns the decision.
+  // BT.2020 primaries are a MODELLED fact, not an opaque "unsupported
+  // metadata" bit. mediaVideoColorAdmitted() owns the decision.
   if (stringEquals(value, kCMFormatDescriptionColorPrimaries_ITU_R_2020)) {
     return media::MediaColorPrimaries::Bt2020;
   }
   // SD-era primaries are a modelled fact on THIS route, not an opaque bit.
   // VideoToolbox attaches SMPTE_C / EBU_3213 verbatim to the decoded surface
-  // (measured on the user's corpus), the decoded-surface validator already
-  // admits both, and the display layer converts from the surface's own tag --
-  // so the primaries the container declares are the primaries WindowServer
-  // presents. Setting the fail-closed bit here was the whole reason legacy
-  // 4:2:0 SD content fell back to mpv.
+  // (measured), the decoded-surface validator admits both, and the display
+  // layer converts from the surface's own tag -- so the primaries the
+  // container declares are the primaries WindowServer presents.
   //
   // SMPTE-C only, and the asymmetry is deliberate. The frozen contract has ONE
   // BT.601 primaries enumerator, but SMPTE-C (525) and EBU 3213 (625) are
@@ -1299,8 +1273,8 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   // Binding the one enumerator to SMPTE-C keeps colorPrimariesExtension() an
   // exact inverse. EBU 3213 therefore keeps its named refusal and falls back:
   // admitting it would mean emitting SMPTE-C for a stream that said 625, which
-  // is the wrong-colour failure this widening exists to avoid. Distinguishing
-  // them needs an appended enumerator -- see scratchpad/sd_color_report.md.
+  // is a wrong-colour failure. Distinguishing them needs an appended
+  // enumerator.
   if (stringEquals(value, kCMFormatDescriptionColorPrimaries_SMPTE_C)) {
     return media::MediaColorPrimaries::Bt601;
   }
@@ -1321,7 +1295,7 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   if (stringEquals(value, kCMFormatDescriptionTransferFunction_ITU_R_709_2)) {
     return media::MediaTransferFunction::Bt709;
   }
-  // Amendment 6: PQ and HLG are modelled facts. VideoToolbox resolves each to
+  // PQ and HLG are modelled facts. VideoToolbox resolves each to
   // a real CGColorSpace on the decoded surface ("Rec. ITU-R BT.2100 PQ" /
   // "... HLG", measured), which is what the display layer presents from.
   if (stringEquals(value,
@@ -1352,7 +1326,7 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   if (stringEquals(value, kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4)) {
     return media::MediaMatrixCoefficients::Bt601;
   }
-  // Amendment 6: the BT.2020 non-constant-luminance matrix is a modelled fact.
+  // The BT.2020 non-constant-luminance matrix is a modelled fact.
   if (stringEquals(value, kCMFormatDescriptionYCbCrMatrix_ITU_R_2020)) {
     return media::MediaMatrixCoefficients::Bt2020Ncl;
   }
@@ -1692,11 +1666,9 @@ class CodecRbspBitReader final {
       return MediaCodec::Mp3;
     case kAudioFormatLinearPCM:
       return MediaCodec::Pcm;
-    // Reachable only now that a video-less asset is admitted: these are the
-    // formats a standalone music file carries, and AVFoundation demuxes all of
-    // them (verified by probe against .flac/.opus/.ac3 assets). Every
-    // enumerator already existed for the Matroska sweep -- nothing is appended
-    // to the frozen MediaCodec enumeration here.
+    // Formats a standalone (video-less) music file carries; AVFoundation
+    // demuxes all of them (verified by probe against FLAC, Opus and AC-3
+    // assets).
     case kAudioFormatFLAC:
       return MediaCodec::Flac;
     case kAudioFormatOpus:
@@ -1706,8 +1678,8 @@ class CodecRbspBitReader final {
     case kAudioFormatEnhancedAC3:
       return MediaCodec::Eac3;
     // ADPCM in WAV. Both families decode through AudioToolbox bit-exactly
-    // against ffmpeg with a zero-frame lead-in (see the amendment 12 note on
-    // MediaCodec::AdpcmIma). Microsoft ADPCM has no CoreAudio constant, so its
+    // against ffmpeg with a zero-frame lead-in. Microsoft ADPCM has no
+    // CoreAudio constant, so its
     // tag is named once in media/adpcm_audio.hpp.
     case kAudioFormatDVIIntelIMA:
       return MediaCodec::AdpcmIma;
@@ -1874,12 +1846,11 @@ inspectVideoFormatFacts(
       format, kCMFormatDescriptionExtension_ChromaLocationBottomField,
       &unsupportedColorMetadata);
 
-  // Amendment 6 splits this list. The two HDR volume/light descriptions leave
-  // the opaque "unsupported" bit and become modelled PRESENCE facts, because
+  // The two HDR volume/light descriptions (and ambient viewing) are modelled
+  // PRESENCE facts rather than the opaque "unsupported" bit, because
   // VideoToolbox copies them verbatim onto the decoded surface and the layer's
   // derived format description reproduces them byte for byte -- so they are
-  // metadata this route now delivers rather than metadata it cannot honour.
-  // Everything else on the list stays refused exactly as before.
+  // metadata this route delivers. Everything else below stays refused.
   const bool masteringDisplayPresent = extensionPresent(
       format, kCMFormatDescriptionExtension_MasteringDisplayColorVolume);
   const bool contentLightPresent = extensionPresent(
@@ -1920,9 +1891,8 @@ inspectVideoFormatFacts(
   }
   const media::MediaVideoSampleFormat sampleFormat = *sampleFormatOrRefusal;
   // VP9 Profile 2 and AV1 Main 10 reach the same 10-bit bi-planar output
-  // surface as HEVC Main 10, so they carry the identical SDR contract: the
-  // parsed depth must agree with the container's, and a 10-bit stream tagged
-  // outside BT.709/unspecified is refused here rather than at frame delivery.
+  // surface as HEVC Main 10, so they carry the identical contract: the parsed
+  // depth must agree with the container's.
   if (codec == MediaCodec::Hevc || codec == MediaCodec::Vp9 ||
       codec == MediaCodec::Av1) {
     if (sampleFormat == media::MediaVideoSampleFormat::Unsupported) {
@@ -1930,13 +1900,11 @@ inspectVideoFormatFacts(
     }
     const std::uint8_t parsedBits =
         static_cast<std::uint8_t>(media::mediaSampleFormatDepth(sampleFormat));
-    // Main 10 carries the same colour contract as Main -- and under amendment
-    // 6 that contract now includes BT.2020/PQ/HLG. This gate used to hold a
-    // SECOND, 10-bit-only copy of the colour rule, which is exactly the kind
-    // of drift the single mediaVideoColorAdmitted() predicate exists to end:
-    // there is no colour question that depends on the depth, so the depth
-    // check keeps only the depth question. VideoToolbox's decoded-frame
-    // attachments are still validated again before any frame is leased.
+    // Main 10 carries the same colour contract as Main (including
+    // BT.2020/PQ/HLG), decided once by mediaVideoColorAdmitted(): no colour
+    // question depends on the depth, so this check asks only the depth
+    // question. VideoToolbox's decoded-frame attachments are still validated
+    // again before any frame is leased.
     if (bitsPerComponent != 0 && bitsPerComponent != parsedBits) {
       return std::nullopt;
     }
@@ -2469,11 +2437,11 @@ void incrementInventory(media::MediaTrackInventory* inventory,
 
 [[nodiscard]] bool audioLayoutSupported(const media::MediaAudioFormat& audio,
                                         std::string* error) {
-  // Kept deliberately identical to native_audio_converter.mm's
-  // supportedChannelLayout: this is the descriptor-level restatement of the
-  // same rule, and the two disagreeing would admit a descriptor the converter
-  // then refuses at configure time -- a Startup failure instead of a clean
-  // Unsupported verdict.
+  // Must stay identical to audioChannelLayoutAdmitted
+  // (core_media_codec_facts.hpp), which the converter applies: the two
+  // disagreeing would admit a descriptor the converter then refuses at
+  // configure time -- a Startup failure instead of a clean Unsupported
+  // verdict.
   const bool supportedLayout =
       !audio.channelLayoutPresent
           ? audio.channelLayoutTag == 0
@@ -2511,7 +2479,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
 //
 // The rebind proof's question: does this live transform still say exactly the
 // angle the immutable descriptor recorded? A track whose transform changed
-// under the reader is refused exactly as it always was.
+// under the reader is refused.
 [[nodiscard]] bool videoTransformMatchesRotation(
     CGAffineTransform transform, std::int16_t expectedDegrees) noexcept {
   const std::optional<int> degrees = quarterTurnDegrees(transform);
@@ -2529,10 +2497,9 @@ void incrementInventory(media::MediaTrackInventory* inventory,
 // TIMED-TEXT TRACKS ARE ADMITTED. A tx3g/mov_text subtitle track, a legacy
 // QuickTime 'text' track and a CEA-608 closed-caption track are all inert to
 // this backend: none is ever selected, opened by the reader, or decoded, so
-// none costs the video or audio lane a byte or a cycle. They were refused
-// originally because nothing downstream could show them; the subtitle lane now
-// can, and in any case a file's captions must never decide whether its picture
-// plays. The count still rides the bounded kHardMaximumTracks total.
+// none costs the video or audio lane a byte or a cycle, and a file's captions
+// must never decide whether its picture plays. The count still rides the
+// bounded kHardMaximumTracks total.
 [[nodiscard]] bool trackInventoryAdmitted(
     const media::MediaTrackInventory& inventory, bool hasVideoSelection,
     bool hasAudioSelection) noexcept {
@@ -2574,8 +2541,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     // was played end to end from a standalone 20.000 s file at both 44.1 and
     // 48 kHz, and its rendered frame count read off the metrics stream:
     //
-    //   .m4a  (AAC)   959488 frames, clock 1.000000. Unchanged; it was the
-    //                 only admission before this sweep.
+    //   .m4a  (AAC)   959488 frames, clock 1.000000.
     //   .mp3          960000 frames -- exact -- CBR and VBR, stereo and mono.
     //   .flac         960000 frames -- exact -- 16-bit.
     //   .wav / .aiff  960000 frames -- exact -- 16- and 24-bit, 0 underruns,
@@ -2584,8 +2550,8 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     //                 and 32-frame withheld MDCT ring-down, the same envelope
     //                 the Matroska route publishes for them.
     //
-    // Two codecs AVAsset does demux are deliberately NOT here, and both keep
-    // the mpv fallback they already had:
+    // One codec AVAsset does demux is deliberately NOT here and keeps the mpv
+    // fallback:
     //
     //   Opus (.opus/.ogg)  AVFoundation states mFramesPerPacket = 0 and carries
     //                 the count per packet instead. The audio session's
@@ -2594,23 +2560,15 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     //                 admitting it would mean reworking the frozen converter
     //                 for a codec that already plays natively from Matroska.
     //
-    // ALAC used to be listed here too, for "drained before its exact timeline
-    // ended". ROOT-CAUSED AND FIXED 2026-09-04: the shortfall was this file's
-    // own doing. restateCompressedAudioPacketDurations above lengthens a short
+    // ALAC: restateCompressedAudioPacketDurations above lengthens a short
     // trailing unit back to mFramesPerPacket -- right for AAC, whose packet
     // really does decode a full 1024 and whose trim really is an edit; wrong
-    // for ALAC, whose final packet really does hold fewer frames (272 of 4096
-    // on the measured fixture, stated by the MP4 sample table and again in the
-    // ALAC frame header, which is how AudioToolbox decodes it exactly). The
-    // converter therefore budgeted 44*4096 = 180,224 frames against a decoder
-    // that can only ever emit 176,400 and failed the end-of-stream equality by
-    // 3,824. ALAC now carries FLAC's tail-shortfall bound and FLAC's exact
-    // decoded duration; the decoder was always exact. The recorded "1.9 s" was
-    // a misreading -- that was the RENDERER's position at teardown, with the
-    // rest of the gap sitting as buffered PCM in the ring; the real shortfall
-    // was always one short packet.
+    // for ALAC, whose final packet really does hold fewer frames (stated by the
+    // MP4 sample table and again in the ALAC frame header, which is how
+    // AudioToolbox decodes it exactly). The converter therefore carries FLAC's
+    // tail-shortfall bound and FLAC's exact decoded duration for ALAC.
     //
-    // The Matroska route carries its own codec sweep and is unaffected by this.
+    // The Matroska route admits its own codec set independently of this.
     switch (onlyAudio->codec) {
       case MediaCodec::Aac:
       case MediaCodec::Mp3:
@@ -2622,9 +2580,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
       //                 chirp fixtures, mono and stereo, 44.1 kHz: produced
       //                 frames equal the declared count (delta 0), cross-
       //                 correlation lag against ffmpeg 0 frames, and every
-      //                 decoded frame bit-identical to ffmpeg's. Measured
-      //                 2026-09-04; see the amendment 12 note on
-      //                 MediaCodec::AdpcmIma for why the fixture is a chirp.
+      //                 decoded frame bit-identical to ffmpeg's.
       case MediaCodec::AdpcmIma:
       case MediaCodec::AdpcmMs:
       //   ALAC          176,400 frames exact on a 4.000 s 44.1 kHz stereo
@@ -2672,8 +2628,8 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   // the one rule for both depths, so an untagged Main 10 stream is admitted
   // exactly like an untagged Main one, and a BT.2020/PQ/HLG stream is admitted
   // at either depth. The opaque-metadata, Dolby Vision and ambient-viewing
-  // refusals now live inside that predicate rather than being restated here,
-  // so there is exactly one place a colour refusal can come from.
+  // refusals live inside that predicate, so there is exactly one place a
+  // colour refusal can come from.
   // Quarter turns are presentable (the presentation layer rotates); anything
   // else was already refused at describeVideo and cannot reach here. This term
   // must stay in lockstep with supportedVideoTrack() in
@@ -2681,10 +2637,8 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   // a clean Unsupported becomes a mid-startup Failed.
   // Named individually rather than folded into one verdict. This predicate has
   // seven independent reasons to refuse and they are not equally likely; a
-  // single message meant a field report (and an agent bisecting a real file)
-  // could not tell a rotation refusal from a chroma-siting one without a
-  // rebuild. The terms and their order are unchanged -- only the diagnostic
-  // is.
+  // single message would leave a field report unable to tell a rotation
+  // refusal from a chroma-siting one without a rebuild.
   const char* geometryRefusal = nullptr;
   if (!quarterTurnRotationAdmitted(video)) {
     geometryRefusal =
@@ -2769,11 +2723,9 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   // honest thing to hand inspectVideoFormatFacts -- exactly what admission
   // handed it.
   //
-  // The atom NAME comes from the shared facts table rather than from a local
-  // avcC/hvcC pair. Such a pair answers null -- and this function false -- for
-  // AV1 and VP9, which videoCodec() admits on a capable machine, so an av01 or
-  // vp09 MP4 passes open and then fails the reader-rebind proof and every
-  // per-sample match.
+  // The atom NAME comes from the shared facts table, so AV1 and VP9 (which
+  // videoCodec() admits on a capable machine) compare their own av1C/vpcC
+  // rather than an assumed avcC/hvcC.
   const media::MediaCodecFacts& facts = media::mediaCodecFacts(track.codec);
   std::span<const std::byte> configuration;
   if (!facts.carriesConfigurationRecord) {
@@ -2813,8 +2765,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   // only the CMVideoFormatDescription, which carries no container transform,
   // so it always reports the unrotated defaults; comparing those against a
   // rotated descriptor would fail every rotated file here and report it as
-  // "the format changed", which is untrue -- the format did not change, and
-  // this function never saw the rotation in the first place.
+  // "the format changed".
   //
   // So the two rotation fields are excluded from THIS comparison and proven
   // where they actually live: selectedFormatsRebindBeforeReader re-reads the
@@ -2891,8 +2842,8 @@ template <typename NoteReaderCreationAttempt>
   // An audio-less asset selected no audio track, so it owes no audio format:
   // the exactly-one-format proof becomes an exactly-zero-formats proof and the
   // format comparison is skipped rather than run against a track that does not
-  // exist. A descriptor that did select audio owes the original proof
-  // unchanged, in the original order.
+  // exist. A descriptor that did select audio owes the exactly-one-format
+  // proof.
   const bool audioSelected = descriptor.selectedAudio.has_value();
   const std::size_t expectedAudioFormatCount = audioSelected ? 1 : 0;
   // The exact mirror for a video-less (audio-only) asset: it selected no video
@@ -2904,11 +2855,9 @@ template <typename NoteReaderCreationAttempt>
       audioFormatCount != expectedAudioFormatCount ||
       (videoSelected && expectedVideo == nullptr) ||
       (audioSelected && expectedAudio == nullptr) ||
-      // The rebind proof is unchanged in strength: the track's transform must
-      // still be exactly what the immutable descriptor recorded. What changed
-      // is that the admitted value is a quarter turn rather than only
-      // identity, so the proof compares the classified angle against the
-      // descriptor's instead of demanding zero from both.
+      // The track's transform must still be exactly what the immutable
+      // descriptor recorded. The admitted value is a quarter turn, so the
+      // proof compares the classified angle against the descriptor's.
       (videoSelected &&
        (!expectedVideo->video ||
         !quarterTurnRotationAdmitted(*expectedVideo->video) ||
@@ -2918,10 +2867,9 @@ template <typename NoteReaderCreationAttempt>
                                  requestedLimits))) ||
       (audioSelected &&
        !audioFormatMatchesTrack(audioFormat, *expectedAudio))) {
-    // Say WHICH thing changed. This proof has six independent ways to fail and
-    // reported all of them as one sentence; when the admitted transform set
-    // widened, that sentence could no longer distinguish "the file really did
-    // change under us" from "this proof does not yet understand the file",
+    // Say WHICH thing changed. This proof has six independent ways to fail,
+    // and one sentence for all of them could not distinguish "the file really
+    // did change under us" from "this proof does not understand the file",
     // which are opposite conclusions.
     const char* rebindRefusal =
         "selected track formats changed before reader creation";
@@ -3392,8 +3340,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
         }
         // See clampedSyncStartWithinTimelineContract: an edit list can put the
         // located random-access point outside `0 <= start <= target` at either
-        // end without being malformed, and this route was the only one of the
-        // four sources with no origin floor at all.
+        // end without being malformed.
         decodeStart = clampedSyncStartWithinTimelineContract(decodeStart,
                                                              *target);
 
@@ -3410,14 +3357,12 @@ class ProductionGeneration final : public AVFoundationGeneration {
       // measured against -- the seek target, the presentation floor, the reader
       // range, the descriptor duration -- is the MOVIE timeline.
       //
-      // The video lane's restatement was long believed unnecessary because the
-      // decoded frame already arrives on the movie timeline (VideoToolbox
-      // reports each frame at its sample's OUTPUT stamp). That is true, and it
-      // is exactly the defect: only the DECODED half had moved. The compressed
-      // half stayed on the media timeline, so the two halves of one lane were
-      // stated on two different clocks, and they diverge by precisely the edit
-      // shift -- invisible on a no-edit file, and a refused negative decoded
-      // frame on a head-trimmed one.
+      // The decoded frame already arrives on the movie timeline (VideoToolbox
+      // reports each frame at its sample's OUTPUT stamp), so the compressed
+      // half must be restated too: otherwise the two halves of one lane are
+      // stated on two clocks that diverge by precisely the edit shift --
+      // invisible on a no-edit file, and a refused negative decoded frame on a
+      // head-trimmed one.
       video_movie_shift_ = kCMTimeZero;
       if (videoTrack != nil) {
 #pragma clang diagnostic push
@@ -3460,11 +3405,10 @@ class ProductionGeneration final : public AVFoundationGeneration {
                                             static_cast<std::int32_t>(gapless->sampleRate));
           }
         }
-        // Place access unit 0 the decoder's own lead-in before the origin, the
-        // way every other route already does. See audioDecoderLeadInShift:
-        // zero for AAC, FLAC, ALAC and LPCM, and zero for every real container,
-        // so this is inert for every track this route admitted before the
-        // standalone-audio sweep.
+        // Place access unit 0 the decoder's own lead-in before the origin, as
+        // the Matroska and MPEG-TS routes do. See audioDecoderLeadInShift:
+        // zero for AAC, FLAC, ALAC and LPCM, and zero for every real container;
+        // only a bare MP3/AC-3/E-AC-3 elementary stream moves.
         {
           const MediaTrackDescriptor* selectedAudio =
               descriptor->selectedAudio
@@ -3497,8 +3441,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // access unit's movie stamp still lands exactly on the media start and
         // the window keeps reporting that it starts at the stream origin.
         //
-        // Applied ONLY when the declared time is not already frame-exact, so
-        // every file that plays today is arithmetically untouched.
+        // Applied ONLY when the declared time is not already frame-exact, so a
+        // frame-exact edit is arithmetically untouched.
         {
           const MediaTrackDescriptor* selectedAudio =
               descriptor->selectedAudio
@@ -3548,7 +3492,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // the neutral contract as facts of the audio window -- mediaStart and
         // presentationEnd -- and the audio-authoritative clock advances across
         // them at rate 1.0 with the renderer emitting zeros. Neither is a
-        // refusal any more, and neither is an underrun: the source says the
+        // refusal, and neither is an underrun: the source says the
         // audio is absent, so nothing is owed for those frames.
         audio_presentation_end_ = kCMTimeInvalid;
         if (videoTrack != nil) {
@@ -3561,7 +3505,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
           const CMTime audioEnd = CMTimeRangeGetEnd(audioRange);
           // Exactness is mandatory: an end that had to be rounded onto either
           // grid could not name a sample-exact boundary, so the generation
-          // simply keeps today's behaviour rather than guessing one.
+          // declares no presentation end rather than guessing one.
           if ((videoEnd.flags & kCMTimeFlags_Valid) != 0 &&
               (videoEnd.flags & kCMTimeFlags_HasBeenRounded) == 0 &&
               (audioEnd.flags & kCMTimeFlags_Valid) != 0 &&
@@ -3799,8 +3743,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
     }
     const std::optional<int> rotationDegrees = quarterTurnDegrees(transform);
     if (!rotationDegrees) {
-      // Still refused, and still by name -- but now only for the transforms
-      // this player genuinely cannot present: shears, flips, and arbitrary
+      // Refused by name, for the transforms this player genuinely cannot
+      // present: shears, flips, and arbitrary
       // angles. A quarter turn is admitted and carried on the descriptor.
       assignError(error,
                   "video transform is not a quarter turn and is outside the "
@@ -3988,9 +3932,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
     // samplePresentationTimeForTrackTime: with kCMTimeInvalid inside it --
     // correctly, because no sample is mapped there. Every cold open asks for
     // exactly track time 0 (native_media_session.mm states an initial position
-    // unconditionally), so a file carrying one was refused outright with "could
-    // not locate a bounded sync start" even though it is spec-legal, plays in
-    // QuickTime, and differs from its admitted siblings only by that edit.
+    // unconditionally), and such a file is spec-legal and plays in QuickTime.
     // The span is not a seek failure: it is the container saying the first
     // picture arrives a little after the origin. Search from the first movie
     // time this track actually has media at; the caller then clamps the result
@@ -4029,8 +3971,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
       // x265 output. Every caller needs a decode start at or before its
       // request (the audio priming window is measured from it, and the video
       // preroll is defined by it), so keep walking until presentation order
-      // agrees. Closed-GOP H.264 satisfies this on the first full-sync sample
-      // and is unchanged.
+      // agrees. Closed-GOP H.264 satisfies this on the first full-sync
+      // sample.
       if (cursor.currentSampleSyncInfo.sampleIsFullSync &&
           CMTimeCompare(cursor.presentationTimeStamp, mediaTarget) <= 0) {
         return CMTimeSubtract(cursor.presentationTimeStamp, mediaOffset);
@@ -4090,14 +4032,15 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // AVFoundation states every audio access unit twice: the track's own media
   // timeline as input timing, and the asset's edited timeline as output timing
   // together with the container attachments that describe the difference (edit
-  // priming trim and the AAC decoder refresh count). Native v1 consumes the
-  // media timeline and owns its decode-versus-presentation window itself, so
-  // republish each unit on its input timing alone before it leaves this
-  // backend. Compressed audio decode order is presentation order, so the
-  // redundant decode stamp is dropped rather than reconciled. The container's
-  // end trim, folded into the final access unit's duration, is restated on the
-  // codec's ordinal packet grid for the same reason. Returns a +1 reference,
-  // or null when the unit cannot be restated exactly.
+  // priming trim and the AAC decoder refresh count). Native v1 owns its
+  // decode-versus-presentation window itself, so each unit's input (media)
+  // timing is restated on the codec's ordinal packet grid -- including the
+  // container's end trim folded into the final access unit's duration -- then
+  // carried onto the MOVIE timeline by the track's exact edit shift, and the
+  // trim attachments are dropped. Compressed audio decode order is
+  // presentation order, so the redundant decode stamp is dropped rather than
+  // reconciled. Returns a +1 reference, or null when the unit cannot be
+  // restated exactly.
   [[nodiscard]] CMSampleBufferRef restatedOnMediaTimeline(
       CMSampleBufferRef sample) noexcept {
     CMItemCount entries = 0;
@@ -4140,8 +4083,6 @@ class ProductionGeneration final : public AVFoundationGeneration {
     for (CMItemCount index = 0; index < entries; ++index) {
       CMSampleTimingInfo& timing =
           audio_timing_[static_cast<std::size_t>(index)];
-      // Compressed audio decode order is presentation order, so the redundant
-      // decode stamp is dropped rather than reconciled.
       timing.decodeTimeStamp = kCMTimeInvalid;
       // A media timeline is one epoch. An access unit AVFoundation states in a
       // later epoch still occupies the same position on the track's own
@@ -4166,11 +4107,10 @@ class ProductionGeneration final : public AVFoundationGeneration {
     CMRemoveAttachment(sample, kCMSampleBufferAttachmentKey_TrimDurationAtEnd);
     CMRemoveAttachment(sample,
                        kCMSampleBufferAttachmentKey_GradualDecoderRefresh);
-    // Now redundant rather than merely ignored: the offset this attachment
-    // annotated has been applied to the timestamps above, so the silence it
-    // asked the consumer to fill is already accounted for on the movie
-    // timeline. Stripping it before that shift existed would have been a ~1 s
-    // desync; stripping it after is the restatement completing.
+    // Redundant: the offset this attachment annotated has been applied to the
+    // timestamps above, so the silence it asked the consumer to fill is
+    // already accounted for on the movie timeline. It must only be stripped
+    // together with that shift, or audio desyncs by the shift.
     CMRemoveAttachment(
         sample, kCMSampleBufferAttachmentKey_FillDiscontinuitiesWithSilence);
     CMSampleBufferRef restated = nullptr;
@@ -4196,10 +4136,11 @@ class ProductionGeneration final : public AVFoundationGeneration {
 
   // One staged sample's worth of audio access units, drawn from the reader's
   // own batch and re-cut to the native bound when the batch is larger than it.
-  // The steady state is a pass-through: every compressed batch this backend has
-  // been measured against (84 MP3 / 21 FLAC / 140 AAC / 101 Opus units) already
-  // fits, so nothing is copied and nothing is retained. Only LPCM, whose batch
-  // is the reader's whole 2 s read, ever enters the re-cut path.
+  // The steady state is a pass-through: a batch from a normally interleaved
+  // compressed track already fits, so nothing is copied and nothing is
+  // retained. LPCM, whose batch is the reader's whole 2 s read, and a batch
+  // that is long in media time (a non-interleaved track) enter the re-cut
+  // path.
   [[nodiscard]] AVFoundationCopiedSample nextAudioAccessUnits() {
     if (audio_batch_.get() != nullptr) {
       return takeAudioBatchChunk();
@@ -4285,9 +4226,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
     // Every AVFoundation track output ends in a marker tail that states no
     // media on the track's own timeline: a decoder-drain request, a consumed
     // notification request, and the edit list's empty-media terminator. Native
-    // v1 reads the media timeline and owns its decoder lifecycle and its own
-    // end of stream, so none of these are publishable and none of them are
-    // faults. Drop them and read on; the read after the tail reports the
+    // v1 owns its decoder lifecycle and its own end of stream, so none of these
+    // are publishable and none of them are faults. Drop them and read on; the read after the tail reports the
     // terminal status. Timed discontinuity markers are not dropped here.
     bool exhausted = true;
     for (std::size_t marker = 0; marker != kMaximumMediaFreeMarkers; ++marker) {
@@ -4343,8 +4283,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
   CMTime audio_media_start_{kCMTimeZero};
   // This generation's exact video media-to-movie timeline shift. Zero for a
   // container with no edit list, and for any edit shape that is not a single
-  // constant displacement -- both of which leave the video statement exactly
-  // where it was before the restatement existed.
+  // constant displacement -- both of which leave video stamps unshifted.
   CMTime video_movie_shift_{kCMTimeZero};
   // Movie time at which this generation's presentation must end when the
   // selected video runs past the end of the selected audio. Invalid means the
@@ -4465,10 +4404,8 @@ struct AVFoundationMediaSource::Impl {
   // description. sampleFormatMatchesTrack walks roughly two dozen
   // CoreFoundation dictionary lookups and, for H.264/HEVC, an exp-Golomb walk
   // of the SPS -- 2-10 us on EVERY frame, spent re-deriving an answer that
-  // cannot change while the format description object is the same one. This is
-  // the single largest per-frame cost the 2026-08-17 audit found anywhere in
-  // the pipeline, and it is per-open work executed per sample: the exact shape
-  // the "dispatch at the top, not in the loop" rule exists to catch.
+  // cannot change while the format description object is the same one: per-open
+  // work that must not run per sample.
   //
   // CMFormatDescription is immutable, so pointer identity is a sound proof --
   // but only against a RETAINED reference, which is what stops a released
@@ -4950,8 +4887,7 @@ struct AVFoundationMediaSource::Impl {
     // On the movie timeline the codec's own priming access unit legitimately
     // sits BEFORE media time zero -- an edit list that trims AAC-LC encoder
     // priming says exactly that. This is the case the neutral timeline already
-    // models as audioCodecPrecedesStreamOrigin/trimBeforeFloor; it only became
-    // reachable on this route once audio moved onto the movie timeline.
+    // models as audioCodecPrecedesStreamOrigin/trimBeforeFloor.
     if (!decodeFrame ||
         (*decodeFrame < 0 &&
          !media::audioCodecPrecedesStreamOrigin(track->codec))) {
@@ -4970,8 +4906,8 @@ struct AVFoundationMediaSource::Impl {
     MediaTime audioEnd{};
     if (declaredPresentationEnd.valid() && declaredAudioEnd.valid()) {
       // A declared end that is not exactly representable on this track's frame
-      // grid cannot name a sample-exact boundary, so the generation keeps
-      // today's behaviour (it ends at its own audio end) rather than guessing.
+      // grid cannot name a sample-exact boundary, so the generation ends at
+      // its own audio end rather than guessing.
       if (media::exactAudioFrameIndex(declaredPresentationEnd, sampleRate) &&
           media::exactAudioFrameIndex(declaredAudioEnd, sampleRate)) {
         presentationEnd = declaredPresentationEnd;

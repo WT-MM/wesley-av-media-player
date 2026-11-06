@@ -59,7 +59,7 @@ struct DecodeWorker::Impl {
   RuntimeLease runtime;
   bool counted{}, queued{}, reservationRetired{true};
   // At most sixteen playback lanes and sixteen preview lanes wait for the
-  // unchanged sixteen-worker ceiling. Queue entries own no decoder thread or
+  // sixteen-worker ceiling. Queue entries own no decoder thread or
   // packet/conversion workspace; only bounded codec configuration is retained.
   static constexpr unsigned kMaximumPending = 2 * kMaximumWorkers;
   inline static std::mutex admissionMutex;

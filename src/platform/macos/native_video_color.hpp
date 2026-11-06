@@ -136,7 +136,6 @@ struct YCbCrMatrixRows {
       CVBufferCopyAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey,
                              nullptr);
   if (matrix == nullptr) {
-    // Conventional SD/HD inference for untagged material.
     *kind = (CVPixelBufferGetWidth(pixelBuffer) <= 1024 &&
              CVPixelBufferGetHeight(pixelBuffer) <= 576)
                 ? YCbCrMatrixKind::Bt601
@@ -169,15 +168,14 @@ struct YCbCrMatrixRows {
 // Matroska and MPEG-TS build theirs from a codec configuration record, and a
 // description built from the atom alone carries no colour at all. Handing
 // VideoToolbox such a description makes the decoded surface untagged, and an
-// untagged PQ surface is presented as SDR -- the washed-out render measured at
-// 98/255 on the colour bars, which is the failure this mapping prevents.
+// untagged PQ surface is presented as SDR -- the washed-out render this
+// mapping prevents.
 //
 // This is the exact inverse of avfoundation_media_source.mm's copy* readers,
 // stated once so the two directions cannot drift apart.
 //
 // nullptr means "write no key". Absence is how an untagged stream is spelled
-// to CoreMedia, and it is what the SDR corpus has always presented from, so an
-// untagged track keeps a byte-identical description. OtherExplicit and Srgb
+// to CoreMedia, so an untagged track keeps a byte-identical description. OtherExplicit and Srgb
 // return nullptr rather than an approximation: they are refused upstream by
 // media::mediaVideoColorAdmitted(), and if that rule is ever widened an
 // untagged surface is a safe degradation where a WRONG tag is not.
@@ -197,14 +195,14 @@ colorPrimariesExtension(media::MediaColorPrimaries value) noexcept {
   // Writing NOTHING here would be the wrong kind of safe. An absent primaries
   // key does not mean "untagged" to VideoToolbox: it re-infers by CODED SIZE
   // and hands back BT.709 for anything above SD. A 1080p SMPTE-C stream would
-  // then be admitted and presented through BT.709 primaries -- worse than the
-  // fallback it replaced.
+  // then be admitted and presented through BT.709 primaries -- worse than
+  // falling back.
   //
   // The binding is enforced at every producer, not just this route:
   // mediaColorPrimariesFromIso() in matroska_demuxer.cpp and mpegts_demuxer.cpp
   // map ISO value 6 here and leave value 5 refused, exactly as the
   // AVFoundation reader does. Admitting BT.470BG anywhere requires splitting
-  // the enumerator first -- see the amendment in the SD colour report.
+  // the enumerator first.
   case media::MediaColorPrimaries::Bt601:
     return kCMFormatDescriptionColorPrimaries_SMPTE_C;
   default:

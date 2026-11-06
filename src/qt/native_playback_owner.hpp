@@ -37,8 +37,9 @@ namespace native_protocol = ::wam::media::native_playback;
 // application is otherwise timer-throttled and deprioritised, which is exactly
 // the state a background media player runs in. NSActivityUserInitiated covers
 // App Nap, idle system sleep and sudden termination; NSActivityIdleDisplaySleep
-// Disabled covers the display. Calls are idempotent: only one assertion is ever
-// held, and it is released on the first call with held = false.
+// Disabled covers the display. Only one assertion is ever held; calls are
+// reference counted per holding window, and it is released when the last
+// holder calls with held = false.
 void setMacosPlaybackActivityHeld(bool held) noexcept;
 
 // GUI-thread owner for the mutually exclusive native and compatibility
@@ -59,17 +60,6 @@ public:
   [[nodiscard]] bool stop(bool preserveVisibleState = false);
   [[nodiscard]] QString playbackFailureText(const QString &fallback) const;
   [[nodiscard]] PauseDisposition setPaused(bool paused);
-  // Starts the main-video surface handoff and constructs the preview lane at
-  // pointer-down. A retained Ended graph is already drained, so it prewarms
-  // the lane without a second main-consumer quiesce. Refusal is deliberately
-  // quiet; the final CommitSeek remains authoritative even when visual
-  // preview preparation is unavailable.
-  // Deferred and Unsupported are both quiet refusals, but they mean opposite
-  // things to a caller: Deferred is "not right now" (wrong router state, a
-  // handoff already in flight) and the next gesture may well succeed, while
-  // Unsupported is "not for this source at all" -- an audio-only binding has
-  // no frame to preview and never will, so the caller should stop demanding
-  // one for the whole gesture instead of collecting a failure per sample.
   void fallbackOpenSucceeded(std::uint64_t attempt, std::uint64_t serial,
                              std::uint64_t sourceKey);
   void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
@@ -105,10 +95,6 @@ private:
     bool idleObserved{false};
     bool terminalResetRequired{false};
   };
-
-  // Re-evaluates the wall-clock watchdog that bounds the native phases that
-  // own no timer of their own: NativePreparing, NativeStarting, NativeSeeking
-  // and NativeStopping.
 
   void completeOpenPreflight(NativeOpenPreflightResult result);
   [[nodiscard]] std::optional<native_protocol::SourceKey> allocateSourceKey();

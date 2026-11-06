@@ -16,9 +16,8 @@ namespace wam::media {
 // decoder emit a normalised Lt/Rt matrix at -10.70 dB (both surrounds folded
 // into BOTH outputs) and makes the FLAC path silently discard centre, LFE and
 // both surrounds. Either would play the file audibly wrongly where mpv plays
-// it correctly, which is why multichannel used to be refused at admission
-// instead. The fix is to decode the FULL native layout and apply the exact
-// coefficients here.
+// it correctly, so the FULL native layout is decoded and the exact
+// coefficients are applied here.
 //
 // THE COEFFICIENTS are ITU-R BS.775 style, and are exactly what
 // libswresample -- and therefore ffmpeg and mpv -- produce for float output:
@@ -36,7 +35,7 @@ namespace wam::media {
 // ffmpeg's INTEGER output path divides by that row sum, i.e. -7.655 dB, and
 // mpv deliberately does not (`--audio-normalize-downmix` defaults to no).
 // Matching the quiet variant would be an audible 7.7 dB regression against the
-// mpv fallback this path is replacing, so the post-gain is fixed at exactly
+// mpv fallback, so the post-gain is fixed at exactly
 // 1.0. Overshoot is bounded downstream by the render core, which already
 // saturates every stereo sample to +/-1 after applying gain -- and doing it
 // there rather than here means a listener at less than full volume never

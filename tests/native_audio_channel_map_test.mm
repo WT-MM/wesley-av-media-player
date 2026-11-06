@@ -2,7 +2,7 @@
 //
 // Every tag below was OBSERVED, not looked up: each one is what
 // kAudioConverterOutputChannelLayout reported after AudioConverterNew on a
-// real encoded fixture of that arrangement (scratchpad/downmix/mcprobe.mm).
+// real encoded fixture of that arrangement.
 // This test pins that the platform still expands them the same way and that
 // the role mapping turns them into the coefficients the downmix policy states.
 
@@ -73,7 +73,7 @@ void testMeasuredDecoderLayouts() {
       LayoutCase{"FLAC 7.1", 0x00BD0008U, 8,
                  {kL, kR, kC, kE, kSl, kSr, kSl, kSr}},
       // The 7.1 and 6.1 arrangements a real AAC fixture produces, measured
-      // 2026-09-04 (scratchpad/audio_gaps/wamconv.mm) with the converter
+      // with the converter
       // configured exactly as native_audio_converter.mm configures it: the
       // decompression magic cookie set FIRST, then the input layout tag. The
       // cookie is load-bearing for this answer -- without it the same

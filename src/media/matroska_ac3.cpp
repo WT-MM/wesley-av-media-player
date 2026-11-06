@@ -147,12 +147,12 @@ parseHeader(std::span<const std::byte> frame, bool wantEnhanced,
   parsed->enhanced = enhanced;
 
   BitReader reader(frame);
-  if (!reader.skip(16U)) { // syncword
+  if (!reader.skip(16U)) {
     return Ac3AdmissionError::TruncatedSyncframe;
   }
 
   if (!enhanced) {
-    if (!reader.skip(16U)) { // crc1
+    if (!reader.skip(16U)) {
       return Ac3AdmissionError::TruncatedSyncframe;
     }
     std::uint32_t fscod = 0;
@@ -170,7 +170,7 @@ parseHeader(std::span<const std::byte> frame, bool wantEnhanced,
     parsed->sampleRate = kSampleRateByFscod[fscod];
     parsed->syncframeBytes = *words * 2U;
     parsed->blocks = kAc3BlocksPerSyncframe;
-    if (!reader.skip(8U)) { // bsid (5) + bsmod (3)
+    if (!reader.skip(8U)) {
       return Ac3AdmissionError::TruncatedSyncframe;
     }
     std::uint32_t acmod = 0;

@@ -15,7 +15,7 @@ namespace wam::media {
 // demuxer selection. A row says which demuxer is even CAPABLE of the
 // container, never whether the media is admissible -- the selected source owns
 // that decision and reports Unsupported through the one existing fallback
-// route. A fourth container is one row here plus its own backend.
+// route. Another container is one row here plus its own backend.
 //
 // `.mka` is present so an audio-only Matroska reaches the Matroska source and
 // is refused there for having no video track, rather than being handed to a

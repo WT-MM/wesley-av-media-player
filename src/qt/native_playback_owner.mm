@@ -41,11 +41,10 @@ bool applied(const playback_router::Transition &transition) noexcept {
 // asking for it.
 //
 // WAM is a multi-window player: two windows can be playing at once, and one of
-// them pausing must NOT end the assertion the other still needs. A bare
-// boolean latch did exactly that -- the display could idle-sleep and App Nap
-// could throttle the process mid-playback in the window that was still
-// running. One assertion, reference counted over the windows holding it, is
-// the correct ownership; every caller edge-triggers (PlayerController tracks
+// them pausing must NOT end the assertion the other still needs, or the
+// display could idle-sleep and App Nap could throttle the process mid-playback
+// in the window that was still running. One assertion, reference counted over
+// the windows holding it, is the ownership; every caller edge-triggers (PlayerController tracks
 // its own hold), so the count is a count of windows, not of signals.
 //
 // GUI-thread-owned: every caller is on it, so no synchronisation is implied.
@@ -159,9 +158,12 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
 NativePlaybackOwner::~NativePlaybackOwner() {
   openPreflight_.stop();
   latestOpenPreflightRequest_ = 0;
-  clearNativeSession();
+  retireNativeSession();
 }
 
+// Rationale for macos::NativePlaybackOwner's wall-clock phase watchdog
+// (refreshNativePhaseWatchdog in src/platform/macos/native_playback_owner.mm).
+//
 // NativePreparing, NativeStarting and NativeSeeking are the phases whose
 // completion depends entirely on a fact arriving from the session worker.
 // Every other phase either owns a physical transport or has already published
@@ -558,8 +560,9 @@ void NativePlaybackOwner::publishLifecycle(
           if (telemetry_ != nullptr) {
             telemetry_->prepared(event, controller_.engineReady());
           }
-          // Submit Start before publishing any synchronous QML-facing signal.
-          // durationChanged may immediately issue a resume seek; the session
+          // The base owner submits Start before calling here, i.e. before any
+          // synchronous QML-facing signal below. durationChanged may
+          // immediately issue a resume seek; the session
           // supports CommitSeek from Starting only after this subordinate
           // Start command has been physically admitted.
           const SourceRecord *record = sourceRecord(event.sourceKey);
@@ -651,9 +654,10 @@ void NativePlaybackOwner::publishVideoDraw(
     const native_protocol::VideoDrawProof &proof, bool first) {
   if (first && telemetry_) telemetry_->firstFrameDrawn(proof, controller_.engineReady());
   // NativeAudioSession owns the authoritative running clock internally, but
-  // the public v1 proof stream intentionally emits a sampled AudioClockProof
-  // only for paused transport. While running, the exact drawn frame PTS is
-  // therefore the bounded, event-driven UI playhead observation.
+  // the public v1 proof stream emits a sampled AudioClockProof only for
+  // paused transport and for video-less generations. While video is running,
+  // the exact drawn frame PTS is therefore the bounded, event-driven UI
+  // playhead observation.
   const double position = std::max(0.0, proof.frameStartSeconds);
   controller_.publishNativeMainPosition(position);
   // The same proof also carries this frame's own duration, which is the only

@@ -78,28 +78,6 @@ struct NativeAudioSessionQuarantineFacts {
   bool quarantined{false};
 };
 
-// Side-effect-free owner-thread composition of exact logical payload ownership
-// at the two audio leaves. generation is the session control generation;
-// converterGeneration and ringGeneration preserve each raw leaf generation so
-// a stopped/quiescing transition can be reported without inventing coherence.
-// generationCoherent means the ring matches the session and every leaf which
-// currently owns bytes matches it; an empty converter's retired tag is inert.
-// Current values remain exact even when false. Each HWM is independently diagnostic
-// since its leaf's latest generation/phase reset and must never be summed with
-// another HWM or treated as a concurrent aggregate. Fixed converter arrays,
-// ring capacity, AudioUnit/framework objects, and allocator overhead are not
-// represented here.
-struct NativeAudioSessionMemoryFacts {
-  media::MediaGeneration generation{0};
-  media::MediaGeneration converterGeneration{0};
-  media::MediaGeneration ringGeneration{0};
-  std::size_t converterRetainedPayloadBytes{0};
-  std::size_t peakConverterRetainedPayloadBytes{0};
-  std::size_t ringUnreadPcmBytes{0};
-  std::size_t peakRingUnreadPcmBytes{0};
-  bool generationCoherent{false};
-};
-
 struct NativeAudioSessionFacts {
   NativeAudioSessionState state{NativeAudioSessionState::Fresh};
   NativeAudioSessionFailure failure{NativeAudioSessionFailure::None};
@@ -122,7 +100,6 @@ struct NativeAudioSessionFacts {
   std::uint64_t controlRevision{0};
   std::uint64_t appliedControlRevision{0};
   bool endOfStreamRequested{false};
-  bool converterDrained{false};
   bool terminalPublished{false};
   bool terminalObserved{false};
   media::MediaGeneration clockGeneration{0};
@@ -136,7 +113,6 @@ struct NativeAudioSessionFacts {
   // AudioUnit for a settled pause. The generation, stream cursor, ring and
   // clock are unchanged while it is set; only the device is idle.
   bool outputSuspended{false};
-  NativeAudioSessionMemoryFacts memory{};
   NativeAudioConverterStats converter{};
   NativeAudioOutputFacts output{};
 };
@@ -292,11 +268,6 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   // facts without adding any work to the real-time callback itself.
   [[nodiscard]] NativeAudioRenderStats renderStats() const noexcept;
   [[nodiscard]] NativeAudioSessionFacts facts() const noexcept;
-  // Exact Ready + stopped/quiescent owner-thread phase boundary. Success resets only
-  // the two diagnostic leaf HWMs, seeding each from its current ownership.
-  // It never changes live ownership or creates an aggregate memory fact.
-  [[nodiscard]] bool resetMemoryHighWater(
-      media::MediaGeneration expectedGeneration) noexcept;
 
  private:
   explicit NativeAudioSession(

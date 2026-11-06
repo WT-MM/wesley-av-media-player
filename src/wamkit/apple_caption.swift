@@ -164,7 +164,7 @@ private actor Engine {
         // that reader is a deterministic drain barrier; a scheduler yield or
         // an empty volatile range is not proof that final events were consumed.
         // A fresh module also fixes the macOS 26.3.1 repeated-file text leak.
-        // The same analyzer remains prepared (see CAPTION_ENGINES.md).
+        // The same analyzer remains prepared (see docs/captions/CAPTION_ENGINES.md).
         guard let locale else { throw Failure("Caption locale was released") }
         let fresh = SpeechTranscriber(locale:locale,preset:.timeIndexedProgressiveTranscription)
         try await a.setModules([fresh])

@@ -12,7 +12,7 @@ namespace wam::macos {
 struct NativePcmRingTestAccess;
 struct NativePcmRingLayoutAssertions;
 
-// Fixed stereo Float32 SPSC handoff for a future native CoreAudio lane.
+// Fixed stereo Float32 SPSC handoff for the native CoreAudio lane.
 // publish() is producer-only and consume() is consumer-only. flush() is a
 // single serialized control-owner operation: stop both endpoints before
 // calling it, and never race it with publish(), consume(), or another flush().
@@ -23,14 +23,11 @@ public:
   // Occupancy is counted in SLABS and the producer's admission unit is one
   // slab per converted input lease, so the reachable occupancy is
   // kSlabCount * (frames the codec puts in a slab), which for AAC-LC is 1024
-  // -- not kSlabCount * kFramesPerSlab. Four slabs therefore carried exactly
-  // four 1024-frame device periods of producer headroom, which was correct
-  // while one device frame consumed exactly one media frame.
+  // -- not kSlabCount * kFramesPerSlab.
   //
-  // Pitch-preserved playback rate breaks that identity: at 4x a single
-  // 1024-frame device callback consumes 4096 MEDIA frames, i.e. the entire
-  // four-slab reachable occupancy, leaving the producer zero headroom and
-  // manufacturing a permanent underrun. The headroom inequality is really
+  // Pitch-preserved playback rate means one device frame is not one media
+  // frame: at 4x a single 1024-frame device callback consumes 4096 MEDIA
+  // frames. The producer-headroom inequality is therefore
   //   kDeviceBufferFrames * kMaximumNativeRate * kRingDevicePeriodsOfHeadroom
   //       <= kSlabCount * kMinimumFramesPerPublishedSlab
   // = 1024 * 4 * 4 = 16384 <= kSlabCount * 1024, so kSlabCount must be at
@@ -72,7 +69,7 @@ public:
     std::uint64_t generation{0};
     std::size_t queuedSlabs{0};
     // Exact unread interleaved stereo Float32 payload bytes currently owned by
-    // the ring. This is logical live data, not the fixed 128 KiB storage
+    // the ring. This is logical live data, not the fixed 512 KiB storage
     // capacity. The high-water is diagnostic since the latest successful
     // generation transition or explicit reset and must not be added to another
     // owner's high-water.

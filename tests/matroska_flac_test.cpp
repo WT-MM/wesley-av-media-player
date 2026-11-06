@@ -15,8 +15,8 @@ namespace {
 using namespace wam::media::matroska;
 
 
-// The CodecPrivate of scratchpad/fixtures/sw/c_flac.mkv, byte for byte as
-// ffmpeg muxed it: 'fLaC', then one metadata block flagged last, type 0,
+// The CodecPrivate of an ffmpeg-encoded FLAC Matroska fixture, byte for byte
+// as ffmpeg muxed it: 'fLaC', then one metadata block flagged last, type 0,
 // length 34, whose STREAMINFO says 4608/4608 block sizes, 44100 Hz, 2
 // channels, 24 bits and 264600 total samples.
 constexpr std::array<std::uint8_t, 42> kRealCodecPrivate{
@@ -210,10 +210,9 @@ void testChannelGate() {
   // the byte at 8 + 12 holds it as (channels - 1) << 1 within 0x0E, with the
   // stereo fixture's 0x43 meaning one, i.e. two channels.
   //
-  // Multichannel FLAC is now ADMITTED. It used to be refused because asking
-  // AudioConverter for a stereo output ASBD made its FLAC path SILENTLY DROP
-  // centre, LFE and both surrounds -- re-measured and still true. The player
-  // no longer asks: it decodes the full layout and folds it itself.
+  // Multichannel FLAC is ADMITTED. Asking AudioConverter for a stereo output
+  // ASBD makes its FLAC path SILENTLY DROP centre, LFE and both surrounds, so
+  // the player decodes the full layout and folds it itself.
   for (std::uint8_t channels = 1U; channels <= 8U; ++channels) {
     auto bytes = realCodecPrivate();
     bytes[8U + 12U] = static_cast<std::byte>(

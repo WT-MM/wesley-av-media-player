@@ -152,8 +152,8 @@ bool rationalEqualsNonnegativeInteger(MediaRational value,
 
 bool validVideoFormat(const MediaVideoFormat& video,
                       const MediaSourceLimits& limits) noexcept {
-  // Orientation-agnostic since amendment 8; the zero-dimension refusal lives
-  // inside the predicate now, so this no longer restates it.
+  // codedDimensionsAdmitted is orientation-agnostic and also refuses zero
+  // dimensions.
   if (!limits.codedDimensionsAdmitted(video.codedWidth, video.codedHeight) ||
       video.displayWidth == 0 || video.displayHeight == 0 ||
       video.pixelAspectNumerator == 0 ||
@@ -192,11 +192,10 @@ bool validAudioFormat(const MediaAudioFormat& audio,
   // Native audio v1 preserves only a scalar CoreAudio-compatible layout tag,
   // not bitmap/description payloads.
   //
-  // MONO AND STEREO stay exactly as strict as they have always been: one
-  // enumerated canonical tag each, so a reserved family (0xffff0002) or a
-  // different two-channel layout (0x00660002 Headphones) is refused even
-  // though its low bits do say two.  Both are pinned in
-  // native_media_source_test.cpp and neither behaviour changes here.
+  // MONO AND STEREO: one enumerated canonical tag each, so a reserved family
+  // (0xffff0002) or a different two-channel layout (0x00660002 Headphones) is
+  // refused even though its low bits do say two.  Both are pinned in
+  // native_media_source_test.cpp.
   constexpr std::uint32_t kCanonicalMonoLayout = 0x00640001U;
   constexpr std::uint32_t kCanonicalStereoLayout = 0x00650002U;
   if (audio.channels == 1) {
@@ -205,7 +204,7 @@ bool validAudioFormat(const MediaAudioFormat& audio,
   if (audio.channels == 2) {
     return audio.channelLayoutTag == kCanonicalStereoLayout;
   }
-  // MULTICHANNEL (2026-08-27).  Wider layouts have no single canonical tag to
+  // MULTICHANNEL.  Wider layouts have no single canonical tag to
   // enumerate -- 5.1 alone has four in common use (MPEG_5_1_A..D), one per
   // codec family -- so this layer checks the strongest property it can state
   // WITHOUT seeing channel labels, which a backend-neutral file deliberately
@@ -695,12 +694,11 @@ bool mediaVideoHasSquarePixels(const MediaVideoFormat& video) noexcept {
 }
 
 bool mediaVideoColorAdmitted(const MediaVideoFormat& video) noexcept {
-  // BT.601 primaries admitted 2026-09-03. The BT.601 MATRIX was always
-  // admitted below, so SD material was refused solely for declaring the
-  // primaries that go with it -- while the identical stream with the primaries
-  // tag ABSENT was admitted and then tagged SMPTE_C by VideoToolbox's own SD
-  // inference anyway. The rule refused the honest file and passed the silent
-  // one. Presentation carries them: the decoded-surface validator in
+  // BT.601 primaries are admitted alongside the BT.601 matrix. Refusing them
+  // would refuse SD material solely for declaring the primaries that go with
+  // its matrix, while the identical stream with the primaries tag ABSENT is
+  // admitted and then tagged SMPTE_C by VideoToolbox's own SD inference
+  // anyway. Presentation carries them: the decoded-surface validator in
   // video_toolbox_decoder.mm admits SMPTE_C and EBU_3213, and the display
   // layer converts from the surface's own tag.
   const bool primaries =

@@ -1,8 +1,7 @@
 // The native audio sample-rate family, asserted in BOTH directions. The header
 // is read by four gates (source admission, session preflight, converter,
 // output unit); a family that quietly gained or lost a member would move all
-// four at once, and the only test that used to touch it was the frozen
-// session test's single "unsupported rate" pin. Membership here is exactly the
+// four at once. Membership here is exactly the
 // set proven sample-exact end to end (see the header): nothing is admitted on
 // the strength of being an integer.
 
