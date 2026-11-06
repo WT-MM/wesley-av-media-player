@@ -1,9 +1,7 @@
 #include "caption_service.hpp"
 
 #include "jobs.hpp"
-#ifdef WAM_CAPTION_ABI
 #include "apple_caption_backend.hpp"
-#endif
 #include <cstdio>
 
 #include <algorithm>
@@ -1204,7 +1202,6 @@ void CaptionService::run(
       return future.get();
     };
     bool useApple = false;
-#ifdef WAM_CAPTION_ABI
     if (request.options.prefer_apple && !request.options.translate_to_english) {
       if (!apple_) apple_ = std::make_unique<AppleCaptionBackend>();
       auto query = std::async(std::launch::async,[&] {
@@ -1232,7 +1229,6 @@ void CaptionService::run(
       }
       if (!useApple) { apple_->finish(); apple_.reset(); }
     }
-#endif
     if (stopIfRequested()) return;
     request.tools.ffmpeg = ffmpeg.path;
     if (!useApple) {

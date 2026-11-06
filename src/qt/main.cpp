@@ -7,7 +7,7 @@
 #endif
 #include "mpv_video_item.hpp"
 #include "subtitle_bitmap_provider.hpp"
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
 #include "native_playback_owner.hpp"
 #include "platform/macos/native_embedding_support.hpp"
@@ -1202,7 +1202,7 @@ int verifyRuntime() {
 } // namespace
 
 static int runApplication(int argc, char *argv[]) {
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK) && defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK) && defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
   (void)wam::qt::NativeBenchmarkTelemetry::instance();
 #endif
   WAM_STARTUP_STAMP(MainEntered);
@@ -1247,7 +1247,7 @@ static int runApplication(int argc, char *argv[]) {
   format.setSwapInterval(1);
   QSurfaceFormat::setDefaultFormat(format);
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // Quiet launch seams. See ScriptedGeometry above. Both are decided here,
   // before QGuiApplication exists, because the Cocoa platform integration
   // performs its launch-time activation inside that constructor: the only
@@ -1279,7 +1279,7 @@ static int runApplication(int argc, char *argv[]) {
     wam::macos::NativeEmbeddingSupport::setTestMuted(true);
 #endif
 
-#if !defined(Q_OS_MACOS) || !defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if !defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   constexpr bool background_launch = false;
 #endif
 
@@ -1289,7 +1289,7 @@ static int runApplication(int argc, char *argv[]) {
   wam::qt::TerminationSignal terminationSignal;
 #endif
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // NSApp now exists and no window has been shown yet: the one moment where
   // dropping to the accessory policy costs no visible activation flicker.
   if (background_launch)
@@ -1351,7 +1351,7 @@ static int runApplication(int argc, char *argv[]) {
     // window, so the provider is registered once here and resolves each
     // window's caption by the key its URL carries.
     wam::qt::registerSubtitleBitmapProvider(engine);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // On the CALayer presentation route the video is an
     // AVSampleBufferDisplayLayer sitting *below* Qt's view, so the QML
     // background must stop painting opaque black over it. The route decision
@@ -1389,7 +1389,7 @@ static int runApplication(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("appHost"),
                                              &windows);
     windows.setBackgroundLaunch(background_launch);
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // WAM_TEST_GEOMETRY parks the FIRST window at an exact rectangle. Later
     // windows cascade off it exactly as real ones do, so a multi-window
     // measurement still gets N findable, non-overlapping windows.
@@ -1461,7 +1461,7 @@ static int runApplication(int argc, char *argv[]) {
     if (!first->controller()->available())
       return 3;
     wam::qt::PlayerController *first_player = first->controller();
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     if (wam::qt::NativeBenchmarkTelemetry::instance().enabled() &&
         qEnvironmentVariableIsSet("WAM_TEST_NOTICE_TRACE")) {
       const auto reportNotice = [first_player] {
@@ -1489,7 +1489,7 @@ static int runApplication(int argc, char *argv[]) {
     // describe.
     std::vector<ScriptedSeek> seek_script;
     ScriptedSeekState seek_state;
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     if (wam::qt::NativeBenchmarkTelemetry::instance().enabled())
       seek_script = parseSeekScript(qgetenv("WAM_TEST_SEEK_SCRIPT"));
 #endif
@@ -1554,7 +1554,7 @@ static int runApplication(int argc, char *argv[]) {
       static_cast<void>(windows.openUrl(url));
     file_open_relay.attach(&windows);
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // Warm-open measurement, on the scripted-seek opt-in. Each entry reopens
     // in the already-running FIRST window, so its telemetry lineage is a warm
     // open with no launch work in the span -- and deliberately a replacement
@@ -1686,7 +1686,7 @@ static int runApplication(int argc, char *argv[]) {
     exit_code = app.exec();
   }
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   wam::macos::NativeEmbeddingSupport::drainRetirementsForProcessExit();
   // The event loop and QML surface are gone, so no later production callsite
   // can append a playback fact after this terminal stream commit.

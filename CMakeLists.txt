@@ -1859,9 +1859,6 @@ if(BUILD_TESTING)
         src/qt/native_benchmark_telemetry.cpp)
       target_include_directories(
         wam_native_benchmark_telemetry_test PRIVATE src)
-      target_compile_definitions(
-        wam_native_benchmark_telemetry_test PRIVATE
-        WAM_NATIVE_BENCHMARK_TELEMETRY_TESTING=1)
       target_compile_features(
         wam_native_benchmark_telemetry_test PRIVATE cxx_std_20)
       target_compile_options(

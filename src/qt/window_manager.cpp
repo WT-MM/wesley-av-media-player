@@ -11,7 +11,7 @@
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
 #endif
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "platform/macos/native_embedding_support.hpp"
 #endif
 
@@ -34,7 +34,7 @@
 #include <chrono>
 #include <cmath>
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 // The window factory's cap and the native resource envelope's cap are two
 // statements of one number. Assert they agree rather than letting a future
 // edit raise one and silently overrun the other: N windows each hold their own
