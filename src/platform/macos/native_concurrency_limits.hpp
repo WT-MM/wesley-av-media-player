@@ -5,16 +5,13 @@ namespace wam::macos {
 // Process-wide cap on simultaneously open player windows, and therefore on
 // every per-session native resource this process can hold at once.
 //
-// WAM became a multi-window player in 2026-08 (the QuickTime model: every open
-// gets its own window, all of them playing at the same time). Before that, a
-// handful of native chokepoints -- the audio output's AudioUnit callback
-// bridge, the audio session, the video consumer graph, the layer-presentation
-// gate -- were each written as a strict ONE-PER-PROCESS claim, because one
-// window could only ever want one of each. Those claims are now bounded
-// registries of exactly this many slots instead, which keeps every property
-// the single claim had (a fixed, statically sized resource envelope; no
-// unbounded leak on a quarantined teardown; a hard refusal rather than an
-// overrun when the envelope is full) while admitting N windows.
+// WAM is a multi-window player (the QuickTime model: every open gets its own
+// window, all of them playing at the same time). The native chokepoints -- the
+// audio output's AudioUnit callback bridge, the audio session, the video
+// consumer graph, the layer-presentation gate -- are bounded registries of
+// exactly this many slots, which gives a fixed, statically sized resource
+// envelope, no unbounded leak on a quarantined teardown, and a hard refusal
+// rather than an overrun when the envelope is full.
 //
 // This header exists so that cap is stated ONCE. Every derived bound --
 // kMaxConcurrentLayerPresentations, the audio-output slot table, the audio

@@ -89,11 +89,12 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   }
   bool retryFailedRenderContext();
 
-  // Nonblocking ownership handshake for a future native presenter. Revoking
-  // permission prevents new libmpv OpenGL contexts immediately. An in-flight
+  // Nonblocking ownership handshake with the native presenter
+  // (NativePlaybackOwner). Revoking permission prevents new libmpv OpenGL
+  // contexts immediately. An in-flight
   // creation or active context remains Busy until the render thread discards
   // or releases it in its current OpenGL context. revokeRenderContext() does
-  // not queue or wait for a Qt frame; a future activating controller must
+  // not queue or wait for a Qt frame; a caller that needs the context gone must
   // schedule a scene-graph pass and observe Busy becoming false. Re-allowing
   // while Busy restores that sole reserved/active context; render_mutex_
   // prevents a second context from being created alongside it.

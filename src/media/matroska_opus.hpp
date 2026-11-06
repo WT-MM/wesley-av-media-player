@@ -22,8 +22,7 @@ inline constexpr std::uint32_t kOpusOutputSampleRate{48'000};
 // this many leading frames from every freshly created AudioConverter and
 // ignores the OpusHead pre-skip entirely, so the trim the caller still owes is
 // preSkip - kOpusDecoderDelayFrames. Proven invariant across forged pre-skip
-// values, packet durations, channel counts and encoder applications; see
-// scratchpad/preskip_probe.mm and scratchpad/prime_probe.mm.
+// values, packet durations, channel counts and encoder applications.
 inline constexpr std::uint32_t kOpusDecoderDelayFrames{120};
 
 // RFC 6716 caps one packet at 120 ms, i.e. 5760 frames at 48 kHz.

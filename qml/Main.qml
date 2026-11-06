@@ -128,28 +128,23 @@ ApplicationWindow {
     // Two answers feed it, and the order matters.
     //
     // `assetNaturalSize` is MacWindowChrome's asynchronous AVURLAsset probe --
-    // the original and, for MP4/MOV, still the authoritative one: it is what
-    // shipped, it applies the track's preferredTransform, and letting anything
-    // else win for those containers would change behaviour that is correct.
+    // authoritative for MP4/MOV, because it applies the track's
+    // preferredTransform.
     //
     // `controller.videoDisplaySize` is the engine that ACTUALLY demuxed the
     // container speaking for itself -- the native backends' Prepared event and
-    // mpv's dwidth/dheight. It exists because AVFoundation cannot demux
+    // mpv's dwidth/dheight. It is needed because AVFoundation cannot demux
     // Matroska, WebM or MPEG-TS at all, so the probe above answers (0, 0) for
-    // every one of them and every behaviour listed above silently died. Both
-    // routes (native and the mpv compatibility fallback) publish it, so a
-    // container is fixed wherever it ends up playing.
+    // every one of them. Both routes (native and the mpv compatibility
+    // fallback) publish it, so a container works wherever it ends up playing.
     //
-    // Precedence, not merge: a probe answer for THIS source wins outright, so
-    // no MP4 changes its geometry by a single pixel; the backend answer is the
-    // fallback that makes the other three containers work; and the last clause
-    // -- a probe answer left over from the previous source -- is there only to
-    // reproduce the pre-existing behaviour exactly. Before this property
-    // existed the old size simply stayed put between a source change and the
-    // new probe answer, and it has to keep doing so: dropping to (0, 0) for
-    // those few milliseconds would take effectiveMinimumHeight back to 360 and
-    // visibly grow a short cinemascope window before the new size snapped it
-    // back.
+    // Precedence, not merge: a probe answer for THIS source wins outright; the
+    // backend answer is the fallback for the other three containers; and the
+    // last clause -- a probe answer left over from the previous source -- keeps
+    // the old size between a source change and the new probe answer: dropping
+    // to (0, 0) for those few milliseconds would take effectiveMinimumHeight
+    // back to 360 and visibly grow a short cinemascope window before the new
+    // size snapped it back.
     readonly property size videoNaturalSize:
         (root.assetNaturalSizeCurrent && root.assetNaturalSize.width > 0
             && root.assetNaturalSize.height > 0) ? root.assetNaturalSize
@@ -678,9 +673,8 @@ ApplicationWindow {
             return;
         nativeTitlebarHeight = windowChrome.titlebarHeight();
         applyWindowAspectLock();
-        // A window created while a mode was already meant to be on (nothing
-        // does that today, but the two toggles are ordinary properties and a
-        // future seeder would) adopts it here rather than at first click.
+        // A viewing mode already set when the bridge arrives is applied here
+        // rather than at first click.
         applyViewingModes();
         revealControls();
     }
@@ -693,10 +687,9 @@ ApplicationWindow {
             : Window.Maximized;
     }
 
-    // QuickTime's View > Actual Size, reachable by double-clicking the
-    // titlebar band. Returns false (a no-op) until the video's native pixel
-    // size has been probed, so callers can fall back to the ordinary
-    // titlebar double-click behavior.
+    // QuickTime's View > Actual Size (AppMenuBar's View > Actual Size item).
+    // Returns false (a no-op) without the native window bridge or until the
+    // video's native pixel size has been probed.
     function resizeToActualSize() {
         if (typeof windowChrome === "undefined" || !windowChrome)
             return false;
@@ -723,14 +716,7 @@ ApplicationWindow {
         return true;
     }
 
-    // "window hugs the video": re-snap the windowed frame to the current
-    // video's aspect ratio whenever something has left it off-aspect --
-    // a programmatic/AX resize (the benchmark harness's own resizes are
-    // excluded via windowHugsVideoActive's benchmarkModeActive gate), the
-    // minimumHeight clamp engaging, or a media change to a different aspect.
-    // Always called off hugsVideoResnapTimer's debounce, never directly from
-    // a width/height change, so it only ever observes settled geometry.
-    // The other half of "window hugs the video", and the half that acts during
+    // The half of "window hugs the video" that acts during
     // an interactive drag: macos_window_chrome's InteractiveAspectLock is what
     // keeps a mouse resize on-aspect between mouse-down and mouse-up, where a
     // programmatic re-snap must never interfere. It therefore has to follow
@@ -748,6 +734,13 @@ ApplicationWindow {
             windowChrome.setContentAspectRatio(0, 0);
     }
 
+    // "window hugs the video": re-snap the windowed frame to the current
+    // video's aspect ratio whenever something has left it off-aspect --
+    // a programmatic/AX resize (the benchmark harness's own resizes are
+    // excluded via windowHugsVideoActive's benchmarkModeActive gate), the
+    // minimumHeight clamp engaging, or a media change to a different aspect.
+    // Always called off hugsVideoResnapTimer's debounce, never directly from
+    // a width/height change, so it only ever observes settled geometry.
     function maybeResnapToHugVideo() {
         if (!root.windowHugsVideoActive)
             return;
@@ -1149,11 +1142,6 @@ ApplicationWindow {
         }
     }
 
-    // The desktop menu bar is NOT instantiated here. It is app-level and
-    // created once by WindowManager (qml/AppMenu.qml), because it has to
-    // survive the last window closing and must not be installed N times over.
-    // It follows the focused window through appHost.focusedController.
-
     // ApplicationWindow automatically extends `background` to cover the whole
     // window -- including the transparent titlebar strip -- while ordinary
     // content children (the `stage` Item below) stay confined to the safe
@@ -1165,9 +1153,8 @@ ApplicationWindow {
         // On the layer presentation route the video is composited by
         // WindowServer from an AVSampleBufferDisplayLayer underneath Qt's view,
         // so this backdrop has to become a transparent hole once media is open
-        // or it paints opaque black straight over the video. The no-media
-        // colours are unchanged: with nothing playing there is no layer content
-        // to reveal.
+        // or it paints opaque black straight over the video. With no media it
+        // stays opaque: there is no layer content to reveal.
         color: controller.hasMedia
                ? (layerPresentation ? "transparent" : "#000000")
                : root.darkAppearance ? "#111215" : "#f5f5f3"
@@ -1196,9 +1183,8 @@ ApplicationWindow {
         // overlay has to be measured against the picture -- and `stage` is
         // confined to the window's safe area while the video runs the full
         // height of the window underneath the transparent titlebar. Anchoring
-        // to `stage` put every caption a titlebar's worth of inset off (it
-        // measured 94..385 across where the picture wanted 74..406). Living
-        // here, the overlay shares the video's box by construction and cannot
+        // to `stage` would put every caption a titlebar's worth of inset off.
+        // Living here, the overlay shares the video's box by construction and cannot
         // drift from it. Declared after MpvVideo and before the titlebar band,
         // so it draws over the picture and under the chrome.
         Item {
@@ -1314,19 +1300,16 @@ ApplicationWindow {
             // window's proxy title.
             //
             // Anchored to the title's right edge rather than laid out with it
-            // inside a centred Row, which was the other candidate. Two things
-            // decided it: the filename keeps the exact position macOS centres
-            // a window title at -- the existing centring and elide-width maths
-            // are untouched -- and, because the caret comes and goes with the
-            // source (local file yes, stream no), a Row would slide the
-            // filename sideways on every such change. The group therefore
-            // reads as "title, centred, with a caret hung off it" rather than
-            // as a centred pair, which is also how it looks. Measured off a
-            // 480pt-wide window: the filename's own centre lands 0.2pt from
-            // the window centre (i.e. exactly where it was before), and the
-            // filename-plus-caret pair centres 7pt right of it -- under 1.5%
-            // of the window's width, well below the offset at which a title
-            // stops reading as centred.
+            // inside a centred Row, for two reasons: the filename keeps the
+            // exact position macOS centres a window title at (the centring and
+            // elide-width maths ignore the caret), and, because the caret comes
+            // and goes with the source (local file yes, stream no), a Row would
+            // slide the filename sideways on every such change. The group
+            // therefore reads as "title, centred, with a caret hung off it"
+            // rather than as a centred pair. On a 480pt-wide window the
+            // filename-plus-caret pair centres 7pt right of the window centre
+            // -- under 1.5% of the window's width, well below the offset at
+            // which a title stops reading as centred.
             //
             // It inherits the band's opacity, so it fades in and out with the
             // filename and the traffic lights on one schedule; it adds no
@@ -1469,7 +1452,8 @@ ApplicationWindow {
             }
 
             // Fallback for synthetic taps that do reach the QML band (real
-            // mouse double-clicks arrive via the native monitor above).
+            // mouse double-clicks arrive via the native monitor, see
+            // onTitlebarDoubleClicked below).
             // Header double-click zooms to the largest screen fit, same as
             // the video area.
             TapHandler {
@@ -1645,7 +1629,7 @@ ApplicationWindow {
                 // is confined to the safe area below it, so a double-click
                 // reaching this handler is always over the video, never the
                 // band -- titlebarBand's own TapHandler (background, above)
-                // owns QuickTime's View > Actual Size double-click.
+                // and onTitlebarDoubleClicked own the band's double-click.
                 //
                 // Double-clicking the video zooms the window to fit the
                 // screen (and back), the way QuickTime's green button does.
@@ -1703,8 +1687,7 @@ ApplicationWindow {
                 // has to re-arm the idle fade rather than pin the chrome up.
                 if (outcome === 1) {
                     transport.flashVolume();
-                    // The reason this exists: the user asked to see the
-                    // number, VLC-style, while scrolling over the picture.
+                    // The level, VLC-style, while scrolling over the picture.
                     // Called per admitted delta, so the card that is already
                     // up simply updates.
                     root.showVolumeOsd();
@@ -1809,17 +1792,7 @@ ApplicationWindow {
             onTriggered: root.noticeVisible = false
         }
 
-        // The volume OSD. Top-centre, one titlebar-band's height clear of the
-        // top edge.
-        //
-        // Position justified against the two things it must not fight. The
-        // transport lives at the bottom centre (defaultTransportY) and Quick
-        // Edit takes the right-hand column (quickEditWidth + its margin), so
-        // the top-centre strip is the one large region neither can occupy at
-        // any window size -- top-RIGHT would sit under the Quick Edit sheet
-        // the moment it opens. Dropping a full band height below the top edge
-        // clears the titlebar band's own filename, so a scroll while the
-        // chrome is up does not stack two pieces of text.
+        // The volume OSD (also the frame-step position readout).
         //
         // Not inside the faded chrome and not reported into
         // transport.interactionActive: showing the volume must not pin the
@@ -1942,13 +1915,12 @@ ApplicationWindow {
             }
 
             if (event.key === Qt.Key_H) {
-                // Pause every window and hide the app. A bare key, bound here
-                // rather than as a native menu key equivalent, for the same
-                // reason F and E are: an NSMenu key equivalent for an
-                // unmodified key intercepts that keystroke application-wide,
-                // text fields included. Keys.onPressed on the video stage only
-                // ever fires when no text field holds focus, so typing "h"
-                // into Quick Edit or Preferences is unaffected.
+                // Pause every window and hide the app. H, M, E, V, T and F are
+                // bare keys, bound in this filter rather than as NSMenu key
+                // equivalents (see qml/AppMenuBar.qml's header). Keys.onPressed
+                // on the video stage only ever fires when no text field holds
+                // focus, so typing "h" into Quick Edit or Preferences is
+                // unaffected.
                 root.hideAndPauseAll();
                 event.accepted = true;
             } else if (event.key === Qt.Key_M && root.controller.hasMedia) {
@@ -1959,10 +1931,6 @@ ApplicationWindow {
                 root.toggleQuickEdit();
                 event.accepted = true;
             } else if (event.key === Qt.Key_V) {
-                // Bare keys, bound here rather than as native menu key
-                // equivalents, for the same reason H, E and F are: an NSMenu
-                // key equivalent for an unmodified key intercepts that
-                // keystroke application-wide, text fields included.
                 root.toggleVividBoost();
                 event.accepted = true;
             } else if (event.key === Qt.Key_T) {
@@ -2072,15 +2040,14 @@ ApplicationWindow {
         function onSourceChanged() {
             // Fires on every successful open, including a direct file-to-file
             // replacement where hasMedia never toggles false. This runs on the
-            // GUI thread inside the open, so it must never block: reading a
-            // size synchronously here called -[AVURLAsset tracks] with the
-            // tracks key unloaded, which does not report (0, 0) as once
-            // assumed -- it parses the asset on the calling thread. Measured,
-            // that stalled the GUI thread for the whole parse on a cold open,
-            // and on a file-to-file replacement it wedged the event loop
-            // outright against the session's own in-flight load of the same
-            // asset. The asynchronous request delivers identical numbers off
-            // the GUI thread and is now the only path.
+            // GUI thread inside the open, so it must never block: a
+            // synchronous size read would call -[AVURLAsset tracks] with the
+            // tracks key unloaded, which does not report (0, 0) -- it parses
+            // the asset on the calling thread. That stalls the GUI thread for
+            // the whole parse on a cold open, and on a file-to-file
+            // replacement wedges the event loop against the session's own
+            // in-flight load of the same asset. Hence only the asynchronous
+            // request, which delivers identical numbers off the GUI thread.
             // Only the probe's bookkeeping is touched here. The backend half
             // is the controller's own property, cleared by
             // PlayerController::resetTimeline on every media transition, and
@@ -2090,14 +2057,12 @@ ApplicationWindow {
             // order.
             //
             // Neither the recorded answer nor the source it belongs to is
-            // touched. The recorded source is now, by definition, the previous
+            // touched. The recorded source is by definition the previous
             // file's, so assetNaturalSizeCurrent is already false and the
             // recorded size falls through to videoNaturalSize's last-resort
-            // clause -- which is precisely the "the old size stays put until
-            // the new answer arrives" behaviour this property had before it
-            // gained a second feeder, and the reason a file-to-file
-            // replacement does not flash the window through a size no video
-            // ever had.
+            // clause: the old size stays put until the new answer arrives, so
+            // a file-to-file replacement does not flash the window through a
+            // size no video ever had.
             if (typeof windowChrome === "undefined" || !windowChrome || !root.controller.hasMedia)
                 return;
             windowChrome.requestVideoNaturalSize(root.controller.source);
@@ -2114,12 +2079,6 @@ ApplicationWindow {
     Connections {
         target: (typeof windowChrome !== "undefined" && windowChrome) ? windowChrome : null
 
-        // A (0, 0) answer is now recorded rather than dropped. It used to be
-        // dropped because it was the only answer there was and dropping it at
-        // least preserved the previous file's size; it is now the load-bearing
-        // fact that AVFoundation cannot describe this container -- every
-        // Matroska, WebM and MPEG-TS file produces exactly it -- and recording
-        // it is what hands the question over to the backend that can.
         function onSourceIsHdrReady(source, hdr) {
             if (!root.controller.hasMedia)
                 return;
@@ -2133,6 +2092,10 @@ ApplicationWindow {
             root.applyViewingModes();
         }
 
+        // A (0, 0) answer is recorded rather than dropped: it is the fact that
+        // AVFoundation cannot describe this container -- every Matroska, WebM
+        // and MPEG-TS file produces exactly it -- and recording it is what
+        // hands the question over to the backend that can.
         function onVideoNaturalSizeReady(source, width, height) {
             if (!root.controller.hasMedia)
                 return;
@@ -2150,8 +2113,7 @@ ApplicationWindow {
         // swallows AppKit's own titlebar-zoom default). Header double-click
         // zooms to the largest screen fit (and back), same as the video --
         // the user expects macOS's titlebar-zoom feel everywhere. Actual
-        // Size remains available through resizeToActualSize() for a future
-        // menu item.
+        // Size is the View menu's item (resizeToActualSize()).
         function onTitlebarDoubleClicked() {
             if (!root.resizeToFitScreen())
                 root.toggleMaximized();
@@ -2169,7 +2131,7 @@ ApplicationWindow {
     // being resized.
     //
     // A function rather than the body of onVideoNaturalSizeChanged because it
-    // now has two triggers. The size itself is one. The other is the AVURLAsset
+    // has two triggers. The size itself is one. The other is the AVURLAsset
     // probe finishing: the snap deliberately waits for it (see the
     // assetNaturalSizeCurrent gate below), and when the probe confirms a size
     // the backend had already published, the value does not change and no
@@ -2180,7 +2142,7 @@ ApplicationWindow {
             return;
         root.applyWindowAspectLock();
         // Let the probe speak first, always. For MP4 and MOV its answer is the
-        // authoritative one and it is what shipped; the backend's answer is
+        // authoritative one; the backend's answer is
         // separately derived and, for a container with a pixel-aspect or
         // clean-aperture atom, need not agree to the pixel. Since the snap
         // happens exactly once per source, whichever answer is in hand at that
@@ -2243,7 +2205,7 @@ ApplicationWindow {
         // Same duration and curve as the band's and the transport's own
         // fades, so the traffic lights travel with them.
         windowChrome.setTitlebarRevealed(controlsRevealed, !root.chromeInstantHide);
-        // The cursorShape binding below cannot deliver a blank cursor by
+        // stageHover's cursorShape binding cannot deliver a blank cursor by
         // itself on the layer route: nothing repaints while the chrome is
         // hidden, so Qt only applies the shape on the next pointer event --
         // and pointer movement is exactly what reveals the chrome again.
@@ -2260,16 +2222,16 @@ ApplicationWindow {
             hideControlsImmediately();
     }
 
-    // FULLSCREEN TRANSITIONS. Both halves of this are fixes, not upkeep.
+    // FULLSCREEN TRANSITIONS.
     //
     // The traffic lights. macOS does not build a second set of window buttons
     // for fullscreen; it reparents the very NSButton instances the chrome
     // fade has been writing alphaValue onto into the auto-hiding fullscreen
     // titlebar accessory. AppKit's hover-reveal then animates that
     // accessory's POSITION and never touches their alpha -- so a window that
-    // entered fullscreen with the chrome faded out (alpha 0) slid three
-    // invisible buttons down under the menu bar, and there was no way to
-    // click out of fullscreen at all. setTitlebarRevealed now pins them
+    // entered fullscreen with the chrome faded out (alpha 0) would slide three
+    // invisible buttons down under the menu bar, leaving no way to click out
+    // of fullscreen. setTitlebarRevealed pins them
     // opaque whenever the window is in fullscreen
     // (src/qt/macos_window_chrome.mm); re-asserting it here is what clears
     // the latch left by the last windowed fade on the way IN, and what
@@ -2294,7 +2256,7 @@ ApplicationWindow {
     // and only the native side can answer it honestly: Qt's `visibility`
     // flips the instant something asks for fullscreen, while AppKit's own
     // NSWindowStyleMaskFullScreen flips when the transition actually
-    // completes -- and measured, the two can disagree for a long time (or
+    // completes -- and the two can disagree for a long time (or
     // forever, if AppKit declines the transition, which it does for a window
     // whose application is not active). setTitlebarControlsRevealed reads the
     // style mask and pins the buttons opaque exactly while it is set, so a
@@ -2326,8 +2288,8 @@ ApplicationWindow {
     //
     // It stands down for the two surfaces that legitimately own Escape while
     // they are up (Quick Edit closes on it, a native dialog cancels on it),
-    // so this never steals the key from them; the filter on `stage` keeps
-    // handling Escape for Quick Edit exactly as before.
+    // so this never steals the key from them; the filter on `stage` handles
+    // Escape for Quick Edit.
     Shortcut {
         sequence: "Escape"
         context: Qt.WindowShortcut

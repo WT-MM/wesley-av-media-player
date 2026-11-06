@@ -254,9 +254,8 @@ struct NativeLayerVideoOutput::State
     if (!dropBaselineValid) {
       // First sample after activation or after a flush. A flush is a documented
       // source of large drop counts for content that belonged to the retired
-      // generation (DESIGN.md section 6: 157 drops of 783 on one mid-run
-      // flush); charging those to the new generation would superseded-starve a
-      // freshly armed timeline. Re-baseline instead.
+      // generation (DESIGN.md section 6); charging those to the new generation
+      // would superseded-starve a freshly armed timeline. Re-baseline instead.
       lastObservedDrops = dropped;
       dropBaselineValid = true;
       return;
@@ -396,8 +395,7 @@ struct NativeLayerVideoOutput::State
     // Manual-enqueue mode: no controlTimebase and no render synchronizer is
     // attached anywhere in this file, so DisplayImmediately is both permitted
     // and required. Without it the renderer's own timebase sits at rate 0 and
-    // at most one frame ever reaches the screen -- a trap Phase A measured
-    // directly (DESIGN.md section 3.1b, the totalNumberOfFrames = 9 run).
+    // at most one frame ever reaches the screen (DESIGN.md section 3.1b).
     CFArrayRef attachments =
         CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, true);
     if (attachments != nullptr && CFArrayGetCount(attachments) > 0) {
@@ -763,7 +761,6 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
     ++state->healthCounters.enqueuedFrames;
     state->noteRetentionLocked();
 
-    // The drop audit, folded into the proof rather than reported beside it.
     if (state->dropDebt > 0) {
       --state->dropDebt;
       ++state->healthCounters.supersededByDropFrames;
@@ -909,9 +906,8 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::closeProgress(
       // above. facts().generation reports acceptedGeneration, and
       // NativeVideoConsumer::retire()'s post-close gate requires it to equal
       // the invalidation generation -- without this the gate can never be
-      // satisfied and every terminal retirement of this route fails, which is
-      // what made a warm file replacement report "could not retire safely"
-      // while the old media kept playing. The guard above already proved
+      // satisfied and every terminal retirement of this route fails. The guard
+      // above already proved
       // finalGeneration > acceptedGeneration on this first entry, so the
       // assignment is monotonic (the OpenGL route states the same rule as an
       // explicit std::max).

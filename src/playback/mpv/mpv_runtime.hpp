@@ -45,7 +45,7 @@ class MpvFallbackFactory final {
       const QString& applicationDirectory);
 };
 
-// Existing non-Apple builds link libmpv normally. This factory captures those
+// Non-Apple builds link libmpv normally. This factory captures those
 // linked functions in the same immutable dispatch table used by the lazy
 // macOS fallback, without making dynamic-loader or bundle-security claims.
 class MpvLinkedRuntimeFactory final {

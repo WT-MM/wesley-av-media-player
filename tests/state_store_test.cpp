@@ -261,9 +261,9 @@ int main() {
     std::ofstream max_volume(path, std::ios::trunc);
     // 500% is above the native gain stage's own ceiling and 50% is below the
     // "no amplification" floor; both are bounded rather than rejected. The
-    // 350% volume proves the widened volume record: it used to be clamped to
-    // 200 on the way in, which would have silently un-boosted a window the
-    // user had pushed there under a 400% maximum.
+    // 350% volume proves the volume record is not clamped to 200 on the way
+    // in, which would silently un-boost a window the user had pushed there
+    // under a 400% maximum.
     max_volume << "volume 350\nmax_volume 500\n";
   }
   wam::StateStore max_volume_high(path);

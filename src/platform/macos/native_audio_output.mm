@@ -73,26 +73,22 @@ struct OutputSlot {
 // that nobody is home. A vector, a lazily created slot, or any destruction at
 // exit would each reintroduce exactly the use-after-free this design removes.
 //
-// Before WAM became a multi-window player this was a single claim flag and one
-// pair of singleton bridges, because one process could only ever want one
-// output. Widening it to kMaximumConcurrentPlayerWindows slots keeps every
-// property that design had -- a fixed resource envelope, no unbounded leak on
-// a quarantined teardown, a hard refusal rather than an overrun when full --
-// and admits N simultaneous windows. Nothing here grows with load.
+// kMaximumConcurrentPlayerWindows slots give a fixed resource envelope, no
+// unbounded leak on a quarantined teardown, and a hard refusal rather than an
+// overrun when full, while admitting N simultaneous windows. Nothing here grows
+// with load.
 OutputSlot gSlots[kMaximumConcurrentPlayerWindows];
 
 // Recovers the slot a CoreAudio callback context belongs to, or nullptr.
 //
-// This is the successor to the old `context != &gCallbackBridge` identity test
-// and must be exactly as strict: the context is UNTRUSTED (a stale context
+// The identity test must be strict: the context is UNTRUSTED (a stale context
 // from an already-detached unit, or a foreign one from any other AudioUnit
 // client in the process, can reach these entry points). So the pointer is
 // never dereferenced, never cast, and never turned into an index by
 // arithmetic. It is only COMPARED, by pointer equality, against the addresses
 // of the bridges the registry actually owns. A context that is not the exact
 // address of one of the kMaximumConcurrentPlayerWindows bridges of the
-// requested kind is rejected, which is the same set-of-one-widened-to-N
-// decision the singleton test made. The scan is a fixed
+// requested kind is rejected. The scan is a fixed
 // kMaximumConcurrentPlayerWindows equality comparisons against addresses the
 // compiler knows statically -- no load from the untrusted pointer, no branch
 // on its contents, no allocation, no lock -- which the real-time render
@@ -453,23 +449,21 @@ NativeAudioOutput::~NativeAudioOutput() {
 
 std::shared_ptr<NativeAudioOutput>
 NativeAudioOutput::recoverQuarantined() noexcept {
-  // At most one recovery per call, exactly as when there was one retention
-  // cell; the caller repeats until this returns null.
+  // At most one recovery per call; the caller repeats until this returns null.
   //
   // A slot's callbackOwner is published the moment a callback context is
   // attached and cleared only by a teardown that reached Done, so "retained"
   // covers both a genuinely abandoned output and a healthy one that is simply
-  // still running. With one slot those were indistinguishable and it did not
-  // matter -- there was nothing else to hand back. With N slots it matters a
-  // great deal: handing a caller a neighbouring window's LIVE output, which it
-  // would then close, would silence a window that was playing perfectly well.
+  // still running. The difference matters: handing a caller a neighbouring
+  // window's LIVE output, which it would then close, would silence a window
+  // that was playing perfectly well.
   //
   // So the abandoned ones are found first. An output whose only remaining
   // strong reference is its own callback_self_owner_ is by definition one no
   // owner can ever close again -- that is precisely the quarantine this seam
   // exists to drain. Only if no slot is in that state does the scan fall back
-  // to the first retained slot, which is the pre-multi-window behaviour and is
-  // what a caller still holding its own owner is asking about.
+  // to the first retained slot, which is what a caller still holding its own
+  // owner is asking about.
   for (const bool abandonedOnly : {true, false}) {
     for (OutputSlot &slot : gSlots) {
       NativeAudioOutput *const output =
@@ -758,8 +752,8 @@ double NativeAudioOutput::hostClockFrequency() noexcept {
 }
 
 // The configure() refusal epilogue, stated once. Everything past the first
-// irreversible AudioUnit call must give that instance back; the seventeen
-// refusals below each follow one such call, so the close is not optional and
+// irreversible AudioUnit call must give that instance back; the refusals
+// below each follow one such call, so the close is not optional and
 // not theirs to remember individually.
 NativeAudioOutputProgress NativeAudioOutput::failConfigure(
     NativeAudioOutputFailure failure, OSStatus status,
@@ -1386,10 +1380,9 @@ NativeAudioOutput::reconcileDeviceChange() noexcept {
     latchFailure(NativeAudioOutputFailure::DeviceFormatQueryFailed, status);
     return NativeAudioOutputProgress::Failed;
   }
-  // The one genuinely fatal case, and the only one the old listener could
-  // ever be right about: the device is no longer running at the rate
+  // The one genuinely fatal case: the device is no longer running at the rate
   // configure() latched, so every host-tick prediction already made against
-  // it is void. Fail closed exactly as start()'s own revalidation does.
+  // it is void. Fail closed, as start()'s own revalidation does.
   if (!validDeviceRate(deviceFormat)) {
     latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
                  kAudioUnitErr_FormatNotSupported);
@@ -1860,8 +1853,8 @@ void NativeAudioOutput::devicePropertyChanged(
   // Deliberately no latchFailure here. This runs in HAL notification context,
   // where no property may be read, so the only honest thing the listener can
   // say is "the format was republished" -- not "the device changed". Declaring
-  // a fatal DeviceRateMismatch from here ended native audio for the whole
-  // session on notifications whose rate was identical (the built-in speaker
+  // a fatal DeviceRateMismatch from here would end native audio for the whole
+  // session on notifications whose rate is identical (the built-in speaker
   // re-publishing its format ~2.5 s after first audio; another client changing
   // the device-global IO buffer size). Admission is already revoked above, so
   // nothing renders into a device that may have moved; reconcileDeviceChange()

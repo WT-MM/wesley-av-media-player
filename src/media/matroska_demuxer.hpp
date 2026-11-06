@@ -49,13 +49,13 @@ enum class MatroskaDemuxError : std::uint8_t {
   FileChanged,
   Io,
   Cancelled,
-  // Appended 2026-08-21. A video track whose coded dimensions are outside the
-  // v1 admission envelope. It is split out of TrackSelection because that
+  // A video track whose coded dimensions are outside the v1 admission
+  // envelope. It is distinct from TrackSelection because that
   // bucket says only "the tracks you asked for are unavailable", which is the
   // one thing a dimension refusal must not say: the track IS there, it is the
   // envelope that refuses it, and the verdict has to carry both numbers.
   CodedDimensionLimit,
-  // Appended 2026-08-21. The selected video track's own random access cadence
+  // The selected video track's own random access cadence
   // is wider than the seek preroll the route decodes through -- proven by a
   // Cluster scan, not inferred from a Cues element. Distinct from InvalidCue
   // and MissingCues on purpose: both of those blame the index, and this one
@@ -201,9 +201,6 @@ private:
   [[nodiscard]] MatroskaCursorReadResult
   readNextRaw(CancellationToken cancellation) noexcept;
 
-public:
-
- private:
   struct Impl;
   explicit MatroskaCursor(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;

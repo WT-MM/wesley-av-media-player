@@ -530,7 +530,7 @@ void NativeAudioRenderCore::applyGain(
     // representable full-scale range; a hard clamp is what VLC-style
     // amplification does and it is branch-predictable, allocation-free and
     // constant-time -- everything this callback is required to be. Below
-    // unity the clamp can never fire, so the ordinary path is unchanged.
+    // unity the clamp can never fire, so the ordinary path is unaffected.
     //
     // Sample values only. No frame count, cursor, clock segment or statistic
     // is touched here: result.pcmFrames is already fixed and the clock
@@ -641,7 +641,7 @@ NativeAudioRenderCore::PrefixSplit NativeAudioRenderCore::computePrefixSplit(
   // terminal yet) still must not.
   //
   // Both are zero for every source that declares no silence, and every
-  // expression below then reduces to the prior arithmetic verbatim.
+  // expression below then reduces to the no-silence arithmetic.
   const std::uint64_t leadInSilence =
       lead_in_end_frame_ > input.streamFrameStart
           ? lead_in_end_frame_ - input.streamFrameStart
@@ -884,8 +884,8 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   // out of the adjacency proof (prior end == this start) and out of the
   // coalescing identities. Rate changes retain the exact shared media
   // boundary and are admitted before changing the delay. At unity on a device
-  // running at the stream rate the sum is exactly zero and every expression
-  // below reduces to the pre-rate arithmetic verbatim.
+  // running at the stream rate the sum is exactly zero and no endpoint is
+  // shifted.
   const std::uint64_t latency_output_frames =
       static_cast<std::uint64_t>(stretch_latency_output_frames_) +
       static_cast<std::uint64_t>(
@@ -1128,7 +1128,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     // Publishing it as elapsed media time keeps the audio-owned clock moving,
     // which is what lets the video route retire frames it can no longer
     // present and lets the dispatcher's read gate reopen. Freezing the clock
-    // here is what turned a transient underrun into a whole-pipeline deadlock.
+    // here would turn a transient underrun into a whole-pipeline deadlock.
     //
     // This is deliberately confined to steady-state playback: it requires a
     // running generation that has already committed a real PCM segment, so it

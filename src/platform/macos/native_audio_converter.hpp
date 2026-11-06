@@ -80,7 +80,7 @@ public:
   //
   // Deliberately NOT pure: the default answers "this backend states no channel
   // layout", which is the truthful answer for every stereo-or-narrower test
-  // double and keeps the existing frozen backends compiling unchanged. The
+  // double. The
   // converter only ASKS when the source is wider than stereo, and a source
   // wider than stereo whose backend cannot state its layout is refused rather
   // than guessed.
@@ -123,8 +123,7 @@ struct NativeAudioGenerationTimeline {
   // packet and states the overrun as Matroska DiscardPadding -- so the decoded
   // tail has to be discarded at exact frame granularity. The discarded frames
   // still count as decoded, so the generation's exact accepted-frame budget is
-  // unchanged; only publication stops early. Appended with an inert default so
-  // every existing aggregate initialiser keeps its exact meaning.
+  // unchanged; only publication stops early. The defaults are inert.
   media::MediaTime presentationCeiling{};
   bool trimAfterCeiling{false};
 };
@@ -254,11 +253,12 @@ struct NativeAudioConverterStats {
 // packet descriptions, 256 KiB magic cookie, and one 4096-frame Float32 slab.
 // Their bounded payload/PCM paths allocate nothing after configuration.
 //
-// v1 admits exact AAC/HE-AAC/ALAC/MP3 ASBDs and only integral 44.1/48/96/192
-// kHz rates. Channel-layout metadata may be absent; if present it must be the
-// exact canonical Mono or Stereo tag matching the ASBD, or -- for a
-// multichannel source -- a tag whose expansion is an admissible stereo
-// downmix. It preserves the source rate.
+// It admits the codec/format-tag pairs in core_media_codec_facts.hpp (plus the
+// software codecs when WAM_ENABLE_AVCODEC_STAGE is built) at exactly the rates
+// in native_audio_sample_rates.hpp. Channel-layout metadata may be absent; if
+// present it must be the exact canonical Mono or Stereo tag matching the ASBD,
+// or -- for a multichannel source -- a tag whose expansion is an admissible
+// stereo downmix. It preserves the source rate.
 //
 // WIDTH is normalised immediately before publishing, never earlier and never
 // on the render callback: mono is duplicated to stereo, and a source wider

@@ -17,8 +17,8 @@ namespace wam::media {
 // Value 2 is "unspecified", which carries exactly as much information as an
 // absent description and is therefore Unknown, NOT OtherExplicit: OtherExplicit
 // means "an explicit value this renderer does not support" and is a fallback
-// proof, and mapping unspecified onto it made every stream with a partial VUI
-// fail consumer configuration.
+// proof, and mapping unspecified onto it would make every stream with a
+// partial VUI fail consumer configuration.
 //
 // Anything not named here stays OtherExplicit and is refused by name
 // downstream, in mediaVideoColorAdmitted(). The named set is EXACTLY the set the

@@ -972,15 +972,12 @@ void privateEpochExhaustionFailsWithoutWrap() {
 // second at +4.50 s / +4.77 s. Any preview target below that second sync sample
 // therefore decodes a preroll run that begins before the origin.
 //
-// The lane used to refuse those frames outright ("preview decoder emitted
-// invalid frame timing"), which latched the lane; the session's
-// stopPreviewLaneForTerminal then escalated the dead lane into a REFUSED COMMIT
-// SEEK ("Native seeking is unavailable for this file.") and the transport froze
-// with no fallback. Backward seeks looked like the trigger only because they
-// land at low targets; a FORWARD seek to the same low target stalled
-// identically.
+// Refusing those frames would latch the lane, and the session's
+// stopPreviewLaneForTerminal would escalate the dead lane into a REFUSED
+// COMMIT SEEK that freezes the transport with no fallback, for any seek
+// (forward or backward) to a low target.
 //
-// The rule that survives is the consumer's own: what matters is where a frame
+// The rule is the consumer's own: what matters is where a frame
 // ENDS, not which side of the origin it begins on.
 void preOriginPrerollFramesAreRetiredNotRefused() {
   Fixture fixture;

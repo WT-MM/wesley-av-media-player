@@ -62,13 +62,6 @@ class NativeAudioStretchUnit final {
 
   [[nodiscard]] NativeAudioStretchStage stage() noexcept;
 
-  // Output frames of group delay at rate 1.0, as the unit itself declared it.
-  // Zero means the declared latency did not match the closed form the stage
-  // validated at construction, and no compensation is applied.
-  [[nodiscard]] std::uint32_t latencyBaseFrames() const noexcept {
-    return latency_base_frames_;
-  }
-
   // The unit's pitch parameter is in cents and is limited to +/- 2400, which
   // is exactly the 0.25x..4x window expressed as 1200 * log2(rate).
   static constexpr double kPitchCentsLimit = 2400.0;

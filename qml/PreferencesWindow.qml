@@ -200,9 +200,9 @@ Window {
             // AbstractButton's own click handling does a direct imperative
             // write to `checked` on every toggle, which -- per ordinary QML
             // property semantics -- detaches this binding the first time the
-            // box is clicked (the same hazard qml/PreferencesWindow.qml's
-            // seek-step SpinBox already guards against for its own `value`,
-            // there via a `when` clause). A plain Binding element would stay
+            // box is clicked (the same hazard the seek-step SpinBox above
+            // guards against for its own `value` via a `when` clause). A
+            // plain Binding element would stay
             // detached forever after that first click. The Connections below
             // is what keeps this box honest afterward: it does not depend on
             // any binding surviving, it just re-writes `checked` imperatively

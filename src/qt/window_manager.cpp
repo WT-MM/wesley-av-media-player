@@ -11,7 +11,7 @@
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
 #endif
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "platform/macos/native_embedding_support.hpp"
 #endif
 
@@ -34,7 +34,7 @@
 #include <chrono>
 #include <cmath>
 
-#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 // The window factory's cap and the native resource envelope's cap are two
 // statements of one number. Assert they agree rather than letting a future
 // edit raise one and silently overrun the other: N windows each hold their own
@@ -112,9 +112,8 @@ void applyColorScheme(QStyleHints *style_hints, int appearance) {
   }
 }
 
-// Background-launch and parked-geometry seams. Owned here rather than in
-// main.cpp because they now have to apply to every window this process
-// creates, not just the one the engine used to load.
+// Background-launch and parked-geometry seams. Owned here because they apply
+// to every window this process creates.
 bool g_background_launch = false;
 bool g_parked_geometry_valid = false;
 bool g_parked_all_windows = false;
@@ -207,8 +206,7 @@ PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
     : QObject(&manager), manager_(manager) {
   // One QML context per window. `player` and `windowChrome` are resolved out
   // of it, so qml/Main.qml -- which reads both as bare context properties --
-  // needs no change to become an N-instance component: each instance simply
-  // sees its own objects.
+  // works as an N-instance component: each instance sees its own objects.
   context_ = new QQmlContext(engine.rootContext(), this);
 
   controller_ = new PlayerController(this);
@@ -271,11 +269,10 @@ PlayerWindow::~PlayerWindow() {
   // Destruction order is load-bearing, and QObject's own child sweep gets it
   // WRONG: it deletes children in the order they were parented, which here is
   // context, controller, root -- tearing the controller down while the QML
-  // scene is still bound to it. That produced a burst of "cannot read property
-  // of null" binding failures on every close and, worse, left the video item
-  // detaching from an already-destroyed controller.
+  // scene is still bound to it (null-property binding failures on close, and
+  // the video item detaching from an already-destroyed controller).
   //
-  // The correct order is the reverse of construction: the QML scene first (so
+  // The correct order: the QML scene first (so
   // MpvVideoItem detaches its render surface from a live controller), then the
   // chrome bridge (so its AppKit event monitor is removed while its window
   // still exists), and only then the controller, whose destructor retires the
@@ -379,8 +376,8 @@ void PlayerWindow::applyPendingResume() {
     return;
   // Wait for the transport to actually be running. Duration and source both
   // arrive while the engine is still starting, and a seek issued into that
-  // window replaces the pending start instead of following it, which left a
-  // resumed open parked on its first frame. The request stays pending until a
+  // window replaces the pending start instead of following it, which would
+  // park a resumed open on its first frame. The request stays pending until a
   // start it can follow, so a paused open simply keeps its position.
   if (!controller_->playing() || controller_->position() <= 0.0)
     return;
@@ -448,8 +445,8 @@ void PlayerWindow::wireResumeTracking() {
         tracked_local_source.isEmpty()
             ? 0.0
             : store.positionFor(persistentKey(tracked_local_source));
-    // Native accurate seek now serves AAC, so the restore seek keeps the
-    // native session instead of retiring it and a resumed open plays.
+    // Native accurate seek serves AAC, so the restore seek keeps the native
+    // session instead of retiring it.
     constexpr bool kAutoResumeEnabled = true;
     resume_pending_ = kAutoResumeEnabled && resume_position_ >= 5.0;
     if (resume_pending_)
@@ -639,7 +636,7 @@ bool WindowManager::openUrl(const QUrl &source) {
     return fresh->open(source);
 
   // At the window cap. Rather than silently dropping the open, replace the
-  // focused window's media and say so -- the same warm-replacement path a
+  // focused window's media -- the same warm-replacement path a
   // drag-and-drop onto that window takes.
   if (PlayerWindow *focused = focusedPlayerWindow())
     return focused->open(source);
@@ -863,9 +860,8 @@ void WindowManager::openMedia() {
   // argv do -- unless an empty window is already sitting there to claim it.
   //
   // The dialog is nonetheless hosted by a window that already exists rather
-  // than by a window created up front for the result. Creating it first was
-  // the obvious implementation and it is wrong: cancelling the dialog would
-  // leave a blank player standing there, which is exactly the dead window the
+  // than by a window created up front for the result: cancelling the dialog
+  // would leave such a window as a blank player, which is exactly the dead window the
   // empty-claim rule exists to avoid. The QML side therefore delivers the
   // chosen file back through openUrl(), which decides between claiming and
   // creating at the moment there is actually a file to put somewhere.

@@ -136,9 +136,8 @@ void applyStereoDownmix(const StereoDownmixMatrix &matrix,
       accumulatedLeft += value * left[channel];
       accumulatedRight += value * right[channel];
     }
-    // Written only after the whole source frame has been read, and 2*frame
-    // <= sourceChannels*frame for every frame while sourceChannels >= 2, so
-    // this never clobbers a sample a later frame still needs.
+    // Written after the whole source frame is read; in-place safety argument
+    // is on applyStereoDownmix in the header.
     const std::size_t destinationBase = frame * kStereoDownmixOutputChannels;
     samples[destinationBase] = accumulatedLeft;
     samples[destinationBase + 1U] = accumulatedRight;

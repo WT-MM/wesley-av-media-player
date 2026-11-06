@@ -5,9 +5,8 @@ import QtQuick
 //
 // Deliberately generic in what it displays (`text` is whatever the caller
 // wants to say) and deliberately NOT generic in anything else -- it is one
-// card in one place, not a layout system. Today the volume drives it; a
-// future "1.5x" or "+10s" readout can drive the same component without it
-// needing a single new knob.
+// card in one place, not a layout system. The volume drives it; any other
+// short readout can drive the same component without a new knob.
 //
 // THREE PROPERTIES OF THIS COMPONENT ARE LOAD-BEARING, not incidental:
 //
@@ -81,8 +80,7 @@ Item {
         onTriggered: osd.shown = false
     }
 
-    // Bare white text, VLC-style, per the user's explicit request -- no card,
-    // no scrim. A hairline of dark text shadow is the whole legibility budget:
+    // Bare white text, VLC-style -- no card, no scrim. A hairline of dark text shadow is the whole legibility budget:
     // it keeps the number readable over a white shot without reading as a
     // background.
     Text {

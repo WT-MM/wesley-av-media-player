@@ -115,7 +115,6 @@ playback_router::Tick NativePlaybackOwner::nextTick() noexcept {
 
 void NativePlaybackOwner::refreshNativePhaseWatchdog() {
   if (retirementPending() || !nativePhaseIsBounded(router_.snapshot().state)) {
-    // Leaving the bounded phases invalidates any in-flight timer.
     ++nativePhaseWatchdogEpoch_;
     nativePhaseWatchdogArmed_ = false;
     return;
@@ -952,9 +951,6 @@ bool NativePlaybackOwner::deferOwnerCommand(std::function<void()> command) {
   deferredOwnerCommand_ = std::move(command);
   return true;
 }
-void NativePlaybackOwner::clearNativeSession() noexcept {
-  retireNativeSession();
-}
 void NativePlaybackOwner::retireNativeSession(std::function<void()> continuation) {
   if (continuation) retirementContinuation_ = std::move(continuation);
   clearNativePreview();
@@ -1036,7 +1032,7 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
       session->setMuted(configuration->muted) !=
           macos::NativeMediaSessionCommandStatus::Accepted) {
     nativeSession_ = std::move(session);
-    clearNativeSession();
+    retireNativeSession();
     surfaceNativeError(
         "Unable to bind native playback controls.");
     return router_.onNativeFailed(
@@ -1054,7 +1050,7 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
   const auto status =
       nativeSession_->prepare(action.prepare, configuration->initialPosition);
   if (status != macos::NativeMediaSessionCommandStatus::Accepted) {
-    clearNativeSession();
+    retireNativeSession();
     surfaceNativeError(
         "Native playback rejected media preparation.");
     return router_.onNativeFailed(

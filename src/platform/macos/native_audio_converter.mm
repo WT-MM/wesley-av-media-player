@@ -166,19 +166,6 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
                     distance);
 }
 
-[[nodiscard]] bool supportedRate(double rate,
-                                 std::uint32_t *exactRate) noexcept {
-  return exactRate != nullptr &&
-         nativeAudioSampleRateSupported(rate, exactRate);
-}
-
-// The AudioToolbox format identifier whitelist, stated once for this file and
-// the audio session in core_media_codec_facts.hpp.
-[[nodiscard]] bool supportedCodec(media::MediaCodec codec,
-                                  std::uint32_t formatTag) noexcept {
-  return audioCodecFormatTagAdmitted(codec, formatTag);
-}
-
 // AudioToolbox swallows this many leading frames before it emits anything, so a
 // generation decodes this many fewer frames than its packets declare. It is a
 // property of the decoder, not of the container, which is why it is stated in
@@ -188,8 +175,8 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
 // exactly one access unit, because the format's first packet carries only the
 // left half of an overlap-add window and decodes to zero samples by
 // specification. Measured invariant across fresh converters and across
-// AudioConverterReset alike, which is why Vorbis keeps the cheap reset that
-// Opus had to give up.
+// AudioConverterReset alike, which is why Vorbis can use the cheap reset that
+// Opus cannot.
 [[nodiscard]] std::uint32_t decoderLeadInFrames(
     media::MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
   if (codec == media::MediaCodec::Vorbis) {
@@ -230,7 +217,7 @@ decoderFrameDeficitFrames(media::MediaCodec codec,
     // player, not by the decoder. An MP4's stts states the final ALAC packet's
     // true length -- 272 frames of a 4096-frame grid on the measured fixture --
     // but restateCompressedAudioPacketDurations
-    // (avfoundation_media_source.mm:274) lengthens every short trailing unit
+    // (avfoundation_media_source.mm) lengthens every short trailing unit
     // back to mFramesPerPacket, because that is the correct end-trim fix for
     // AAC, whose 1024-frame packet genuinely decodes 1024 frames and whose trim
     // really is an edit. ALAC's final packet genuinely holds fewer frames --
@@ -252,11 +239,6 @@ struct ChannelLayoutIdentity {
   bool present{false};
   std::uint32_t tag{0};
 };
-
-[[nodiscard]] bool
-supportedChannelLayout(const media::MediaAudioFormat &audio) noexcept {
-  return audioChannelLayoutAdmitted(audio);
-}
 
 [[nodiscard]] bool readSupportedChannelLayout(
     const AudioChannelLayout *layout, std::size_t layoutSize,
@@ -282,7 +264,7 @@ supportedChannelLayout(const media::MediaAudioFormat &audio) noexcept {
   candidate.channels = channels;
   candidate.channelLayoutTag = layout->mChannelLayoutTag;
   candidate.channelLayoutPresent = true;
-  if (!supportedChannelLayout(candidate)) {
+  if (!audioChannelLayoutAdmitted(candidate)) {
     return false;
   }
   *identity = {true, layout->mChannelLayoutTag};
@@ -505,15 +487,14 @@ public:
     // Drained means: the caller asked for the end, nothing came out, and there
     // was no input left to consume.
     //
-    // `context.sawEndOfStream` alone is not sufficient, and MP3 is what proved
-    // it. MP3 is the first codec here whose decoder still holds frames after
-    // its last packet -- it swallows 529 at the head and flushes 529 at the
-    // end -- so the first end-of-stream convert call returns those 529 frames
-    // and the SECOND one finds CoreAudio already finished: it returns zero
-    // without invoking the input proc again, so nothing sets sawEndOfStream
-    // and the pump reported "native audio backend made no bounded progress"
-    // at every MP3 end of file. An empty packet span at end of stream is the
-    // same proof by a route CoreAudio cannot skip.
+    // `context.sawEndOfStream` alone is not sufficient. MP3's decoder still
+    // holds frames after its last packet -- it swallows 529 at the head and
+    // flushes 529 at the end -- so the first end-of-stream convert call returns
+    // those 529 frames and the SECOND one finds CoreAudio already finished: it
+    // returns zero without invoking the input proc again, so nothing sets
+    // sawEndOfStream and the pump would report "native audio backend made no
+    // bounded progress" at every MP3 end of file. An empty packet span at end
+    // of stream is the same proof by a route CoreAudio cannot skip.
     result.drained = input.endOfStream && outputFrames == 0 &&
                      (context.sawEndOfStream || input.packets.empty());
     result.failed = status != noErr && status != kInputTemporarilyUnavailable;
@@ -532,8 +513,8 @@ public:
     // transient as real output instead of swallowing it, so the same stream
     // decodes to a different frame count depending on whether the generation
     // was configured or flushed. Rebuilding the converter restores the single
-    // invariant the whole Opus trim is derived from. Every other codec keeps
-    // the cheaper reset it has always used.
+    // invariant the whole Opus trim is derived from. Every other codec uses
+    // the cheaper reset.
     if (input_asbd_.mFormatID == kAudioFormatOpus) {
       AudioConverterDispose(converter_);
       converter_ = nullptr;
@@ -640,13 +621,12 @@ private:
     // A CONSTANT-bit-rate input carries no packet descriptions at all:
     // CoreAudio derives the packet count from mDataByteSize / mBytesPerPacket
     // and IGNORES any description array handed to it. Every compressed codec
-    // this converter admits is variable-rate and states mBytesPerPacket = 0,
-    // so until LPCM arrived from AVFoundation the branch below was the only
-    // one that ran. Handing LPCM the whole payload's mDataByteSize while
-    // declaring kMaximumPacketsPerFill packets made CoreAudio consume the
+    // this converter admits is variable-rate and states mBytesPerPacket = 0;
+    // LPCM does not. Handing LPCM the whole payload's mDataByteSize while
+    // declaring kMaximumPacketsPerFill packets makes CoreAudio consume the
     // whole payload -- measured as producedFrames = 1024 against
-    // consumedPackets = 16 -- and the next pump then decoded the same frames
-    // again and ran the generation past its accepted budget. So a CBR input
+    // consumedPackets = 16 -- and the next pump would decode the same frames
+    // again and run the generation past its accepted budget. So a CBR input
     // gets a BYTE-EXACT window of exactly the packets it is told about.
     //
     // It also needs no callback_packets_ storage, which is why it is not
@@ -1005,7 +985,7 @@ struct NativeAudioConverter::Impl {
   // lead_in_frames fewer than its packets declare. MP3 separates them -- it
   // swallows 529 frames at the head and FLUSHES 529 at the end, so its output
   // is shifted by 529 while its COUNT is exactly what the packets declared.
-  // Conflating the two failed every MP3 file with "decoded audio exceeds its
+  // Conflating the two would fail every MP3 file with "decoded audio exceeds its
   // exact accepted timeline budget".
   //
   // lead_in_frames keeps the positioning role (it is where the decoded cursor
@@ -1017,12 +997,12 @@ struct NativeAudioConverter::Impl {
 
   // At end of stream the decoder is normally exactly spent: it has emitted one
   // frame for every frame its packets declared, less the lead-in it swallowed.
-  // Two codecs legitimately fall SHORT of that, by a bounded and stated amount:
+  // Some codecs legitimately fall SHORT of that, by a bounded and stated amount:
   //
   //  * AC-3 and E-AC-3 hold a fixed 32 frames in flight and never flush them.
   //    Explicit post-drain AudioConverterFillComplexBuffer calls return zero
-  //    frames, so those frames are unreachable rather than merely unrequested
-  //    (scratchpad/ac3tail.mm). The withheld audio is the encoder's silent MDCT
+  //    frames, so those frames are unreachable rather than merely unrequested.
+  //    The withheld audio is the encoder's silent MDCT
   //    ring-down, measured at -113 dBFS.
   //  * FLAC's FINAL frame is legitimately shorter than the stream's block
   //    size, so the last packet decodes to fewer frames than the constant grid
@@ -1039,10 +1019,10 @@ struct NativeAudioConverter::Impl {
   //
   // This is a bound, not a licence to be approximate. What the generation
   // actually PUBLISHES is still governed exactly, by the presentation ceiling
-  // the demuxer derives -- and for both codecs that ceiling was measured equal
+  // the demuxer derives -- and for these codecs that ceiling was measured equal
   // to the decoder's own output frame for frame. The bound is zero for Opus,
-  // Vorbis, AAC, MP3 and both ADPCM families, so their arithmetic stays the
-  // exact equality it was -- ADPCM in particular decodes bit-exactly to its
+  // Vorbis, AAC, MP3 and both ADPCM families, so their arithmetic is exact
+  // equality -- ADPCM in particular decodes bit-exactly to its
   // declared frame count, so widening it there would hide a real defect.
   [[nodiscard]] bool decodedBudgetExhausted(
       std::uint64_t decoded) const noexcept {
@@ -1112,8 +1092,8 @@ struct NativeAudioConverter::Impl {
            (!converted.drained || sendingEof);
   }
 
-  // The one end-of-stream seal. Three pump exits reach a drain and the exact
-  // budget identity is the same at all three.
+  // The one end-of-stream seal. Every pump exit that reaches a drain goes
+  // through it, and the exact budget identity is the same at all of them.
   [[nodiscard]] bool sealDrain(std::uint64_t decodedFrames,
                                std::string *error) noexcept {
     if (!decodedBudgetExhausted(decodedFrames)) {
@@ -1573,9 +1553,9 @@ struct NativeAudioConverter::Impl {
   // One fixed slab, at the widest source layout the player admits. The
   // backend decodes the FULL native layout into it and the downmix folds it
   // to stereo in place before publication, so the same storage serves both
-  // ends and nothing allocates after configuration. Widening this from
-  // NativePcmRing::kChannels to kHardMaximumAudioChannels costs 96 KiB per
-  // converter (32,768 floats instead of 8,192).
+  // ends and nothing allocates after configuration. Sizing this at
+  // kMaximumDownmixSourceChannels rather than NativePcmRing::kChannels costs
+  // 96 KiB per converter (32,768 floats instead of 8,192).
   std::array<float, NativeAudioConverter::kFramesPerPump *
                         media::kMaximumDownmixSourceChannels>
       pcm{};
@@ -1615,7 +1595,8 @@ struct NativeAudioConverter::Impl {
   // lead_in_frames for every codec except MP3.
   std::uint32_t frame_deficit_frames{0};
   // See decodedBudgetExhausted. Zero for every codec whose decoder is exactly
-  // spent at end of stream, which is all of them but AC-3, E-AC-3 and FLAC.
+  // spent at end of stream, which is all of them but AC-3, E-AC-3, FLAC and
+  // ALAC.
   std::uint32_t tail_shortfall_bound_frames{0};
   bool has_presentation_ceiling{false};
   bool encoded_borrowed{false};
@@ -1690,13 +1671,13 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   bool candidateCeilingKnown = false;
   if (generation == 0 || state.ring.generation() != generation ||
       track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
-      !track.audio || (!software && !supportedCodec(track.codec, track.audio->formatTag)) ||
+      !track.audio || (!software && !audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag)) ||
       (software && track.audio->formatTag != 0) ||
       track.audio->channels == 0 ||
       track.audio->channels > media::kMaximumDownmixSourceChannels ||
       !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
-      !supportedChannelLayout(*track.audio) ||
-      !supportedRate(track.audio->sampleRate, &candidateSampleRate) ||
+      !audioChannelLayoutAdmitted(*track.audio) ||
+      !nativeAudioSampleRateSupported(track.audio->sampleRate, &candidateSampleRate) ||
       !exactFrame(timeline.presentationFloor, candidateSampleRate,
                   &candidateFloorFrame) ||
       !resolveCeiling(timeline, candidateSampleRate, candidateFloorFrame,
@@ -1729,8 +1710,8 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   state.failed = false;
   state.downmix = {};
   // The backend is asked for the source's OWN width. Asking it for stereo
-  // instead is what produced Apple's normalised Lt/Rt matrix for AC-3 and the
-  // silently dropped centre/LFE/surrounds for FLAC; the fold happens here,
+  // instead yields Apple's normalised Lt/Rt matrix for AC-3 and silently
+  // drops centre/LFE/surrounds for FLAC; the fold happens here,
   // after a complete decode, or not at all.
   NativeAudioBackendConfiguration configuration;
   configuration.input = *track.audio;

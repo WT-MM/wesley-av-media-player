@@ -15,7 +15,7 @@
 //   itu_t_t35_provider_code  0x0031      (ATSC)
 //   user_identifier          'GA94'
 //   user_data_type_code      0x03        (cc_data)
-//   flags/cc_count           1 byte: process_cc_data_flag in bit 6, count in 0..4
+//   flags/cc_count           1 byte: process_cc_data_flag in bit 6, cc_count in bits 4..0
 //   em_data                  1 byte
 //   cc_count x 3 bytes       marker bits, cc_valid, cc_type, then two data bytes
 //   marker_bits              0xFF
@@ -80,7 +80,8 @@ std::size_t appendCaptionTripletsFromAvcc(std::string_view sample,
 
 // HEVC carries the same A/53 payload in a PREFIX_SEI_NUT (type 39). The
 // payload parser is shared; only the NAL header differs (two bytes, type in
-// bits 1..6 of the first). Wired for MPEG-TS HEVC; see the report's deferrals.
+// bits 1..6 of the first). No route calls this yet: HEVC caption extraction is
+// not wired.
 [[nodiscard]] constexpr bool isHevcPrefixSeiNalHeader(
     std::uint8_t byte0) noexcept {
   return ((byte0 >> 1) & 0x3FU) == 39U;

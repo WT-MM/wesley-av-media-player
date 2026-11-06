@@ -40,19 +40,17 @@ namespace wam::macos {
 //
 // This is the same floor matroska_demuxer.cpp applies to the Opus pre-skip
 // ("the downstream timeline contract requires 0 <= actualDecodeStart <=
-// target"), and the origin floor matroska_media_source and mpegts_media_source
-// already carry.
+// target"). The custom-container sources (native_custom_source_core.hpp) keep
+// the same window differently: a plan that starts after its target is admitted
+// only when it starts at the first video access unit, reporting the target as
+// the decode start, and is refused otherwise.
 //
 // It lives in this header, rather than inside one route's translation unit,
 // because BOTH AVFoundation lanes locate a sync start the same way and must
-// answer this question identically. They did not: the main route clamped while
-// the preview lane REFUSED a negative start outright ("preview could not
-// locate a bounded full-sync start"). On a head-trimmed file every target
-// before the first in-window random-access point walks back to the pre-origin
-// IDR, so the preview lane failed, latched, and then killed the COMMIT seek it
-// has no business vetoing -- the measured "backward seeks stall on
-// head-trimmed MP4s" defect. One definition, two callers, so the two lanes
-// cannot drift apart again.
+// answer this question identically. On a head-trimmed file every target before
+// the first in-window random-access point walks back to the pre-origin IDR; a
+// preview lane that refused that start would fail, latch, and veto the COMMIT
+// seek, stalling backward seeks.
 [[nodiscard]] inline CMTime clampedSyncStartWithinTimelineContract(
     CMTime decodeStart, CMTime target) noexcept {
   if (!CMTIME_IS_NUMERIC(decodeStart) || !CMTIME_IS_NUMERIC(target)) {

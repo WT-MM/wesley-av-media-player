@@ -35,22 +35,20 @@ inline constexpr std::uint32_t kAc3FramesPerBlock{256};
 // file that is zero.
 //
 // Measured against ffmpeg's decode of the RAW elementary stream with a chirp
-// (a periodic test tone makes the alignment search degenerate and produced a
-// wrong answer first time round): the signed offset is -256 on every arm.
-// Invariant across durations 2 s / 3.7 s / 5 s / 6 s, mono / stereo / 5.1, and
-// across AudioConverterReset. See scratchpad/sweep_probe.mm, cmpf32.py.
+// (a periodic test tone makes the alignment search degenerate): the signed
+// offset is -256 on every arm, invariant across durations 2 s / 3.7 s / 5 s /
+// 6 s, mono / stereo / 5.1, and across AudioConverterReset.
 inline constexpr std::uint32_t kAc3DecoderDelayFrames{256};
 
 // ...and it stops this many frames SHORT of the end of the stream, holding
 // them in flight and never flushing them. Explicit post-drain
-// AudioConverterFillComplexBuffer calls return zero frames
-// (scratchpad/ac3tail.mm), so the frames are unreachable rather than merely
-// unrequested.
+// AudioConverterFillComplexBuffer calls return zero frames, so the frames are
+// unreachable rather than merely unrequested.
 //
 // This is why an AC-3 track's stated duration is 32 frames (0.667 ms) shorter
 // than ffmpeg's own decode of the same track. Stating ffmpeg's number instead
-// would leave the clock waiting for 32 frames that never arrive, which is the
-// end-of-file free-run the Opus work removed. The withheld frames are the
+// would leave the clock waiting for 32 frames that never arrive (an
+// end-of-file free-run). The withheld frames are the
 // encoder's silent MDCT ring-down: ffmpeg's last 40 raw frames peak at
 // -113 dBFS where the preceding audio sits at -9 dBFS.
 inline constexpr std::uint32_t kAc3DecoderTailShortfallFrames{32};
@@ -115,8 +113,9 @@ struct Ac3Admission {
 // labelled A_AC3 whose frames are E-AC-3 (or the reverse) is a mislabelled mux
 // and falls back rather than being decoded as whichever the bytes happen to be.
 //
-// Admission is intentionally narrower than the format: mono or stereo with no
-// LFE, 6 blocks per syncframe, and one whole syncframe per Block.
+// Admission is intentionally narrower than the format: acmod 1..7 (no 1+1
+// dual mono) with or without LFE, 6 blocks per syncframe, an independent
+// substream 0 only, and one whole syncframe per Block.
 [[nodiscard]] Ac3Admission
 parseAc3Syncframe(std::span<const std::byte> frame, bool enhanced) noexcept;
 

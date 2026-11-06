@@ -248,10 +248,11 @@ class CoreMediaSampleStorage final : public media::MediaPayloadStorage {
 // channel layout tag against the admitted descriptor, so all three are
 // restated from the descriptor rather than re-derived from the cookie.
 //
-// Two shapes are admitted, and exactly two: a codec that HAS a magic cookie
-// must present it as one, and a codec that has none (AC-3, E-AC-3 and MPEG
-// audio restate every parameter in each frame header) must present nothing
-// at all.
+// Three shapes are admitted: a codec that HAS a magic cookie must present it
+// as one; a codec that has none (AC-3, E-AC-3 and MPEG audio restate every
+// parameter in each frame header) must present nothing at all; and a
+// software-decoded codec may carry its raw CodecPrivate record, which is never
+// handed to CoreMedia as a cookie.
 [[nodiscard]] inline CMAudioFormatDescriptionRef createAudioFormatDescription(
     const media::MediaTrackDescriptor& track) noexcept {
   const bool cookiePresent =

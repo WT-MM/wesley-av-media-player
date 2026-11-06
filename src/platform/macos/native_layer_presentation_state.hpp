@@ -16,16 +16,13 @@ namespace wam::macos {
 // factory on the layer route under QML that still paints opaque black shows no
 // video, and the reverse shows no chrome.
 //
-// The layer route is the default as of 2026-08-18: it passed the full
-// verification ladder (teardown, occlusion, chrome compositing, aspect snap,
-// harness, contract test, seeks) and measured at QuickTime-parity CPU/energy
-// with zero GPU work, where the scene-graph route pays ~4.4% GPU and, because
-// it needs an in-process render pass, stops presenting whenever the window is
-// occluded (the clock retires those frames by design; the layer route needs no
-// render pass and is immune). WAM_PRESENTATION=scenegraph opts back to
-// the GL route, so a field problem is a relaunch away from the previous
-// behavior rather than a rebuild. Any other value (including junk) selects the
-// default: an unrecognized opt-out is no opt-out.
+// The layer route is the default: it does zero GPU work in this process,
+// where the scene-graph route pays ~4.4% GPU and, because it needs an
+// in-process render pass, stops presenting whenever the window is occluded
+// (the clock retires those frames by design; the layer route needs no render
+// pass and is immune). WAM_PRESENTATION=scenegraph selects the GL route, so a
+// field problem is a relaunch away rather than a rebuild. Any other value
+// (including junk) selects the default: an unrecognized opt-out is no opt-out.
 [[nodiscard]] inline bool layerPresentationRouteSelected() noexcept {
   const char* value = std::getenv("WAM_PRESENTATION");
   if (value == nullptr) {
@@ -39,12 +36,11 @@ namespace wam::macos {
 // This exists for one reason: on the layer route the video is composited by
 // WindowServer from an AVSampleBufferDisplayLayer, so the Qt video item has
 // nothing to paint, and the per-frame QQuickItem::update() that drives the GL
-// route becomes pure cost. Phase B's gate measured that update() to be the
-// *only* thing dirtying the scene graph once the chrome is hidden -- suppress
-// it and Qt issues zero render passes over a full minute of playback, keep it
-// and Qt issues ~30 per second. Leaving it in place on the layer route would
-// pay the scene graph's render+swap cost for frames nobody draws, which is
-// exactly the cost the pivot exists to remove.
+// route becomes pure cost. That update() is the only thing dirtying the scene
+// graph once the chrome is hidden: suppressed, Qt issues zero render passes
+// during playback; kept, Qt issues ~30 per second, paying the scene graph's
+// render+swap cost for frames nobody draws -- exactly the cost the layer
+// route exists to remove.
 //
 // It is a process-global gate rather than a controller property because the
 // producer (the native session factory, in the macOS backend library) and the
@@ -57,7 +53,7 @@ namespace wam::macos {
 // builds its replacement output before dropping the old one puts two presenting
 // outputs briefly alive at once; with a bare bool the old one's teardown clears
 // the flag while the new one is presenting, Qt silently resumes per-frame
-// update() for the rest of the session, and the pivot's entire win is gone with
+// update() for the rest of the session, and the layer route's win is gone with
 // nothing anywhere to notice. Retain/release makes the overlap correct by
 // construction, and the asserted invariants below make an unbalanced call a
 // debug-build failure instead of a silent performance regression.

@@ -9,10 +9,8 @@ import QtQuick
 // OF the crop, it IS the preview: the bright region is exactly what the
 // exported file will contain, and the dimmed region is exactly what it will
 // not. The sheet says so in words; this file is the reason that sentence is
-// true. (A live playback crop looks cheap on the layer presentation route --
-// AVSampleBufferDisplayLayer has a `contentsRect` that would do it in the
-// compositor for free -- but it is not wired here, and gating the feature on
-// it would have shipped nothing. See the report's deferrals.)
+// true. (Live playback crop is not wired; on the layer presentation route
+// AVSampleBufferDisplayLayer's `contentsRect` could do it in the compositor.)
 //
 // COORDINATES. The rectangle is stored NORMALIZED (0-1 fractions of the source
 // frame) on the controller, and manipulated here in the displayed video's
@@ -44,8 +42,8 @@ Item {
     // The item the picture is drawn in. This overlay lives in the safe-area
     // `stage`, while the video item runs the full window under the
     // transparent titlebar, so the picture's box is MEASURED from that item
-    // rather than assumed to be this one: anchoring to the stage put the
-    // rectangle a titlebar's inset off the picture.
+    // rather than assumed to be this one: anchoring to the stage would put
+    // the rectangle a titlebar's inset off the picture.
     property Item videoItem: null
     readonly property rect videoBox: videoItem
         ? overlay.mapFromItem(videoItem, 0, 0, videoItem.width, videoItem.height)

@@ -1907,11 +1907,10 @@ void testEac3Framing() {
            "numblkscod names the exact decoded sample count");
   }
 
-  // --- the LFE fix, which is what unblocked 5.1 ---------------------------
+  // --- LFE ---------------------------------------------------------------
   // acmod 7 is 3/2 -- five full-bandwidth channels -- and lfeon makes it 5.1.
-  // The old code hardcoded `lfe = false`, so a 5.1 stream was described to
-  // CoreAudio as FIVE channels. That is not a rounding error; it lays the
-  // decoder's own output out wrongly.
+  // Ignoring lfeon describes a 5.1 stream to CoreAudio as FIVE channels, which
+  // lays the decoder's own output out wrongly.
   const Bytes eac351 = makeEac3Frame(1536, 0, 3, 7, true);
   Ac3SyncFrame fx51{};
   expect(parseEac3SyncFrame(eac351, fx51), "a 5.1 E-AC-3 frame parses");
@@ -2231,9 +2230,9 @@ void testUnsupportedStreamTypeVerdicts() {
   }
 }
 
-// MPEG-2 video and the MPEG-audio/AC-3 families are now inside the envelope.
-// This is the other half of the verdict test: what used to be refused by name
-// must now be admitted with an exact descriptor, a positive frame extent, and
+// MPEG-2 video and the MPEG-audio/AC-3 families are inside the envelope.
+// This is the other half of the verdict test: each must be admitted with an
+// exact descriptor, a positive frame extent, and
 // -- where the audio codec is routable -- a selected audio track.
 // End-to-end admission of HEVC transport streams: the synthesized hvcC must
 // survive the SHARED codec inspector, which re-parses the VPS/SPS/PPS the

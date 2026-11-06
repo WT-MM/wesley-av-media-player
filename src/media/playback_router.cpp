@@ -350,9 +350,7 @@ Transition PlaybackRouter::setPreservePitch(bool preserve, Tick now) noexcept {
   }
   intendedPreservePitch_ = preserve;
   if (state_ != State::NativeActive) {
-    // Same shape as setRate: seeking, starting and ended states all issue
-    // their own authoritative run state later, carrying this intent with
-    // them, so retaining it is the whole job here.
+    // Same as setRate: later states carry this intent in their run state.
     return applied();
   }
   native::Serial serial;
@@ -522,10 +520,8 @@ Transition PlaybackRouter::beginNativeStop(bool fallbackCurrent,
            invalidation};
   serial_ = stop_.stamp.serial;
   state_ = State::NativeStopping;
-  // Retirement owns no timer of its own and its completion depends on a fact
-  // published by the session worker exactly as Prepare, Start and CommitSeek
-  // do. Arm the same deadline here so a Stopped proof that can never arrive is
-  // bounded instead of parking the route silently forever.
+  // Stopped depends on a session-worker fact, so it gets the same bounded
+  // deadline as Prepare, Start and CommitSeek (see TimeoutPolicy::stopTicks).
   deadlineArmed_ = timeouts_.stopTicks != 0;
   deadline_ = deadline(now, timeouts_.stopTicks);
   return applied(nativeStopAction(stop_));

@@ -29,11 +29,10 @@ constexpr std::uint8_t kSetupHeaderType{5};
 // frames and the grid is exactly right, so the gate is not a heuristic -- it is
 // the precise condition under which the existing machinery is sound.
 //
-// Measured consequence, recorded honestly: ffmpeg's native Vorbis encoder emits
-// 2048/2048 and is admitted; reference libvorbis emits 256/2048 at every
-// quality setting and is refused, falling back to mpv exactly as before this
-// work. Closing that gap needs a per-packet duration oracle and a cumulative
-// position table rather than an affine grid.
+// Measured consequence: ffmpeg's native Vorbis encoder emits 2048/2048 and is
+// admitted; reference libvorbis emits 256/2048 at every quality setting and is
+// refused, falling back to mpv. Closing that gap needs a per-packet duration
+// oracle and a cumulative position table rather than an affine grid.
 constexpr bool kUniformBlockSizeRationale{true};
 static_assert(kUniformBlockSizeRationale);
 

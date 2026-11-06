@@ -12,9 +12,11 @@ This bridge keeps the interface and media engine deliberately separate:
 
 ## Host requirements
 
-The target needs Qt 6.9 or newer components `Core`, `Gui`, `Qml`, `Quick`,
-`QuickControls2`, and `OpenGL`, plus libmpv and C++20. Enable Qt AUTOMOC (or use
-`qt_add_executable`) and compile these sources:
+The target needs Qt 6.10 or newer components `Core`, `Gui`, `Qml`, `Quick`,
+`QuickControls2`, `QuickDialogs2`, `QuickLayouts`, `OpenGL`, and `LabsPlatform`,
+plus libmpv and C++20. Enable Qt AUTOMOC (or use `qt_add_executable`) and
+compile at least these sources (the full list is in the top-level
+`CMakeLists.txt`):
 
 ```text
 src/qt/player_controller.cpp

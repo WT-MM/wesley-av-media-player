@@ -376,9 +376,9 @@ struct NativeMediaSessionMetrics {
   bool paused{true};
 };
 
-// A one-shot native media epoch. Exactly one worker owns exactly one
-// AVFoundationMediaSource, NativeAudioSession, NativeVideoConsumer, and
-// NativeMediaDispatcher. Public methods only publish fixed commands; source
+// A one-shot native media epoch. Exactly one worker owns exactly one media
+// source (chosen by container routing), NativeAudioSession,
+// NativeVideoConsumer, and NativeMediaDispatcher. Public methods only publish fixed commands; source
 // I/O, demux, decoder/output lifecycle, and fact production stay serialized
 // on that worker. Stop has absolute precedence over all live commands.
 class NativeMediaSession final {

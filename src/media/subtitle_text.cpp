@@ -235,8 +235,8 @@ void appendCue(ParsedFile* out, std::int64_t start, std::int64_t end,
     while (nextLine(&rest, &line)) {
       if (trim(line).empty())
         break;
-      // A new timing line without an intervening blank line means the
-      // previous cue's payload ended; put it back by handling it next round.
+      // Only a blank line ends the payload: a timing line with no blank line
+      // before it is kept as payload text.
       payload.push_back(line);
     }
     std::string text =
@@ -357,13 +357,8 @@ std::string renderAssDialoguePayload(std::string_view payload) {
   return normalizeCueText(stripAssOverrideTags(text));
 }
 
-// SubRip's inline markup subset: <b>, <i>, <u>, <s> and <font ...>, with
-// their closing forms. The overlay is Text.PlainText -- deliberately, so a
-// subtitle file can never inject markup into the UI -- so an unstripped tag is
-// displayed to the viewer as the literal characters "<i>". mpv resolved these
-// before publishing sub-text, so files that used to take the fallback route
-// looked right; a file that now plays natively has to get the same treatment
-// here.
+// The overlay is Text.PlainText deliberately, so a subtitle file can never
+// inject markup into the UI (see the header for the tag subset).
 //
 // Unlike the WebVTT stripper this does NOT delete every angle-bracket run: a
 // SubRip cue may legitimately contain "<" in dialogue, and only the recognised
@@ -628,7 +623,7 @@ std::ptrdiff_t cueIndexAt(const std::vector<Cue>& cues, std::int64_t t,
   const std::ptrdiff_t count = static_cast<std::ptrdiff_t>(cues.size());
   if (count == 0)
     return -1;
-  // Sequential playback: the hint is either still current or the next cue.
+  // Sequential playback: the hint is usually still current.
   if (hint >= 0 && hint < count && cues[static_cast<std::size_t>(hint)].covers(t))
     return hint;
 

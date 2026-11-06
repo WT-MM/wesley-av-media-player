@@ -280,10 +280,11 @@ class NativeAudioOutput final
   // Smallest PCM block the producer can put into one ring slab. The producer's
   // admission unit is a slab, not a frame: pump() converts one input lease per
   // call and publishes exactly one slab from it, so a slab carries one
-  // delivered sample's decoded frames. AAC-LC's access unit is 1024 frames and
-  // is the smallest among the admitted codecs (MP3 is 1152, ALAC up to 4096),
-  // and a container may deliver exactly one access unit per sample. 1024 is
-  // therefore the floor on what a slab is guaranteed to hold.
+  // delivered sample's decoded frames. AAC-LC's access unit is 1024 frames
+  // (MP3 is 1152, ALAC up to 4096), and a container may deliver exactly one
+  // access unit per sample. Opus packets are shorter (typically 960 frames, as
+  // few as 120), so for Opus this floor -- and the kGuaranteedRingFrames
+  // headroom proof built on it -- does not hold.
   static constexpr std::uint32_t kMinimumFramesPerPublishedSlab = 1024;
 
   // Frames a completely full ring is *guaranteed* to hold. Deliberately not
@@ -301,10 +302,10 @@ class NativeAudioOutput final
   static constexpr std::uint32_t kRingDevicePeriodsOfHeadroom = 4;
 
   // Media frames one device period can consume at the fastest admitted
-  // playback rate. Below rate support this was the device period itself; a
-  // time-stretched callback emits the same number of device frames but eats
-  // rate times as many media frames, and the ring is stocked in MEDIA frames.
-  // Every headroom inequality in this file is stated in that unit.
+  // playback rate. A time-stretched callback emits the same number of device
+  // frames but eats rate times as many media frames, and the ring is stocked
+  // in MEDIA frames. Every headroom inequality in this file is stated in that
+  // unit.
   static constexpr std::uint32_t kMaximumRateNumerator = 4;
 
   // Device IO buffer size requested from the HAL. Every render callback is a
@@ -364,7 +365,7 @@ class NativeAudioOutput final
   // while the render callback runs: the pitch-preserving stage is created
   // here on first non-unit use and the callback latches the new rational at
   // its own boundary. The unit rate never creates a stage, so the default
-  // path keeps exactly the cost profile it had before rate support existed.
+  // path pays nothing for rate support.
   // Failure means the stage could not be created or the rate is outside the
   // admitted window; the previously accepted rate stays in force.
   [[nodiscard]] bool setRate(NativePlaybackRate rate) noexcept;
@@ -472,7 +473,7 @@ class NativeAudioOutput final
                     OSStatus status) noexcept;
   // The configure() refusal epilogue. Every refusal after the AudioUnit
   // instance exists must close it: an omitted close() leaks that instance for
-  // the life of the process, and configure() has seventeen exits.
+  // the life of the process, and configure() has many exits.
   [[nodiscard]] NativeAudioOutputProgress failConfigure(
       NativeAudioOutputFailure failure, OSStatus status,
       NativeAudioOutputProgress progress) noexcept;
@@ -621,10 +622,7 @@ class NativeAudioOutput final
 };
 
 // Media frames one device period of `deviceBufferFrames` can consume at the
-// fastest admitted playback rate. Below rate support this was the device
-// period itself; a time-stretched callback emits the same number of device
-// frames but eats rate times as many media frames, and the ring is stocked in
-// MEDIA frames. Every producer-headroom inequality is stated in that unit.
+// fastest admitted playback rate; see kMaximumRateNumerator.
 [[nodiscard]] constexpr std::uint32_t maximumMediaFramesPerDevicePeriod(
     std::uint32_t deviceBufferFrames) noexcept {
   return deviceBufferFrames * NativeAudioOutput::kMaximumRateNumerator;

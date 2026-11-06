@@ -2571,9 +2571,8 @@ void testDecodedSdrColorAttachmentMatrix() {
                         kCFBooleanTrue,
                         kCVAttachmentMode_ShouldNotPropagate);
   validates(false);
-  // AMENDMENT 6 (2026-08-27): BT.2020 primaries and the PQ/HLG transfers are
-  // admitted on a decoded surface, because they are what the presentation path
-  // now delivers rather than metadata it cannot honour.
+  // BT.2020 primaries and the PQ/HLG transfers are admitted on a decoded
+  // surface, because the presentation path delivers them.
   resetAttachments();
   CVBufferSetAttachment(pixelBuffer, kCVImageBufferColorPrimariesKey,
                         kCVImageBufferColorPrimaries_ITU_R_2020,
@@ -2632,11 +2631,10 @@ void testDecodedSdrColorAttachmentMatrix() {
   };
   rejectsPresence(kCVImageBufferGammaLevelKey, number);
   rejectsPresence(kCVImageBufferICCProfileKey, metadata);
-  // AMENDMENT 6: the two HDR volume/light attachments are ACCEPTED. They are
-  // the payload the presentation path delivers -- VideoToolbox copies them
-  // verbatim onto the surface and the display layer's derived format
-  // description reproduces them byte for byte -- so refusing them here was
-  // discarding exactly the information WindowServer tone-maps from.
+  // The two HDR volume/light attachments are ACCEPTED. They are the payload
+  // the presentation path delivers -- VideoToolbox copies them verbatim onto
+  // the surface and the display layer's derived format description
+  // reproduces them byte for byte -- and WindowServer tone-maps from them.
   const auto acceptsPresence = [&](CFStringRef key, CFTypeRef value) {
     resetAttachments();
     CVBufferSetAttachment(pixelBuffer, key, value,
@@ -2731,13 +2729,9 @@ void testDecodedColorCallbackRejectsHdrBeforeLease() {
                        decoder, hdrTiming, &sequence, &error) ==
                        VideoDecodeSubmitResult::Accepted,
                    error);
-  // AMENDMENT 6 (2026-08-27): a PQ frame is ADMITTED now, so it can no longer
-  // stand for "a frame the colour gate refuses". The property this test
-  // actually proves -- that a refused frame is dropped BEFORE any surface is
-  // leased, leaving the surface budget exactly where it was -- is unchanged
-  // and still worth proving, so it is restated with a transfer that stays
-  // outside the widened envelope. sRGB is refused for the same reason it
-  // always was: nothing in the presentation path implements it.
+  // A refused frame is dropped BEFORE any surface is leased, leaving the
+  // surface budget exactly where it was. sRGB stands for a refused transfer:
+  // nothing in the presentation path implements it.
   CVPixelBufferRef refusedTransfer =
       createColorBuffer(kCVImageBufferTransferFunction_sRGB);
   WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
@@ -3644,15 +3638,14 @@ void testHevcConfiguration(bool requireHardware) {
 // full-range stream (H.264 with video_full_range_flag = 1, i.e. ffmpeg's
 // yuvj420p) returns a format the expectation never mentions.
 //
-// MEASURED on this platform (scratchpad/drain/surfprobe.mm) against two real
-// 1080x720 High-profile files: an unpinned session carrying the player's own
+// MEASURED on this platform against two real 1080x720 High-profile files: an unpinned session carrying the player's own
 // IOSurface + Metal image attributes returns '&8f0'
 // (Lossless_420YpCbCr8BiPlanarFullRange) for a full-range stream and '&8v0'
 // (Lossless_420YpCbCr8BiPlanarVideoRange) for an otherwise identical
-// video-range one. Admitting only the VideoRange family therefore dropped
-// EVERY decoded frame of a full-range file in the output callback, latched an
-// async error, and failed the presentation drain closed part-way into
-// playback -- with zero frames ever submitted, while audio kept running.
+// video-range one. Admitting only the VideoRange family would drop EVERY
+// decoded frame of a full-range file in the output callback, latch an async
+// error, and fail the presentation drain closed part-way into playback --
+// with zero frames ever submitted, while audio kept running.
 //
 // The range is not a property this route needs to predict: the display layer
 // never samples the surface, it presents the buffer with the buffer's own

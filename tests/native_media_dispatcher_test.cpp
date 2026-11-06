@@ -1924,24 +1924,16 @@ void checkExactTerminalRetirement() {
 
   // Partial configure failure under parallel port configuration.
   //
-  // These two expectations used to assert the mechanics of a strictly serial
-  // configure: video was configured first, so a video rejection returned
-  // before audio was ever called, and audio was retired with a retired
-  // generation of zero because it had never been exposed.
-  //
-  // openLocalFile() now configures audio on a joined worker thread while it
+  // openLocalFile() configures audio on a joined worker thread while it
   // configures video on the owner thread, because VTDecompressionSessionCreate
   // and AudioUnitInitialize are independent and both IPC-bound; serializing
-  // them charged every open the sum of their latencies. The losing port can no
-  // longer be "the one we never got to" -- both ports are called, and both are
-  // stamped as exposed at the exact generation on the owner thread before
-  // either configure() runs.
+  // them charges every open the sum of their latencies. Both ports are
+  // called, and both are stamped as exposed at the exact generation on the
+  // owner thread before either configure() runs.
   //
-  // The INTENT of the old invariant is exactly what is asserted below and is
-  // unchanged: exposure accounting must be exact, and there must never be an
-  // exposed-but-unaccounted port. What changes is only the mechanism by which
-  // a port becomes exposed. So the fixture still proves the no-leak property,
-  // and proves it on the harder case: audio genuinely configured, video
+  // Exposure accounting must be exact, and there must never be an
+  // exposed-but-unaccounted port. The fixture proves that no-leak property on
+  // the harder case: audio genuinely configured, video
   // failed, and audio must still be retired exactly once, at generation 4, by
   // the ordinary retirement machinery -- configured ports are always retired
   // ports, whichever port lost the race.

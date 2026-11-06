@@ -127,10 +127,9 @@ InteractiveAspectLock &aspectLock() {
 //
 // The LOCK above is legitimately singular -- macOS has one pointer, so at most
 // one drag-resize is ever in flight -- but the RATIO is a per-window fact, and
-// WAM is a multi-window player. With a single stored (window, ratio) pair the
-// last window to open a video overwrote every other window's ratio, so
-// dragging any other window's corner either used the wrong aspect or was not
-// locked at all. A fixed-size table (never grown, never allocated) keyed by
+// WAM is a multi-window player. A single stored (window, ratio) pair would let
+// the last window to open a video overwrite every other window's ratio. A
+// fixed-size table (never grown, never allocated) keyed by
 // window keeps the lock singular and the ratios per window.
 struct AspectRatioEntry {
   // Weak for the same reason the lock's reference is: this table outlives
@@ -286,7 +285,7 @@ struct FitToScreenState {
 
 // One row per window, for the same reason the aspect ratios are a table: the
 // zoom toggle's "put it back where it was" memory belongs to the window that
-// was zoomed. A single shared row meant fitting a second window silently threw
+// was zoomed. A single shared row would let fitting a second window throw
 // away the first window's restore frame.
 std::array<FitToScreenState, wam::macos::NativeEmbeddingSupport::maximumWindows> &
 fitStates() {
@@ -369,11 +368,10 @@ NSScreen *screenFor(NSWindow *nsWindow) {
 }
 
 // Shared by both appliers below (instant and animated) so an animation in
-// flight blocks a nested instant -setFrame: exactly as an instant one already
-// blocked a nested instant one -- see the re-entrancy note above
-// applyWindowFrame. Cleared from the animated path's completion handler, so
-// the guard spans the animation's full ~200-280ms, not just the call that
-// starts it.
+// flight blocks a nested instant -setFrame: exactly as an instant one blocks a
+// nested instant one -- see the re-entrancy note above applyWindowFrame.
+// Cleared from the animated path's completion handler, so the guard spans the
+// animation's full duration, not just the call that starts it.
 bool frame_change_in_flight = false;
 
 // Validates and rounds a caller's proposed frame the same way for both
@@ -429,10 +427,8 @@ bool applyWindowFrame(NSWindow *nsWindow, NSRect frame) {
 // (resizeToFitScreen, resizeToActualSize) -- never by applyWindowFrame's
 // callers, and never by the double-click handler's own aspect-lock upkeep.
 //
-// A first attempt at this feature called the plain convenience method
-// (-[NSWindow setFrame:display:animate:] with animate:YES) where
-// applyWindowFrame's animate:NO call is today. It silently did nothing: on a
-// full-size-content-view window (this
+// The plain convenience method (-[NSWindow setFrame:display:animate:] with
+// animate:YES) does not animate here: on a full-size-content-view window (this
 // one -- see installFullSizeContentView), that convenience method computes
 // its animation through -[NSWindow animationResizeTime:], and Qt's own
 // QCocoaWindow reacts to the *content view's* frame changing during -setFrame
@@ -446,9 +442,9 @@ bool applyWindowFrame(NSWindow *nsWindow, NSRect frame) {
 // is established *before* any layout pass can run inside it, and the
 // animator proxy -- unlike the raw convenience method -- keeps driving the
 // interpolation across each of Qt's synchronous per-frame layout passes
-// instead of letting the first one collapse it. This was verified empirically
-// (screen-captured mid-transition frames showing intermediate window sizes)
-// rather than by inspecting AppKit's private implementation.
+// instead of letting the first one collapse it. This is established
+// empirically (screen-captured mid-transition frames show intermediate window
+// sizes), not from AppKit's private implementation.
 //
 // completion runs after the animation's final frame commits, on the main
 // thread; it may be nil.
@@ -509,18 +505,17 @@ void setTitlebarControlsRevealed(QWindow *window, bool revealed,
   if (!nsWindow)
     return;
 
-  // FULLSCREEN IS NOT OURS TO FADE, and this is the whole reason exiting
-  // fullscreen was impossible.
+  // FULLSCREEN IS NOT OURS TO FADE.
   //
   // AppKit does not build a second set of window buttons for fullscreen; it
   // reparents THESE THREE NSButton INSTANCES into the auto-hiding fullscreen
   // titlebar accessory. Its top-edge-hover reveal then animates the
   // accessory's position -- it never touches each button's alphaValue. So a
   // windowed fade that left them at alpha 0 (and the idle fade below always
-  // does, because pointerInTitlebarBand() is false in fullscreen by
-  // construction and hideControlsIfIdle therefore always hides) made AppKit
+  // would, because pointerInTitlebarBand() is false in fullscreen by
+  // construction and hideControlsIfIdle therefore always hides) makes AppKit
   // slide three fully transparent traffic lights down under the menu bar:
-  // the strip appeared, the buttons did not, and there was no way to click
+  // the strip appears, the buttons do not, and there is no way to click
   // out of fullscreen.
   //
   // In fullscreen the buttons are therefore pinned opaque and AppKit's own
@@ -643,12 +638,11 @@ bool revealInFinder(const QUrl &source) {
   //
   // When this call is what *activates* Finder and Finder answers it by
   // REUSING a window it already had on that folder, the selection lands but
-  // the scroll-to-visible does not. Observed on the real case this feature
-  // exists for: ~/Downloads, five windows already open on it, grouped icon
-  // view. Finder came frontmost, `selection` read back as the right file, and
-  // the file was not drawn anywhere in the window -- it sat past the end of a
-  // truncated group row that never scrolled. Selected, and invisible, which
-  // is indistinguishable from not selected at all.
+  // the scroll-to-visible does not (seen with several windows already open on
+  // the folder, grouped icon view: `selection` reads back as the right file,
+  // which sits past the end of a truncated group row that never scrolled).
+  // Selected, and invisible, which is indistinguishable from not selected at
+  // all.
   //
   // Issuing the identical reveal a second time, once Finder is up and the
   // window is already forward, is what performs the scroll. So do exactly
@@ -1391,12 +1385,11 @@ qreal appliedVividBoost(QWindow *window) {
 // True when an overlay belongs on screen at all right now.
 //
 // Deliberately NOT gated on this application being active or this window being
-// key, and the reason is worth stating because the stricter rule was written
-// first and then measured wrong. Activating another application orders that
+// key. Activating another application orders that
 // application's windows to the front of the normal band -- which is the band
 // the overlay is in -- so the app you switch to is never dimmed by it anyway;
 // the dim only ever covers the desktop and whatever was already behind it.
-// Tying the overlay to activation therefore bought nothing, and it cost the
+// Tying the overlay to activation would buy nothing, and it would cost the
 // mode its ability to be observed at all under the background launch seam,
 // where the process is deliberately never active.
 - (BOOL)shouldShow {

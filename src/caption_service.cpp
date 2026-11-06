@@ -1,9 +1,7 @@
 #include "caption_service.hpp"
 
 #include "jobs.hpp"
-#ifdef WAM_CAPTION_ABI
 #include "apple_caption_backend.hpp"
-#endif
 #include <cstdio>
 
 #include <algorithm>
@@ -1095,7 +1093,6 @@ void CaptionService::complete(const fs::path &output) {
 void CaptionService::fail(std::string error) {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Failed;
-  // The worker publishes finished after all request-local cleanup.
   status_.succeeded = false;
   status_.cancelled = false;
   status_.message = "Caption generation failed.";
@@ -1105,7 +1102,6 @@ void CaptionService::fail(std::string error) {
 void CaptionService::cancelled() {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Cancelled;
-  // The worker publishes finished after all request-local cleanup.
   status_.succeeded = false;
   status_.cancelled = true;
   status_.message = "Caption generation was cancelled.";
@@ -1204,7 +1200,6 @@ void CaptionService::run(
       return future.get();
     };
     bool useApple = false;
-#ifdef WAM_CAPTION_ABI
     if (request.options.prefer_apple && !request.options.translate_to_english) {
       if (!apple_) apple_ = std::make_unique<AppleCaptionBackend>();
       auto query = std::async(std::launch::async,[&] {
@@ -1232,7 +1227,6 @@ void CaptionService::run(
       }
       if (!useApple) { apple_->finish(); apple_.reset(); }
     }
-#endif
     if (stopIfRequested()) return;
     request.tools.ffmpeg = ffmpeg.path;
     if (!useApple) {

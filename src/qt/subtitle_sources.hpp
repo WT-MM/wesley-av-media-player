@@ -171,8 +171,9 @@ public:
     hint_ = -1;
     cached_text_.clear();
   }
-  // True when there is something to look up: loaded cues, or the live
-  // caption feed behind a selected Closed Captions source.
+  // True when there is something to look up: loaded cues, the live caption
+  // feed behind a selected Closed Captions source, or a selected generated
+  // caption source.
   [[nodiscard]] bool hasCues() const noexcept {
     return !cues_.empty() || activeIsClosedCaptions() || activeIsGenerated();
   }

@@ -339,8 +339,8 @@ int main(int argc, char** argv) {
   format.setProfile(QSurfaceFormat::CoreProfile);
   format.setVersion(3, 2);
   format.setDepthBufferSize(0);
-  // Rotated Qt Quick clips use the RenderState stencil contract. The dormant
-  // gate requests it explicitly so a context with zero stencil bits cannot
+  // Rotated Qt Quick clips use the RenderState stencil contract. The gate
+  // requests it explicitly so a context with zero stencil bits cannot
   // produce a deceptively green clipping test.
   format.setStencilBufferSize(8);
   format.setAlphaBufferSize(8);

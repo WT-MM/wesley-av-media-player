@@ -271,8 +271,8 @@ bool audioPacket(LibavformatCursor::Packet& packet, const MediaTrackDescriptor& 
     error="LibavformatAudioPacketGridOverflow";return false;
   }
   const auto expected=static_cast<std::int64_t>(expectedWide);
-  // AAC uses the shared quarter-access-unit bound. Opus retains its existing
-  // one-container-tick quantization proof.
+  // AAC is on grid when the shared piecewise timeline (quarter-access-unit
+  // bound) proved the packet; Opus must lie within one container tick.
   const auto rate = static_cast<std::int32_t>(track.audio->sampleRate);
   const __int128 observed=__int128(packet.pts.value)*rate;
   const __int128 exact=demuxWide*packet.pts.timescale;
@@ -623,9 +623,9 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
   context->audioOnly=audioOnly;context->audioStream=audio;
   context->audioOrigin=audioOrigin;
   context->audioDemuxOrigin=audioOrigin;
-  // Previously qualified 48 kHz fragmented/FLV AAC retains origin decoding
-  // and its bit-identical PCM guarantee (including decoder noise state).
-  // Newly qualified rates and ordinary MP4/Matroska use bounded preroll.
+  // 48 kHz AAC on the exact-demux-timeline route, and FLV AAC, decode from the
+  // origin to keep bit-identical PCM (including decoder noise state). Other
+  // AAC (other rates, ordinary MP4/Matroska) uses bounded preroll.
   context->aacBoundedSeek=audio && audioTrack.codec==MediaCodec::Aac &&
       std::string_view(s.reader->cursor.formatName())!="flv" &&
       (audioTrack.audio->sampleRate!=48000 ||
@@ -680,11 +680,11 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
         audioOrigin = {*origin,static_cast<std::int32_t>(rate)};
         context->audioOrigin = context->audioDemuxOrigin = audioOrigin;
         context->audioMediaStart = audioOrigin.value > 0 ? audioOrigin : MediaTime{0,1};
-        // Fragmented Apple MOV can add an extra encoder edit. Retain its
-        // independent byte-and-output-timing witness instead of guessing.
+        // Fragmented Apple MOV can add an extra encoder edit; it is proved by
+        // an independent byte-and-output-timing witness instead of guessed.
         const std::string_view container = s.reader->cursor.formatName();
-        // FLV has no edit/CodecDelay witness for a displaced AAC origin;
-        // preserve that route's existing zero-origin qualification.
+        // FLV has no edit/CodecDelay witness for a displaced AAC origin, so
+        // FLV AAC is admitted only at a zero origin.
         if (container=="flv" && (*origin!=0 || packet.skipStart)) {
           out.error="LibavformatAudioTimingUnproven: aac";return fail();
         }
@@ -711,7 +711,7 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
         if (!context->aacTimeline) context->aacTimeline = std::make_shared<AacPacketTimeline>(
             static_cast<std::uint32_t>(audioTrack.audio->sampleRate));
         // Some containers omit packet duration; their fixed AAC extent is
-        // known from the ASC. MOV's explicit short durations remain intact.
+        // known from the ASC. Explicit short durations (MOV) are used as stated.
         const auto duration = packet.duration.valid() && packet.duration.value > 0 ? packet.duration :
             MediaTime{1024,static_cast<std::int32_t>(audioTrack.audio->sampleRate)};
         if (!context->aacTimeline->append(packet.pts,duration)) {

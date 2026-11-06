@@ -40,9 +40,8 @@ FocusScope {
     //
     // Unity therefore moves: it sits at travel 1/maximum along the track and
     // is marked there with a tick plus the magnetic snap, the same shape the
-    // speed slider gives 1x. 200% puts it at the midpoint (where it has
-    // always been), 400% at the quarter point, and 100% at the very right
-    // edge -- at which point there is no boost region left at all and the
+    // speed slider gives 1x. 200% puts it at the midpoint, 400% at the
+    // quarter point, and 100% at the very right edge -- at which point there is no boost region left at all and the
     // tick is redundant with the end of the track, so it is dropped.
     //
     // Guarded for the moment before `player` has published the property (and
@@ -148,7 +147,7 @@ FocusScope {
     }
 
     // "2x" for the whole rates the presets use, "1.36x" for a grid step in
-    // between -- the same rule the speed button has always used.
+    // between -- the same rule the speed button uses.
     function formatRate(rate) {
         return Number(rate).toFixed(rate % 1 === 0 ? 0 : 2) + "×";
     }
@@ -301,7 +300,7 @@ FocusScope {
         height: 24
         to: Math.max(1, root.player.duration)
         // Once the palette has faded out, disconnect its geometry from
-        // mpv's frame-rate time-pos notifications. Re-evaluating when it
+        // the player's frame-rate position notifications. Re-evaluating when it
         // becomes visible snaps directly to the current position.
         mediaPosition: root.visible ? root.player.position : 0
         accentColor: root.accentColor
@@ -588,11 +587,10 @@ FocusScope {
 
     // The transport trio owns the bar's centre line. A Row only positions its
     // children horizontally, so without the verticalCenter anchors below the
-    // two 30pt arrow buttons hung from the top of a 42pt-tall row and sat a
-    // full 6pt above the round button's centre -- which is what made the
-    // round button read as "not centred between the arrows" even though the
-    // horizontal spacing was already exact. The volume and utility clusters
-    // anchor to this row's centre for the same reason.
+    // two 30pt arrow buttons would hang from the top of a 42pt-tall row, 6pt
+    // above the round button's centre, and the round button would read as
+    // not centred between the arrows. The volume and utility clusters anchor
+    // to this row's centre for the same reason.
     Row {
         id: transport
         objectName: "playCluster"
@@ -649,10 +647,10 @@ FocusScope {
         id: utilityCluster
         // Named for the same reason Main.qml names this whole panel
         // "transport": so a verification round can measure the cluster's real
-        // geometry instead of eyeballing a screenshot. The two viewing-mode
-        // toggles were added here, and at the window's minimum width (560 ->
-        // transport 536, compact) the cluster measures 192pt spanning
-        // x=334..526, clearing the centred play cluster (x=214..322) by 12pt.
+        // geometry instead of eyeballing a screenshot. At the window's minimum
+        // width (560 -> transport 536, compact) the cluster measures 192pt
+        // spanning x=334..526, clearing the centred play cluster (x=214..322)
+        // by 12pt.
         objectName: "utilityCluster"
         anchors.right: parent.right
         anchors.rightMargin: 10
@@ -898,10 +896,8 @@ FocusScope {
 
         // Vivid and Theater sit immediately before Full Screen so the three
         // viewing-mode controls read as one group, with fullscreen keeping the
-        // rightmost slot convention gives it. Measured at the window's
-        // minimum width (560, transport 536, compact): the utility cluster
-        // grows from 132pt to 192pt and still clears the centred transport
-        // cluster by ~14pt, so both stay reachable with no compact fallback.
+        // rightmost slot convention gives it. Both clusters stay reachable at
+        // the minimum width with no compact fallback (see utilityCluster).
         IconButton {
             id: vividButton
             visible: root.width >= 420

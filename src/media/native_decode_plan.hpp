@@ -43,16 +43,4 @@ struct DecodePlan {
   }
   return plan;
 }
-[[nodiscard]] constexpr const char* decodeRefusalName(DecodeRefusal value) noexcept {
-  switch (value) {
-  case DecodeRefusal::None: return "None";
-  case DecodeRefusal::NotApplicable: return "StageNotApplicable";
-  case DecodeRefusal::HardwareUnavailable: return "AppleHardwareUnavailable";
-  case DecodeRefusal::AppleProfileUnsupported: return "AppleProfileUnsupported";
-  case DecodeRefusal::AppleCodecUnavailable: return "AppleCodecUnavailable";
-  case DecodeRefusal::StageNotBuilt: return "DecoderStageNotBuilt";
-  case DecodeRefusal::PresentationUnsupported: return "PresentationFormatUnsupported";
-  }
-  return "UnknownDecodeRefusal";
-}
 }

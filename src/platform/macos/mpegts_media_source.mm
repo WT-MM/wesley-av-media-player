@@ -32,11 +32,12 @@ using media::mpegts::MpegTsCompressedSample;
 using media::mpegts::MpegTsGenerationPlan;
 
 // Frames Apple's decoder swallows at the head of a track before it emits its
-// first PCM frame. This MUST be the same number `native_audio_converter.mm`'s
-// `decoderLeadInFrames()` uses, because the session proves the generation by
-// checking that the converter's first published frame lands exactly on the
-// presentation floor: the source states the decode start, the converter adds
-// its lead-in, and the two have to meet.
+// first PCM frame. It is read from the shared codec-facts table, which
+// `native_audio_converter.mm`'s `decoderLeadInFrames()` also reads (its one
+// override, Vorbis, never travels in MPEG-TS); the two must agree because the
+// session proves the generation by checking that the converter's first
+// published frame lands exactly on the presentation floor: the source states
+// the decode start, the converter adds its lead-in, and the two have to meet.
 //
 // Matroska gets this for free -- it carries CodecDelay, and its demuxer places
 // access unit 0 that many frames before the presentation origin. A transport
@@ -343,9 +344,8 @@ struct MpegTsMediaSource::Impl final
     sample.track = *selected;
     sample.kind = kind;
     sample.presentationTime = video ? raw.presentationTime : audioPresentation;
-    // Transport Stream carries a REAL decode timestamp on video. Publishing it
-    // is what lets the merge key on decode order without the synthetic
-    // ordering lead the Matroska source has to invent.
+    // Transport Stream carries a REAL decode timestamp on video; see
+    // MpegTsSourceTraits::mergeOrderKey.
     sample.decodeTime = video ? raw.decodeTime : MediaTime{};
     sample.duration = duration;
     sample.keyFrame = video ? raw.keyFrame : true;

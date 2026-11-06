@@ -7,7 +7,7 @@
 namespace wam::playback::mpv {
 
 // One render-thread producer. Reset is serialized with render by PlayerCore's
-// existing render mutex; the GUI sampler reads only the atomic cumulative count.
+// render mutex; the GUI sampler reads only the atomic cumulative count.
 class FrameCounters final {
  public:
   void reset() noexcept { drawn_.store(0, std::memory_order_relaxed); }

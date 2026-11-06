@@ -16,9 +16,9 @@ namespace wam::macos_window_chrome {
 // Reads `source`'s first video track's natural (display) pixel size directly
 // from the container via AVFoundation, independent of whichever playback
 // backend (native AVFoundation/VideoToolbox route or the libmpv fallback) is
-// actually rendering it. PlayerController does not expose decoded video
-// dimensions on either backend, so this reads the file itself; an invalid
-// QSizeF means `source` is not a local file, has no video track, or could
+// actually rendering it (PlayerController::videoDisplaySize is the
+// engine-reported counterpart, used for containers AVFoundation cannot
+// demux). An invalid QSizeF means `source` is not a local file, has no video track, or could
 // not be inspected. Synchronous: intended for one call per newly opened
 // local source, not a per-frame or polling query.
 [[nodiscard]] QSizeF videoNaturalSizeForSource(const QUrl &source);
@@ -63,11 +63,11 @@ void adoptBackgroundLaunchPolicy();
 // Test-only, and the other half of WAM_TEST_BACKGROUND: makes `window` visible
 // and unoccluded WITHOUT activating this process.
 //
-// The accessory policy alone is not enough, and measuring proved it. A
+// The accessory policy alone is not enough. A
 // non-active app's -[NSWindow makeKeyAndOrderFront:] orders the window to the
 // front of ITS OWN app's windows, not to the front of the screen, so the window
-// lands wherever the active app's windows leave it -- measured at z-index 18 of
-// 44 on-screen windows, fully covered. A fully covered window is exactly the
+// lands wherever the active app's windows leave it, possibly fully covered. A
+// fully covered window is exactly the
 // occlusion counterfeit the benchmark discipline forbids: WindowServer stops
 // updating a covered window's backing store, so every drawn-frame fact taken
 // through one is unfalsifiable.
@@ -162,8 +162,8 @@ void setTitlebarControlsRevealed(QWindow *window, bool revealed,
                                  bool animated);
 
 // The alpha the three traffic-light buttons are currently drawn at, or -1 for
-// a null / not-yet-native window. This is a MEASUREMENT of exactly the thing
-// the fullscreen defect was: the chrome fade writes alphaValue onto the same
+// a null / not-yet-native window. This MEASURES the fullscreen hazard: the
+// chrome fade writes alphaValue onto the same
 // NSButton instances AppKit reparents into the fullscreen titlebar accessory,
 // and a fullscreen window whose buttons read 0 here is a fullscreen window
 // nobody can click their way out of. Reported by the WAM_TEST_WINDOW_SCRIPT
@@ -238,9 +238,9 @@ void clearFillScreenPadded(QWindow *window);
 // an SDR display or one already driven to its limit). Read from NSScreen's
 // maximumExtendedDynamicRangeColorComponentValue.
 //
-// This MOVES. Measured on one built-in XDR display with nothing reconfigured,
-// it read 16.0 on one sample and 6.04 minutes later: the headroom follows SDR
-// brightness and ambient light. So it is read at every apply and re-read on a
+// This MOVES: the headroom follows SDR brightness and ambient light (one
+// built-in XDR display, with nothing reconfigured, read both 16.0 and 6.04
+// minutes apart). So it is read at every apply and re-read on a
 // slow timer while the Vivid boost is on, never cached at startup.
 [[nodiscard]] qreal screenEdrHeadroom(QWindow *window);
 
@@ -299,9 +299,10 @@ class MacWindowChrome final : public QObject {
   media::MediaDisplaySize exactDisplaySize_;
   QUrl exactDisplaySource_;
 
-  // True when the process was launched by the benchmark harness (the same
-  // WAM_NATIVE_BENCHMARK_TELEMETRY opt-in the telemetry stream keys on). The
-  // harness positions the window itself and its validity checks reject any
+  // True when the process was launched by the benchmark harness:
+  // nativeBenchmarkTelemetryArmed(), i.e. WAM_NATIVE_BENCHMARK_TELEMETRY alone.
+  // Unlike the telemetry stream, this does not also require a valid run
+  // identity. The harness positions the window itself and its validity checks reject any
   // bounds change it did not make, so QML suppresses the QuickTime aspect
   // snap for these runs.
   Q_PROPERTY(bool benchmarkMode READ benchmarkMode CONSTANT)
@@ -334,7 +335,7 @@ public:
   Q_INVOKABLE QSizeF videoNaturalSizeForSource(const QUrl &source) const;
   // Asynchronous variant of videoNaturalSizeForSource: the synchronous read
   // returns (0, 0) on a cold open because the asset's tracks have not loaded
-  // yet, which silently skipped both the aspect lock and the aspect snap.
+  // yet, which would skip both the aspect lock and the aspect snap.
   // Loads the tracks off-thread and answers with videoNaturalSizeReady on the
   // GUI thread; a (0, 0) reply means the source has no readable video track.
   Q_INVOKABLE void requestVideoNaturalSize(const QUrl &source);

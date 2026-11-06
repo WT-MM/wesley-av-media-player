@@ -182,7 +182,7 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
 
     if a.routed_probe:
         # An explicit initial reader range must include AAC packets beyond
-        # the last picture. This used to lose two tail AUs on some MP4s.
+        # the last picture, or some MP4s lose two tail AUs.
         short_video = root/'short-video.mov'
         command = [str(x).replace('testsrc2=size=160x90:rate=30:duration=4',
                                  'testsrc2=size=160x90:rate=30:duration=3.96') for x in generation]

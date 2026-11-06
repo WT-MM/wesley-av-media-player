@@ -38,12 +38,12 @@ struct VideoCodecConfigurationLimits {
   //
   // OFF by default, and the default is the load-bearing part. A route may
   // turn this on ONLY if it also carries the colour description onto the
-  // CMVideoFormatDescription it synthesizes. Matroska does, since
-  // matroska_sample_builder.mm gained its `colr`. MPEG-TS does NOT: its
-  // sample builder writes no colour extension either, so admitting HDR there
-  // would hand VideoToolbox a PQ stream with nothing to attach to the surface
-  // and produce the washed-out SDR render that reads as "HDR support" and is
-  // strictly worse than a named refusal.
+  // CMVideoFormatDescription it synthesizes: Matroska through its `colr`,
+  // MPEG-TS through the colour extensions its sample builder writes from the
+  // SPS VUI. Admitting HDR without that would hand VideoToolbox a PQ stream
+  // with nothing to attach to the surface and produce the washed-out SDR
+  // render that reads as "HDR support" and is strictly worse than a named
+  // refusal.
   bool admitHighDynamicRangeColor{false};
   bool admitSoftwareProfiles{false};
   bool admitHardwareH264Profiles{false};
@@ -51,8 +51,8 @@ struct VideoCodecConfigurationLimits {
 
 // The single dimension question every parser in this file asks, so the six
 // bitstream parsers cannot drift from each other or from the media contract.
-// Orientation-agnostic since amendment 8: it delegates to the contract's own
-// predicate rather than restating a per-axis comparison a seventh time.
+// Orientation-agnostic: it delegates to the contract's own predicate rather
+// than restating a per-axis comparison a seventh time.
 //
 // Zero is deliberately NOT a size verdict here. Two callers reach this with a
 // dimension that can legitimately be zero and answer it as MalformedRecord a
@@ -241,9 +241,10 @@ inline constexpr std::size_t kVp8KeyframeHeaderMaximumBytes{10};
 //   00 00 01 2x  VideoObjectLayer      (the coded dimensions live here)
 //   00 00 01 B2  user_data             (optional, e.g. the encoder name)
 //
-// ONLY SIMPLE PROFILE IS ADMITTED. Measured on this platform 2026-08-20
-// (scratchpad/vt_asp_probe2.mm): Apple's VideoToolbox 'mp4v' decoder refuses
-// Advanced Simple Profile outright -- VTDecompressionSessionCreate returns
+// ONLY SIMPLE PROFILE IS ADMITTED unless the caller sets
+// admitSoftwareProfiles, which additionally admits Advanced Simple for the
+// software decoder. Apple's VideoToolbox 'mp4v' decoder refuses Advanced
+// Simple Profile outright -- VTDecompressionSessionCreate returns
 // codecBadDataErr (-8969) before a single access unit is submitted, and
 // AVFoundation reproduces the identical failure on a plain mp4v MP4, so this
 // is the platform decoder's own limit and not a carriage defect. The refusal
@@ -259,12 +260,13 @@ inline constexpr std::size_t kVp8KeyframeHeaderMaximumBytes{10};
 // without error and drifts: measured Y-plane mean absolute difference against
 // a reference decode grew 1.76 -> 4.70 over seven frames for quarter-pel
 // content, and an Advanced Simple stream with B-VOPs lost 7 of 12 frames and
-// produced a broken presentation ladder. Everything this parser admits is a
-// stream VideoToolbox decodes bit-accurately.
+// produced a broken presentation ladder. Everything this parser admits for
+// VideoToolbox is a stream VideoToolbox decodes bit-accurately.
 //
 // Two consequences follow from Simple Profile and are relied on downstream:
 // B-VOPs are forbidden, so decode order equals presentation order and the
-// reported reorder depth is 0; and the profile is 8-bit 4:2:0 only.
+// reported reorder depth is 0 (an admitted Advanced Simple stream reports 2);
+// and the profile is 8-bit 4:2:0 only.
 //
 // Note that the Matroska CodecID is NOT a usable profile signal. ffmpeg writes
 // V_MPEG4/ISO/ASP for every MPEG-4 Part 2 track it muxes, Simple Profile
@@ -314,15 +316,15 @@ inline constexpr std::size_t kMpeg4VisualEsdsOverheadBytes{41};
 // Every backend drops an over-ceiling video track the same silent way: the
 // admission predicate returns false, the track never reaches the descriptor,
 // and the file surfaces as "did not select every required track" or, worse,
-// as an empty error field. That refusal cost two rebuild-and-rerun cycles to
-// identify once already (scratchpad/wild_webm_report.md section 5), because
-// nothing in the verdict named the dimension, the cap, or even the subject.
+// as an empty error field, and nothing in that verdict names the dimension,
+// the cap, or even the subject.
 //
 // This is the one place the refusal text is built, so every backend says the
 // same sentence and the cap in it is always the live constant:
 //
-//   coded dimensions 7680x4320 (33,177,600 px) exceed the native v1 ceiling of
-//   4096x2320 (9,502,720 px)
+//   coded dimensions 7680x4320 (33,177,600 px) exceed the native v1 ceiling:
+//   no axis may exceed 4096, the shorter axis may not exceed 2320, and the
+//   frame may not exceed 9,502,720 px
 //
 // Callers append their own typed token -- the Matroska path gets
 // " (CodedDimensionLimit)" from matroskaDemuxErrorMessage, and the backends
