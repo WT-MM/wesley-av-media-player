@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/codec/aac.hpp"
+#include "media/media_codec_facts.hpp"
 #include "media/native_media_source.hpp"
 
 #include <algorithm>
@@ -89,37 +90,14 @@ inline constexpr std::int64_t kAacPacketGridResidualFrames = 256;
 // pre-skip -- so access unit 0 of every real Opus mux starts pre-skip frames
 // early and the generation decodes a bounded preroll it must not publish.
 //
-// Every other admitted codec starts exactly at zero, and the nonnegative
-// guards those codecs are checked against stay in force. This predicate exists
+// The codecs whose facts row sets precedesStreamOrigin share that shape (each
+// row says why); every other codec starts exactly at zero, and the
+// nonnegative guards it is checked against stay in force. This predicate exists
 // so the exception is stated once instead of being re-derived at each of the
 // layers that has to relax for it.
 [[nodiscard]] constexpr bool
 audioCodecPrecedesStreamOrigin(MediaCodec codec) noexcept {
-  switch (codec) {
-  // Vorbis joins Opus for the same structural reason stated differently by the
-  // format: its first packet carries only half an overlap-add window and
-  // decodes to no samples, so access unit 0 presents one block before media
-  // zero. Where Opus states the offset as a CodecDelay/pre-skip field, Vorbis
-  // implies it, but it lands in exactly the same arithmetic.
-  case MediaCodec::Opus:
-  case MediaCodec::Vorbis:
-  // AC-3 and E-AC-3 state a 256-frame CodecDelay -- the decoder delay Apple's
-  // decoder also swallows -- so access unit 0 presents 256 frames early.
-  case MediaCodec::Ac3:
-  case MediaCodec::Eac3:
-  // MP3 states the LAME encoder delay plus the 529-frame decoder delay
-  // (1105 frames from every ffmpeg mux).
-  case MediaCodec::Mp3:
-  // AAC states one 1024-frame access unit of encoder priming whenever the mux
-  // encoded rather than copied the track.
-  case MediaCodec::Aac:
-    return true;
-  default:
-    // FLAC states no CodecDelay and its decoder swallows nothing, so its
-    // access unit 0 is media frame 0 exactly. It deliberately does NOT join
-    // this predicate even though it does state an exact duration below.
-    return false;
-  }
+  return mediaCodecFacts(codec).precedesStreamOrigin;
 }
 
 // True for codecs whose Matroska descriptor states the audio track's duration

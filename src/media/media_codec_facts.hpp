@@ -169,6 +169,13 @@ struct MediaCodecFacts {
   // reset must rebuild the converter instead.
   bool decoderResetRebuilds{false};
 
+  // Decoded by the libavcodec software stage rather than AudioToolbox.
+  bool softwareDecoded{false};
+
+  // The codec's first access unit legitimately presents BEFORE media time
+  // zero; see audioCodecPrecedesStreamOrigin for what that relaxes.
+  bool precedesStreamOrigin{false};
+
   // The reorder depth of a video codec whose configuration record states none,
   // a property of the codec rather than of the stream. H.264, HEVC and AV1
   // derive theirs from the record and state zero here.
@@ -207,8 +214,11 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      .configurationAtomName = "vpcC", .carriesConfigurationRecord = true,
      .requiresHardwareDecode = true, .statesCodedSampleFormat = true,
      .avfoundationVideoAdmitted = true},
+    // AAC states one 1024-frame access unit of encoder priming whenever the
+    // mux encoded rather than copied the track.
     {.codec = MediaCodec::Aac, .kind = MediaCodecKind::Audio,
-     .coreAudioFormatTag = 0x61616320U /* 'aac ' */},
+     .coreAudioFormatTag = 0x61616320U /* 'aac ' */,
+     .precedesStreamOrigin = true},
     // Structurally FLAC's tail bound, for a different reason than the codec:
     // on the AVFoundation route the shortfall is manufactured by this player.
     // An MP4's stts states the final ALAC packet's true length -- 272 frames of
@@ -228,12 +238,13 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
     // MP3 swallows 529 frames at the head and flushes exactly 529 more at the
     // end, so the track still decodes to the frame count its packets declare
     // even though its content sits 529 frames earlier than the packet grid
-    // alone would say.
+    // alone would say. It precedes the origin by the LAME encoder delay plus
+    // that 529-frame decoder delay (1105 frames from every ffmpeg mux).
     {.codec = MediaCodec::Mp3, .kind = MediaCodecKind::Audio,
      .decoderLeadInFrames =
          static_cast<std::uint16_t>(codec::kMpegLayer3DecoderDelayFrames),
      .coreAudioFormatTag = 0x2E6D7033U /* '.mp3' */,
-     .decoderFlushesLeadInAtEnd = true},
+     .decoderFlushesLeadInAtEnd = true, .precedesStreamOrigin = true},
     // AudioConverterReset does NOT restore an Opus converter's priming state:
     // measured, a reset converter emits the decoder's 120-frame startup
     // transient as real output instead of swallowing it, so the same stream
@@ -244,13 +255,17 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      .decoderLeadInFrames =
          static_cast<std::uint16_t>(codec::kOpusDecoderDelayFrames),
      .coreAudioFormatTag = 0x6F707573U /* 'opus' */,
-     .decoderResetRebuilds = true},
+     .decoderResetRebuilds = true, .precedesStreamOrigin = true},
     // 'vorb'. AudioToolbox registers a Vorbis decoder under this fourcc --
     // kAudioFormatProperty_DecodeFormatIDs reports it -- but publishes no
-    // kAudioFormatVorbis constant for it.
+    // kAudioFormatVorbis constant for it. Vorbis precedes the origin for
+    // Opus' structural reason stated differently by the format: its first
+    // packet decodes to no samples, so access unit 0 presents one block before
+    // media zero. Where Opus states the offset as a CodecDelay/pre-skip field,
+    // Vorbis implies it, but it lands in exactly the same arithmetic.
     {.codec = MediaCodec::Vorbis, .kind = MediaCodecKind::Audio,
      .coreAudioFormatTag = 0x766F7262U /* 'vorb' */,
-     .decoderLeadInIsOnePacket = true},
+     .decoderLeadInIsOnePacket = true, .precedesStreamOrigin = true},
     {.codec = MediaCodec::Pcm, .kind = MediaCodecKind::Audio,
      .coreAudioFormatTag = 0x6C70636DU /* 'lpcm' */},
     // VP8 has no VideoToolbox decoder on any Apple platform and is decoded by
@@ -262,20 +277,27 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      .coreMediaType = 0x76703038U /* 'vp08' */,
      .configurationKind = MediaCodecConfigurationKind::VpcC,
      .carriesConfigurationRecord = true, .statesCodedSampleFormat = true},
+    // AC-3 and E-AC-3 state a 256-frame CodecDelay -- the decoder delay
+    // Apple's decoder also swallows -- so access unit 0 presents 256 frames
+    // early.
     {.codec = MediaCodec::Ac3, .kind = MediaCodecKind::Audio,
      .decoderLeadInFrames =
          static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames),
      .coreAudioFormatTag = 0x61632D33U /* 'ac-3' */,
      .decoderTailShortfallFrames =
-         static_cast<std::uint16_t>(codec::kAc3DecoderTailShortfallFrames)},
+         static_cast<std::uint16_t>(codec::kAc3DecoderTailShortfallFrames),
+     .precedesStreamOrigin = true},
     {.codec = MediaCodec::Eac3, .kind = MediaCodecKind::Audio,
      .decoderLeadInFrames =
          static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames),
      .coreAudioFormatTag = 0x65632D33U /* 'ec-3' */,
      .decoderTailShortfallFrames =
-         static_cast<std::uint16_t>(codec::kAc3DecoderTailShortfallFrames)},
+         static_cast<std::uint16_t>(codec::kAc3DecoderTailShortfallFrames),
+     .precedesStreamOrigin = true},
     // The final FLAC frame carries at least one sample and at most a whole
-    // block.
+    // block. FLAC states no CodecDelay and its decoder swallows nothing, so
+    // its access unit 0 is media frame 0 exactly: it deliberately does NOT
+    // precede the origin even though it states an exact decoded duration.
     {.codec = MediaCodec::Flac, .kind = MediaCodecKind::Audio,
      .coreAudioFormatTag = 0x666C6163U /* 'flac' */,
      .decoderTailShortfallBelowOnePacket = true},
@@ -337,19 +359,18 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      .coreMediaType = 0x61703468U /* 'ap4h' */,
      .needsPinnedOutputPixelFormat = true, .requiresHardwareDecode = true,
      .avfoundationVideoAdmitted = true},
-    {.codec = MediaCodec::Dts, .kind = MediaCodecKind::Audio},
-    {.codec = MediaCodec::TrueHd, .kind = MediaCodecKind::Audio},
-    {.codec = MediaCodec::Mlp, .kind = MediaCodecKind::Audio},
+    {.codec = MediaCodec::Dts, .kind = MediaCodecKind::Audio,
+     .softwareDecoded = true},
+    {.codec = MediaCodec::TrueHd, .kind = MediaCodecKind::Audio,
+     .softwareDecoded = true},
+    {.codec = MediaCodec::Mlp, .kind = MediaCodecKind::Audio,
+     .softwareDecoded = true},
 }};
 
 // CoreAudio's mono and stereo channel layout tags (kAudioChannelLayoutTag_Mono
 // and _Stereo), as plain integers; the platform layer asserts both.
 inline constexpr std::uint32_t kCoreAudioMonoLayoutTag{0x00640001U};
 inline constexpr std::uint32_t kCoreAudioStereoLayoutTag{0x00650002U};
-
-[[nodiscard]] constexpr bool softwareAudioCodec(MediaCodec codec) noexcept {
-  return codec == MediaCodec::Dts || codec == MediaCodec::TrueHd || codec == MediaCodec::Mlp;
-}
 
 [[nodiscard]] constexpr bool mediaSampleFormatIs422(MediaVideoSampleFormat format) noexcept {
   return format == MediaVideoSampleFormat::Yuv422EightBit ||
@@ -378,6 +399,10 @@ inline constexpr std::uint32_t kCoreAudioStereoLayoutTag{0x00650002U};
 mediaCodecFacts(MediaCodec codec) noexcept {
   const auto index = static_cast<std::size_t>(codec);
   return kMediaCodecFacts[index < kMediaCodecFacts.size() ? index : 0U];
+}
+
+[[nodiscard]] constexpr bool softwareAudioCodec(MediaCodec codec) noexcept {
+  return mediaCodecFacts(codec).softwareDecoded;
 }
 
 // The last enumerator of the frozen, append-only MediaCodec. Appending one
