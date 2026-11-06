@@ -2576,65 +2576,64 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     return false;
   }
   const media::MediaVideoFormat& video = *track->video;
-  // ONE colour rule, shared with native_video_consumer.mm. See
-  // mediaVideoColorAdmitted() in native_media_source.hpp for what it admits
-  // and what keeps a named refusal.
-  const bool supportedModeledColor = media::mediaVideoColorAdmitted(video);
+  // THE shared admission rule (media::nativeVideoTrackRefusal), plus the one
+  // AVFoundation-only term: the format description's stated bit depth must
+  // agree with the HEVC record it carries. Each refusal is named: the terms
+  // are independent and not equally likely, and a field report must tell a
+  // rotation refusal from a chroma-siting one without a rebuild.
+  const media::NativeVideoRefusal shared =
+      media::nativeVideoTrackRefusal(video, videoFacts);
   const bool hevcDepthMatches =
       track->codec != MediaCodec::Hevc || video.bitsPerComponent == 0 ||
       media::mediaSampleFormatDepth(video.sampleFormat) == video.bitsPerComponent;
-  // Main 10 shares the 8-bit colour contract: supportedModeledColor above is
-  // the one rule for both depths, so an untagged Main 10 stream is admitted
-  // exactly like an untagged Main one, and a BT.2020/PQ/HLG stream is admitted
-  // at either depth. The opaque-metadata, Dolby Vision and ambient-viewing
-  // refusals live inside that predicate, so there is exactly one place a
-  // colour refusal can come from.
-  // Quarter turns are presentable (the presentation layer rotates); anything
-  // else was already refused at describeVideo and cannot reach here. This term
-  // must stay in lockstep with supportedVideoTrack() in
-  // native_video_consumer.mm -- if one admits a rotation the other refuses,
-  // a clean Unsupported becomes a mid-startup Failed.
-  // Named individually rather than folded into one verdict. This predicate has
-  // seven independent reasons to refuse and they are not equally likely; a
-  // single message would leave a field report unable to tell a rotation
-  // refusal from a chroma-siting one without a rebuild.
   const char* geometryRefusal = nullptr;
-  if (!quarterTurnRotationAdmitted(video)) {
-    geometryRefusal =
-        "selected video rotation is outside the native v1 presentation "
-        "contract";
-  } else if (!video.progressive) {
-    geometryRefusal = "interlaced video is outside native v1";
-  } else if (!supportedModeledColor) {
-    geometryRefusal = video.dolbyVisionConfigurationPresent
-        ? "DolbyVisionDisplayOracleProofMissing"
-        : video.ambientViewingEnvironmentPresent
-            ? "AmbientViewingEnvironmentDisplayProofMissing"
-            : "VideoColorDescriptorDisplayProofMissing";
-  } else if (!hevcDepthMatches) {
-    geometryRefusal =
-        "HEVC bit depth disagrees with the decoded sample format";
-  } else if (videoFacts.statesCodedSampleFormat &&
-             media::mediaSampleFormatDepth(video.sampleFormat) == 0) {
-    // A record-less codec is exempt because this gate asks its question of the
-    // wrong artefact for it. It proves that the DECODED surface will be 4:2:0
-    // by reading the coded sample format out of a parameter-set record -- which
-    // is sound for every codec that HAS such a record, and impossible for one
-    // that has none (its sampleFormat is Unknown by construction; see
-    // parseSampleFormat).
-    //
-    // The same guarantee is made for those codecs by a stronger mechanism, not
-    // a weaker one: each pins its decompression session's output pixel format
-    // (needsPinnedOutputPixelFormat), so the surface is 4:2:0 by request rather
-    // than by inference, and validateOutputSurfaceContract re-checks the
-    // delivered format on EVERY frame and fails the stream closed if it ever
-    // differs. A parsed record only ever predicted what this pin compels.
-    geometryRefusal = "selected video sample format is outside native v1";
-  } else if (!media::mediaVideoHasFullCodedAperture(video)) {
-    geometryRefusal =
-        "selected video has a clean aperture smaller than its coded frame";
-  } else if (media::mediaVideoDisplaySize(video).empty()) {
-    geometryRefusal = "AnamorphicExactRationalDisplaySizeProofMissing";
+  switch (shared) {
+    case media::NativeVideoRefusal::None:
+    case media::NativeVideoRefusal::SampleFormat:
+    case media::NativeVideoRefusal::Aperture:
+    case media::NativeVideoRefusal::DisplaySize:
+      if (!hevcDepthMatches) {
+        geometryRefusal =
+            "HEVC bit depth disagrees with the decoded sample format";
+      }
+      break;
+    default:
+      break;
+  }
+  if (geometryRefusal == nullptr) {
+    switch (shared) {
+      case media::NativeVideoRefusal::None:
+        break;
+      case media::NativeVideoRefusal::Dimensions:
+        geometryRefusal =
+            "selected video dimensions are outside the native v1 ceiling";
+        break;
+      case media::NativeVideoRefusal::Rotation:
+        geometryRefusal =
+            "selected video rotation is outside the native v1 presentation "
+            "contract";
+        break;
+      case media::NativeVideoRefusal::Interlaced:
+        geometryRefusal = "interlaced video is outside native v1";
+        break;
+      case media::NativeVideoRefusal::Color:
+        geometryRefusal = video.dolbyVisionConfigurationPresent
+            ? "DolbyVisionDisplayOracleProofMissing"
+            : video.ambientViewingEnvironmentPresent
+                ? "AmbientViewingEnvironmentDisplayProofMissing"
+                : "VideoColorDescriptorDisplayProofMissing";
+        break;
+      case media::NativeVideoRefusal::SampleFormat:
+        geometryRefusal = "selected video sample format is outside native v1";
+        break;
+      case media::NativeVideoRefusal::Aperture:
+        geometryRefusal =
+            "selected video has a clean aperture smaller than its coded frame";
+        break;
+      case media::NativeVideoRefusal::DisplaySize:
+        geometryRefusal = "AnamorphicExactRationalDisplaySizeProofMissing";
+        break;
+    }
   }
   if (geometryRefusal != nullptr) {
     assignError(error, geometryRefusal);
