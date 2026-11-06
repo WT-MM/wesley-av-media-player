@@ -6,6 +6,8 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 
+#include <cstdio>
+
 namespace wam::macos {
 namespace {
 void assignError(std::string* error, const char* message) noexcept {
@@ -49,8 +51,13 @@ NativeMediaSessionPresentation createPresentation(
       }
       if (trackedOutput == nullptr) {
         // A layer route that cannot be installed is not a session failure: the
-        // GL path is a full implementation and stays the fallback.
+        // GL path is a full implementation and stays the fallback. It costs
+        // GPU time and stops on occlusion, so the loss is logged.
         layerHost.reset();
+        std::fprintf(stderr,
+                     "WAM: layer presentation unavailable, using scene graph: "
+                     "%s\n",
+                     layerError.empty() ? "unknown" : layerError.c_str());
       }
     }
     if (trackedOutput == nullptr) {
