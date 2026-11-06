@@ -11,6 +11,7 @@
 #include "media/video_codec_configuration.hpp"
 #include "platform/macos/core_media_codec_facts.hpp"
 #include "platform/macos/core_media_source_support.hpp"
+#include "platform/macos/native_custom_source_core.hpp"
 #include "platform/macos/matroska_sample_builder.hpp"
 extern "C" {
 #include <libavcodec/codec_id.h>
@@ -396,43 +397,48 @@ MediaTime preceding(const Context &context, MediaTime target) {
                        });
   return it == context.raps.begin() ? context.raps.front() : *--it;
 }
+struct LibavformatSourceTraits {
+  static constexpr const char* kName = "libavformat";
+  using AssetContext = Context;
+};
+using Clock = std::chrono::steady_clock;
+double milliseconds(Clock::time_point from, Clock::time_point to) {
+  return std::chrono::duration<double,std::milli>(to-from).count();
+}
+struct OpenTelemetry {
+  bool enabled{};
+  Clock::time_point begun, cursorOpened, scanStarted, scanFinished;
+  double readMs{}, witnessMs{};
+  std::size_t packets{};
+  std::uint64_t bytes{};
+};
 } // namespace
-struct LibavformatMediaSource::Impl {
-  std::atomic<MediaGeneration> operation{}, cancelled{};
-  bool isCancelled() const noexcept {
-    const auto active = operation.load(std::memory_order_acquire);
-    return active && cancelled.load(std::memory_order_acquire) == active;
-  }
+struct LibavformatMediaSource::Impl final
+    : NativeSourceCore<Impl, LibavformatSourceTraits> {
+  std::unique_ptr<PacketReader> reader;
+  std::optional<LibavformatCursor::Packet> videoPending,audioPending;
+  MediaTime target{}, decodeStart{}, audioDecodeStart{}, windowStart{};
+  MediaAudioGenerationWindow audioWindow{};
+  bool audioStartsAtOrigin{true};
+  bool audioTail{};
+  std::uint64_t audioOrdinal{};
   CancellationToken cancellation() const noexcept {
     return {this, [](const void *value) noexcept {
               return static_cast<const Impl *>(value)->isCancelled();
             }};
   }
-  MediaGeneration highWater{}, armed{}, generation{};
-  std::shared_ptr<const Context> context;
-  std::unique_ptr<PacketReader> reader;
-  std::optional<MediaSample> head;
-  std::optional<LibavformatCursor::Packet> videoPending,audioPending;
-  MediaTime target{}, decodeStart{}, audioDecodeStart{}, windowStart{};
-  MediaAudioGenerationWindow audioWindow{};
-  bool audioStartsAtOrigin{true};
-  bool eos{}, audioEos{}, opened{}, audioTail{}, audioEosPublished{}, videoEosPublished{};
-  std::uint64_t audioOrdinal{};
-  std::uint64_t emitted{}, seeks{};
-  std::size_t peak{};
-  bool arm(MediaGeneration next) noexcept {
-    if (!next || next <= highWater || armed)
-      return false;
-    highWater = next;
-    armed = next;
-    operation.store(next, std::memory_order_release);
-    return true;
+  void retireActive() noexcept {
+    videoPending.reset();
+    audioPending.reset();
   }
+  void resetSourceFacts() noexcept { reader.reset(); }
   const MediaTrackDescriptor* packetTrack(unsigned stream) const {
+    const auto& context = assetContext;
     for(const auto& track:context->descriptor()->tracks)if(track.id==stream+1)return &track;
     return nullptr;
   }
   bool normalize(LibavformatCursor::Packet& packet,std::string& error) {
+    const auto& context = assetContext;
     const auto* track=packetTrack(packet.stream);
     if(!track || !track->audio)return true;
     auto frames=context->audioPacketFrames;
@@ -443,8 +449,259 @@ struct LibavformatMediaSource::Impl {
     }
     return audioPacket(packet,*track,context->audioOrigin,context->audioDemuxOrigin,context->audioQuantum,audioOrdinal++,frames,audioTail,error,proof);
   }
+  // Indexes the whole file once at cold open: the descriptor, the video RAP
+  // index and the AAC piecewise timeline.
+  std::shared_ptr<Context> scan(const std::filesystem::path &path,
+                                const MediaSourceOpenOptions &options,
+                                std::string &error, MediaRefusalClass &refusal,
+                                OpenTelemetry &t) {
+  if (!reader->cursor.open(path, cancellation(), error, &refusal))
+    return nullptr;
+  t.cursorOpened = Clock::now();
+  auto descriptor = std::make_shared<MediaSourceDescriptor>();
+  std::optional<unsigned> video, audio;
+  const auto count = reader->cursor.streamCount();
+  if (count > options.limits.maximumTracks) {
+    error = "LibavformatTrackLimit";
+    return nullptr;
+  }
+  for (unsigned i = 0; i < count; ++i) {
+    const auto stream = reader->cursor.stream(i);
+    ++descriptor->inventory.total;
+    if (stream.video && !stream.attached) {
+      ++descriptor->inventory.video;
+      if (!video || options.selection.preferredVideo == i + 1)
+        video = i;
+    } else if (stream.audio) {
+      ++descriptor->inventory.audio;
+      if (!audio || options.selection.preferredAudio == i + 1)
+        audio = i;
+    } else
+      ++descriptor->inventory.metadata;
+  }
+  if(audio) {
+    const auto codec=reader->cursor.stream(*audio).codecId;
+    const std::string_view container=reader->cursor.formatName();
+    const bool opus=codec==AV_CODEC_ID_OPUS && (!video ||
+        (reader->cursor.stream(*video).codecId==AV_CODEC_ID_HEVC && container.find("matroska")!=std::string_view::npos));
+    const bool aac=codec==AV_CODEC_ID_AAC &&
+        (container.find("mov")!=std::string_view::npos ||
+         (container=="flv" && video && reader->cursor.stream(*video).codecId==AV_CODEC_ID_H264) ||
+         container.find("matroska")!=std::string_view::npos);
+    if(!opus && !aac) {
+      error="LibavformatAudioTimingUnproven: ";error+=reader->cursor.codecName(*audio);return nullptr;
+    }
+  }
+  if (!video && !audio) {
+    error = "LibavformatNoAdmittedVideoTrack";
+    return nullptr;
+  }
+  const bool audioOnly = !video;
+  if (audioOnly && options.selection.requireVideo) {
+    error = "LibavformatRequiredVideoTrackMissing";
+    return nullptr;
+  }
+  if (!audio && options.selection.requireAudio) {
+    error = "LibavformatRequiredAudioTrackMissing";
+    return nullptr;
+  }
+  if (audioOnly)
+    video = audio;
+  if (options.selection.preferredVideo &&
+      *options.selection.preferredVideo != *video + 1) {
+    error = "LibavformatSelectedTrackUnavailable";
+    return nullptr;
+  }
+  MediaTrackDescriptor track;
+  track.id = *video + 1;
+  const auto stream = reader->cursor.stream(*video);
+  MediaTrackDescriptor audioTrack;
+  MediaTime audioOrigin{};
+  std::uint32_t audioFrames{};
+  if(audio) {
+    audioTrack.id=*audio+1;
+    if(!audioDescriptor(reader->cursor.stream(*audio),audioTrack,audioFrames,audioOrigin,std::string_view(reader->cursor.formatName())=="flv",error)) {
+      error+=": ";error+=reader->cursor.codecName(*audio);return nullptr;
+    }
+    descriptor->selectedAudio=audioTrack.id;
+  }
+  if(audioOnly)track=audioTrack;
+  else if(!videoDescriptor(stream,options.limits,track,error))return nullptr;
+  if(!audioOnly)descriptor->selectedVideo=track.id;
+  auto context=std::make_shared<Context>(path,options,descriptor);
+  context->selectedStream=*video;context->identity=reader->cursor.identity();
+  context->audioOnly=audioOnly;context->audioStream=audio;
+  context->audioOrigin=audioOrigin;
+  context->audioDemuxOrigin=audioOrigin;
+  // 48 kHz AAC on the exact-demux-timeline route, and FLV AAC, decode from the
+  // origin to keep bit-identical PCM (including decoder noise state). Other
+  // AAC (other rates, ordinary MP4/Matroska) uses bounded preroll.
+  context->aacBoundedSeek=audio && audioTrack.codec==MediaCodec::Aac &&
+      std::string_view(reader->cursor.formatName())!="flv" &&
+      (audioTrack.audio->sampleRate!=48000 ||
+       !LibavformatCursor::requiresExactDemuxTimeline(path,cancellation()));
+  if(audio)context->audioQuantum=reader->cursor.stream(*audio).timeBase;
+  if(audioOnly)context->raps.push_back({0,1});
+  LibavformatCursor::Packet packet;
+  MediaTime end{0, 1}, audioEnd{0,1},videoEnd{0,1};
+  std::uint64_t& bytes = t.bytes;
+  std::uint64_t audioPackets{};
+  bool audioTail = false;
+  std::optional<MediaTime> aacProvedEnd;
+  std::optional<LibavformatAacEdit> aacEditEnd;
+  t.scanStarted = Clock::now();
+  for (std::size_t packets = 0;; ++packets) {
+    if (packets == 2'000'000 || bytes > 16ULL * 1024 * 1024 * 1024) {
+      error = "LibavformatIndexScanLimit";
+      return nullptr;
+    }
+    const auto readStarted = t.enabled ? Clock::now() : Clock::time_point{};
+    const auto rc = reader->cursor.read(packet, error);
+    if (t.enabled) t.readMs += milliseconds(readStarted,Clock::now());
+    t.packets = packets;
+    if (rc == LibavformatCursor::Read::End)
+      break;
+    if (rc != LibavformatCursor::Read::Packet)
+      return nullptr;
+    bytes += packet.bytes.size();
+    const bool isAudio=audio && packet.stream==*audio;
+    if(packet.stream!=*video && !isAudio)continue;
+    if (!packet.pts.valid() || (!isAudio && packet.pts.value < 0) ||
+        (!isAudio && (!packet.duration.valid() || packet.duration.value <= 0)) ||
+        packet.corrupt) {
+      error = "LibavformatExactVideoTimelineUnavailable";
+      return nullptr;
+    }
+    if (packet.bytes.size() > (isAudio
+                                   ? options.limits.maximumAudioSampleBytes
+                                   : options.limits.maximumVideoSampleBytes)) {
+      error = "LibavformatSampleLimit";
+      return nullptr;
+    }
+    if(isAudio) {
+      if (!audioPackets && audioTrack.codec == MediaCodec::Aac) {
+        const auto witnessStarted = Clock::now();
+        const auto rate = static_cast<std::uint32_t>(audioTrack.audio->sampleRate);
+        const auto origin = exactAudioFrameIndex(packet.pts, rate);
+        if (!origin || (*origin < 0 && packet.skipStart != std::uint64_t(-*origin)) ||
+            (*origin >= 0 && packet.skipStart)) {
+          error="LibavformatAudioPrimingUnproven: aac";return nullptr;
+        }
+        audioOrigin = {*origin,static_cast<std::int32_t>(rate)};
+        context->audioOrigin = context->audioDemuxOrigin = audioOrigin;
+        context->audioMediaStart = audioOrigin.value > 0 ? audioOrigin : MediaTime{0,1};
+        // Fragmented Apple MOV can add an extra encoder edit; it is proved by
+        // an independent byte-and-output-timing witness instead of guessed.
+        const std::string_view container = reader->cursor.formatName();
+        // FLV has no edit/CodecDelay witness for a displaced AAC origin, so
+        // FLV AAC is admitted only at a zero origin.
+        if (container=="flv" && (*origin!=0 || packet.skipStart)) {
+          error="LibavformatAudioTimingUnproven: aac";return nullptr;
+        }
+        if (container.find("mov") != std::string_view::npos) {
+          aacEditEnd = inspectLibavformatAacEdit(path,reader->cursor.stream(*audio).containerTrackId);
+          if (!aacEditEnd) {error="LibavformatAudioTimingUnproven: aac";return nullptr;}
+          context->audioMediaStart = *audioFrameAtOrAfter(aacEditEnd->start,rate);
+          if (compareMediaTime(audioOrigin,context->audioMediaStart)==MediaTimeOrder::Greater) {
+            error="LibavformatAudioPrimingUnproven: origin after media start";return nullptr;
+          }
+        }
+        if (rate == 48000 && (*origin == -64 || *origin == -2112)) {
+          const auto proof = proveLibavformatAacTiming(path,
+              reader->cursor.stream(*audio).containerTrackId, packet);
+          if (!proof) {error="LibavformatAudioTimingUnproven: aac";return nullptr;}
+          audioOrigin = proof->origin;
+          aacProvedEnd = proof->end;
+          context->audioOrigin = audioOrigin;
+          context->audioDemuxOrigin = proof->demuxOrigin;
+        }
+        t.witnessMs += milliseconds(witnessStarted,Clock::now());
+      }
+      if (audioTrack.codec == MediaCodec::Aac) {
+        if (!context->aacTimeline) context->aacTimeline = std::make_shared<AacPacketTimeline>(
+            static_cast<std::uint32_t>(audioTrack.audio->sampleRate));
+        // Some containers omit packet duration; their fixed AAC extent is
+        // known from the ASC. Explicit short durations (MOV) are used as stated.
+        const auto duration = packet.duration.valid() && packet.duration.value > 0 ? packet.duration :
+            MediaTime{codec::kAacLcSamplesPerAccessUnit,static_cast<std::int32_t>(audioTrack.audio->sampleRate)};
+        if (!context->aacTimeline->append(packet.pts,duration)) {
+          error="AacPacketTimelineDiscontinuity: unrepresentable piecewise grid";return nullptr;
+        }
+      }
+      if(!audioPacket(packet,audioTrack,audioOrigin,context->audioDemuxOrigin,context->audioQuantum,audioPackets++,audioFrames,audioTail,error,
+          context->aacTimeline ? &context->aacTimeline->packets().back() : nullptr))return nullptr;
+      audioTrack.audio->framesPerPacket=audioFrames;
+    }
+    const auto packetEnd = media::addMediaTime(packet.pts, packet.duration);
+    if (!packetEnd) {
+      error = "LibavformatVideoTimelineUnrepresentable";
+      return nullptr;
+    }
+    if (compareMediaTime(*packetEnd, end) == MediaTimeOrder::Greater)
+      end = *packetEnd;
+    if(isAudio)audioEnd=*packetEnd;
+    else if(compareMediaTime(*packetEnd,videoEnd)==MediaTimeOrder::Greater)videoEnd=*packetEnd;
+    if (packet.key && !isAudio) {
+      if (context->raps.size() == Context::kMaximumRaps) {
+        error = "LibavformatRapIndexLimit";
+        return nullptr;
+      }
+      if (!context->raps.empty() &&
+          compareMediaTime(packet.pts, context->raps.back()) !=
+              MediaTimeOrder::Greater) {
+        error = "LibavformatNonmonotonicRapIndex";
+        return nullptr;
+      }
+      context->raps.push_back(packet.pts);
+    }
+  }
+  t.scanFinished = Clock::now();
+  if (context->aacTimeline && !context->aacTimeline->finish(std::string_view(reader->cursor.formatName()).find("mov")!=std::string_view::npos)) {
+    error="AacPacketTailTrimUnproven";return nullptr;
+  }
+  if (context->raps.empty() || (!audio && context->raps.front().value != 0)) {
+    error = "LibavformatStreamOriginRapMissing";
+    return nullptr;
+  }
+  if (audio) {
+    const auto rate=static_cast<std::uint32_t>(audioTrack.audio->sampleRate);
+    const auto frame=exactAudioFrameIndex(audioEnd,rate);
+    if (!frame) {error="LibavformatAudioEndUnrepresentable";return nullptr;}
+    audioEnd={*frame,static_cast<std::int32_t>(rate)};
+  }
+  if (context->aacTimeline) {
+    const auto& last = context->aacTimeline->packets().back();
+    const MediaTime provedEnd{last.start+last.duration+context->audioOrigin.value-context->audioDemuxOrigin.value,
+                             context->audioOrigin.timescale};
+    if (compareMediaTime(provedEnd,audioEnd)==MediaTimeOrder::Less) audioEnd=provedEnd;
+  }
+  if (aacEditEnd && !aacProvedEnd) {
+    const auto rate = static_cast<std::uint32_t>(audioTrack.audio->sampleRate);
+    const auto declared = audioFrameAtOrAfter(aacEditEnd->end,rate);
+    const auto frame=declared ? exactAudioFrameIndex(*declared,rate) : std::nullopt;
+    if (!frame || *frame > audioEnd.value + kAacPacketGridResidualFrames) {
+      error="LibavformatAudioTimingUnproven: aac edit extends beyond packet end";return nullptr;
+    }
+  }
+  if (aacProvedEnd && compareMediaTime(audioEnd,*aacProvedEnd)!=MediaTimeOrder::Equal) {
+    error="LibavformatAudioTimingUnproven: aac endpoint " + std::to_string(audioEnd.value) + "/" + std::to_string(audioEnd.timescale) + " tail=" + std::to_string(context->aacTimeline->packets().back().start) + "+" + std::to_string(context->aacTimeline->packets().back().duration) + " shift=" + std::to_string(context->audioOrigin.value-context->audioDemuxOrigin.value) + " versus " + std::to_string(aacProvedEnd->value) + "/" + std::to_string(aacProvedEnd->timescale);return nullptr;
+  }
+  context->audioPacketFrames=audioFrames;
+  descriptor->duration=end;
+  if(!audioOnly) { track.duration=videoEnd;descriptor->tracks.push_back(std::move(track)); }
+  if(audio) { audioTrack.duration=audioEnd;descriptor->tracks.push_back(std::move(audioTrack)); }
+  if(!validateMediaSourceDescriptor(*descriptor,options.limits,&error))return nullptr;
+  for(const auto& selected:descriptor->tracks)if(!reader->initialize(selected,error))return nullptr;
+  if(audio && !audioOnly) {
+    reader->audioCursor=std::make_unique<LibavformatCursor>();
+    if(!reader->audioCursor->open(path,cancellation(),error) ||
+       reader->audioCursor->identity()!=context->identity)return nullptr;
+  }
+    return context;
+  }
   bool start(MediaTime requested, MediaSeekMode mode, std::string &error) {
-    target=requested;eos=false;audioEos=false;audioTail=false;audioOrdinal=0;audioEosPublished=false;videoEosPublished=false;head.reset();videoPending.reset();audioPending.reset();
+    const auto& context = assetContext;
+    target=requested;audioTail=false;audioOrdinal=0;
     decodeStart=preceding(*context,target);
     if(mode==MediaSeekMode::KeyFrame && compareMediaTime(decodeStart,target)!=MediaTimeOrder::Greater)target=decodeStart;
     audioDecodeStart=context->audioOrigin;audioStartsAtOrigin=true;
@@ -500,16 +757,15 @@ struct LibavformatMediaSource::Impl {
       const auto* track=packetTrack(packet.stream);if(!track)continue;
       if(track->video && (!packet.key || compareMediaTime(packet.pts,decodeStart)!=MediaTimeOrder::Equal))continue;
       if(!normalize(packet,error))return false;
-      MediaSample sample;
-      if(!reader->materialize(packet,generation,target,*track,sample,error))return false;
-      peak=std::max(peak,sample.payload.byteSize());head=std::move(sample);
-      return stateWindow(error);
+      (track->video?videoPending:audioPending)=packet;
+      return stage(true,true,&error) && stage(false,true,&error) && stateWindow(error);
     }
     error="LibavformatInterleaveLimit";return false;
   }
   // The generation's reported decode start and audio window, shared by open
   // and seek.
   bool stateWindow(std::string& error) {
+    const auto& context = assetContext;
     const auto start=timelineWindowDecodeStart(decodeStart,target,context->raps.front());
     if(!start) {error="LibavformatDecodeStartOutsideWindow";return false;}
     windowStart=*start;
@@ -523,10 +779,125 @@ struct LibavformatMediaSource::Impl {
     return true;
   }
 
+  // One lane head: the positioned packet when begin left one, else the next
+  // packet of the lane's stream, materialized as one CoreMedia sample.
+  [[nodiscard]] bool stage(bool video, bool admission, std::string* error) {
+    const std::optional<MediaTrackId> selected =
+        video ? descriptor->selectedVideo : descriptor->selectedAudio;
+    if (!selected) {
+      (video ? videoTerminal : audioTerminal) = true;
+      return true;
+    }
+    auto& pending = video ? videoPending : audioPending;
+    std::string message;
+    if (!pending) {
+      auto& cursor = video || assetContext->audioOnly ? reader->cursor : *reader->audioCursor;
+      const unsigned stream = *selected - 1;
+      for (unsigned skipped = 0;; ++skipped) {
+        if (skipped == 4096) {
+          assignError(error, "LibavformatInterleaveLimit");
+          return false;
+        }
+        LibavformatCursor::Packet packet;
+        const auto rc = cursor.read(packet, message);
+        if (rc == LibavformatCursor::Read::End) {
+          (video ? videoTerminal : audioTerminal) = true;
+          if (admission) {
+            assignNamed(error, "selected ", " output has no admission sample");
+            return false;
+          }
+          return true;
+        }
+        if (rc != LibavformatCursor::Read::Packet) {
+          if (error != nullptr) *error = std::move(message);
+          return false;
+        }
+        if (packet.stream != stream) continue;
+        if (!normalize(packet, message)) {
+          if (error != nullptr) *error = std::move(message);
+          return false;
+        }
+        pending = std::move(packet);
+        break;
+      }
+    }
+    const auto* track = packetTrack(pending->stream);
+    MediaSample sample;
+    if (track == nullptr ||
+        !reader->materialize(*pending, generation, target, *track, sample, message)) {
+      if (error != nullptr) *error = std::move(message);
+      return false;
+    }
+    pending.reset();
+    const std::size_t bytes = sample.payload.byteSize();
+    const MediaTime order =
+        sample.decodeTime.valid() ? sample.decodeTime : sample.presentationTime;
+    (video ? videoHead : audioHead) =
+        StagedSample{*selected, order, std::move(sample), bytes};
+    publishHeadFacts();
+    return true;
+  }
+  [[nodiscard]] GenerationStart begin(
+      const std::filesystem::path& requestedPath,
+      const MediaSourceOpenOptions& requestedOptions,
+      MediaGeneration requestedGeneration,
+      const std::optional<MediaTime>& requestedTarget,
+      MediaSeekMode mode, const std::shared_ptr<const Context>& existingContext) {
+    GenerationStart started;
+    OpenTelemetry t;
+    t.enabled = existingContext == nullptr &&
+                std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY") != nullptr;
+    t.begun = Clock::now();
+    if (!resetForGeneration(requestedOptions, requestedGeneration,
+                            requestedTarget, mode)) {
+      started.status = MediaSourceOpenStatus::Cancelled;
+      return started;
+    }
+    started.status = MediaSourceOpenStatus::Unsupported;
+    const auto fail = [&] {
+      if (isCancelled())
+        started.status = MediaSourceOpenStatus::Cancelled;
+      reader.reset();
+      withdrawFailedOperation();
+      return started;
+    };
+    std::shared_ptr<const Context> context = existingContext;
+    if (context == nullptr) {
+      reader = std::make_unique<PacketReader>();
+      context = scan(requestedPath, requestedOptions, started.error,
+                     started.refusal, t);
+      if (context == nullptr) return fail();
+    } else if (reader == nullptr) {
+      started.error = "LibavformatReaderUnavailable";
+      return fail();
+    }
+    assetContext = context;
+    descriptor = context->descriptor();
+    const MediaTime position = requestedTarget.value_or(MediaTime{0, 1});
+    if (!position.valid() || position.value < 0 ||
+        compareMediaTime(position, descriptor->duration) == MediaTimeOrder::Greater) {
+      started.error = "LibavformatInitialTargetOutsideDuration";
+      return fail();
+    }
+    if (!start(position, mode, started.error) || isCancelled())
+      return fail();
+    started.status = MediaSourceOpenStatus::Ready;
+    started.actualDecodeStart = windowStart;
+    started.descriptor = descriptor;
+    started.context = context;
+    started.audioWindow = audioWindow;
+    open = true;
+    openSnapshot.store(true, std::memory_order_release);
+    if (t.enabled) std::fprintf(stderr,
+        "WAM: libavformat open packets=%zu bytes=%llu cursor_ms=%.3f metadata_ms=%.3f scan_ms=%.3f read_ms=%.3f witness_ms=%.3f generation_ms=%.3f total_ms=%.3f\n",
+        t.packets,static_cast<unsigned long long>(t.bytes),milliseconds(t.begun,t.cursorOpened),milliseconds(t.cursorOpened,t.scanStarted),
+        milliseconds(t.scanStarted,t.scanFinished),t.readMs,t.witnessMs,milliseconds(t.scanFinished,Clock::now()),milliseconds(t.begun,Clock::now()));
+    return started;
+  }
 };
 LibavformatMediaSource::LibavformatMediaSource()
     : impl_(std::make_unique<Impl>()) {}
-LibavformatMediaSource::~LibavformatMediaSource() = default;
+LibavformatMediaSource::~LibavformatMediaSource() { close(); }
 bool LibavformatMediaSource::armOperation(MediaGeneration generation) noexcept {
   return impl_->arm(generation);
 }
@@ -534,433 +905,23 @@ MediaSourceOpenOutcome
 LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
                                       const MediaSourceOpenOptions &options,
                                       MediaGeneration generation) {
-  using Clock = std::chrono::steady_clock;
-  const bool telemetry = std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY") != nullptr;
-  const auto begun = Clock::now();
-  double readMs = 0, witnessMs = 0;
-  const auto milliseconds = [](auto from, auto to) { return std::chrono::duration<double,std::milli>(to-from).count(); };
-  auto &s = *impl_;
-  MediaSourceOpenOutcome out;
-  out.generation = generation;
-  if (s.armed != generation || !generation) {
-    out.error = "LibavformatOperationNotArmed";
-    return out;
-  }
-  s.armed = 0;
-  s.generation = generation;
-  s.head.reset();s.videoPending.reset();s.audioPending.reset();
-  s.reader = std::make_unique<PacketReader>();
-  s.context.reset();
-  s.opened = false;
-  out.status = MediaSourceOpenStatus::Unsupported;
-  auto fail = [&]() {
-    if (s.isCancelled())
-      out.status = MediaSourceOpenStatus::Cancelled;
-    s.videoPending.reset();s.audioPending.reset();
-    s.reader.reset();
-    s.context.reset();
-    s.head.reset();
-    s.operation.store(0, std::memory_order_release);
-    return out;
-  };
-  if (!s.reader->cursor.open(path, s.cancellation(), out.error, &out.refusal))
-    return fail();
-  const auto cursorOpened = Clock::now();
-  auto descriptor = std::make_shared<MediaSourceDescriptor>();
-  std::optional<unsigned> video, audio;
-  const auto count = s.reader->cursor.streamCount();
-  if (count > options.limits.maximumTracks) {
-    out.error = "LibavformatTrackLimit";
-    return fail();
-  }
-  for (unsigned i = 0; i < count; ++i) {
-    const auto stream = s.reader->cursor.stream(i);
-    ++descriptor->inventory.total;
-    if (stream.video && !stream.attached) {
-      ++descriptor->inventory.video;
-      if (!video || options.selection.preferredVideo == i + 1)
-        video = i;
-    } else if (stream.audio) {
-      ++descriptor->inventory.audio;
-      if (!audio || options.selection.preferredAudio == i + 1)
-        audio = i;
-    } else
-      ++descriptor->inventory.metadata;
-  }
-  if(audio) {
-    const auto codec=s.reader->cursor.stream(*audio).codecId;
-    const std::string_view container=s.reader->cursor.formatName();
-    const bool opus=codec==AV_CODEC_ID_OPUS && (!video ||
-        (s.reader->cursor.stream(*video).codecId==AV_CODEC_ID_HEVC && container.find("matroska")!=std::string_view::npos));
-    const bool aac=codec==AV_CODEC_ID_AAC &&
-        (container.find("mov")!=std::string_view::npos ||
-         (container=="flv" && video && s.reader->cursor.stream(*video).codecId==AV_CODEC_ID_H264) ||
-         container.find("matroska")!=std::string_view::npos);
-    if(!opus && !aac) {
-      out.error="LibavformatAudioTimingUnproven: ";out.error+=s.reader->cursor.codecName(*audio);return fail();
-    }
-  }
-  if (!video && !audio) {
-    out.error = "LibavformatNoAdmittedVideoTrack";
-    return fail();
-  }
-  const bool audioOnly = !video;
-  if (audioOnly && options.selection.requireVideo) {
-    out.error = "LibavformatRequiredVideoTrackMissing";
-    return fail();
-  }
-  if (!audio && options.selection.requireAudio) {
-    out.error = "LibavformatRequiredAudioTrackMissing";
-    return fail();
-  }
-  if (audioOnly)
-    video = audio;
-  if (options.selection.preferredVideo &&
-      *options.selection.preferredVideo != *video + 1) {
-    out.error = "LibavformatSelectedTrackUnavailable";
-    return fail();
-  }
-  MediaTrackDescriptor track;
-  track.id = *video + 1;
-  const auto stream = s.reader->cursor.stream(*video);
-  MediaTrackDescriptor audioTrack;
-  MediaTime audioOrigin{};
-  std::uint32_t audioFrames{};
-  if(audio) {
-    audioTrack.id=*audio+1;
-    if(!audioDescriptor(s.reader->cursor.stream(*audio),audioTrack,audioFrames,audioOrigin,std::string_view(s.reader->cursor.formatName())=="flv",out.error)) {
-      out.error+=": ";out.error+=s.reader->cursor.codecName(*audio);return fail();
-    }
-    descriptor->selectedAudio=audioTrack.id;
-  }
-  if(audioOnly)track=audioTrack;
-  else if(!videoDescriptor(stream,options.limits,track,out.error))return fail();
-  if(!audioOnly)descriptor->selectedVideo=track.id;
-  auto context=std::make_shared<Context>(path,options,descriptor);
-  context->selectedStream=*video;context->identity=s.reader->cursor.identity();
-  context->audioOnly=audioOnly;context->audioStream=audio;
-  context->audioOrigin=audioOrigin;
-  context->audioDemuxOrigin=audioOrigin;
-  // 48 kHz AAC on the exact-demux-timeline route, and FLV AAC, decode from the
-  // origin to keep bit-identical PCM (including decoder noise state). Other
-  // AAC (other rates, ordinary MP4/Matroska) uses bounded preroll.
-  context->aacBoundedSeek=audio && audioTrack.codec==MediaCodec::Aac &&
-      std::string_view(s.reader->cursor.formatName())!="flv" &&
-      (audioTrack.audio->sampleRate!=48000 ||
-       !LibavformatCursor::requiresExactDemuxTimeline(path,s.cancellation()));
-  if(audio)context->audioQuantum=s.reader->cursor.stream(*audio).timeBase;
-  if(audioOnly)context->raps.push_back({0,1});
-  LibavformatCursor::Packet packet;
-  MediaTime end{0, 1}, audioEnd{0,1},videoEnd{0,1};
-  std::uint64_t bytes{}, audioPackets{};
-  bool audioTail = false;
-  std::optional<MediaTime> aacProvedEnd;
-  std::optional<LibavformatAacEdit> aacEditEnd;
-  const auto scanStarted = Clock::now();
-  std::size_t scannedPackets = 0;
-  for (std::size_t packets = 0;; ++packets) {
-    if (packets == 2'000'000 || bytes > 16ULL * 1024 * 1024 * 1024) {
-      out.error = "LibavformatIndexScanLimit";
-      return fail();
-    }
-    const auto readStarted = telemetry ? Clock::now() : Clock::time_point{};
-    const auto rc = s.reader->cursor.read(packet, out.error);
-    if (telemetry) readMs += milliseconds(readStarted,Clock::now());
-    scannedPackets = packets;
-    if (rc == LibavformatCursor::Read::End)
-      break;
-    if (rc != LibavformatCursor::Read::Packet)
-      return fail();
-    bytes += packet.bytes.size();
-    const bool isAudio=audio && packet.stream==*audio;
-    if(packet.stream!=*video && !isAudio)continue;
-    if (!packet.pts.valid() || (!isAudio && packet.pts.value < 0) ||
-        (!isAudio && (!packet.duration.valid() || packet.duration.value <= 0)) ||
-        packet.corrupt) {
-      out.error = "LibavformatExactVideoTimelineUnavailable";
-      return fail();
-    }
-    if (packet.bytes.size() > (isAudio
-                                   ? options.limits.maximumAudioSampleBytes
-                                   : options.limits.maximumVideoSampleBytes)) {
-      out.error = "LibavformatSampleLimit";
-      return fail();
-    }
-    if(isAudio) {
-      if (!audioPackets && audioTrack.codec == MediaCodec::Aac) {
-        const auto witnessStarted = Clock::now();
-        const auto rate = static_cast<std::uint32_t>(audioTrack.audio->sampleRate);
-        const auto origin = exactAudioFrameIndex(packet.pts, rate);
-        if (!origin || (*origin < 0 && packet.skipStart != std::uint64_t(-*origin)) ||
-            (*origin >= 0 && packet.skipStart)) {
-          out.error="LibavformatAudioPrimingUnproven: aac";return fail();
-        }
-        audioOrigin = {*origin,static_cast<std::int32_t>(rate)};
-        context->audioOrigin = context->audioDemuxOrigin = audioOrigin;
-        context->audioMediaStart = audioOrigin.value > 0 ? audioOrigin : MediaTime{0,1};
-        // Fragmented Apple MOV can add an extra encoder edit; it is proved by
-        // an independent byte-and-output-timing witness instead of guessed.
-        const std::string_view container = s.reader->cursor.formatName();
-        // FLV has no edit/CodecDelay witness for a displaced AAC origin, so
-        // FLV AAC is admitted only at a zero origin.
-        if (container=="flv" && (*origin!=0 || packet.skipStart)) {
-          out.error="LibavformatAudioTimingUnproven: aac";return fail();
-        }
-        if (container.find("mov") != std::string_view::npos) {
-          aacEditEnd = inspectLibavformatAacEdit(path,s.reader->cursor.stream(*audio).containerTrackId);
-          if (!aacEditEnd) {out.error="LibavformatAudioTimingUnproven: aac";return fail();}
-          context->audioMediaStart = *audioFrameAtOrAfter(aacEditEnd->start,rate);
-          if (compareMediaTime(audioOrigin,context->audioMediaStart)==MediaTimeOrder::Greater) {
-            out.error="LibavformatAudioPrimingUnproven: origin after media start";return fail();
-          }
-        }
-        if (rate == 48000 && (*origin == -64 || *origin == -2112)) {
-          const auto proof = proveLibavformatAacTiming(path,
-              s.reader->cursor.stream(*audio).containerTrackId, packet);
-          if (!proof) {out.error="LibavformatAudioTimingUnproven: aac";return fail();}
-          audioOrigin = proof->origin;
-          aacProvedEnd = proof->end;
-          context->audioOrigin = audioOrigin;
-          context->audioDemuxOrigin = proof->demuxOrigin;
-        }
-        witnessMs += milliseconds(witnessStarted,Clock::now());
-      }
-      if (audioTrack.codec == MediaCodec::Aac) {
-        if (!context->aacTimeline) context->aacTimeline = std::make_shared<AacPacketTimeline>(
-            static_cast<std::uint32_t>(audioTrack.audio->sampleRate));
-        // Some containers omit packet duration; their fixed AAC extent is
-        // known from the ASC. Explicit short durations (MOV) are used as stated.
-        const auto duration = packet.duration.valid() && packet.duration.value > 0 ? packet.duration :
-            MediaTime{codec::kAacLcSamplesPerAccessUnit,static_cast<std::int32_t>(audioTrack.audio->sampleRate)};
-        if (!context->aacTimeline->append(packet.pts,duration)) {
-          out.error="AacPacketTimelineDiscontinuity: unrepresentable piecewise grid";return fail();
-        }
-      }
-      if(!audioPacket(packet,audioTrack,audioOrigin,context->audioDemuxOrigin,context->audioQuantum,audioPackets++,audioFrames,audioTail,out.error,
-          context->aacTimeline ? &context->aacTimeline->packets().back() : nullptr))return fail();
-      audioTrack.audio->framesPerPacket=audioFrames;
-    }
-    const auto packetEnd = media::addMediaTime(packet.pts, packet.duration);
-    if (!packetEnd) {
-      out.error = "LibavformatVideoTimelineUnrepresentable";
-      return fail();
-    }
-    if (compareMediaTime(*packetEnd, end) == MediaTimeOrder::Greater)
-      end = *packetEnd;
-    if(isAudio)audioEnd=*packetEnd;
-    else if(compareMediaTime(*packetEnd,videoEnd)==MediaTimeOrder::Greater)videoEnd=*packetEnd;
-    if (packet.key && !isAudio) {
-      if (context->raps.size() == Context::kMaximumRaps) {
-        out.error = "LibavformatRapIndexLimit";
-        return fail();
-      }
-      if (!context->raps.empty() &&
-          compareMediaTime(packet.pts, context->raps.back()) !=
-              MediaTimeOrder::Greater) {
-        out.error = "LibavformatNonmonotonicRapIndex";
-        return fail();
-      }
-      context->raps.push_back(packet.pts);
-    }
-  }
-  const auto scanFinished = Clock::now();
-  if (context->aacTimeline && !context->aacTimeline->finish(std::string_view(s.reader->cursor.formatName()).find("mov")!=std::string_view::npos)) {
-    out.error="AacPacketTailTrimUnproven";return fail();
-  }
-  if (context->raps.empty() || (!audio && context->raps.front().value != 0)) {
-    out.error = "LibavformatStreamOriginRapMissing";
-    return fail();
-  }
-  if (audio) {
-    const auto rate=static_cast<std::uint32_t>(audioTrack.audio->sampleRate);
-    const auto frame=exactAudioFrameIndex(audioEnd,rate);
-    if (!frame) {out.error="LibavformatAudioEndUnrepresentable";return fail();}
-    audioEnd={*frame,static_cast<std::int32_t>(rate)};
-  }
-  if (context->aacTimeline) {
-    const auto& last = context->aacTimeline->packets().back();
-    const MediaTime provedEnd{last.start+last.duration+context->audioOrigin.value-context->audioDemuxOrigin.value,
-                             context->audioOrigin.timescale};
-    if (compareMediaTime(provedEnd,audioEnd)==MediaTimeOrder::Less) audioEnd=provedEnd;
-  }
-  if (aacEditEnd && !aacProvedEnd) {
-    const auto rate = static_cast<std::uint32_t>(audioTrack.audio->sampleRate);
-    const auto declared = audioFrameAtOrAfter(aacEditEnd->end,rate);
-    const auto frame=declared ? exactAudioFrameIndex(*declared,rate) : std::nullopt;
-    if (!frame || *frame > audioEnd.value + kAacPacketGridResidualFrames) {
-      out.error="LibavformatAudioTimingUnproven: aac edit extends beyond packet end";return fail();
-    }
-  }
-  if (aacProvedEnd && compareMediaTime(audioEnd,*aacProvedEnd)!=MediaTimeOrder::Equal) {
-    out.error="LibavformatAudioTimingUnproven: aac endpoint " + std::to_string(audioEnd.value) + "/" + std::to_string(audioEnd.timescale) + " tail=" + std::to_string(context->aacTimeline->packets().back().start) + "+" + std::to_string(context->aacTimeline->packets().back().duration) + " shift=" + std::to_string(context->audioOrigin.value-context->audioDemuxOrigin.value) + " versus " + std::to_string(aacProvedEnd->value) + "/" + std::to_string(aacProvedEnd->timescale);return fail();
-  }
-  context->audioPacketFrames=audioFrames;
-  descriptor->duration=end;
-  if(!audioOnly) { track.duration=videoEnd;descriptor->tracks.push_back(std::move(track)); }
-  if(audio) { audioTrack.duration=audioEnd;descriptor->tracks.push_back(std::move(audioTrack)); }
-  if(!validateMediaSourceDescriptor(*descriptor,options.limits,&out.error))return fail();
-  for(const auto& selected:descriptor->tracks)if(!s.reader->initialize(selected,out.error))return fail();
-  if(audio && !audioOnly) {
-    s.reader->audioCursor=std::make_unique<LibavformatCursor>();
-    if(!s.reader->audioCursor->open(path,s.cancellation(),out.error) ||
-       s.reader->audioCursor->identity()!=context->identity)return fail();
-  }
-  s.context = context;
-  const MediaTime target = options.initialPosition
-                               ? options.initialPosition->target
-                               : MediaTime{0, 1};
-  if (!target.valid() || target.value < 0 ||
-      compareMediaTime(target, end) == MediaTimeOrder::Greater) {
-    out.error = "LibavformatInitialTargetOutsideDuration";
-    return fail();
-  }
-  if (!s.start(target,
-               options.initialPosition ? options.initialPosition->mode
-                                       : MediaSeekMode::Accurate,
-               out.error))
-    return fail();
-  if (s.isCancelled())
-    return fail();
-  s.opened = true;
-  out.status = MediaSourceOpenStatus::Ready;
-  out.actualDecodeStart = s.windowStart;
-  out.descriptor = descriptor;
-  out.preparedContext = context;
-  out.audioWindow = s.audioWindow;
-  if (telemetry) std::fprintf(stderr,
-      "WAM: libavformat open packets=%zu bytes=%llu cursor_ms=%.3f metadata_ms=%.3f scan_ms=%.3f read_ms=%.3f witness_ms=%.3f generation_ms=%.3f total_ms=%.3f\n",
-      scannedPackets,bytes,milliseconds(begun,cursorOpened),milliseconds(cursorOpened,scanStarted),
-      milliseconds(scanStarted,scanFinished),readMs,witnessMs,milliseconds(scanFinished,Clock::now()),milliseconds(begun,Clock::now()));
-  return out;
+  return impl_->openLocalFile(path, options, generation);
 }
 MediaSourceSeekOutcome
 LibavformatMediaSource::seek(const MediaSourceSeekRequest &request) {
-  auto &s = *impl_;
-  MediaSourceSeekOutcome out;
-  out.generation = request.generation;
-  if (s.armed != request.generation || !s.context || !request.target.valid() ||
-      request.target.value < 0 ||
-      compareMediaTime(request.target, s.context->descriptor()->duration) ==
-          MediaTimeOrder::Greater) {
-    if (s.armed == request.generation) {
-      s.armed = 0;
-      s.operation.store(s.opened ? s.generation : 0, std::memory_order_release);
-    }
-    out.error = "LibavformatSeekRequestRejected";
-    return out;
-  }
-  s.armed = 0;
-  s.generation = request.generation;
-  if (!s.start(request.target, request.mode, out.error)) {
-    s.head.reset();
-    s.videoPending.reset();s.audioPending.reset();
-    s.reader.reset();
-    s.context.reset();
-    s.opened = false;
-    s.operation.store(0, std::memory_order_release);
-    return out;
-  }
-  ++s.seeks;
-  out.accepted = true;
-  out.actualDecodeStart = s.windowStart;
-  out.preparedContext = s.context;
-  out.audioWindow = s.audioWindow;
-  return out;
+  return impl_->seek(request);
 }
 MediaSourceReadResult
 LibavformatMediaSource::readNext(MediaGeneration expected) {
-  auto &s = *impl_;
-  if (s.isCancelled())
-    return MediaSourceCancelled{expected};
-  if (!s.opened || expected != s.generation)
-    return MediaSourceFailure{expected, "LibavformatReadGenerationMismatch"};
-  if (s.head) {
-    auto sample = std::move(*s.head);
-    s.head.reset();
-    ++s.emitted;
-    return sample;
-  }
-  const bool mixed=bool(s.reader->audioCursor);
-  std::string error;
-  const auto fill=[&](bool audio)->bool {
-    auto& pending=audio?s.audioPending:s.videoPending;
-    auto& ended=audio?s.audioEos:s.eos;
-    if(pending || ended)return true;
-    auto& cursor=audio?*s.reader->audioCursor:s.reader->cursor;
-    const auto stream=audio?*s.context->audioStream:s.context->selectedStream;
-    for(unsigned skipped=0;skipped<4096;++skipped) {
-      LibavformatCursor::Packet packet;
-      const auto rc=cursor.read(packet,error);
-      if(rc==LibavformatCursor::Read::End) {ended=true;return true;}
-      if(rc!=LibavformatCursor::Read::Packet)return false;
-      if(packet.stream!=stream)continue;
-      if(!s.normalize(packet,error))return false;
-      pending=packet;return true;
-    }
-    error="LibavformatInterleaveLimit";return false;
-  };
-  if(!fill(false) || (mixed && !fill(true))) {
-    if(s.isCancelled())return MediaSourceCancelled{expected};
-    return MediaSourceFailure{expected,std::move(error)};
-  }
-  if(s.eos && !s.videoPending && !s.videoEosPublished) {
-    s.videoEosPublished=true;return MediaEndOfStream{expected,s.context->selectedStream+1};
-  }
-  if(mixed && s.audioEos && !s.audioPending && !s.audioEosPublished) {
-    s.audioEosPublished=true;return MediaEndOfStream{expected,*s.context->audioStream+1};
-  }
-  if(!s.videoPending && !s.audioPending)return MediaSourceExhausted{expected};
-  const auto timestamp=[](const LibavformatCursor::Packet& packet) {
-    return packet.dts.valid()?packet.dts:packet.pts;
-  };
-  const bool audio=s.audioPending && (!s.videoPending ||
-      compareMediaTime(timestamp(*s.audioPending),timestamp(*s.videoPending))!=MediaTimeOrder::Greater);
-  auto& pending=audio?s.audioPending:s.videoPending;
-  const auto* track=s.packetTrack(pending->stream);
-  MediaSample sample;
-  if(!track || !s.reader->materialize(*pending,expected,s.target,*track,sample,error))
-    return MediaSourceFailure{expected,std::move(error)};
-  pending.reset();++s.emitted;return sample;
+  return impl_->readNext(expected);
 }
 void LibavformatMediaSource::requestCancel(
     MediaGeneration generation) noexcept {
-  if (generation &&
-      impl_->operation.load(std::memory_order_acquire) == generation) {
-    auto observed = impl_->cancelled.load(std::memory_order_acquire);
-    while (observed < generation &&
-           !impl_->cancelled.compare_exchange_weak(observed, generation,
-                                                   std::memory_order_release,
-                                                   std::memory_order_acquire)) {
-    }
-  }
+  impl_->requestCancel(generation);
 }
-void LibavformatMediaSource::close() noexcept {
-  impl_->head.reset();
-  impl_->videoPending.reset();impl_->audioPending.reset();
-  impl_->reader.reset();
-  impl_->context.reset();
-  impl_->opened = false;
-  impl_->armed = 0;
-  impl_->operation.store(0, std::memory_order_release);
-}
+void LibavformatMediaSource::close() noexcept { impl_->close(); }
 MediaSourceStats LibavformatMediaSource::stats() const noexcept {
-  const auto &s = *impl_;
-  MediaSourceStats out;
-  out.open = s.opened;
-  out.cancelled = s.isCancelled();
-  out.operationGeneration = s.operation.load(std::memory_order_acquire);
-  out.generation = s.generation;
-  out.stagedGeneration = s.head || s.videoPending || s.audioPending ? s.generation : 0;
-  out.stagedVideoHeads =
-      (s.head && s.head->kind == MediaSampleKind::EncodedVideo) || (s.videoPending && !s.context->audioOnly) ? 1 : 0;
-  out.stagedAudioHeads =
-      (s.head && s.head->kind == MediaSampleKind::EncodedAudio) || s.audioPending || (s.videoPending && s.context->audioOnly) ? 1 : 0;
-  out.stagedPayloadBytes = (s.head ? s.head->payload.byteSize() : 0) +
-      (s.videoPending?s.videoPending->bytes.size():0)+(s.audioPending?s.audioPending->bytes.size():0);
-  out.peakStagedPayloadBytes = std::max(s.peak,out.stagedPayloadBytes);
-  out.samplesEmitted = s.emitted;
-  out.seeksAccepted = s.seeks;
-  return out;
+  return impl_->stats();
 }
 } // namespace wam::macos
 
