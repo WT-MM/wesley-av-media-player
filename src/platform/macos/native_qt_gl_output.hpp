@@ -5,6 +5,7 @@
 #include "qt_gl_video_item.hpp"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -31,11 +32,12 @@ struct NativeQtGlOutputDeferredWatchdogFacts {
 // Render-pass statistics are sampled on bounded bridge activity, not every Qt
 // redraw; quiescent values can therefore lag until the next
 // start/dispatch/flush/failure/retirement observation.
-class NativeQtGlOutput final : public NativeScheduledFrameOutput,
-                               public NativeTrackedVideoOutput {
+class NativeQtGlOutput final : public NativeTrackedVideoOutput {
  public:
-  static std::shared_ptr<NativeQtGlOutput> create(
-      QtGlVideoItem* item, std::string* error = nullptr);
+  using FailureHandler = std::function<void(std::string)>;
+  using StartAppliedHandler =
+      std::function<void(NativeScheduledFrameStartAck)>;
+
   static std::shared_ptr<NativeQtGlOutput> createTracked(
       QtGlVideoItem* item, NativeTrackedVideoOutputWakeSeam wake,
       std::string* error = nullptr);
@@ -44,17 +46,24 @@ class NativeQtGlOutput final : public NativeScheduledFrameOutput,
   NativeQtGlOutput& operator=(const NativeQtGlOutput&) = delete;
   ~NativeQtGlOutput() override;
 
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+  // The untracked scheduling surface beneath the tracked contract, reachable
+  // only from the GL output test: a create() that turns tracking off, direct
+  // dispatch, explicit start/flush/close and the failure handler. The tracked
+  // methods below drive the same machinery.
+  static std::shared_ptr<NativeQtGlOutput> create(
+      QtGlVideoItem* item, std::string* error = nullptr);
   [[nodiscard]] NativeScheduledFrameDispatchResult dispatch(
-      FrameLease frame, std::string* error = nullptr) noexcept override;
+      FrameLease frame, std::string* error = nullptr) noexcept;
   [[nodiscard]] bool startGeneration(
       std::uint64_t generation, StartAppliedHandler applied,
-      std::string* error = nullptr) noexcept override;
+      std::string* error = nullptr) noexcept;
   [[nodiscard]] bool flush(std::uint64_t nextGeneration,
-                           std::string* error = nullptr) noexcept override;
-  void close(std::uint64_t finalGeneration) noexcept override;
-  void setFailureHandler(FailureHandler handler) noexcept override;
-  [[nodiscard]] NativeScheduledFrameOutputStats stats()
-      const noexcept override;
+                           std::string* error = nullptr) noexcept;
+  void setFailureHandler(FailureHandler handler) noexcept;
+  [[nodiscard]] NativeScheduledFrameOutputStats stats() const noexcept;
+#endif
+  void close(std::uint64_t finalGeneration) noexcept;
 
   [[nodiscard]] NativeTrackedVideoCapacity capacity(
       std::uint64_t generation) const noexcept override;

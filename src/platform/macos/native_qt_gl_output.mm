@@ -46,7 +46,7 @@ void assignErrorNoexcept(std::string* error,
   }
 }
 
-void invokeFailureNoexcept(NativeScheduledFrameOutput::FailureHandler handler,
+void invokeFailureNoexcept(NativeQtGlOutput::FailureHandler handler,
                            std::string message) noexcept {
   if (!handler) {
     return;
@@ -1380,6 +1380,7 @@ NativeQtGlOutput::~NativeQtGlOutput() {
   }
 }
 
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
 std::shared_ptr<NativeQtGlOutput> NativeQtGlOutput::create(
     QtGlVideoItem* item, std::string* error) {
   auto output = createTracked(
@@ -1391,6 +1392,7 @@ std::shared_ptr<NativeQtGlOutput> NativeQtGlOutput::create(
   }
   return output;
 }
+#endif
 
 std::shared_ptr<NativeQtGlOutput> NativeQtGlOutput::createTracked(
     QtGlVideoItem* item, NativeTrackedVideoOutputWakeSeam wake,
@@ -1497,6 +1499,7 @@ std::shared_ptr<NativeQtGlOutput> NativeQtGlOutput::createTracked(
       new NativeQtGlOutput(std::move(state)));
 }
 
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
 NativeScheduledFrameDispatchResult NativeQtGlOutput::dispatch(
     FrameLease frame, std::string* error) noexcept {
   const std::shared_ptr<State> state = state_;
@@ -1554,7 +1557,9 @@ NativeScheduledFrameDispatchResult NativeQtGlOutput::dispatch(
                         std::move(notify.second));
   return result;
 }
+#endif
 
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
 bool NativeQtGlOutput::startGeneration(
     std::uint64_t generation, StartAppliedHandler applied,
     std::string* error) noexcept {
@@ -1565,11 +1570,14 @@ bool NativeQtGlOutput::startGeneration(
   }
   return flushImpl(generation, std::move(applied), error);
 }
+#endif
 
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
 bool NativeQtGlOutput::flush(std::uint64_t nextGeneration,
                              std::string* error) noexcept {
   return flushImpl(nextGeneration, {}, error);
 }
+#endif
 
 bool NativeQtGlOutput::flushImpl(std::uint64_t nextGeneration,
                                  StartAppliedHandler startApplied,
@@ -1771,6 +1779,7 @@ void NativeQtGlOutput::close(std::uint64_t finalGeneration) noexcept {
                         std::move(notify.second));
 }
 
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
 void NativeQtGlOutput::setFailureHandler(FailureHandler handler) noexcept {
   // The installed or already-latched handler is arbitrary and may release the
   // last public output owner while this call is delivering it.
@@ -1811,7 +1820,9 @@ void NativeQtGlOutput::setFailureHandler(FailureHandler handler) noexcept {
     state->queueImmediateObservation();
   }
 }
+#endif
 
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
 NativeScheduledFrameOutputStats NativeQtGlOutput::stats() const noexcept {
   const std::shared_ptr<State> state = state_;
   state->consumeDeferredSchedulingFailureNoexcept();
@@ -1834,6 +1845,7 @@ NativeScheduledFrameOutputStats NativeQtGlOutput::stats() const noexcept {
   result.fatalErrorSerial = state->fatalErrorSerial;
   return result;
 }
+#endif
 
 NativeTrackedVideoCapacity NativeQtGlOutput::capacity(
     std::uint64_t generation) const noexcept {
