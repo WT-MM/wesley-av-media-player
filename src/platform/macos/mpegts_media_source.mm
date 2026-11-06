@@ -141,11 +141,6 @@ CMVideoFormatDescriptionRef MpegTsSourceTraits::createVideoFormatDescription(
   return createMpegTsVideoFormatDescription(track);
 }
 
-std::string MpegTsSourceTraits::demuxErrorMessage(const char* what,
-                                                  DemuxError error) {
-  return mpegTsDemuxErrorMessage(what, error);
-}
-
 MediaTime MpegTsSourceTraits::mergeOrderKey(const MediaSample& sample) noexcept {
   return sample.decodeTime.valid() ? sample.decodeTime
                                    : sample.presentationTime;

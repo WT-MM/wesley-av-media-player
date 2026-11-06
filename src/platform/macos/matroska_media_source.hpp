@@ -32,8 +32,6 @@ struct MatroskaSourceTraits {
   using CursorEnd = media::matroska::MatroskaCursorEnd;
   using CursorCancelled = media::matroska::MatroskaCursorCancelled;
   using CursorFailure = media::matroska::MatroskaCursorFailure;
-  using DemuxStatus = media::matroska::MatroskaDemuxStatus;
-  using DemuxError = media::matroska::MatroskaDemuxError;
   using Plan = media::matroska::MatroskaGenerationPlan;
   using PrepareOutcome = media::matroska::MatroskaPrepareOutcome;
   using PlanOutcome = media::matroska::MatroskaPlanOutcome;
@@ -70,8 +68,6 @@ struct MatroskaSourceTraits {
       const PreparedAsset& asset) noexcept;
   [[nodiscard]] static CMVideoFormatDescriptionRef
   createVideoFormatDescription(const media::MediaTrackDescriptor& track) noexcept;
-  [[nodiscard]] static std::string demuxErrorMessage(const char* what,
-                                                     DemuxError error);
   // Video sorts on a key that leads its presentation time by
   // kVideoMergeLeadNanoseconds (exact, rounded UP in the timestamp's own
   // timescale so the key never lands short of the reorder window); audio

@@ -45,6 +45,8 @@ using namespace wam::media::matroska;
 using wam::media::MediaSeekMode;
 using wam::media::MediaSourceOpenOptions;
 using wam::media::MediaTime;
+using wam::media::MediaRefusalClass;
+using wam::media::MediaSourceOpenStatus;
 
 using Bytes = std::vector<std::byte>;
 
@@ -619,7 +621,7 @@ std::shared_ptr<const MatroskaPreparedAsset> prepareOnce(
   MatroskaPrepareOutcome outcome = prepareMatroska(
       std::move(reader), std::filesystem::path("/bench/synthetic.mkv"),
       defaultOptions(), {});
-  if (outcome.status != MatroskaDemuxStatus::Ready) {
+  if (outcome.status != MediaSourceOpenStatus::Ready) {
     std::fprintf(stderr,
                  "BENCH: prepare failed (status=%d error=%d msg=%s) for a "
                  "%llu-cluster document\n",
@@ -657,7 +659,7 @@ void benchPrepare(const std::vector<std::size_t>& clusterCounts) {
           MatroskaPrepareOutcome outcome = prepareMatroska(
               std::move(reader), std::filesystem::path("/bench/synthetic.mkv"),
               defaultOptions(), {});
-          if (outcome.status != MatroskaDemuxStatus::Ready) {
+          if (outcome.status != MediaSourceOpenStatus::Ready) {
             ++failures;
           }
         },
@@ -706,7 +708,7 @@ void benchPlanGeneration(const std::vector<std::size_t>& clusterCounts) {
 
       const MatroskaPlanOutcome probe =
           asset->planGeneration(value, MediaSeekMode::Accurate, {});
-      if (probe.status != MatroskaDemuxStatus::Ready) {
+      if (probe.status != MediaSourceOpenStatus::Ready) {
         std::fprintf(stderr,
                      "BENCH: planGeneration %s failed at %zu cues (error=%d "
                      "msg=%s)\n",
@@ -720,7 +722,7 @@ void benchPlanGeneration(const std::vector<std::size_t>& clusterCounts) {
           [&asset, value] {
             const MatroskaPlanOutcome outcome =
                 asset->planGeneration(value, MediaSeekMode::Accurate, {});
-            if (outcome.status != MatroskaDemuxStatus::Ready) {
+            if (outcome.status != MediaSourceOpenStatus::Ready) {
               ++failures;
             }
           },
@@ -767,7 +769,7 @@ void benchCursorReadNext() {
     }
     const MatroskaPlanOutcome plan =
         asset->planGeneration(MediaTime{0, 1000}, MediaSeekMode::Accurate, {});
-    if (plan.status != MatroskaDemuxStatus::Ready) {
+    if (plan.status != MediaSourceOpenStatus::Ready) {
       std::fprintf(stderr, "BENCH: readNext plan failed for %s (error=%d %s)\n",
                    item.name, static_cast<int>(plan.error),
                    plan.message.c_str());
@@ -867,7 +869,7 @@ void benchCopyRanges(bool realFile) {
       }
       MatroskaPrepareOutcome outcome =
           prepareMatroskaLocalFile(temporary, defaultOptions(), {});
-      if (outcome.status != MatroskaDemuxStatus::Ready) {
+      if (outcome.status != MediaSourceOpenStatus::Ready) {
         ++failures;
         std::filesystem::remove(temporary);
         continue;
@@ -884,7 +886,7 @@ void benchCopyRanges(bool realFile) {
 
     std::vector<std::byte> destination(item.frameBytes);
     const std::array<FrameRange, 1> ranges{document.videoFrames.front()};
-    MatroskaDemuxError error = MatroskaDemuxError::None;
+    MediaRefusalClass error = MediaRefusalClass::None;
     require(asset->copyRanges(ranges, destination, {}, &error),
             "copyRanges rejected a valid single-frame request");
 

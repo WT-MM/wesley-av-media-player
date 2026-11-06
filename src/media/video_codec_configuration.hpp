@@ -327,7 +327,7 @@ inline constexpr std::size_t kMpeg4VisualEsdsOverheadBytes{41};
 //   frame may not exceed 9,502,720 px
 //
 // Callers append their own typed token -- the Matroska path gets
-// " (CodedDimensionLimit)" from matroskaDemuxErrorMessage, and the backends
+// " (CodedDimensionLimit)" from refusalMessage, and the backends
 // with no such wrapper append the same token literally -- so a grep for
 // CodedDimensionLimit finds every backend's refusal.
 [[nodiscard]] bool codedDimensionsWithinV1Ceiling(

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/media_refusal.hpp"
 #include "media/media_time.hpp"
 
 #include <cstddef>
@@ -714,13 +715,6 @@ class MediaSourcePreparedContext {
   MediaTrackSelection selection_;
   MediaSourceLimits limits_;
   std::shared_ptr<const MediaSourceDescriptor> descriptor_;
-};
-
-enum class MediaSourceOpenStatus : std::uint8_t {
-  Ready,
-  Unsupported,
-  Cancelled,
-  Failed,
 };
 
 // Source-proved audio boundaries for one generation. decodeStart is the

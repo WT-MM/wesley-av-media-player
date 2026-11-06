@@ -92,24 +92,24 @@ signedBlockTick(std::uint64_t clusterTick, std::int16_t relative) noexcept {
   return static_cast<std::int64_t>(value);
 }
 
-[[nodiscard]] MatroskaDemuxError parseError(ParseOutcome outcome) noexcept {
+[[nodiscard]] MediaRefusalClass parseError(ParseOutcome outcome) noexcept {
   if (outcome.status == ParseStatus::Cancelled) {
-    return MatroskaDemuxError::Cancelled;
+    return MediaRefusalClass::Cancelled;
   }
   if (outcome.status == ParseStatus::IoError) {
     return outcome.error == ParseError::FileChanged
-               ? MatroskaDemuxError::FileChanged
-               : MatroskaDemuxError::Io;
+               ? MediaRefusalClass::FileChanged
+               : MediaRefusalClass::Io;
   }
   if (outcome.status == ParseStatus::Unsupported) {
-    return MatroskaDemuxError::UnsupportedContainer;
+    return MediaRefusalClass::UnsupportedContainer;
   }
   if (outcome.status == ParseStatus::LimitExceeded) {
     return outcome.error == ParseError::CueLimit
-               ? MatroskaDemuxError::IndexLimit
-               : MatroskaDemuxError::SampleLimit;
+               ? MediaRefusalClass::IndexLimit
+               : MediaRefusalClass::SampleLimit;
   }
-  return MatroskaDemuxError::InvalidContainer;
+  return MediaRefusalClass::InvalidContainer;
 }
 
 struct CollectedDocument final : Visitor {
@@ -2640,7 +2640,7 @@ findCluster(const std::vector<MatroskaClusterIndexEntry>& clusters,
 }
 
 struct ScanResult {
-  MatroskaDemuxError error{MatroskaDemuxError::None};
+  MediaRefusalClass error{MediaRefusalClass::None};
   std::optional<CapturedBlockVisitor> block;
   std::uint32_t clusterIndex{0};
 };
@@ -2659,13 +2659,13 @@ template <typename Predicate>
   for (std::size_t clusterIndex = firstCluster; clusterIndex < end;
        ++clusterIndex) {
     if (cancellation.cancelled()) {
-      result.error = MatroskaDemuxError::Cancelled;
+      result.error = MediaRefusalClass::Cancelled;
       return result;
     }
     const ByteRange data = state.clusters[clusterIndex].dataRange();
     auto cursor = beginClusterChildCursor(*state.reader, data, options);
     if (!cursor) {
-      result.error = MatroskaDemuxError::InvalidContainer;
+      result.error = MediaRefusalClass::InvalidContainer;
       return result;
     }
     while (!cursor->done()) {
@@ -2694,8 +2694,8 @@ template <typename Predicate>
 // ---------------------------------------------------------------------------
 
 struct ScannedCueIndexOutcome {
-  MatroskaDemuxStatus status{MatroskaDemuxStatus::Ready};
-  MatroskaDemuxError error{MatroskaDemuxError::None};
+  MediaSourceOpenStatus status{MediaSourceOpenStatus::Ready};
+  MediaRefusalClass error{MediaRefusalClass::None};
   const char* message{""};
 };
 
@@ -2739,13 +2739,13 @@ struct ScannedCueIndexOutcome {
   for (std::size_t clusterIndex = 0; clusterIndex < state.clusters.size();
        ++clusterIndex) {
     if (cancellation.cancelled()) {
-      return {MatroskaDemuxStatus::Cancelled, MatroskaDemuxError::Cancelled,
+      return {MediaSourceOpenStatus::Cancelled, MediaRefusalClass::Cancelled,
               "the Cluster scan was cancelled"};
     }
     const ByteRange data = state.clusters[clusterIndex].dataRange();
     auto cursor = beginClusterChildCursor(*state.reader, data, options);
     if (!cursor) {
-      return {MatroskaDemuxStatus::Failed, MatroskaDemuxError::InvalidContainer,
+      return {MediaSourceOpenStatus::Failed, MediaRefusalClass::InvalidContainer,
               "a Cluster data range could not be walked"};
     }
     while (!cursor->done()) {
@@ -2753,10 +2753,10 @@ struct ScannedCueIndexOutcome {
       const ParseOutcome outcome = parseClusterChildAt(
           *state.reader, *cursor, visitor, options, cancellation);
       if (!outcome.ok()) {
-        const MatroskaDemuxError error = parseError(outcome);
-        return {error == MatroskaDemuxError::Cancelled
-                    ? MatroskaDemuxStatus::Cancelled
-                    : MatroskaDemuxStatus::Failed,
+        const MediaRefusalClass error = parseError(outcome);
+        return {error == MediaRefusalClass::Cancelled
+                    ? MediaSourceOpenStatus::Cancelled
+                    : MediaSourceOpenStatus::Failed,
                 error, "a Cluster Block header could not be parsed"};
       }
       if (!visitor.emitted || visitor.header.trackNumber != track) {
@@ -2784,7 +2784,7 @@ struct ScannedCueIndexOutcome {
         continue;
       }
       if (out->size() >= kMaximumMatroskaCues) {
-        return {MatroskaDemuxStatus::Unsupported, MatroskaDemuxError::IndexLimit,
+        return {MediaSourceOpenStatus::Unsupported, MediaRefusalClass::IndexLimit,
                 "the scanned random access index is over its bounded budget"};
       }
       out->push_back({ticks, static_cast<std::uint32_t>(clusterIndex),
@@ -2853,7 +2853,7 @@ MatroskaCursorReadResult
 MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
   try {
     if (impl_ == nullptr || impl_->state == nullptr) {
-      return MatroskaCursorFailure{MatroskaDemuxError::InvalidRequest,
+      return MatroskaCursorFailure{MediaRefusalClass::InvalidRequest,
                                    "cursor is not initialized"};
     }
     if (impl_->ended) {
@@ -2864,7 +2864,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
     }
     const AssetState& state = *impl_->state;
     if (!state.unchanged()) {
-      return MatroskaCursorFailure{MatroskaDemuxError::FileChanged,
+      return MatroskaCursorFailure{MediaRefusalClass::FileChanged,
                                    "Matroska file changed"};
     }
 
@@ -2875,7 +2875,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             *state.reader, state.clusters[impl_->clusterIndex].dataRange(),
             impl_->options);
         if (!clusterCursor) {
-          return MatroskaCursorFailure{MatroskaDemuxError::InvalidContainer,
+          return MatroskaCursorFailure{MediaRefusalClass::InvalidContainer,
                                        "invalid Cluster data range"};
         }
         impl_->clusterCursor.emplace(std::move(*clusterCursor));
@@ -2886,8 +2886,8 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             *state.reader, *impl_->clusterCursor, visitor, impl_->options,
             cancellation);
         if (!outcome.ok()) {
-          const MatroskaDemuxError error = parseError(outcome);
-          if (error == MatroskaDemuxError::Cancelled) {
+          const MediaRefusalClass error = parseError(outcome);
+          if (error == MediaRefusalClass::Cancelled) {
             return MatroskaCursorCancelled{};
           }
           return MatroskaCursorFailure{error, "Cluster child parse failed"};
@@ -2900,20 +2900,20 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             continue;
           }
           if (visitor.header.containerEncoded.offset != impl_->startBlockOffset) {
-            return MatroskaCursorFailure{MatroskaDemuxError::InvalidCue,
+            return MatroskaCursorFailure{MediaRefusalClass::InvalidCue,
                                          "generation block was not found"};
           }
           impl_->startFound = true;
         }
         if (!blockFeaturesSupported(visitor, state.audio)) {
-          return MatroskaCursorFailure{MatroskaDemuxError::UnsupportedTrack,
+          return MatroskaCursorFailure{MediaRefusalClass::UnsupportedTrack,
                                        "unsupported BlockGroup feature"};
         }
         const auto tick = signedBlockTick(
             state.clusters[impl_->clusterIndex].timestampTick,
             visitor.header.relativeTimestamp);
         if (!tick) {
-          return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
+          return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline,
                                        "block timestamp overflow"};
         }
 
@@ -2925,7 +2925,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
         sample.discardable = visitor.header.discardable;
         if (impl_->video) {
           if (visitor.frameCount != 1 || visitor.header.lacing != Lacing::None) {
-            return MatroskaCursorFailure{MatroskaDemuxError::UnsupportedTrack,
+            return MatroskaCursorFailure{MediaRefusalClass::UnsupportedTrack,
                                          "video lacing is not supported"};
           }
           sample.frames[0] = visitor.frames[0];
@@ -2935,7 +2935,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
           const auto presentation =
               timeFromSignedTick(*tick, state.timestampScaleNanoseconds);
           if (!presentation || presentation->value < 0) {
-            return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
+            return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline,
                                          "invalid video presentation time"};
           }
           sample.presentationTime = *presentation;
@@ -2948,7 +2948,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                 state.timestampScaleNanoseconds);
             if (!duration) {
               return MatroskaCursorFailure{
-                  MatroskaDemuxError::InvalidTimeline,
+                  MediaRefusalClass::InvalidTimeline,
                   "invalid BlockDuration"};
             }
             sample.duration = *duration;
@@ -2958,7 +2958,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                 *state.video->entry.defaultDurationNanoseconds);
             if (!duration) {
               return MatroskaCursorFailure{
-                  MatroskaDemuxError::InvalidTimeline,
+                  MediaRefusalClass::InvalidTimeline,
                   "invalid DefaultDuration"};
             }
             sample.duration = *duration;
@@ -2967,7 +2967,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
           if (!state.audio || visitor.referenceCount != 0 ||
               visitor.frameCount == 0 ||
               visitor.frameCount > state.limits.maximumAudioSampleCount) {
-            return MatroskaCursorFailure{MatroskaDemuxError::UnsupportedTrack,
+            return MatroskaCursorFailure{MediaRefusalClass::UnsupportedTrack,
                                          "invalid audio Block"};
           }
           const std::uint32_t samplesPerAccessUnit =
@@ -2982,7 +2982,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                   state.timestampScaleNanoseconds, samplesPerAccessUnit);
           if (!aacProjectionOnGrid(projection,
                                    state.audio->audioTickResidualTolerance)) {
-            return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
+            return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline,
                                          "audio Block is off the exact AU grid"};
           }
           // Opus packets carry their own duration in the TOC byte. A track
@@ -2998,14 +2998,14 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
               if (amount == 0 ||
                   !state.reader->readAt(
                       frame.offset, std::span<std::byte>(toc).first(amount))) {
-                return MatroskaCursorFailure{MatroskaDemuxError::Io,
+                return MatroskaCursorFailure{MediaRefusalClass::Io,
                                              "Opus packet TOC is unreadable"};
               }
               const auto frames = opusPacketFrameCount(
                   std::span<const std::byte>(toc).first(amount));
               if (!frames || *frames != samplesPerAccessUnit) {
                 return MatroskaCursorFailure{
-                    MatroskaDemuxError::UnsupportedTrack,
+                    MediaRefusalClass::UnsupportedTrack,
                     "Opus packet duration is not constant"};
               }
             }
@@ -3042,7 +3042,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                   !state.reader->readAt(
                       frame.offset,
                       std::span<std::byte>(header).first(amount))) {
-                return MatroskaCursorFailure{MatroskaDemuxError::Io,
+                return MatroskaCursorFailure{MediaRefusalClass::Io,
                                              "audio frame header is unreadable"};
               }
               const std::span<const std::byte> bytes =
@@ -3054,7 +3054,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                                              ac3Configuration, enhanced);
               if (!matched) {
                 return MatroskaCursorFailure{
-                    MatroskaDemuxError::UnsupportedTrack,
+                    MediaRefusalClass::UnsupportedTrack,
                     "audio frame header does not match the admitted stream"};
               }
             }
@@ -3065,13 +3065,13 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
               std::array<std::byte, 32> header{};
               const auto size = static_cast<std::size_t>(std::min<std::uint64_t>(range.size, header.size()));
               if (!state.reader->readAt(range.offset, std::span(header).first(size)))
-                return MatroskaCursorFailure{MatroskaDemuxError::Io, "SoftwareAudioPacketUnreadable"};
+                return MatroskaCursorFailure{MediaRefusalClass::Io, "SoftwareAudioPacketUnreadable"};
               const auto facts = inspectSoftwareAudioPacket(state.audio->codec, std::span(header).first(size), range.size);
               const auto ordinal = impl_->expectedAudioOrdinal + index;
               if (!facts || facts->frames != samplesPerAccessUnit || (!ordinal && !facts->majorSync) ||
                   (state.audio->codec != MediaCodec::Dts &&
                    facts->inputTiming != std::uint16_t(state.audio->audioMinorSyncOrigin + ordinal * samplesPerAccessUnit)))
-                return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline, "SoftwareAudioPacketOrdinalMismatch"};
+                return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline, "SoftwareAudioPacketOrdinalMismatch"};
             }
           }
           std::uint16_t firstFrame = 0;
@@ -3081,7 +3081,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
           if (firstFrame >= visitor.frameCount ||
               projection->accessUnitOrdinal + firstFrame !=
                   impl_->expectedAudioOrdinal) {
-            return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
+            return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline,
                                          "audio ordinal discontinuity"};
           }
           std::size_t bytes = 0;
@@ -3090,7 +3090,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             const std::uint64_t frameBytes = visitor.frames[index].bytes.size;
             if (frameBytes > state.limits.maximumAudioSampleBytes ||
                 bytes > state.limits.maximumAudioSampleBytes - frameBytes) {
-              return MatroskaCursorFailure{MatroskaDemuxError::SampleLimit,
+              return MatroskaCursorFailure{MediaRefusalClass::SampleLimit,
                                            "audio sample exceeds byte cap"};
             }
             sample.frames[sample.frameCount++] = visitor.frames[index];
@@ -3106,7 +3106,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                samplesPerAccessUnit * UINT64_C(1'000'000'000)) /
               state.audio->audioSampleRate);
           if (!presentation) {
-            return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
+            return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline,
                                          "audio presentation overflow"};
           }
           sample.presentationTime = *presentation;
@@ -3116,7 +3116,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             const auto* descriptor = findMediaTrack(*state.descriptor, state.audio->id);
             if (!descriptor || !descriptor->audio || descriptor->audio->bytesPerFrame == 0 ||
                 bytes % descriptor->audio->bytesPerFrame != 0) {
-              return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline, "PCM block is not frame aligned"};
+              return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline, "PCM block is not frame aligned"};
             }
             frameCount = bytes / descriptor->audio->bytesPerFrame;
           }
@@ -3130,7 +3130,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                               std::numeric_limits<std::int64_t>::max()) ||
               denominator > static_cast<std::uint64_t>(
                                 std::numeric_limits<std::int32_t>::max())) {
-            return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
+            return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline,
                                          "audio duration overflow"};
           }
           sample.duration = MediaTime{static_cast<std::int64_t>(numerator),
@@ -3145,7 +3145,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
     impl_->ended = true;
     return MatroskaCursorEnd{};
   } catch (...) {
-    return MatroskaCursorFailure{MatroskaDemuxError::Io,
+    return MatroskaCursorFailure{MediaRefusalClass::Io,
                                  "cursor allocation failed"};
   }
 }
@@ -3153,7 +3153,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
 MatroskaCursorReadResult
 MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
   if (impl_ == nullptr) {
-    return MatroskaCursorFailure{MatroskaDemuxError::InvalidRequest,
+    return MatroskaCursorFailure{MediaRefusalClass::InvalidRequest,
                                  "cursor is not initialized"};
   }
   MatroskaCursorReadResult current;
@@ -3258,19 +3258,19 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
   try {
     const AssetState& state = *impl_->state;
     if (!target.valid() || target.value < 0 || !state.unchanged()) {
-      outcome.error = state.unchanged() ? MatroskaDemuxError::InvalidTimeline
-                                        : MatroskaDemuxError::FileChanged;
+      outcome.error = state.unchanged() ? MediaRefusalClass::InvalidTimeline
+                                        : MediaRefusalClass::FileChanged;
       outcome.message = "invalid target or changed file";
       return outcome;
     }
     if (cancellation.cancelled()) {
-      outcome.status = MatroskaDemuxStatus::Cancelled;
-      outcome.error = MatroskaDemuxError::Cancelled;
+      outcome.status = MediaSourceOpenStatus::Cancelled;
+      outcome.error = MediaRefusalClass::Cancelled;
       return outcome;
     }
     const auto beforeEnd = compareMediaTime(target, state.descriptor->duration);
     if (!beforeEnd || *beforeEnd != MediaTimeOrder::Less) {
-      outcome.error = MatroskaDemuxError::InvalidTimeline;
+      outcome.error = MediaRefusalClass::InvalidTimeline;
       outcome.message = "target is outside the finite duration";
       return outcome;
     }
@@ -3307,12 +3307,12 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
               static_cast<std::int64_t>(state.cues[middle].timestampTick),
               state.timestampScaleNanoseconds);
           if (!cueTime) {
-            outcome.error = MatroskaDemuxError::InvalidTimeline;
+            outcome.error = MediaRefusalClass::InvalidTimeline;
             return outcome;
           }
           const auto order = compareMediaTime(*cueTime, target);
           if (!order) {
-            outcome.error = MatroskaDemuxError::InvalidTimeline;
+            outcome.error = MediaRefusalClass::InvalidTimeline;
             return outcome;
           }
           if (*order == MediaTimeOrder::Greater) {
@@ -3332,7 +3332,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
           static_cast<std::int64_t>(cue.timestampTick),
           state.timestampScaleNanoseconds);
       if (!decodeStart) {
-        outcome.error = MatroskaDemuxError::InvalidTimeline;
+        outcome.error = MediaRefusalClass::InvalidTimeline;
         return outcome;
       }
       plan.actualDecodeStart = *decodeStart;
@@ -3346,12 +3346,12 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
             return block.header.containerEncoded.offset == plan.videoBlockOffset;
           },
           cancellation);
-      if (videoProof.error != MatroskaDemuxError::None || !videoProof.block ||
+      if (videoProof.error != MediaRefusalClass::None || !videoProof.block ||
           !(videoProof.block->header.simpleBlock
                 ? videoProof.block->header.keyFrame
                 : videoProof.block->referenceCount == 0)) {
-        outcome.error = videoProof.error == MatroskaDemuxError::None
-                            ? MatroskaDemuxError::InvalidCue
+        outcome.error = videoProof.error == MediaRefusalClass::None
+                            ? MediaRefusalClass::InvalidCue
                             : videoProof.error;
         outcome.message = "Cue does not identify a video random access point";
         return outcome;
@@ -3359,7 +3359,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       seedCluster = cue.clusterIndex;
     } else {
       if (!state.audio) {
-        outcome.error = MatroskaDemuxError::TrackSelection;
+        outcome.error = MediaRefusalClass::TrackSelection;
         outcome.message = "generation has neither a video nor an audio lane";
         return outcome;
       }
@@ -3371,12 +3371,12 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
             static_cast<std::int64_t>(state.clusters[middle].timestampTick),
             state.timestampScaleNanoseconds);
         if (!clusterTime) {
-          outcome.error = MatroskaDemuxError::InvalidTimeline;
+          outcome.error = MediaRefusalClass::InvalidTimeline;
           return outcome;
         }
         const auto order = compareMediaTime(*clusterTime, target);
         if (!order) {
-          outcome.error = MatroskaDemuxError::InvalidTimeline;
+          outcome.error = MediaRefusalClass::InvalidTimeline;
           return outcome;
         }
         if (*order == MediaTimeOrder::Greater) {
@@ -3398,14 +3398,14 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
         presentationStart = plan.actualDecodeStart;
       }
       if (!presentationStart) {
-        outcome.error = MatroskaDemuxError::InvalidTimeline;
+        outcome.error = MediaRefusalClass::InvalidTimeline;
         outcome.message = "audio presentation floor is not representable";
         return outcome;
       }
       const auto pcmFrame = exactAudioFrameIndex(
           *presentationStart, state.audio->audioSampleRate);
       if (!pcmFrame || *pcmFrame < 0) {
-        outcome.error = MatroskaDemuxError::InvalidTimeline;
+        outcome.error = MediaRefusalClass::InvalidTimeline;
         return outcome;
       }
       const std::uint32_t samplesPerAccessUnit =
@@ -3464,9 +3464,9 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
                                       block.frameCount;
           },
           cancellation, &passedTarget);
-      if (audioBlock.error != MatroskaDemuxError::None || !audioBlock.block) {
-        outcome.error = audioBlock.error == MatroskaDemuxError::None
-                            ? MatroskaDemuxError::InvalidTimeline
+      if (audioBlock.error != MediaRefusalClass::None || !audioBlock.block) {
+        outcome.error = audioBlock.error == MediaRefusalClass::None
+                            ? MediaRefusalClass::InvalidTimeline
                             : audioBlock.error;
         outcome.message = "audio access unit for seek target was not found";
         return outcome;
@@ -3490,12 +3490,12 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
           {presentationOrigin, startOrdinal, state.audio->audioSampleRate,
            samplesPerAccessUnit});
       if (!decode) {
-        outcome.error = MatroskaDemuxError::InvalidTimeline;
+        outcome.error = MediaRefusalClass::InvalidTimeline;
         return outcome;
       }
       const auto mediaStart = audioPacketGridTime({presentationOrigin,
           state.audio->audioFirstOrdinal, state.audio->audioSampleRate, samplesPerAccessUnit});
-      if (!mediaStart) { outcome.error = MatroskaDemuxError::InvalidTimeline; return outcome; }
+      if (!mediaStart) { outcome.error = MediaRefusalClass::InvalidTimeline; return outcome; }
       plan.audioWindow = {*decode, *presentationStart,
                           startOrdinal == state.audio->audioFirstOrdinal};
       if (mediaStart->value > 0) {
@@ -3513,19 +3513,19 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
         constexpr MediaTime kOrigin{0, 1};
         const auto againstOrigin = compareMediaTime(*decode, kOrigin);
         if (!againstOrigin) {
-          outcome.error = MatroskaDemuxError::InvalidTimeline;
+          outcome.error = MediaRefusalClass::InvalidTimeline;
           return outcome;
         }
         plan.actualDecodeStart =
             *againstOrigin == MediaTimeOrder::Less ? kOrigin : *decode;
       }
     }
-    outcome.status = MatroskaDemuxStatus::Ready;
-    outcome.error = MatroskaDemuxError::None;
+    outcome.status = MediaSourceOpenStatus::Ready;
+    outcome.error = MediaRefusalClass::None;
     outcome.plan = plan;
     return outcome;
   } catch (...) {
-    outcome.error = MatroskaDemuxError::Io;
+    outcome.error = MediaRefusalClass::Io;
     outcome.message = "generation planning allocation failed";
     return outcome;
   }
@@ -3577,14 +3577,14 @@ std::unique_ptr<MatroskaCursor> MatroskaPreparedAsset::makeAudioCursor(
 
 bool MatroskaPreparedAsset::copyRanges(
     std::span<const FrameRange> ranges, std::span<std::byte> destination,
-    CancellationToken cancellation, MatroskaDemuxError* error) const noexcept {
+    CancellationToken cancellation, MediaRefusalClass* error) const noexcept {
   if (error != nullptr) {
-    *error = MatroskaDemuxError::None;
+    *error = MediaRefusalClass::None;
   }
   const AssetState& state = *impl_->state;
   if (!state.unchanged()) {
     if (error != nullptr) {
-      *error = MatroskaDemuxError::FileChanged;
+      *error = MediaRefusalClass::FileChanged;
     }
     return false;
   }
@@ -3595,7 +3595,7 @@ bool MatroskaPreparedAsset::copyRanges(
                     std::min(destination.size(),
                              static_cast<std::size_t>(frame.bytes.size))) {
       if (error != nullptr) {
-        *error = MatroskaDemuxError::SampleLimit;
+        *error = MediaRefusalClass::SampleLimit;
       }
       return false;
     }
@@ -3603,7 +3603,7 @@ bool MatroskaPreparedAsset::copyRanges(
   }
   if (total != destination.size()) {
     if (error != nullptr) {
-      *error = MatroskaDemuxError::InvalidRequest;
+      *error = MediaRefusalClass::InvalidRequest;
     }
     return false;
   }
@@ -3614,7 +3614,7 @@ bool MatroskaPreparedAsset::copyRanges(
     while (remaining != 0) {
       if (cancellation.cancelled()) {
         if (error != nullptr) {
-          *error = MatroskaDemuxError::Cancelled;
+          *error = MediaRefusalClass::Cancelled;
         }
         return false;
       }
@@ -3624,8 +3624,8 @@ bool MatroskaPreparedAsset::copyRanges(
               destination.subspan(destinationOffset, amount))) {
         if (error != nullptr) {
           *error = state.reader->size() == state.readerSize
-                       ? MatroskaDemuxError::Io
-                       : MatroskaDemuxError::FileChanged;
+                       ? MediaRefusalClass::Io
+                       : MediaRefusalClass::FileChanged;
         }
         return false;
       }
@@ -3643,7 +3643,7 @@ bool MatroskaPreparedAsset::copyRanges(
   // buffer more trustworthy.
   if (!state.unchanged()) {
     if (error != nullptr) {
-      *error = MatroskaDemuxError::FileChanged;
+      *error = MediaRefusalClass::FileChanged;
     }
     return false;
   }
@@ -3651,7 +3651,7 @@ bool MatroskaPreparedAsset::copyRanges(
   // the destination is only complete when the token never flipped.
   if (cancellation.cancelled()) {
     if (error != nullptr) {
-      *error = MatroskaDemuxError::Cancelled;
+      *error = MediaRefusalClass::Cancelled;
     }
     return false;
   }
@@ -3702,7 +3702,7 @@ namespace {
   // caller as Unsupported so it falls back cleanly, rather than as Failed,
   // which the session reports as a hard protocol fault on a blocking
   // surface.
-  result.status = MatroskaDemuxStatus::Unsupported;
+  result.status = MediaSourceOpenStatus::Unsupported;
   // Name the dimension refusal specifically. Everything else that lands
   // here is genuinely "the track you asked for is not available", but an
   // over-ceiling video track IS available and readable -- it is the v1
@@ -3725,11 +3725,11 @@ namespace {
     }
   }
   if (overCeiling != nullptr) {
-    result.error = MatroskaDemuxError::CodedDimensionLimit;
+    result.error = MediaRefusalClass::CodedDimensionLimit;
     result.message = codedDimensionRefusalMessage(
         *overCeiling->video->pixelWidth, *overCeiling->video->pixelHeight);
   } else {
-    result.error = MatroskaDemuxError::TrackSelection;
+    result.error = MediaRefusalClass::TrackSelection;
     result.message = "requested Matroska tracks are unavailable";
   }
   return result;
@@ -3794,14 +3794,14 @@ namespace {
   // than being second-guessed here.
 #if !defined(WAM_ENABLE_AVCODEC_STAGE)
   if (audio && softwareAudioCodecId(inlineString(audio->codecId)) != MediaCodec::Unknown)
-    return MatroskaPrepareOutcome{MatroskaDemuxStatus::Unsupported,
-        MatroskaDemuxError::CodecConfiguration, nullptr, "SoftwareAudioStageNotBuilt"};
+    return MatroskaPrepareOutcome{MediaSourceOpenStatus::Unsupported,
+        MediaRefusalClass::CodecConfiguration, nullptr, "SoftwareAudioStageNotBuilt"};
 #endif
   if (audio && inlineString(audio->codecId) == "A_OPUS" && audio->audio &&
       audio->audio->outputSamplingFrequency &&
       *audio->audio->outputSamplingFrequency != kOpusOutputSampleRate) {
-    return MatroskaPrepareOutcome{MatroskaDemuxStatus::Unsupported,
-        MatroskaDemuxError::CodecConfiguration, nullptr,
+    return MatroskaPrepareOutcome{MediaSourceOpenStatus::Unsupported,
+        MediaRefusalClass::CodecConfiguration, nullptr,
         "OpusOutputSampleRateUnsupported"};
   }
   if (audio == nullptr || inlineString(audio->codecId) != "A_AAC" ||
@@ -3817,8 +3817,8 @@ namespace {
     return std::nullopt;
   }
   MatroskaPrepareOutcome result;
-  result.status = MatroskaDemuxStatus::Unsupported;
-  result.error = MatroskaDemuxError::CodecConfiguration;
+  result.status = MediaSourceOpenStatus::Unsupported;
+  result.error = MediaRefusalClass::CodecConfiguration;
   result.message = aacSbrSignaled(configuration)
       ? kHeAacDecoderDelayRefusal
       : "selected AAC-LC or Opus track was not admitted";
@@ -4035,20 +4035,20 @@ MatroskaPrepareOutcome prepareMatroska(
   MatroskaPrepareOutcome result;
   try {
     if (reader == nullptr || reader->size() == 0 || path.empty()) {
-      result.error = MatroskaDemuxError::InvalidRequest;
+      result.error = MediaRefusalClass::InvalidRequest;
       result.message = "a finite reader and path identity are required";
       return result;
     }
     std::string initialError;
     if (!validateMediaSourceInitialPosition(requested.initialPosition,
                                             &initialError)) {
-      result.error = MatroskaDemuxError::InvalidRequest;
+      result.error = MediaRefusalClass::InvalidRequest;
       result.message = std::move(initialError);
       return result;
     }
     if (cancellation.cancelled()) {
-      result.status = MatroskaDemuxStatus::Cancelled;
-      result.error = MatroskaDemuxError::Cancelled;
+      result.status = MediaSourceOpenStatus::Cancelled;
+      result.error = MediaRefusalClass::Cancelled;
       return result;
     }
     auto state = std::make_shared<AssetState>();
@@ -4141,8 +4141,8 @@ MatroskaPrepareOutcome prepareMatroska(
     }
     if (!directoryDriven) {
       if (cancellation.cancelled()) {
-        result.status = MatroskaDemuxStatus::Cancelled;
-        result.error = MatroskaDemuxError::Cancelled;
+        result.status = MediaSourceOpenStatus::Cancelled;
+        result.error = MediaRefusalClass::Cancelled;
         return result;
       }
       options.scanClusterMetadata = false;
@@ -4151,8 +4151,8 @@ MatroskaPrepareOutcome prepareMatroska(
           !harvestClusterTimestamps(*state->reader, document.clusters,
                                     cancellation)) {
         if (cancellation.cancelled()) {
-          result.status = MatroskaDemuxStatus::Cancelled;
-          result.error = MatroskaDemuxError::Cancelled;
+          result.status = MediaSourceOpenStatus::Cancelled;
+          result.error = MediaRefusalClass::Cancelled;
           return result;
         }
         document.reset();
@@ -4163,16 +4163,16 @@ MatroskaPrepareOutcome prepareMatroska(
     }
     if (!parsed.ok() || document.allocationFailure) {
       result.error = parseError(parsed);
-      result.status = result.error == MatroskaDemuxError::Cancelled
-                          ? MatroskaDemuxStatus::Cancelled
+      result.status = result.error == MediaRefusalClass::Cancelled
+                          ? MediaSourceOpenStatus::Cancelled
                           : parsed.status == ParseStatus::Unsupported
-                                ? MatroskaDemuxStatus::Unsupported
-                                : MatroskaDemuxStatus::Failed;
+                                ? MediaSourceOpenStatus::Unsupported
+                                : MediaSourceOpenStatus::Failed;
       result.message = "Matroska structure was not admitted";
       return result;
     }
     if (!state->unchanged()) {
-      result.error = MatroskaDemuxError::FileChanged;
+      result.error = MediaRefusalClass::FileChanged;
       result.message = "file identity changed during preparation";
       return result;
     }
@@ -4184,14 +4184,14 @@ MatroskaPrepareOutcome prepareMatroska(
         (document.chapters &&
          (document.chapters->linkedSegmentPresent ||
           document.chapters->orderedEditionPresent))) {
-      result.error = MatroskaDemuxError::UnsupportedContainer;
-      result.status = MatroskaDemuxStatus::Unsupported;
+      result.error = MediaRefusalClass::UnsupportedContainer;
+      result.status = MediaSourceOpenStatus::Unsupported;
       result.message = "v1 requires one finite unlinked Matroska Segment";
       return result;
     }
     const auto duration = trackDuration(*document.info);
     if (!duration || duration->value <= 0) {
-      result.error = MatroskaDemuxError::InvalidTimeline;
+      result.error = MediaRefusalClass::InvalidTimeline;
       result.message = "finite positive Duration is required";
       return result;
     }
@@ -4215,7 +4215,7 @@ MatroskaPrepareOutcome prepareMatroska(
       incrementInventory(&descriptor->inventory, inventoryKind(track.type));
       const auto id = trackId(track.number);
       if (!id) {
-        result.error = MatroskaDemuxError::UnsupportedTrack;
+        result.error = MediaRefusalClass::UnsupportedTrack;
         result.message = "track number does not fit MediaTrackId";
         return result;
       }
@@ -4230,7 +4230,7 @@ MatroskaPrepareOutcome prepareMatroska(
       if (!makeVideoDescriptor(*state->reader, *video, state->limits, *duration,
                                document.clusters, state->constraints,
                                cancellation, &videoDescriptor, &videoRuntime)) {
-        result.status = MatroskaDemuxStatus::Unsupported;
+        result.status = MediaSourceOpenStatus::Unsupported;
         // makeVideoDescriptor folds every unadmitted trait into one bool, and
         // "not admitted" is exactly the verdict that cost a rebuild cycle to
         // attribute. The coded-dimension case is separable without guessing --
@@ -4241,11 +4241,11 @@ MatroskaPrepareOutcome prepareMatroska(
             video->video->pixelHeight &&
             !codedDimensionsWithinV1Ceiling(*video->video->pixelWidth,
                                             *video->video->pixelHeight)) {
-          result.error = MatroskaDemuxError::CodedDimensionLimit;
+          result.error = MediaRefusalClass::CodedDimensionLimit;
           result.message = codedDimensionRefusalMessage(
               *video->video->pixelWidth, *video->video->pixelHeight);
         } else {
-          result.error = MatroskaDemuxError::CodecConfiguration;
+          result.error = MediaRefusalClass::CodecConfiguration;
           result.message =
               "selected AVC/HEVC/AV1/VP9/VP8/MPEG-4 Part 2 track was not "
               "admitted";
@@ -4260,8 +4260,8 @@ MatroskaPrepareOutcome prepareMatroska(
             videoDescriptor.codecConfigurationKind, videoDescriptor.codecConfiguration, colorLimits);
         if (const char* refusal = softwareContainerColorRefusal(videoDescriptor.codec, true,
                 color.facts ? color.facts->profile : 0)) {
-          result.status = MatroskaDemuxStatus::Unsupported;
-          result.error = MatroskaDemuxError::CodecConfiguration;
+          result.status = MediaSourceOpenStatus::Unsupported;
+          result.error = MediaRefusalClass::CodecConfiguration;
           result.message = refusal;
           return result;
         }
@@ -4324,10 +4324,10 @@ MatroskaPrepareOutcome prepareMatroska(
             return true;
           });
       if (!selected) {
-        result.error = cancellation.cancelled() ? MatroskaDemuxError::Cancelled
-                                                : MatroskaDemuxError::CodecConfiguration;
-        result.status = cancellation.cancelled() ? MatroskaDemuxStatus::Cancelled
-                                                 : MatroskaDemuxStatus::Unsupported;
+        result.error = cancellation.cancelled() ? MediaRefusalClass::Cancelled
+                                                : MediaRefusalClass::CodecConfiguration;
+        result.status = cancellation.cancelled() ? MediaSourceOpenStatus::Cancelled
+                                                 : MediaSourceOpenStatus::Unsupported;
         result.message = bestRefusal + "; candidates: [" + candidateRefusals + "]";
         return result;
       }
@@ -4338,7 +4338,7 @@ MatroskaPrepareOutcome prepareMatroska(
     std::string descriptorError;
     if (!validateMediaSourceDescriptor(*descriptor, state->limits,
                                        &descriptorError)) {
-      result.error = MatroskaDemuxError::CodecConfiguration;
+      result.error = MediaRefusalClass::CodecConfiguration;
       result.message = std::move(descriptorError);
       return result;
     }
@@ -4346,7 +4346,7 @@ MatroskaPrepareOutcome prepareMatroska(
 
     if (document.clusters.empty() ||
         document.clusters.size() > kMaximumMatroskaClusters) {
-      result.error = MatroskaDemuxError::IndexLimit;
+      result.error = MediaRefusalClass::IndexLimit;
       result.message = "bounded Cluster directory is required";
       return result;
     }
@@ -4362,7 +4362,7 @@ MatroskaPrepareOutcome prepareMatroska(
       if (!clusterRangeValid(document.clusters[index], &cluster) ||
           (index != 0 && (cluster.encodedOffset <= previousOffset ||
                          (!state->video && cluster.timestampTick < previousTimestamp)))) {
-        result.error = MatroskaDemuxError::InvalidTimeline;
+        result.error = MediaRefusalClass::InvalidTimeline;
         result.message = "Cluster directory is not finite and monotonic";
         return result;
       }
@@ -4477,7 +4477,7 @@ MatroskaPrepareOutcome prepareMatroska(
       if (degenerate != nullptr) {
         const ScannedCueIndexOutcome scanned = buildScannedVideoCueIndex(
             *state, state->video->id, &state->cues, cancellation);
-        if (scanned.error != MatroskaDemuxError::None) {
+        if (scanned.error != MediaRefusalClass::None) {
           result.status = scanned.status;
           result.error = scanned.error;
           result.message = std::string(scanned.message) + " while rebuilding "
@@ -4487,8 +4487,8 @@ MatroskaPrepareOutcome prepareMatroska(
         if (state->cues.empty()) {
           // A selected video track with no random access Block anywhere has
           // nothing to start decoding from, at any target.
-          result.status = MatroskaDemuxStatus::Unsupported;
-          result.error = MatroskaDemuxError::SparseRandomAccess;
+          result.status = MediaSourceOpenStatus::Unsupported;
+          result.error = MediaRefusalClass::SparseRandomAccess;
           result.message =
               std::string("no random access Block for the selected video "
                           "track exists in any Cluster, and ") +
@@ -4506,19 +4506,19 @@ MatroskaPrepareOutcome prepareMatroska(
       const MatroskaPlanOutcome plan = asset->planGeneration(
           requested.initialPosition->target,
           requested.initialPosition->mode, cancellation);
-      if (plan.status != MatroskaDemuxStatus::Ready) {
+      if (plan.status != MediaSourceOpenStatus::Ready) {
         result.status = plan.status;
         result.error = plan.error;
         result.message = plan.message;
         return result;
       }
     }
-    result.status = MatroskaDemuxStatus::Ready;
-    result.error = MatroskaDemuxError::None;
+    result.status = MediaSourceOpenStatus::Ready;
+    result.error = MediaRefusalClass::None;
     result.asset = std::move(asset);
     return result;
   } catch (...) {
-    result.error = MatroskaDemuxError::Io;
+    result.error = MediaRefusalClass::Io;
     result.message = "Matroska preparation allocation failed";
     return result;
   }
@@ -4528,12 +4528,12 @@ MatroskaPrepareOutcome prepareMatroskaLocalFile(
     const std::filesystem::path& path, const MediaSourceOpenOptions& options,
     CancellationToken cancellation, const AudioTrackRejections& rejectedAudio) noexcept {
   if (cancellation.cancelled()) {
-    return {MatroskaDemuxStatus::Cancelled, MatroskaDemuxError::Cancelled,
+    return {MediaSourceOpenStatus::Cancelled, MediaRefusalClass::Cancelled,
             nullptr, {}};
   }
   std::shared_ptr<StableFileReader> reader = StableFileReader::open(path);
   if (reader == nullptr) {
-    return {MatroskaDemuxStatus::Failed, MatroskaDemuxError::Io, nullptr,
+    return {MediaSourceOpenStatus::Failed, MediaRefusalClass::Io, nullptr,
             "could not open the local Matroska file"};
   }
   MatroskaPrepareOutcome outcome =

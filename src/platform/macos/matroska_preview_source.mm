@@ -26,7 +26,7 @@ using media::matroska::MatroskaCursor;
 using media::matroska::MatroskaCursorCancelled;
 using media::matroska::MatroskaCursorEnd;
 using media::matroska::MatroskaCursorFailure;
-using media::matroska::MatroskaDemuxStatus;
+using media::MediaSourceOpenStatus;
 using media::matroska::MatroskaGenerationPlan;
 using media::matroska::MatroskaPreparedAsset;
 
@@ -275,19 +275,19 @@ NativePreviewBeginOutcome MatroskaPreviewSource::begin(
         impl_->asset->planGeneration(request.target,
                                      media::MediaSeekMode::Accurate,
                                      impl_->cancellation());
-    if (planned.status != MatroskaDemuxStatus::Ready || !planned.plan) {
+    if (planned.status != MediaSourceOpenStatus::Ready || !planned.plan) {
       switch (planned.status) {
-      case MatroskaDemuxStatus::Cancelled:
+      case MediaSourceOpenStatus::Cancelled:
         outcome.status = NativePreviewStatus::Cancelled;
         break;
-      case MatroskaDemuxStatus::Unsupported:
+      case MediaSourceOpenStatus::Unsupported:
         outcome.status = NativePreviewStatus::Unsupported;
         break;
       default:
         outcome.status = NativePreviewStatus::Failed;
         break;
       }
-      outcome.error = matroskaDemuxErrorMessage(
+      outcome.error = media::refusalMessage(
           planned.message.empty() ? "matroska preview planning failed"
                                   : planned.message.c_str(),
           planned.error);
@@ -388,7 +388,7 @@ NativePreviewReadResult MatroskaPreviewSource::readNext(
       return NativePreviewEndOfStream{expectedEpoch};
     }
     if (const auto* failed = std::get_if<MatroskaCursorFailure>(&read)) {
-      std::string error = matroskaDemuxErrorMessage(
+      std::string error = media::refusalMessage(
           failed->message.empty() ? "matroska preview cursor read failed"
                                   : failed->message.c_str(),
           failed->error);

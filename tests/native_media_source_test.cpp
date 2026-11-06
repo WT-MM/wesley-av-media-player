@@ -16,6 +16,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -669,6 +670,45 @@ MediaSample sampleWithSizedPayload(MediaSampleKind kind, MediaTrackId track,
   sample.sampleCount = 1;
   sample.payload = sizedPayload(bytes);
   return sample;
+}
+
+// The "(Name)" suffix of every demuxer refusal reaches stderr and must keep
+// the spelling both demuxers printed before they shared one class.
+void checkRefusalClassNames() {
+  using enum MediaRefusalClass;
+  constexpr std::pair<MediaRefusalClass, std::string_view> kLegacy[] = {
+      {None, "None"},
+      {InvalidRequest, "InvalidRequest"},
+      {InvalidContainer, "InvalidContainer"},
+      {UnsupportedContainer, "UnsupportedContainer"},
+      {NotTransportStream, "NotTransportStream"},
+      {MissingProgramTable, "MissingProgramTable"},
+      {TrackSelection, "TrackSelection"},
+      {ProgramSelection, "ProgramSelection"},
+      {UnsupportedTrack, "UnsupportedTrack"},
+      {UnsupportedStreamType, "UnsupportedStreamType"},
+      {CodecConfiguration, "CodecConfiguration"},
+      {CodedDimensionLimit, "CodedDimensionLimit"},
+      {InvalidTimeline, "InvalidTimeline"},
+      {MissingCues, "MissingCues"},
+      {InvalidCue, "InvalidCue"},
+      {SparseRandomAccess, "SparseRandomAccess"},
+      {IndexLimit, "IndexLimit"},
+      {SampleLimit, "SampleLimit"},
+      {ScanLimit, "ScanLimit"},
+      {FileChanged, "FileChanged"},
+      {Io, "Io"},
+      {Cancelled, "Cancelled"},
+  };
+  for (const auto& [refusal, name] : kLegacy) {
+    expect(mediaRefusalClassName(refusal) == name,
+           "refusal class name keeps its legacy spelling");
+  }
+  expect(std::string_view(mediaRefusalClassName(
+             static_cast<MediaRefusalClass>(255))) == "Unknown",
+         "an out-of-range refusal class names itself Unknown");
+  expect(refusalMessage("read failed", Io) == "read failed (Io)",
+         "refusal message appends the class name in parentheses");
 }
 
 void checkPreparedContextIdentity() {
@@ -2064,6 +2104,7 @@ int main() {
   static_assert(std::is_trivially_copyable_v<MediaSourceStats>);
   static_assert(std::is_standard_layout_v<MediaAudioGenerationWindow>);
   static_assert(std::is_trivially_copyable_v<MediaAudioGenerationWindow>);
+  checkRefusalClassNames();
   checkHardLimitClamping();
   checkExactAudioFrameGrid();
   checkExactTickArithmetic();

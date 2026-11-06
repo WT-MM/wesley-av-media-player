@@ -100,35 +100,6 @@ static_assert(kMaximumMpegTsAccessUnitPackets * 184U >
 
 inline constexpr std::size_t kMaximumMpegTsTracks{8};
 
-enum class MpegTsDemuxStatus : std::uint8_t {
-  Ready,
-  Unsupported,
-  Cancelled,
-  Failed,
-};
-
-// Typed rejection verdicts. Nothing in this demuxer drops a stream silently:
-// every refusal names one of these and carries a cold message.
-enum class MpegTsDemuxError : std::uint8_t {
-  None,
-  InvalidRequest,
-  NotTransportStream,   // no consistent sync pattern
-  InvalidContainer,     // sync found, structure impossible
-  MissingProgramTable,  // no PAT/PMT within the bounded scan
-  ProgramSelection,     // no program carries an admissible video stream
-  UnsupportedStreamType,
-  CodecConfiguration,
-  InvalidTimeline,      // no usable PTS/PCR pair, or a non-monotone one
-  IndexLimit,
-  SampleLimit,
-  ScanLimit,            // a bounded scan ran out before finding its target
-  FileChanged,
-  Io,
-  Cancelled,
-};
-
-[[nodiscard]] const char* mpegTsDemuxErrorName(MpegTsDemuxError error) noexcept;
-
 // ---------------------------------------------------------------------------
 // Index
 // ---------------------------------------------------------------------------
@@ -219,7 +190,7 @@ struct MpegTsGenerationPlan {
 struct MpegTsCursorEnd {};
 struct MpegTsCursorCancelled {};
 struct MpegTsCursorFailure {
-  MpegTsDemuxError error{MpegTsDemuxError::Io};
+  MediaRefusalClass error{MediaRefusalClass::Io};
   std::string message;
 };
 
@@ -251,8 +222,8 @@ class MpegTsCursor final {
 };
 
 struct MpegTsPlanOutcome {
-  MpegTsDemuxStatus status{MpegTsDemuxStatus::Failed};
-  MpegTsDemuxError error{MpegTsDemuxError::InvalidTimeline};
+  MediaSourceOpenStatus status{MediaSourceOpenStatus::Failed};
+  MediaRefusalClass error{MediaRefusalClass::InvalidTimeline};
   std::optional<MpegTsGenerationPlan> plan;
   std::string message;
 };
@@ -324,7 +295,7 @@ class MpegTsPreparedAsset final
   [[nodiscard]] bool copyAccessUnit(
       const MpegTsCompressedSample& sample, std::span<std::byte> destination,
       CancellationToken cancellation = {},
-      MpegTsDemuxError* error = nullptr) const noexcept;
+      MediaRefusalClass* error = nullptr) const noexcept;
 
  private:
   struct Impl;
@@ -341,8 +312,8 @@ class MpegTsPreparedAsset final
 };
 
 struct MpegTsPrepareOutcome {
-  MpegTsDemuxStatus status{MpegTsDemuxStatus::Failed};
-  MpegTsDemuxError error{MpegTsDemuxError::InvalidContainer};
+  MediaSourceOpenStatus status{MediaSourceOpenStatus::Failed};
+  MediaRefusalClass error{MediaRefusalClass::InvalidContainer};
   std::shared_ptr<const MpegTsPreparedAsset> asset;
   std::string message;
 };

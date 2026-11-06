@@ -68,14 +68,4 @@ struct MatroskaSampleBuildInputs {
     const media::matroska::MatroskaCompressedSample& sample,
     ScopedSampleBuffer* out, std::string* error);
 
-[[nodiscard]] const char* matroskaDemuxErrorName(
-    media::matroska::MatroskaDemuxError error) noexcept;
-
-// The neutral header owns no FileChanged status, so a mid-stream identity
-// change has to travel as a MediaSourceFailure. Naming the demuxer error inside
-// the message keeps that fact recoverable by an owner that must distinguish a
-// swapped file from an ordinary read error.
-[[nodiscard]] std::string matroskaDemuxErrorMessage(
-    const char* what, media::matroska::MatroskaDemuxError error);
-
 }  // namespace wam::macos

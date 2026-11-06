@@ -567,42 +567,6 @@ struct AssetState {
 
 }  // namespace
 
-const char* mpegTsDemuxErrorName(MpegTsDemuxError error) noexcept {
-  switch (error) {
-    case MpegTsDemuxError::None:
-      return "None";
-    case MpegTsDemuxError::InvalidRequest:
-      return "InvalidRequest";
-    case MpegTsDemuxError::NotTransportStream:
-      return "NotTransportStream";
-    case MpegTsDemuxError::InvalidContainer:
-      return "InvalidContainer";
-    case MpegTsDemuxError::MissingProgramTable:
-      return "MissingProgramTable";
-    case MpegTsDemuxError::ProgramSelection:
-      return "ProgramSelection";
-    case MpegTsDemuxError::UnsupportedStreamType:
-      return "UnsupportedStreamType";
-    case MpegTsDemuxError::CodecConfiguration:
-      return "CodecConfiguration";
-    case MpegTsDemuxError::InvalidTimeline:
-      return "InvalidTimeline";
-    case MpegTsDemuxError::IndexLimit:
-      return "IndexLimit";
-    case MpegTsDemuxError::SampleLimit:
-      return "SampleLimit";
-    case MpegTsDemuxError::ScanLimit:
-      return "ScanLimit";
-    case MpegTsDemuxError::FileChanged:
-      return "FileChanged";
-    case MpegTsDemuxError::Io:
-      return "Io";
-    case MpegTsDemuxError::Cancelled:
-      return "Cancelled";
-  }
-  return "Unknown";
-}
-
 bool detectMpegTsFraming(std::span<const std::byte> probe,
                          std::uint64_t fileSize,
                          MpegTsFraming& framing) noexcept {
@@ -920,7 +884,7 @@ finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
 MpegTsCursorReadResult
 MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
   if (impl_ == nullptr) {
-    return MpegTsCursorFailure{MpegTsDemuxError::InvalidRequest,
+    return MpegTsCursorFailure{MediaRefusalClass::InvalidRequest,
                                "mpeg-ts cursor is not open"};
   }
   if (impl_->ended) {
@@ -931,7 +895,7 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
   }
   const AssetState& state = *impl_->state;
   if (!state.unchanged()) {
-    return MpegTsCursorFailure{MpegTsDemuxError::FileChanged,
+    return MpegTsCursorFailure{MediaRefusalClass::FileChanged,
                                "mpeg-ts file changed during playback"};
   }
 
@@ -949,7 +913,7 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
     std::span<const std::byte> packet;
     const WalkStatus status = walker.next(impl_->position, packet);
     if (status == WalkStatus::Io) {
-      return MpegTsCursorFailure{MpegTsDemuxError::Io,
+      return MpegTsCursorFailure{MediaRefusalClass::Io,
                                  "mpeg-ts packet read failed"};
     }
     if (status == WalkStatus::End) {
@@ -1020,7 +984,7 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
       if (completed) {
         if (completed->payloadBytes > kMaximumMpegTsAccessUnitBytes) {
           return MpegTsCursorFailure{
-              MpegTsDemuxError::SampleLimit,
+              MediaRefusalClass::SampleLimit,
               "mpeg-ts access unit exceeds the admitted sample size"};
         }
         completed->track = walk.pid;
@@ -1034,7 +998,7 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
     }
     if (walk.packetCount >= kMaximumMpegTsAccessUnitPackets) {
       return MpegTsCursorFailure{
-          MpegTsDemuxError::SampleLimit,
+          MediaRefusalClass::SampleLimit,
           "mpeg-ts access unit spans more packets than the cap admits"};
     }
     walk.appendPayload(
@@ -1052,21 +1016,21 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
 bool MpegTsPreparedAsset::copyAccessUnit(const MpegTsCompressedSample& sample,
                                          std::span<std::byte> destination,
                                          CancellationToken cancellation,
-                                         MpegTsDemuxError* error) const
+                                         MediaRefusalClass* error) const
     noexcept {
   if (error != nullptr) {
-    *error = MpegTsDemuxError::None;
+    *error = MediaRefusalClass::None;
   }
   const AssetState& state = *impl_->state;
   if (!state.unchanged()) {
     if (error != nullptr) {
-      *error = MpegTsDemuxError::FileChanged;
+      *error = MediaRefusalClass::FileChanged;
     }
     return false;
   }
   if (destination.size() != sample.payloadBytes) {
     if (error != nullptr) {
-      *error = MpegTsDemuxError::InvalidRequest;
+      *error = MediaRefusalClass::InvalidRequest;
     }
     return false;
   }
@@ -1086,13 +1050,13 @@ bool MpegTsPreparedAsset::copyAccessUnit(const MpegTsCompressedSample& sample,
     while (written < destination.size()) {
       if (cancellation.cancelled()) {
         if (error != nullptr) {
-          *error = MpegTsDemuxError::Cancelled;
+          *error = MediaRefusalClass::Cancelled;
         }
         return false;
       }
       if (++packets > kMaximumMpegTsAccessUnitPackets) {
         if (error != nullptr) {
-          *error = MpegTsDemuxError::SampleLimit;
+          *error = MediaRefusalClass::SampleLimit;
         }
         return false;
       }
@@ -1105,8 +1069,8 @@ bool MpegTsPreparedAsset::copyAccessUnit(const MpegTsCompressedSample& sample,
       if (status == WalkStatus::Io) {
         if (error != nullptr) {
           *error = state.reader->size() == state.readerSize
-                       ? MpegTsDemuxError::Io
-                       : MpegTsDemuxError::FileChanged;
+                       ? MediaRefusalClass::Io
+                       : MediaRefusalClass::FileChanged;
         }
         return false;
       }
@@ -1143,26 +1107,26 @@ bool MpegTsPreparedAsset::copyAccessUnit(const MpegTsCompressedSample& sample,
 
     if (written != destination.size()) {
       if (error != nullptr) {
-        *error = MpegTsDemuxError::Io;
+        *error = MediaRefusalClass::Io;
       }
       return false;
     }
     if (!state.unchanged()) {
       if (error != nullptr) {
-        *error = MpegTsDemuxError::FileChanged;
+        *error = MediaRefusalClass::FileChanged;
       }
       return false;
     }
     if (cancellation.cancelled()) {
       if (error != nullptr) {
-        *error = MpegTsDemuxError::Cancelled;
+        *error = MediaRefusalClass::Cancelled;
       }
       return false;
     }
     return true;
   } catch (...) {
     if (error != nullptr) {
-      *error = MpegTsDemuxError::Io;
+      *error = MediaRefusalClass::Io;
     }
     return false;
   }
@@ -1180,22 +1144,22 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
   try {
     const AssetState& state = *impl_->state;
     if (cancellation.cancelled()) {
-      result.status = MpegTsDemuxStatus::Cancelled;
-      result.error = MpegTsDemuxError::Cancelled;
+      result.status = MediaSourceOpenStatus::Cancelled;
+      result.error = MediaRefusalClass::Cancelled;
       return result;
     }
     if (!state.unchanged()) {
-      result.error = MpegTsDemuxError::FileChanged;
+      result.error = MediaRefusalClass::FileChanged;
       result.message = "mpeg-ts file changed before planning";
       return result;
     }
     if (!target.valid() || target.value < 0) {
-      result.error = MpegTsDemuxError::InvalidRequest;
+      result.error = MediaRefusalClass::InvalidRequest;
       result.message = "seek target must be a valid nonnegative time";
       return result;
     }
     if (state.index.empty()) {
-      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.error = MediaRefusalClass::InvalidTimeline;
       result.message = "mpeg-ts index is empty";
       return result;
     }
@@ -1206,7 +1170,7 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
                              static_cast<__int128>(kTimestampHz)) /
                             static_cast<__int128>(target.timescale);
     if (scaled > std::numeric_limits<std::int64_t>::max()) {
-      result.error = MpegTsDemuxError::InvalidRequest;
+      result.error = MediaRefusalClass::InvalidRequest;
       result.message = "seek target is outside the 90 kHz timeline";
       return result;
     }
@@ -1321,8 +1285,8 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
 
         while (position < scanLimit) {
           if ((++refinePackets & 0x3FFU) == 0 && cancellation.cancelled()) {
-            result.status = MpegTsDemuxStatus::Cancelled;
-            result.error = MpegTsDemuxError::Cancelled;
+            result.status = MediaSourceOpenStatus::Cancelled;
+            result.error = MediaRefusalClass::Cancelled;
             return result;
           }
           const std::uint64_t packetOffset = position;
@@ -1332,7 +1296,7 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
             break;
           }
           if (status == WalkStatus::Io) {
-            result.error = MpegTsDemuxError::Io;
+            result.error = MediaRefusalClass::Io;
             result.message = "mpeg-ts seek scan read failed";
             return result;
           }
@@ -1416,7 +1380,7 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
         videoStartTick = firstAfterTick;
       }
       if (chosen == nullptr) {
-        result.error = MpegTsDemuxError::ScanLimit;
+        result.error = MediaRefusalClass::ScanLimit;
         // Two different facts wear the same refusal, and telling them apart
         // from a stderr capture is the difference between "this stream has a
         // long GOP" and "this stream's per-picture prologue is larger than the
@@ -1440,7 +1404,7 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
     const std::optional<MediaTime> decodeStart =
         rebasedTime(videoStartTick, state.originTick);
     if (!decodeStart) {
-      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.error = MediaRefusalClass::InvalidTimeline;
       result.message = "seek landed outside the representable timeline";
       return result;
     }
@@ -1458,12 +1422,12 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
       }
     }
 
-    result.status = MpegTsDemuxStatus::Ready;
-    result.error = MpegTsDemuxError::None;
+    result.status = MediaSourceOpenStatus::Ready;
+    result.error = MediaRefusalClass::None;
     result.plan = plan;
     return result;
   } catch (...) {
-    result.error = MpegTsDemuxError::Io;
+    result.error = MediaRefusalClass::Io;
     result.message = "mpeg-ts planning allocation failed";
     return result;
   }
@@ -1538,7 +1502,7 @@ struct ProgramScanResult {
 // Deciding between grades means every program's PMT has to be read, so the
 // pass runs to the bound unless it finds a Complete program at the FIRST PAT
 // entry, which nothing later can beat.
-[[nodiscard]] MpegTsDemuxError
+[[nodiscard]] MediaRefusalClass
 scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
              CancellationToken cancellation, ProgramScanResult& out) noexcept {
   PacketWalker walker(window, framing);
@@ -1557,7 +1521,7 @@ scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
 
   while (position < limit) {
     if ((++probes & 0x3FFU) == 0 && cancellation.cancelled()) {
-      return MpegTsDemuxError::Cancelled;
+      return MediaRefusalClass::Cancelled;
     }
     std::span<const std::byte> packet;
     const WalkStatus status = walker.next(position, packet);
@@ -1565,7 +1529,7 @@ scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
       break;
     }
     if (status == WalkStatus::Io) {
-      return MpegTsDemuxError::Io;
+      return MediaRefusalClass::Io;
     }
     TsPacketHeader header{};
     if (decodeTsPacket(packet, header) != TsPacketStatus::Ok ||
@@ -1624,7 +1588,7 @@ scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
       // Nothing later in the PAT can beat a Complete program at entry zero, so
       // the common single-program and well-ordered-multiplex cases stop early.
       if (bestGrade == ProgramGrade::Complete && bestIndex == 0) {
-        return MpegTsDemuxError::None;
+        return MediaRefusalClass::None;
       }
       break;
     }
@@ -1634,12 +1598,12 @@ scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
     }
   }
   if (!out.hasPat) {
-    return MpegTsDemuxError::MissingProgramTable;
+    return MediaRefusalClass::MissingProgramTable;
   }
   if (!out.hasPmt) {
-    return MpegTsDemuxError::ProgramSelection;
+    return MediaRefusalClass::ProgramSelection;
   }
-  return MpegTsDemuxError::None;
+  return MediaRefusalClass::None;
 }
 
 // How many consecutive video access units the timing scan observes before it
@@ -1774,7 +1738,7 @@ measuredFrameDurationTicks(const FirstUnitFacts& facts) noexcept {
 // One bounded pass that finds, for each selected stream, the first access unit
 // and everything preparation needs from it: the parameter sets that become the
 // codec configuration, the first audio frame header, and the first PTS of each.
-[[nodiscard]] MpegTsDemuxError
+[[nodiscard]] MediaRefusalClass
 scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
                std::uint16_t videoPid, MediaCodec videoCodec,
                std::uint16_t audioPid, bool audioIsLatm,
@@ -1797,7 +1761,7 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
 
   while (position < limit) {
     if ((++probes & 0x3FFU) == 0 && cancellation.cancelled()) {
-      return MpegTsDemuxError::Cancelled;
+      return MediaRefusalClass::Cancelled;
     }
     const std::uint64_t packetOffset = position;
     std::span<const std::byte> packet;
@@ -1806,7 +1770,7 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
       break;
     }
     if (status == WalkStatus::Io) {
-      return MpegTsDemuxError::Io;
+      return MediaRefusalClass::Io;
     }
     TsPacketHeader header{};
     if (decodeTsPacket(packet, header) != TsPacketStatus::Ok ||
@@ -1886,7 +1850,7 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
                        latmStatus == LatmStatus::Malformed) {
               // A config that IS present and is not carriable settles the
               // question; scanning on would only find the same one restated.
-              return MpegTsDemuxError::None;
+              return MediaRefusalClass::None;
             }
           }
         }
@@ -1908,10 +1872,10 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
         !wantAudio || (facts.hasAudioPts && facts.hasAudioHeader &&
                        (!audioIsLatm || facts.hasLatmConfig));
     if (videoDone && audioDone) {
-      return MpegTsDemuxError::None;
+      return MediaRefusalClass::None;
     }
   }
-  return MpegTsDemuxError::None;
+  return MediaRefusalClass::None;
 }
 
 // Finds the first PCR at or after `from` on `pcrPid`, within one bounded probe
@@ -2080,20 +2044,20 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
   MpegTsPrepareOutcome result{};
   try {
     if (reader == nullptr || reader->size() == 0 || path.empty()) {
-      result.error = MpegTsDemuxError::InvalidRequest;
+      result.error = MediaRefusalClass::InvalidRequest;
       result.message = "mpeg-ts preparation requires a reader and a path";
       return result;
     }
     std::string initialError;
     if (!validateMediaSourceInitialPosition(requested.initialPosition,
                                             &initialError)) {
-      result.error = MpegTsDemuxError::InvalidRequest;
+      result.error = MediaRefusalClass::InvalidRequest;
       result.message = std::move(initialError);
       return result;
     }
     if (cancellation.cancelled()) {
-      result.status = MpegTsDemuxStatus::Cancelled;
-      result.error = MpegTsDemuxError::Cancelled;
+      result.status = MediaSourceOpenStatus::Cancelled;
+      result.error = MediaRefusalClass::Cancelled;
       return result;
     }
 
@@ -2111,13 +2075,13 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           std::min<std::uint64_t>(kMpegTsReadWindowBytes, state->readerSize));
       const std::span<const std::byte> probe = window.at(0, probeBytes);
       if (probe.empty()) {
-        result.error = MpegTsDemuxError::Io;
+        result.error = MediaRefusalClass::Io;
         result.message = "could not read the mpeg-ts probe window";
         return result;
       }
       if (!detectMpegTsFraming(probe, state->readerSize, state->framing)) {
-        result.status = MpegTsDemuxStatus::Unsupported;
-        result.error = MpegTsDemuxError::NotTransportStream;
+        result.status = MediaSourceOpenStatus::Unsupported;
+        result.error = MediaRefusalClass::NotTransportStream;
         result.message = "no consistent transport stream packet framing";
         return result;
       }
@@ -2126,20 +2090,20 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     // --- programs ----------------------------------------------------------
     ProgramScanResult programs{};
     {
-      const MpegTsDemuxError error =
+      const MediaRefusalClass error =
           scanPrograms(window, state->framing, cancellation, programs);
-      if (error == MpegTsDemuxError::Cancelled) {
-        result.status = MpegTsDemuxStatus::Cancelled;
+      if (error == MediaRefusalClass::Cancelled) {
+        result.status = MediaSourceOpenStatus::Cancelled;
         result.error = error;
         return result;
       }
-      if (error != MpegTsDemuxError::None) {
-        result.status = error == MpegTsDemuxError::Io
-                            ? MpegTsDemuxStatus::Failed
-                            : MpegTsDemuxStatus::Unsupported;
+      if (error != MediaRefusalClass::None) {
+        result.status = error == MediaRefusalClass::Io
+                            ? MediaSourceOpenStatus::Failed
+                            : MediaSourceOpenStatus::Unsupported;
         result.error = error;
         result.message =
-            error == MpegTsDemuxError::MissingProgramTable
+            error == MediaRefusalClass::MissingProgramTable
                 ? "no program association table within the bounded scan"
                 : "no program carries a video elementary stream";
         return result;
@@ -2185,10 +2149,10 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
                                inventory.metadata));
 
     if (videoStream == nullptr) {
-      result.status = MpegTsDemuxStatus::Unsupported;
+      result.status = MediaSourceOpenStatus::Unsupported;
       result.error = rejectedVideoType != 0
-                         ? MpegTsDemuxError::UnsupportedStreamType
-                         : MpegTsDemuxError::ProgramSelection;
+                         ? MediaRefusalClass::UnsupportedStreamType
+                         : MediaRefusalClass::ProgramSelection;
       // Name the refused type. MPEG-1 video (0x01) and MPEG-4 part 2 (0x10)
       // have no route; that gap must reach the caller by name rather than as
       // a silent skip.
@@ -2207,8 +2171,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     if (videoStream->codec != MediaCodec::H264 &&
         videoStream->codec != MediaCodec::Hevc &&
         videoStream->codec != MediaCodec::Mpeg2Video) {
-      result.status = MpegTsDemuxStatus::Unsupported;
-      result.error = MpegTsDemuxError::UnsupportedStreamType;
+      result.status = MediaSourceOpenStatus::Unsupported;
+      result.error = MediaRefusalClass::UnsupportedStreamType;
       result.message =
           "mpeg-ts video admission is H.264, HEVC and MPEG-2 only";
       return result;
@@ -2230,8 +2194,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     }
     // A present soundtrack requires an admitted selection.
     if (audioStream == nullptr && rejectedAudioType != 0) {
-      result.status = MpegTsDemuxStatus::Unsupported;
-      result.error = MpegTsDemuxError::UnsupportedStreamType;
+      result.status = MediaSourceOpenStatus::Unsupported;
+      result.error = MediaRefusalClass::UnsupportedStreamType;
       result.message = "mpeg-ts audio stream type is not routable: " +
                        hexStreamType(rejectedAudioType);
       return result;
@@ -2244,29 +2208,29 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           state->hasAudio &&
           state->audio.streamType ==
               static_cast<std::uint8_t>(TsStreamType::LatmAac);
-      const MpegTsDemuxError error = scanFirstUnits(
+      const MediaRefusalClass error = scanFirstUnits(
           window, state->framing, state->video.pid, state->video.codec,
           state->hasAudio ? state->audio.pid : kNullPid, audioIsLatm,
           cancellation, facts);
-      if (error == MpegTsDemuxError::Cancelled) {
-        result.status = MpegTsDemuxStatus::Cancelled;
+      if (error == MediaRefusalClass::Cancelled) {
+        result.status = MediaSourceOpenStatus::Cancelled;
         result.error = error;
         return result;
       }
-      if (error != MpegTsDemuxError::None) {
+      if (error != MediaRefusalClass::None) {
         result.error = error;
         result.message = "mpeg-ts elementary stream scan failed";
         return result;
       }
     }
     if (!facts.hasVideoPts) {
-      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.error = MediaRefusalClass::InvalidTimeline;
       result.message = "no video presentation timestamp in the bounded scan";
       return result;
     }
     if (!facts.hasParameterSets) {
-      result.status = MpegTsDemuxStatus::Unsupported;
-      result.error = MpegTsDemuxError::CodecConfiguration;
+      result.status = MediaSourceOpenStatus::Unsupported;
+      result.error = MediaRefusalClass::CodecConfiguration;
       result.message =
           state->video.codec == MediaCodec::Mpeg2Video
               ? "no in-band MPEG-2 sequence header in the bounded scan"
@@ -2291,7 +2255,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       state->videoFrameDurationTicks = measuredFrameDurationTicks(facts);
     }
     if (state->videoFrameDurationTicks == 0) {
-      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.error = MediaRefusalClass::InvalidTimeline;
       result.message =
           "no exact video frame extent could be established from the stream";
       return result;
@@ -2342,7 +2306,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       state->endTick = endTick;
     }
     if (!duration.valid()) {
-      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.error = MediaRefusalClass::InvalidTimeline;
       result.message = "could not derive a positive duration from the PCR";
       return result;
     }
@@ -2364,8 +2328,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       std::int64_t previousTick = std::numeric_limits<std::int64_t>::min();
       for (std::size_t i = 0; i < probes; ++i) {
         if (cancellation.cancelled()) {
-          result.status = MpegTsDemuxStatus::Cancelled;
-          result.error = MpegTsDemuxError::Cancelled;
+          result.status = MediaSourceOpenStatus::Cancelled;
+          result.error = MediaRefusalClass::Cancelled;
           return result;
         }
         const std::uint64_t from =
@@ -2382,7 +2346,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           continue;  // not strictly increasing: drop rather than corrupt
         }
         if (state->index.size() >= kMaximumMpegTsIndexEntries) {
-          result.error = MpegTsDemuxError::IndexLimit;
+          result.error = MediaRefusalClass::IndexLimit;
           result.message = "mpeg-ts index exceeded its hard entry cap";
           return result;
         }
@@ -2395,7 +2359,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
         previousTick = tick;
       }
       if (state->index.empty()) {
-        result.error = MpegTsDemuxError::InvalidTimeline;
+        result.error = MediaRefusalClass::InvalidTimeline;
         result.message = "no program clock reference found for the index";
         return result;
       }
@@ -2411,7 +2375,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     }
 
     if (!state->unchanged()) {
-      result.error = MpegTsDemuxError::FileChanged;
+      result.error = MediaRefusalClass::FileChanged;
       result.message = "file identity changed during preparation";
       return result;
     }
@@ -2431,15 +2395,15 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       const std::optional<Mpeg2SequenceHeader> sequence =
           parseMpeg2SequenceHeader(facts.parameterSets);
       if (!sequence || sequence->width == 0 || sequence->height == 0) {
-        result.status = MpegTsDemuxStatus::Unsupported;
-        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.status = MediaSourceOpenStatus::Unsupported;
+        result.error = MediaRefusalClass::CodecConfiguration;
         result.message = "in-band MPEG-2 sequence header has no geometry";
         return result;
       }
       if (!state->limits.codedDimensionsAdmitted(sequence->width,
                                                  sequence->height)) {
-        result.status = MpegTsDemuxStatus::Unsupported;
-        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.status = MediaSourceOpenStatus::Unsupported;
+        result.error = MediaRefusalClass::CodecConfiguration;
         // Both numbers, not just the word "exceeds": the cap is a constant the
         // reader of a stderr capture does not have in front of them.
         result.message = codedDimensionRefusalMessage(sequence->width,
@@ -2480,8 +2444,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       const bool built = hevc ? buildHvcCFromAnnexB(facts.parameterSets, avcc)
                               : buildAvcCFromAnnexB(facts.parameterSets, avcc);
       if (!built) {
-        result.status = MpegTsDemuxStatus::Unsupported;
-        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.status = MediaSourceOpenStatus::Unsupported;
+        result.error = MediaRefusalClass::CodecConfiguration;
         result.message =
             hevc ? "could not synthesize an hvcC from in-band VPS/SPS/PPS"
                  : "could not synthesize an avcC from in-band SPS/PPS";
@@ -2509,8 +2473,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           inspectVideoCodecConfiguration(state->video.codec,
                                          configurationKind, avcc, codecLimits);
       if (!inspection.admitted()) {
-        result.status = MpegTsDemuxStatus::Unsupported;
-        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.status = MediaSourceOpenStatus::Unsupported;
+        result.error = MediaRefusalClass::CodecConfiguration;
         // Name the inspector's own verdict: a byte-correct record can still be
         // refused for a color-description envelope the synthesis has no say
         // in, and "refused" alone does not say which.
@@ -2723,8 +2687,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
         descriptor->selectedAudio = track.id;
         descriptor->tracks.push_back(std::move(track));
       } else {
-        result.status = MpegTsDemuxStatus::Unsupported;
-        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.status = MediaSourceOpenStatus::Unsupported;
+        result.error = MediaRefusalClass::CodecConfiguration;
         result.message = "mpeg-ts audio configuration refused: " +
                          audioRefusalReason(state->audio.streamType,
                                             state->audio.codec, facts);
@@ -2735,7 +2699,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     std::string descriptorError;
     if (!validateMediaSourceDescriptor(*descriptor, state->limits,
                                        &descriptorError)) {
-      result.error = MpegTsDemuxError::CodecConfiguration;
+      result.error = MediaRefusalClass::CodecConfiguration;
       result.message = std::move(descriptorError);
       return result;
     }
@@ -2748,7 +2712,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       const MpegTsPlanOutcome planned =
           asset->planGeneration(requested.initialPosition->target,
                                 requested.initialPosition->mode, cancellation);
-      if (planned.status != MpegTsDemuxStatus::Ready) {
+      if (planned.status != MediaSourceOpenStatus::Ready) {
         result.status = planned.status;
         result.error = planned.error;
         result.message = planned.message;
@@ -2756,12 +2720,12 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       }
     }
 
-    result.status = MpegTsDemuxStatus::Ready;
-    result.error = MpegTsDemuxError::None;
+    result.status = MediaSourceOpenStatus::Ready;
+    result.error = MediaRefusalClass::None;
     result.asset = std::move(asset);
     return result;
   } catch (...) {
-    result.error = MpegTsDemuxError::Io;
+    result.error = MediaRefusalClass::Io;
     result.message = "mpeg-ts preparation allocation failed";
     return result;
   }
@@ -2772,12 +2736,12 @@ prepareMpegTsLocalFile(const std::filesystem::path& path,
                        const MediaSourceOpenOptions& options,
                        CancellationToken cancellation) noexcept {
   if (cancellation.cancelled()) {
-    return {MpegTsDemuxStatus::Cancelled, MpegTsDemuxError::Cancelled, nullptr,
+    return {MediaSourceOpenStatus::Cancelled, MediaRefusalClass::Cancelled, nullptr,
             {}};
   }
   std::shared_ptr<StableFileReader> reader = StableFileReader::open(path);
   if (reader == nullptr) {
-    return {MpegTsDemuxStatus::Failed, MpegTsDemuxError::Io, nullptr,
+    return {MediaSourceOpenStatus::Failed, MediaRefusalClass::Io, nullptr,
             "could not open the local mpeg-ts file"};
   }
   MpegTsPrepareOutcome outcome =

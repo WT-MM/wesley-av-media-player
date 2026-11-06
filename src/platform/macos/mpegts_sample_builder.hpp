@@ -25,13 +25,6 @@ namespace wam::macos {
 // Nothing here is part of the shipping surface of `mpegts_media_source.hpp`;
 // this header is included only by MPEG-TS backend translation units.
 
-// The neutral header owns no FileChanged status, so a mid-stream identity
-// change has to travel as a MediaSourceFailure. Naming the demuxer error
-// inside the message keeps that fact recoverable by an owner that must
-// distinguish a swapped file from an ordinary read error.
-[[nodiscard]] std::string mpegTsDemuxErrorMessage(
-    const char* what, media::mpegts::MpegTsDemuxError error);
-
 // Two video shapes, and exactly two.
 //
 //  * H.264 and HEVC arrive as Annex-B with in-band parameter sets (SPS/PPS,

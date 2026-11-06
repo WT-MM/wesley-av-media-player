@@ -26,44 +26,6 @@ inline constexpr std::size_t kMaximumMatroskaEncodedBlockBytes{
     kMaximumMatroskaClusterBytes};
 inline constexpr std::size_t kMaximumMatroskaSeekClusters{8'192};
 
-enum class MatroskaDemuxStatus : std::uint8_t {
-  Ready,
-  Unsupported,
-  Cancelled,
-  Failed,
-};
-
-enum class MatroskaDemuxError : std::uint8_t {
-  None,
-  InvalidRequest,
-  InvalidContainer,
-  UnsupportedContainer,
-  TrackSelection,
-  UnsupportedTrack,
-  CodecConfiguration,
-  InvalidTimeline,
-  MissingCues,
-  InvalidCue,
-  IndexLimit,
-  SampleLimit,
-  FileChanged,
-  Io,
-  Cancelled,
-  // A video track whose coded dimensions are outside the v1 admission
-  // envelope. It is distinct from TrackSelection because that
-  // bucket says only "the tracks you asked for are unavailable", which is the
-  // one thing a dimension refusal must not say: the track IS there, it is the
-  // envelope that refuses it, and the verdict has to carry both numbers.
-  CodedDimensionLimit,
-  // The selected video track's own random access cadence
-  // is wider than the seek preroll the route decodes through -- proven by a
-  // Cluster scan, not inferred from a Cues element. Distinct from InvalidCue
-  // and MissingCues on purpose: both of those blame the index, and this one
-  // says the index is right and the BITSTREAM has no seed to offer. Nothing
-  // this demuxer can build changes it.
-  SparseRandomAccess,
-};
-
 // Exactly 24 bytes and therefore at most 1.5 MiB at the hard cluster cap.
 struct MatroskaClusterIndexEntry {
   std::uint64_t encodedOffset{0};
@@ -175,7 +137,7 @@ struct MatroskaGenerationPlan {
 struct MatroskaCursorEnd {};
 struct MatroskaCursorCancelled {};
 struct MatroskaCursorFailure {
-  MatroskaDemuxError error{MatroskaDemuxError::Io};
+  MediaRefusalClass error{MediaRefusalClass::Io};
   std::string message;
 };
 
@@ -208,8 +170,8 @@ private:
 };
 
 struct MatroskaPlanOutcome {
-  MatroskaDemuxStatus status{MatroskaDemuxStatus::Failed};
-  MatroskaDemuxError error{MatroskaDemuxError::InvalidTimeline};
+  MediaSourceOpenStatus status{MediaSourceOpenStatus::Failed};
+  MediaRefusalClass error{MediaRefusalClass::InvalidTimeline};
   std::optional<MatroskaGenerationPlan> plan;
   std::string message;
 };
@@ -243,7 +205,7 @@ class MatroskaPreparedAsset final
   [[nodiscard]] bool copyRanges(
       std::span<const FrameRange> ranges, std::span<std::byte> destination,
       CancellationToken cancellation = {},
-      MatroskaDemuxError* error = nullptr) const noexcept;
+      MediaRefusalClass* error = nullptr) const noexcept;
 
  private:
   struct Impl;
@@ -259,8 +221,8 @@ class MatroskaPreparedAsset final
 };
 
 struct MatroskaPrepareOutcome {
-  MatroskaDemuxStatus status{MatroskaDemuxStatus::Failed};
-  MatroskaDemuxError error{MatroskaDemuxError::InvalidContainer};
+  MediaSourceOpenStatus status{MediaSourceOpenStatus::Failed};
+  MediaRefusalClass error{MediaRefusalClass::InvalidContainer};
   std::shared_ptr<const MatroskaPreparedAsset> asset;
   std::string message;
 };

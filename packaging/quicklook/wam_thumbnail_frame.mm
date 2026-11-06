@@ -349,7 +349,7 @@ bool CopyMatroskaKeyframe(const std::filesystem::path& path,
 
   const auto token = DeadlineToken(deadline);
   auto outcome = mkv::prepareMatroskaLocalFile(path, options, token);
-  if (outcome.status != mkv::MatroskaDemuxStatus::Ready || !outcome.asset) {
+  if (outcome.status != wam::media::MediaSourceOpenStatus::Ready || !outcome.asset) {
     if (error) {
       *error = outcome.message.empty() ? "matroska prepare failed"
                                        : outcome.message;
@@ -458,7 +458,7 @@ bool CopyMpegTsKeyframe(const std::filesystem::path& path,
 
   const auto token = DeadlineToken(deadline);
   auto outcome = ts::prepareMpegTsLocalFile(path, options, token);
-  if (outcome.status != ts::MpegTsDemuxStatus::Ready || !outcome.asset) {
+  if (outcome.status != wam::media::MediaSourceOpenStatus::Ready || !outcome.asset) {
     if (error) {
       *error = outcome.message.empty() ? "mpeg-ts prepare failed"
                                        : outcome.message;

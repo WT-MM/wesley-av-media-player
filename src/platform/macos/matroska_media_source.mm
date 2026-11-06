@@ -85,11 +85,6 @@ CMVideoFormatDescriptionRef MatroskaSourceTraits::createVideoFormatDescription(
   return createMatroskaVideoFormatDescription(track);
 }
 
-std::string MatroskaSourceTraits::demuxErrorMessage(const char* what,
-                                                    DemuxError error) {
-  return matroskaDemuxErrorMessage(what, error);
-}
-
 MediaTime MatroskaSourceTraits::mergeOrderKey(
     const MediaSample& sample) noexcept {
   return sample.kind == MediaSampleKind::EncodedVideo

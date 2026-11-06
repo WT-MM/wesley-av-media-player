@@ -20,7 +20,7 @@ using media::MediaCodecConfigurationKind;
 using media::MediaTrackDescriptor;
 using media::MediaTrackKind;
 using media::matroska::MatroskaCompressedSample;
-using media::matroska::MatroskaDemuxError;
+using media::MediaRefusalClass;
 
 constexpr std::size_t kMaximumLaceFrames{
     media::matroska::ParseOptions::kHardMaximumLaceFrames};
@@ -58,55 +58,6 @@ std::optional<media::MediaTime> matroskaTickTime(
     return std::nullopt;
   }
   return media::MediaTime{numerator, static_cast<std::int32_t>(denominator)};
-}
-
-const char* matroskaDemuxErrorName(MatroskaDemuxError error) noexcept {
-  switch (error) {
-  case MatroskaDemuxError::None:
-    return "None";
-  case MatroskaDemuxError::InvalidRequest:
-    return "InvalidRequest";
-  case MatroskaDemuxError::InvalidContainer:
-    return "InvalidContainer";
-  case MatroskaDemuxError::UnsupportedContainer:
-    return "UnsupportedContainer";
-  case MatroskaDemuxError::TrackSelection:
-    return "TrackSelection";
-  case MatroskaDemuxError::UnsupportedTrack:
-    return "UnsupportedTrack";
-  case MatroskaDemuxError::CodecConfiguration:
-    return "CodecConfiguration";
-  case MatroskaDemuxError::InvalidTimeline:
-    return "InvalidTimeline";
-  case MatroskaDemuxError::MissingCues:
-    return "MissingCues";
-  case MatroskaDemuxError::InvalidCue:
-    return "InvalidCue";
-  case MatroskaDemuxError::IndexLimit:
-    return "IndexLimit";
-  case MatroskaDemuxError::SampleLimit:
-    return "SampleLimit";
-  case MatroskaDemuxError::FileChanged:
-    return "FileChanged";
-  case MatroskaDemuxError::Io:
-    return "Io";
-  case MatroskaDemuxError::Cancelled:
-    return "Cancelled";
-  case MatroskaDemuxError::CodedDimensionLimit:
-    return "CodedDimensionLimit";
-  case MatroskaDemuxError::SparseRandomAccess:
-    return "SparseRandomAccess";
-  }
-  return "Unknown";
-}
-
-std::string matroskaDemuxErrorMessage(const char* what,
-                                      MatroskaDemuxError error) {
-  std::string message(what);
-  message += " (";
-  message += matroskaDemuxErrorName(error);
-  message += ")";
-  return message;
 }
 
 CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
@@ -307,18 +258,18 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
   }
   const std::span<std::byte> destination(reinterpret_cast<std::byte*>(raw),
                                          bytes);
-  MatroskaDemuxError copyError = MatroskaDemuxError::None;
+  MediaRefusalClass copyError = MediaRefusalClass::None;
   if (!inputs.asset->copyRanges({sample.frames.data(), frameCount}, destination,
                                 inputs.cancellation, &copyError)) {
     // A failed or cancelled copy leaves a partially written block that no
     // caller ever sees; releasing it here is the whole cleanup.
     CFRelease(block);
-    if (copyError == MatroskaDemuxError::Cancelled) {
+    if (copyError == MediaRefusalClass::Cancelled) {
       return MatroskaSampleBuildStatus::Cancelled;
     }
     if (error != nullptr) {
       *error =
-          matroskaDemuxErrorMessage("matroska payload copy failed", copyError);
+          media::refusalMessage("matroska payload copy failed", copyError);
     }
     return MatroskaSampleBuildStatus::Failed;
   }
