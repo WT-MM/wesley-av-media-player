@@ -1,6 +1,8 @@
 #include "software_vp8_decoder.hpp"
 
+#include "native_video_color.hpp"
 #include "native_video_limits.hpp"
+#include "software_presentation_pool.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>
@@ -16,10 +18,6 @@
 #include <vpx/vpx_image.h>
 #endif
 
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
-#include <arm_neon.h>
-#define WAM_VP8_HAS_NEON 1
-#endif
 
 namespace wam::macos {
 namespace {
@@ -35,240 +33,18 @@ void assignError(std::string *error, const char *message) {
 }
 
 // --------------------------------------------------------------------------
-// Bounded, IOSurface-backed NV12 pool.
-// --------------------------------------------------------------------------
-
-CFDictionaryRef makeNumberDictionary(const void **keys, const std::int32_t *values,
-                                     std::size_t count,
-                                     const void *extraKey,
-                                     CFTypeRef extraValue) {
-  std::vector<CFTypeRef> cfValues;
-  std::vector<const void *> cfKeys;
-  try {
-    cfValues.reserve(count + 1);
-    cfKeys.reserve(count + 1);
-  } catch (...) {
-    return nullptr;
-  }
-  for (std::size_t index = 0; index < count; ++index) {
-    CFNumberRef number = CFNumberCreate(kCFAllocatorDefault,
-                                        kCFNumberSInt32Type, &values[index]);
-    if (number == nullptr) {
-      for (CFTypeRef value : cfValues) {
-        CFRelease(value);
-      }
-      return nullptr;
-    }
-    cfValues.push_back(number);
-    cfKeys.push_back(keys[index]);
-  }
-  bool ownsExtra = false;
-  if (extraKey != nullptr && extraValue != nullptr) {
-    cfKeys.push_back(extraKey);
-    cfValues.push_back(extraValue);
-    ownsExtra = true;
-  }
-  CFDictionaryRef dictionary = CFDictionaryCreate(
-      kCFAllocatorDefault, cfKeys.data(), cfValues.data(),
-      static_cast<CFIndex>(cfKeys.size()), &kCFTypeDictionaryKeyCallBacks,
-      &kCFTypeDictionaryValueCallBacks);
-  const std::size_t owned = ownsExtra ? cfValues.size() - 1 : cfValues.size();
-  for (std::size_t index = 0; index < owned; ++index) {
-    CFRelease(cfValues[index]);
-  }
-  return dictionary;
-}
-
-// Depth is a hard cap rather than a hint: allocation goes through CVPixelBufferPoolCreatePixelBufferWithAux-
-// Attributes with kCVPixelBufferPoolAllocationThresholdKey, so an accounting
-// mistake surfaces as kCVReturnWouldExceedAllocationThreshold on the very next
-// frame instead of as unbounded IOSurface growth behind NativeSurfaceBudget.
-CVPixelBufferPoolRef createNv12Pool(std::int32_t width, std::int32_t height,
-                                    std::size_t depth, std::string *error) {
-  if (width <= 0 || height <= 0 || depth == 0) {
-    assignError(error, "software VP8 pool geometry is invalid");
-    return nullptr;
-  }
-  const std::int32_t poolKeysValues[] = {static_cast<std::int32_t>(depth)};
-  const void *poolKeys[] = {kCVPixelBufferPoolMinimumBufferCountKey};
-  CFDictionaryRef poolAttributes =
-      makeNumberDictionary(poolKeys, poolKeysValues, 1, nullptr, nullptr);
-  if (poolAttributes == nullptr) {
-    assignError(error, "software VP8 pool attributes could not be built");
-    return nullptr;
-  }
-
-  CFDictionaryRef ioSurfaceProperties =
-      CFDictionaryCreate(kCFAllocatorDefault, nullptr, nullptr, 0,
-                         &kCFTypeDictionaryKeyCallBacks,
-                         &kCFTypeDictionaryValueCallBacks);
-  if (ioSurfaceProperties == nullptr) {
-    CFRelease(poolAttributes);
-    assignError(error, "software VP8 IOSurface properties could not be built");
-    return nullptr;
-  }
-  // 64-byte row alignment keeps every plane row NEON-aligned and matches what
-  // VideoToolbox's own output surfaces use.
-  const std::int32_t bufferValues[] = {
-      static_cast<std::int32_t>(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
-      width, height, 64};
-  const void *bufferKeys[] = {kCVPixelBufferPixelFormatTypeKey,
-                              kCVPixelBufferWidthKey, kCVPixelBufferHeightKey,
-                              kCVPixelBufferBytesPerRowAlignmentKey};
-  CFDictionaryRef bufferAttributes =
-      makeNumberDictionary(bufferKeys, bufferValues, 4,
-                           kCVPixelBufferIOSurfacePropertiesKey,
-                           ioSurfaceProperties);
-  CFRelease(ioSurfaceProperties);
-  if (bufferAttributes == nullptr) {
-    CFRelease(poolAttributes);
-    assignError(error, "software VP8 buffer attributes could not be built");
-    return nullptr;
-  }
-
-  CVPixelBufferPoolRef pool = nullptr;
-  const CVReturn status = CVPixelBufferPoolCreate(
-      kCFAllocatorDefault, poolAttributes, bufferAttributes, &pool);
-  CFRelease(poolAttributes);
-  CFRelease(bufferAttributes);
-  if (status != kCVReturnSuccess || pool == nullptr) {
-    assignError(error, "software VP8 pixel buffer pool could not be created");
-    return nullptr;
-  }
-  return pool;
-}
-
-// Returns nullptr both for a genuine failure and for the bounded-depth
-// refusal. The caller treats both as backpressure, because a decode stage that
-// cannot obtain a surface right now has nothing to say beyond "not yet".
-CVPixelBufferRef takeFromPool(CVPixelBufferPoolRef pool, std::size_t depth) {
-  const std::int32_t threshold = static_cast<std::int32_t>(depth);
-  CFNumberRef number =
-      CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &threshold);
-  if (number == nullptr) {
-    return nullptr;
-  }
-  const void *keys[] = {kCVPixelBufferPoolAllocationThresholdKey};
-  const void *values[] = {number};
-  CFDictionaryRef auxiliary = CFDictionaryCreate(
-      kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
-      &kCFTypeDictionaryValueCallBacks);
-  CFRelease(number);
-  if (auxiliary == nullptr) {
-    return nullptr;
-  }
-  CVPixelBufferRef buffer = nullptr;
-  const CVReturn status = CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
-      kCFAllocatorDefault, pool, auxiliary, &buffer);
-  CFRelease(auxiliary);
-  if (status != kCVReturnSuccess || buffer == nullptr) {
-    return nullptr;
-  }
-  return buffer;
-}
-
-// --------------------------------------------------------------------------
-// I420 -> NV12.
-// --------------------------------------------------------------------------
-
-void copyPlaneRows(std::uint8_t *destination, std::size_t destinationStride,
-                   const std::uint8_t *source, std::size_t sourceStride,
-                   std::size_t width, std::size_t height) noexcept {
-  if (destinationStride == sourceStride && destinationStride == width) {
-    std::memcpy(destination, source, width * height);
-    return;
-  }
-  for (std::size_t row = 0; row < height; ++row) {
-    std::memcpy(destination + row * destinationStride,
-                source + row * sourceStride, width);
-  }
-}
-
-void interleaveChroma(std::uint8_t *destination, std::size_t destinationStride,
-                      const std::uint8_t *u, std::size_t uStride,
-                      const std::uint8_t *v, std::size_t vStride,
-                      std::size_t width, std::size_t height) noexcept {
-  for (std::size_t row = 0; row < height; ++row) {
-    std::uint8_t *out = destination + row * destinationStride;
-    const std::uint8_t *inU = u + row * uStride;
-    const std::uint8_t *inV = v + row * vStride;
-    std::size_t column = 0;
-#if defined(WAM_VP8_HAS_NEON)
-    for (; column + 16 <= width; column += 16) {
-      uint8x16x2_t pair;
-      pair.val[0] = vld1q_u8(inU + column);
-      pair.val[1] = vld1q_u8(inV + column);
-      vst2q_u8(out + 2 * column, pair);
-    }
-#endif
-    for (; column < width; ++column) {
-      out[2 * column] = inU[column];
-      out[2 * column + 1] = inV[column];
-    }
-  }
-}
-
-[[nodiscard]] bool convertI420ToNv12(CVPixelBufferRef destination,
-                                     const std::uint8_t *y,
-                                     std::size_t yStride,
-                                     const std::uint8_t *u,
-                                     std::size_t uStride,
-                                     const std::uint8_t *v,
-                                     std::size_t vStride, std::size_t width,
-                                     std::size_t height) noexcept {
-  if (destination == nullptr || y == nullptr || u == nullptr || v == nullptr ||
-      width == 0 || height == 0) {
-    return false;
-  }
-  if (CVPixelBufferGetPixelFormatType(destination) !=
-          kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
-      CVPixelBufferGetPlaneCount(destination) != 2 ||
-      CVPixelBufferGetWidthOfPlane(destination, 0) != width ||
-      CVPixelBufferGetHeightOfPlane(destination, 0) != height) {
-    return false;
-  }
-  const std::size_t chromaWidth = (width + 1) / 2;
-  const std::size_t chromaHeight = (height + 1) / 2;
-  if (CVPixelBufferGetHeightOfPlane(destination, 1) != chromaHeight) {
-    return false;
-  }
-  if (CVPixelBufferLockBaseAddress(destination, 0) != kCVReturnSuccess) {
-    return false;
-  }
-  auto *luma = static_cast<std::uint8_t *>(
-      CVPixelBufferGetBaseAddressOfPlane(destination, 0));
-  auto *chroma = static_cast<std::uint8_t *>(
-      CVPixelBufferGetBaseAddressOfPlane(destination, 1));
-  const std::size_t lumaStride =
-      CVPixelBufferGetBytesPerRowOfPlane(destination, 0);
-  const std::size_t chromaStride =
-      CVPixelBufferGetBytesPerRowOfPlane(destination, 1);
-  bool ok = luma != nullptr && chroma != nullptr && lumaStride >= width &&
-            chromaStride >= 2 * chromaWidth && yStride >= width &&
-            uStride >= chromaWidth && vStride >= chromaWidth;
-  if (ok) {
-    copyPlaneRows(luma, lumaStride, y, yStride, width, height);
-    interleaveChroma(chroma, chromaStride, u, uStride, v, vStride, chromaWidth,
-                     chromaHeight);
-  }
-  CVPixelBufferUnlockBaseAddress(destination, 0);
-  return ok;
-}
-
-// --------------------------------------------------------------------------
 // Colour attachments.
 // --------------------------------------------------------------------------
 
 // VP8's bitstream states no colour description (RFC 6386 has exactly one
 // colour space and no primaries or transfer syntax), and makeVideoDescriptor
 // refuses any container Colour element that is not BT.709, so an admitted VP8
-// track is either untagged or explicitly BT.709. This applies the same SD/HD
-// convention the presentation routes apply to an untagged surface, which is
-// what makes the CALayer route and the scene-graph route agree on the same
-// frame instead of each inventing its own default.
+// track is either untagged or explicitly BT.709. Tagging with the presenters'
+// own untagged default makes the CALayer and scene-graph routes agree.
 CFDictionaryRef createColorAttachments(std::int32_t width,
                                        std::int32_t height) {
-  const bool standardDefinition = width <= 1024 && height <= 576;
+  const bool standardDefinition = untaggedSurfaceIsStandardDefinition(
+      static_cast<std::size_t>(width), static_cast<std::size_t>(height));
   const void *keys[] = {kCVImageBufferYCbCrMatrixKey,
                         kCVImageBufferColorPrimariesKey,
                         kCVImageBufferTransferFunctionKey};
@@ -316,7 +92,7 @@ struct SoftwareVp8Decoder::Impl {
 
   VideoToolboxDecoderOptions options;
   DecodedFrameSink *sink{nullptr};
-  CVPixelBufferPoolRef pool{nullptr};
+  SoftwarePresentationPool pool;
   CFDictionaryRef colorAttachments{nullptr};
   std::optional<FrameLease> pending;
   std::optional<std::string> lastError;
@@ -377,10 +153,7 @@ struct SoftwareVp8Decoder::Impl {
   }
 
   void releasePool() noexcept {
-    if (pool != nullptr) {
-      CVPixelBufferPoolRelease(pool);
-      pool = nullptr;
-    }
+    pool.close();
     if (colorAttachments != nullptr) {
       CFRelease(colorAttachments);
       colorAttachments = nullptr;
@@ -459,10 +232,9 @@ bool SoftwareVp8Decoder::configure(const VideoStreamConfiguration &configuration
   }
   impl.codecOpen = true;
 
-  impl.pool = createNv12Pool(configuration.codedSize.width,
-                             configuration.codedSize.height,
-                             kSoftwareVp8PoolDepth, error);
-  if (impl.pool == nullptr) {
+  if (!impl.pool.configure(configuration.codedSize.width,
+                           configuration.codedSize.height,
+                           kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)) {
     impl.releaseCodec();
     impl.latch("software VP8 surface pool could not be created", error);
     return false;
@@ -573,7 +345,7 @@ SoftwareVp8Decoder::submitCMSampleBuffer(CMSampleBufferRef sample,
   // exhaustion a pure, side-effect-free backpressure edge: the dispatcher
   // keeps the compressed sample in its lane and offers it again after the
   // output releases a surface.
-  CVPixelBufferRef destination = takeFromPool(impl.pool, kSoftwareVp8PoolDepth);
+  CVPixelBufferRef destination = impl.pool.acquire();
   if (destination == nullptr) {
     ++impl.poolBackpressure;
     ++impl.backpressuredSubmissions;
@@ -614,15 +386,12 @@ SoftwareVp8Decoder::submitCMSampleBuffer(CMSampleBufferRef sample,
     impl.latch("libvpx produced an unexpected VP8 image format", error);
     return VideoDecodeSubmitResult::Rejected;
   }
-  const bool converted = convertI420ToNv12(
-      destination, image->planes[VPX_PLANE_Y],
-      static_cast<std::size_t>(image->stride[VPX_PLANE_Y]),
-      image->planes[VPX_PLANE_U],
-      static_cast<std::size_t>(image->stride[VPX_PLANE_U]),
-      image->planes[VPX_PLANE_V],
-      static_cast<std::size_t>(image->stride[VPX_PLANE_V]),
-      static_cast<std::size_t>(impl.width),
-      static_cast<std::size_t>(impl.height));
+  const int strides[3] = {image->stride[VPX_PLANE_Y],
+                          image->stride[VPX_PLANE_U],
+                          image->stride[VPX_PLANE_V]};
+  const bool converted = copySoftwarePlanes(
+      destination, image->planes, strides, static_cast<unsigned>(impl.width),
+      static_cast<unsigned>(impl.height), 8, false);
   if (!converted) {
     CVPixelBufferRelease(destination);
     impl.latch("software VP8 frame could not be converted to NV12", error);
@@ -800,7 +569,7 @@ void SoftwareVp8Decoder::close() noexcept {
   if (impl.retirementStarted) {
     return;
   }
-  if (!impl.configured && impl.pool == nullptr && !impl.codecOpen) {
+  if (!impl.configured && !impl.pool.configured() && !impl.codecOpen) {
     return;
   }
   const std::uint64_t retired = impl.generation + 1;
@@ -886,20 +655,5 @@ std::optional<std::string> SoftwareVp8Decoder::takeLastError() {
   return result;
 }
 
-#if defined(WAM_SOFTWARE_VP8_TESTING)
-CVPixelBufferPoolRef SoftwareVp8DecoderTestAccess::createPool(
-    std::int32_t width, std::int32_t height, std::size_t depth,
-    std::string *error) {
-  return createNv12Pool(width, height, depth, error);
-}
-
-bool SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-    CVPixelBufferRef destination, const std::uint8_t *y, std::size_t yStride,
-    const std::uint8_t *u, std::size_t uStride, const std::uint8_t *v,
-    std::size_t vStride, std::size_t width, std::size_t height) noexcept {
-  return wam::macos::convertI420ToNv12(destination, y, yStride, u, uStride, v,
-                                       vStride, width, height);
-}
-#endif
 
 } // namespace wam::macos

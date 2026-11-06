@@ -1444,6 +1444,7 @@ if(BUILD_TESTING)
           tests/software_vp8_test.mm
           src/platform/macos/software_vp8_decoder.hpp
           src/platform/macos/software_vp8_decoder.mm
+          src/platform/macos/software_presentation_pool.mm
           src/platform/macos/video_decode_lane.hpp
           src/platform/macos/native_surface_budget.hpp
           src/platform/macos/native_surface_budget.mm
@@ -1455,8 +1456,7 @@ if(BUILD_TESTING)
           src/platform/macos/video_toolbox_decoder.mm)
         target_include_directories(wam_software_vp8_test PRIVATE src)
         target_compile_definitions(wam_software_vp8_test PRIVATE
-          WAM_ENABLE_SOFTWARE_VP8
-          WAM_SOFTWARE_VP8_TESTING=1)
+          WAM_ENABLE_SOFTWARE_VP8)
         target_link_libraries(wam_software_vp8_test PRIVATE
           wam_native_core
           PkgConfig::WAM_LIBVPX
@@ -1489,6 +1489,7 @@ if(BUILD_TESTING)
         src/platform/macos/video_toolbox_decoder.mm
         src/platform/macos/software_vp8_decoder.hpp
         src/platform/macos/software_vp8_decoder.mm
+        src/platform/macos/software_presentation_pool.mm
         src/platform/macos/video_decode_lane.hpp)
       target_include_directories(wam_native_video_consumer_test PRIVATE src)
       target_compile_definitions(wam_native_video_consumer_test PRIVATE

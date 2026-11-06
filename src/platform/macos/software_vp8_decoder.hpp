@@ -75,9 +75,8 @@ inline constexpr std::size_t kSoftwareVp8RendererRetainedSurfaces = 1;
 // + 1  the renderer's own retention, measured above
 // = 6
 //
-// native_video_consumer.hpp restates that arithmetic against its own constants
-// in a static_assert, so the two cannot drift apart silently.
-inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
+// That sum is SoftwarePresentationPool::kDepth, the one depth every software
+// route allocates from; native_video_consumer.hpp asserts it.
 
 // MEMORY, stated because these buffers are app-attributable and the surface
 // budget is a contract rather than a knob. The DEPTH above is a count and does
@@ -168,26 +167,5 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-#if defined(WAM_SOFTWARE_VP8_TESTING)
-// Fixture-free access to the two pieces that are pure functions of memory
-// layout: the bounded pool and the I420 -> NV12 conversion. Absent from
-// shipping objects.
-struct SoftwareVp8DecoderTestAccess {
-  // Creates the same bounded, IOSurface-backed NV12 pool production uses.
-  // Returns nullptr on failure; the caller owns a +1 reference.
-  [[nodiscard]] static CVPixelBufferPoolRef
-  createPool(std::int32_t width, std::int32_t height, std::size_t depth,
-             std::string *error);
-  // Exactly the production conversion, against caller-owned planar input.
-  // Returns false when the destination is not a two-plane NV12 buffer of the
-  // stated size.
-  [[nodiscard]] static bool
-  convertI420ToNv12(CVPixelBufferRef destination, const std::uint8_t *y,
-                    std::size_t yStride, const std::uint8_t *u,
-                    std::size_t uStride, const std::uint8_t *v,
-                    std::size_t vStride, std::size_t width,
-                    std::size_t height) noexcept;
-};
-#endif
 
 } // namespace wam::macos

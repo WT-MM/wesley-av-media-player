@@ -5,6 +5,7 @@
 // libvpx's own encoder rather than embedding a binary fixture: the test then
 // proves the round trip end to end and stays readable.
 
+#include "platform/macos/software_presentation_pool.hpp"
 #include "platform/macos/software_vp8_decoder.hpp"
 #include "platform/macos/video_decode_lane.hpp"
 
@@ -30,16 +31,17 @@ using wam::macos::DecodedFrameSink;
 using wam::macos::FrameEnqueueResult;
 using wam::macos::FrameLease;
 using wam::macos::kSoftwareVp8DecoderOwnedSurfaces;
-using wam::macos::kSoftwareVp8PoolDepth;
 using wam::macos::kSoftwareVp8RendererRetainedSurfaces;
 using wam::macos::kWamVideoCodecTypeVp8;
 using wam::macos::SoftwareVp8Decoder;
-using wam::macos::SoftwareVp8DecoderTestAccess;
+using wam::macos::SoftwarePresentationPool;
 using wam::macos::VideoDecodeDrainProgress;
 using wam::macos::VideoDecodeLane;
 using wam::macos::VideoDecodeSubmitResult;
 using wam::macos::VideoDecoderRetireProgress;
 using wam::macos::VideoStreamConfiguration;
+
+constexpr std::size_t kPoolDepth = SoftwarePresentationPool::kDepth;
 
 int failures = 0;
 
@@ -62,7 +64,7 @@ static_assert(kSoftwareVp8DecoderOwnedSurfaces == 1U,
 static_assert(kSoftwareVp8RendererRetainedSurfaces >= 1U,
               "the renderer keeps a CoreVideo reference past WAM's last lease "
               "and the pool must provision for it");
-static_assert(kSoftwareVp8PoolDepth <=
+static_assert(kPoolDepth <=
                   static_cast<std::size_t>(
                       wam::macos::kNativeSurfaceBudgetMaximumSurfaces),
               "the pool depth must fit the process-wide surface budget");
@@ -73,7 +75,7 @@ static_assert(kSoftwareVp8PoolDepth <=
 // hard-coded 1920x1080 and would have kept passing, while proving nothing,
 // the moment the ceiling moved.
 static_assert(
-    kSoftwareVp8PoolDepth *
+    kPoolDepth *
             (wam::media::MediaSourceLimits::kHardMaximumCodedPixels * 3ULL /
                  2ULL +
              wam::macos::kNativeSurfaceBudgetSurfaceAlignmentSlackBytes) <
@@ -83,13 +85,13 @@ static_assert(
 // 6 * (9,502,720 * 1.5) = 85,524,480 B of payload at the ceiling; the two
 // resolutions that actually matter are restated so a depth change or a ceiling
 // change has to restate them too.
-static_assert(kSoftwareVp8PoolDepth *
+static_assert(kPoolDepth *
                       (wam::media::MediaSourceLimits::kHardMaximumCodedPixels *
                        3ULL / 2ULL) ==
                   85'524'480ULL,
               "state the pool's ceiling footprint in bytes so a depth or "
               "ceiling change has to restate it");
-static_assert(kSoftwareVp8PoolDepth * (1920ULL * 1080ULL * 3ULL / 2ULL) ==
+static_assert(kPoolDepth * (1920ULL * 1080ULL * 3ULL / 2ULL) ==
                   18'662'400ULL,
               "and its 1080p footprint, which is what most content costs");
 static_assert(kWamVideoCodecTypeVp8 == static_cast<CMVideoCodecType>('vp08'),
@@ -138,49 +140,30 @@ public:
 // Pool.
 // ---------------------------------------------------------------------------
 
-CVPixelBufferRef vendWithThreshold(CVPixelBufferPoolRef pool,
-                                   std::size_t threshold) {
-  const std::int32_t value = static_cast<std::int32_t>(threshold);
-  CFNumberRef number =
-      CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &value);
-  const void *keys[] = {kCVPixelBufferPoolAllocationThresholdKey};
-  const void *values[] = {number};
-  CFDictionaryRef auxiliary = CFDictionaryCreate(
-      kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
-      &kCFTypeDictionaryValueCallBacks);
-  CFRelease(number);
-  CVPixelBufferRef buffer = nullptr;
-  const CVReturn status = CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
-      kCFAllocatorDefault, pool, auxiliary, &buffer);
-  CFRelease(auxiliary);
-  return status == kCVReturnSuccess ? buffer : nullptr;
-}
-
 void testPool() {
-  std::string error;
-  CVPixelBufferPoolRef pool =
-      SoftwareVp8DecoderTestAccess::createPool(640, 360, kSoftwareVp8PoolDepth,
-                                               &error);
-  expect(pool != nullptr, "the bounded NV12 pool is created");
-  if (pool == nullptr) {
+  SoftwarePresentationPool pool;
+  expect(pool.configure(640, 360,
+                        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+         "the bounded NV12 pool is created");
+  if (!pool.configured()) {
     return;
   }
 
   std::vector<CVPixelBufferRef> held;
-  for (std::size_t index = 0; index < kSoftwareVp8PoolDepth; ++index) {
-    CVPixelBufferRef buffer = vendWithThreshold(pool, kSoftwareVp8PoolDepth);
+  for (std::size_t index = 0; index < kPoolDepth; ++index) {
+    CVPixelBufferRef buffer = pool.acquire();
     expect(buffer != nullptr, "the pool vends up to its full depth");
     if (buffer == nullptr) {
       break;
     }
     held.push_back(buffer);
   }
-  expect(held.size() == kSoftwareVp8PoolDepth,
+  expect(held.size() == kPoolDepth,
          "the pool vends exactly its depth before refusing");
 
   // The bound is hard, not advisory: the depth+1 request is refused rather
   // than served by growing the pool behind NativeSurfaceBudget's back.
-  CVPixelBufferRef overflow = vendWithThreshold(pool, kSoftwareVp8PoolDepth);
+  CVPixelBufferRef overflow = pool.acquire();
   expect(overflow == nullptr, "the pool refuses beyond its bounded depth");
   if (overflow != nullptr) {
     CVPixelBufferRelease(overflow);
@@ -212,22 +195,18 @@ void testPool() {
   for (CVPixelBufferRef buffer : held) {
     CVPixelBufferRelease(buffer);
   }
-  CVPixelBufferRef recycled = vendWithThreshold(pool, kSoftwareVp8PoolDepth);
+  CVPixelBufferRef recycled = pool.acquire();
   expect(recycled != nullptr, "released buffers are recycled by the pool");
   if (recycled != nullptr) {
     CVPixelBufferRelease(recycled);
   }
 
-  expect(SoftwareVp8DecoderTestAccess::createPool(0, 360,
-                                                  kSoftwareVp8PoolDepth,
-                                                  &error) == nullptr &&
-             SoftwareVp8DecoderTestAccess::createPool(
-                 640, 0, kSoftwareVp8PoolDepth, &error) == nullptr &&
-             SoftwareVp8DecoderTestAccess::createPool(640, 360, 0, &error) ==
-                 nullptr,
-         "the pool refuses degenerate geometry and a zero depth");
-
-  CVPixelBufferPoolRelease(pool);
+  SoftwarePresentationPool degenerate;
+  expect(!degenerate.configure(0, 360,
+                               kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) &&
+             !degenerate.configure(
+                 640, 0, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+         "the pool refuses degenerate geometry");
 }
 
 // ---------------------------------------------------------------------------
@@ -290,19 +269,27 @@ PlanarImage makeGradient(std::size_t width, std::size_t height,
   return image;
 }
 
+bool convert(CVPixelBufferRef destination, const PlanarImage &image,
+             std::size_t yStride, unsigned width, unsigned height,
+             const std::uint8_t *y = nullptr) {
+  const std::uint8_t *const planes[3] = {y != nullptr ? y : image.y.data(),
+                                         image.u.data(), image.v.data()};
+  const int strides[3] = {static_cast<int>(yStride),
+                          static_cast<int>(image.cStride),
+                          static_cast<int>(image.cStride)};
+  return wam::macos::copySoftwarePlanes(destination, planes, strides, width,
+                                        height, 8, false);
+}
+
 void checkConversion(const PlanarImage &image, const char *what) {
-  std::string error;
-  CVPixelBufferPoolRef pool = SoftwareVp8DecoderTestAccess::createPool(
-      static_cast<std::int32_t>(image.width),
-      static_cast<std::int32_t>(image.height), 2, &error);
-  expect(pool != nullptr, "conversion fixture pool is created");
-  if (pool == nullptr) {
-    return;
-  }
-  CVPixelBufferRef buffer = vendWithThreshold(pool, 2);
+  SoftwarePresentationPool pool;
+  expect(pool.configure(static_cast<std::int32_t>(image.width),
+                        static_cast<std::int32_t>(image.height),
+                        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+         "conversion fixture pool is created");
+  CVPixelBufferRef buffer = pool.acquire();
   expect(buffer != nullptr, "conversion fixture buffer is vended");
   if (buffer == nullptr) {
-    CVPixelBufferPoolRelease(pool);
     return;
   }
   // Poison the destination so an incompletely written plane cannot pass by
@@ -315,9 +302,9 @@ void checkConversion(const PlanarImage &image, const char *what) {
   }
   CVPixelBufferUnlockBaseAddress(buffer, 0);
 
-  const bool converted = SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-      buffer, image.y.data(), image.yStride, image.u.data(), image.cStride,
-      image.v.data(), image.cStride, image.width, image.height);
+  const bool converted =
+      convert(buffer, image, image.yStride, static_cast<unsigned>(image.width),
+              static_cast<unsigned>(image.height));
   expect(converted, what);
 
   if (converted) {
@@ -360,7 +347,6 @@ void checkConversion(const PlanarImage &image, const char *what) {
   }
 
   CVPixelBufferRelease(buffer);
-  CVPixelBufferPoolRelease(pool);
 }
 
 void testConversion() {
@@ -387,32 +373,27 @@ void testConversion() {
                   "converts exactly");
 
   // Contract refusals.
-  std::string error;
-  CVPixelBufferPoolRef pool =
-      SoftwareVp8DecoderTestAccess::createPool(64, 64, 2, &error);
-  if (pool != nullptr) {
-    CVPixelBufferRef buffer = vendWithThreshold(pool, 2);
+  SoftwarePresentationPool pool;
+  if (pool.configure(64, 64, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)) {
+    CVPixelBufferRef buffer = pool.acquire();
     const PlanarImage image = makeCheckerboard(64, 64, 0);
-    expect(!SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-               buffer, image.y.data(), image.yStride, image.u.data(),
-               image.cStride, image.v.data(), image.cStride, 128, 64),
+    expect(!convert(buffer, image, image.yStride, 128, 64),
            "a geometry mismatch is refused rather than written past the plane");
-    expect(!SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-               nullptr, image.y.data(), image.yStride, image.u.data(),
-               image.cStride, image.v.data(), image.cStride, 64, 64),
+    expect(!convert(nullptr, image, image.yStride, 64, 64),
            "a null destination is refused");
-    expect(!SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-               buffer, nullptr, image.yStride, image.u.data(), image.cStride,
-               image.v.data(), image.cStride, 64, 64),
+    const std::uint8_t *const missing[3] = {nullptr, image.u.data(),
+                                            image.v.data()};
+    const int strides[3] = {static_cast<int>(image.yStride),
+                            static_cast<int>(image.cStride),
+                            static_cast<int>(image.cStride)};
+    expect(!wam::macos::copySoftwarePlanes(buffer, missing, strides, 64, 64, 8,
+                                           false),
            "a null source plane is refused");
-    expect(!SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-               buffer, image.y.data(), 16, image.u.data(), image.cStride,
-               image.v.data(), image.cStride, 64, 64),
+    expect(!convert(buffer, image, 16, 64, 64),
            "a source stride narrower than the width is refused");
     if (buffer != nullptr) {
       CVPixelBufferRelease(buffer);
     }
-    CVPixelBufferPoolRelease(pool);
   }
 }
 

@@ -76,10 +76,10 @@ struct SoftwareAvcodecVideoDecoder::Impl {
       CVPixelBufferRelease(destination); s.fail("AvcodecFrameColorUnsupported"); return FrameResult::Failed;
     }
     attach(kCVImageBufferColorPrimariesKey,primaries?primaries:
-       (frame.width<=704?kCVImageBufferColorPrimaries_SMPTE_C:kCVImageBufferColorPrimaries_ITU_R_709_2));
+       (untaggedSurfaceIsStandardDefinition(frame.width,frame.height)?kCVImageBufferColorPrimaries_SMPTE_C:kCVImageBufferColorPrimaries_ITU_R_709_2));
     attach(kCVImageBufferTransferFunctionKey,transfer?transfer:kCVImageBufferTransferFunction_ITU_R_709_2);
     attach(kCVImageBufferYCbCrMatrixKey,matrix?matrix:
-       (frame.width<=704?kCVImageBufferYCbCrMatrix_ITU_R_601_4:kCVImageBufferYCbCrMatrix_ITU_R_709_2));
+       (untaggedSurfaceIsStandardDefinition(frame.width,frame.height)?kCVImageBufferYCbCrMatrix_ITU_R_601_4:kCVImageBufferYCbCrMatrix_ITU_R_709_2));
     CFStringRef location=nullptr;
     switch(frame.chroma_location) {
     case AVCHROMA_LOC_UNSPECIFIED: break;

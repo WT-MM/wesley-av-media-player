@@ -105,6 +105,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
     src/platform/macos/native_video_presenter.mm
     src/platform/macos/video_toolbox_decoder.hpp
     src/platform/macos/video_toolbox_decoder.mm
+    src/platform/macos/software_presentation_pool.hpp
+    src/platform/macos/software_presentation_pool.mm
     src/platform/macos/software_vp8_decoder.hpp
     src/platform/macos/software_vp8_decoder.mm
     src/platform/macos/video_decode_lane.hpp)
@@ -133,8 +135,7 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
   endif()
   if(WAM_ENABLE_AVCODEC_STAGE)
     target_sources(wam_macos_native_video_core PRIVATE
-      src/platform/macos/software_avcodec_video_decoder.mm
-      src/platform/macos/software_presentation_pool.mm)
+      src/platform/macos/software_avcodec_video_decoder.mm)
     target_link_libraries(wam_macos_native_video_core PUBLIC wam_avcodec_worker)
     target_compile_definitions(wam_macos_native_video_core PUBLIC WAM_ENABLE_AVCODEC_STAGE=1)
     target_compile_definitions(wam_native_core PRIVATE WAM_ENABLE_AVCODEC_STAGE=1)

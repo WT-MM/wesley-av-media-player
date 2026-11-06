@@ -122,8 +122,16 @@ struct YCbCrMatrixRows {
   return CFSTR("YCbCrMatrix#5");
 }
 
-// Absent matrix metadata is inferred, never refused: SD-sized material
-// conventionally uses BT.601 and HD-sized material BT.709. Explicit metadata
+// The one default for an untagged surface, used by every decoder that tags one
+// and every presenter that samples one: SD-sized material conventionally uses
+// BT.601 (SMPTE C primaries) and HD-sized material BT.709.
+[[nodiscard]] constexpr bool untaggedSurfaceIsStandardDefinition(
+    std::size_t width, std::size_t height) noexcept {
+  return width <= 1024 && height <= 576;
+}
+
+// Absent matrix metadata is inferred, never refused (see
+// untaggedSurfaceIsStandardDefinition). Explicit metadata
 // always wins over the inference. An explicit value outside the three known
 // standards yields no kind, and the caller names its own refusal -- this
 // function never invents a matrix for metadata it does not recognize.
@@ -136,8 +144,9 @@ struct YCbCrMatrixRows {
       CVBufferCopyAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey,
                              nullptr);
   if (matrix == nullptr) {
-    *kind = (CVPixelBufferGetWidth(pixelBuffer) <= 1024 &&
-             CVPixelBufferGetHeight(pixelBuffer) <= 576)
+    *kind = untaggedSurfaceIsStandardDefinition(
+                CVPixelBufferGetWidth(pixelBuffer),
+                CVPixelBufferGetHeight(pixelBuffer))
                 ? YCbCrMatrixKind::Bt601
                 : YCbCrMatrixKind::Bt709;
     return true;
