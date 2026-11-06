@@ -1,5 +1,6 @@
 #include "media/mpegts_packet.hpp"
 
+#include "media/codec/aac.hpp"
 #include "media/rbsp_bit_reader.hpp"
 
 #include <algorithm>
@@ -1003,13 +1004,6 @@ std::uint32_t mpeg2FrameDurationTicks(std::uint8_t frameRateCode) noexcept {
 // Elementary audio framing
 // ---------------------------------------------------------------------------
 
-std::uint32_t adtsSampleRateForIndex(std::uint8_t index) noexcept {
-  static constexpr std::array<std::uint32_t, 13> kRates{
-      96'000, 88'200, 64'000, 48'000, 44'100, 32'000, 24'000,
-      22'050, 16'000, 12'000, 11'025, 8'000,  7'350};
-  return index < kRates.size() ? kRates[index] : 0U;
-}
-
 bool parseAdtsHeader(std::span<const std::byte> bytes,
                      AdtsHeader& header) noexcept {
   header = AdtsHeader{};
@@ -1024,7 +1018,7 @@ bool parseAdtsHeader(std::span<const std::byte> bytes,
   header.profileObjectType = static_cast<std::uint8_t>(((b2 >> 6) & 0x03U) + 1U);
   header.samplingFrequencyIndex =
       static_cast<std::uint8_t>((b2 >> 2) & 0x0FU);
-  header.sampleRate = adtsSampleRateForIndex(header.samplingFrequencyIndex);
+  header.sampleRate = codec::aacSampleRateForIndex(header.samplingFrequencyIndex);
   header.channelConfiguration = static_cast<std::uint8_t>(
       ((b2 & 0x01U) << 2) | ((byteAt(bytes, 3) >> 6) & 0x03U));
   header.frameBytes =
@@ -1226,7 +1220,7 @@ class LatmBitReader {
   config.audioObjectType = static_cast<std::uint8_t>(objectType);
   config.samplingFrequencyIndex = static_cast<std::uint8_t>(frequencyIndex);
   config.sampleRate =
-      adtsSampleRateForIndex(static_cast<std::uint8_t>(frequencyIndex));
+      codec::aacSampleRateForIndex(static_cast<std::uint8_t>(frequencyIndex));
   config.channelConfiguration = static_cast<std::uint8_t>(channelConfiguration);
   config.audioSpecificConfigBits = static_cast<std::uint16_t>(bits);
   config.audioSpecificConfigBytes = static_cast<std::uint8_t>((bits + 7U) / 8U);

@@ -79,6 +79,16 @@ struct AacLcEsDescriptorCookie {
 [[nodiscard]] std::optional<AacLcEsDescriptorCookie>
 buildAacLcEsDescriptorCookie(const AacLcConfiguration &configuration) noexcept;
 
+// ISO/IEC 14496-3 samplingFrequencyIndex, shared by the AudioSpecificConfig
+// and the ADTS header. Zero for an escape or reserved index.
+[[nodiscard]] constexpr std::uint32_t aacSampleRateForIndex(
+    std::uint8_t index) noexcept {
+  constexpr std::uint32_t kRates[]{96'000, 88'200, 64'000, 48'000, 44'100,
+                                   32'000, 24'000, 22'050, 16'000, 12'000,
+                                   11'025, 8'000,  7'350};
+  return index < std::size(kRates) ? kRates[index] : 0U;
+}
+
 inline constexpr const char* kHeAacDecoderDelayRefusal =
     "HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof";
 

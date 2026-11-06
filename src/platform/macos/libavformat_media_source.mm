@@ -228,10 +228,10 @@ bool audioDescriptor(const LibavformatCursor::Stream& stream, MediaTrackDescript
       error="LibavformatAacConfigurationUnqualified";
       if (codec::aacSbrSignaled(stream.extradata)) error=codec::kHeAacDecoderDelayRefusal;
       if (stream.extradata.size() >= 2) {
-        constexpr unsigned rates[]={96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350};
-        const auto index=((std::to_integer<unsigned>(stream.extradata[0])&7)<<1) |
-                         (std::to_integer<unsigned>(stream.extradata[1])>>7);
-        if (index<13 && rates[index]*2==stream.rate) error=codec::kHeAacDecoderDelayRefusal;
+        const auto index=static_cast<std::uint8_t>(((std::to_integer<unsigned>(stream.extradata[0])&7)<<1) |
+                         (std::to_integer<unsigned>(stream.extradata[1])>>7));
+        const auto rate=codec::aacSampleRateForIndex(index);
+        if (rate && rate*2==stream.rate) error=codec::kHeAacDecoderDelayRefusal;
       }
       return false;
     }
