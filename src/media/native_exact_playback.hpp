@@ -2,16 +2,12 @@
 
 #include "native_media_source.hpp"
 #include "native_playback_contract.hpp"
-#include <numeric>
 
 namespace wam::media {
 
 inline std::optional<MediaTime> canonicalNonnegativeTime(MediaTime value) noexcept {
   if (!value.valid() || value.value < 0) return {};
-  const auto divisor = std::gcd(static_cast<std::uint64_t>(value.value),
-                                static_cast<std::uint64_t>(value.timescale));
-  return MediaTime{value.value / static_cast<std::int64_t>(divisor),
-                   value.timescale / static_cast<std::int32_t>(divisor)};
+  return mediaTimeFromTicks(value.value, static_cast<std::uint32_t>(value.timescale));
 }
 
 // Half-open coverage uses integer cross-products, including off-grid targets.

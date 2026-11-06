@@ -49,6 +49,7 @@ if(APPLE OR WAM_BUILD_APP)
     src/media/mpegts_demuxer.cpp
     src/media/video_codec_configuration.hpp
     src/media/video_codec_configuration.cpp
+    src/media/media_time.hpp
     src/media/native_media_source.hpp
     src/media/native_media_source.cpp
     src/media/native_media_backend.hpp

@@ -722,7 +722,7 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
           context->aacTimeline ? &context->aacTimeline->packets().back() : nullptr))return fail();
       audioTrack.audio->framesPerPacket=audioFrames;
     }
-    const auto packetEnd = checkedExactTimeSum(packet.pts, packet.duration);
+    const auto packetEnd = media::addMediaTime(packet.pts, packet.duration);
     if (!packetEnd) {
       out.error = "LibavformatVideoTimelineUnrepresentable";
       return fail();

@@ -36,6 +36,7 @@ using wam::media::MediaTime;
 using wam::media::MediaTimeOrder;
 using wam::media::MediaTrackKind;
 using wam::media::compareMediaTime;
+using wam::media::mediaTimeFromTicks;
 using Bytes = std::vector<std::byte>;
 
 // --- layout and ownership contracts, proved at compile time ---------------
@@ -344,22 +345,22 @@ void testTimestampRollover() {
 }
 
 void testExactTicks() {
-  const std::optional<MediaTime> second = mediaTimeFromTicks(90'000);
+  const std::optional<MediaTime> second = mediaTimeFromTicks(90'000, kTimestampHz);
   expect(second && second->value == 1 && second->timescale == 1,
          "90,000 ticks reduces to exactly one second");
-  const std::optional<MediaTime> frame = mediaTimeFromTicks(3'003);
+  const std::optional<MediaTime> frame = mediaTimeFromTicks(3'003, kTimestampHz);
   expect(frame && frame->value == 1'001 && frame->timescale == 30'000,
          "one 30000/1001 frame is exactly 1001/30000 s, not a decimal");
-  const std::optional<MediaTime> zero = mediaTimeFromTicks(0);
+  const std::optional<MediaTime> zero = mediaTimeFromTicks(0, kTimestampHz);
   expect(zero && zero->value == 0 && zero->timescale == 1,
          "zero ticks is exactly zero");
-  const std::optional<MediaTime> negative = mediaTimeFromTicks(-90'000);
+  const std::optional<MediaTime> negative = mediaTimeFromTicks(-90'000, kTimestampHz);
   expect(negative && negative->value == -1 && negative->timescale == 1,
          "negative ticks stay exact and signed");
   // A tick count past the wrap must still be exactly representable, which is
   // the whole point of extending before converting.
   const std::optional<MediaTime> past =
-      mediaTimeFromTicks(kTimestampModulus + 90'000);
+      mediaTimeFromTicks(kTimestampModulus + 90'000, kTimestampHz);
   expect(past.has_value(), "a post-rollover tick is representable");
   // 8,589,934,592 + 90,000 = 8,590,024,592 ticks. gcd(8,590,024,592, 90,000)
   // is 16, so the exact reduced rational is 536,876,537 / 5,625 seconds

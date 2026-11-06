@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media/media_time.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -16,57 +18,6 @@ namespace wam::media {
 using MediaGeneration = std::uint64_t;
 using MediaTrackId = std::uint32_t;
 
-// Container timestamps remain exact across demux backends. A zero timescale
-// denotes an invalid/unknown timestamp; negative values are valid (for
-// example, edit-list and preroll timestamps).
-struct MediaTime {
-  std::int64_t value{0};
-  std::int32_t timescale{0};
-
-  [[nodiscard]] constexpr bool valid() const noexcept {
-    return timescale > 0;
-  }
-
-  friend constexpr bool operator==(const MediaTime&, const MediaTime&) =
-      default;
-};
-
-// Returns the canonical MediaTime representation of a finite, nonnegative
-// binary64 value when that exact rational fits the MediaTime domain. The
-// conversion decodes the binary64 representation directly: it never rounds
-// through floating-point arithmetic. Both signed zero encodings normalize to
-// {0, 1}; negative nonzero values and unrepresentable rationals fail closed.
-[[nodiscard]] std::optional<MediaTime>
-exactNonnegativeMediaTime(double seconds) noexcept;
-
-enum class MediaTimeOrder : std::int8_t {
-  Less = -1,
-  Equal = 0,
-  Greater = 1,
-};
-
-[[nodiscard]] std::optional<double> mediaTimeSeconds(MediaTime time) noexcept;
-// Canonical checked conversion for an exact media origin plus an unsigned
-// audio-frame offset. The intermediate rational never rounds through double;
-// all callers receive the same final binary64 result for clock publication
-// and validation. Negative resulting positions and non-finite results are
-// rejected because the native media clock admits only nonnegative time.
-[[nodiscard]] std::optional<double> mediaTimeSecondsAtFrame(
-    MediaTime origin, std::uint64_t frame,
-    std::uint32_t sampleRate) noexcept;
-// Returns the signed PCM-frame ordinal only when time lies exactly on the
-// sample-rate grid. The multiplication and division are checked without
-// converting through floating point.
-[[nodiscard]] std::optional<std::int64_t> exactAudioFrameIndex(
-    MediaTime time, std::uint32_t sampleRate) noexcept;
-// Returns the canonical timestamp of the first PCM-frame boundary at or after
-// time. Signed inputs use mathematical ceiling (toward positive infinity).
-[[nodiscard]] std::optional<MediaTime> audioFrameAtOrAfter(
-    MediaTime time, std::uint32_t sampleRate) noexcept;
-// Exact ordering for timestamps from different time bases. Implementations
-// must not round through double: adjacent media ticks can be above 2^53.
-[[nodiscard]] std::optional<MediaTimeOrder>
-compareMediaTime(MediaTime lhs, MediaTime rhs) noexcept;
 [[nodiscard]] std::optional<MediaGeneration>
 nextMediaGeneration(MediaGeneration current) noexcept;
 

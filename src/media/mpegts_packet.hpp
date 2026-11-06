@@ -114,12 +114,6 @@ class TimestampUnwrapper {
   bool primed_{false};
 };
 
-// Exact conversion of a 90 kHz tick count to MediaTime. The result is reduced
-// to lowest terms so that comparisons against other bases stay exact and
-// cheap. Never rounds; fails closed if the reduced form leaves the domain.
-[[nodiscard]] std::optional<MediaTime>
-mediaTimeFromTicks(std::int64_t ticks) noexcept;
-
 // ---------------------------------------------------------------------------
 // Transport packet header
 // ---------------------------------------------------------------------------

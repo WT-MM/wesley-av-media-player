@@ -24,7 +24,6 @@
 #include <exception>
 #include <limits>
 #include <mutex>
-#include <numeric>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -135,60 +134,6 @@ void assignError(std::string* error, const char* message) {
   const std::size_t owned =
       decoder.inFlightFrames + decoder.retainedPresentationFrames;
   return owned < decodedSurfaceOwnershipBound(decoder);
-}
-
-[[nodiscard]] WideUnsigned magnitude(WideSigned value) noexcept {
-  if (value >= 0) {
-    return static_cast<WideUnsigned>(value);
-  }
-  return static_cast<WideUnsigned>(-(value + 1)) + 1;
-}
-
-[[nodiscard]] WideUnsigned wideGcd(WideUnsigned lhs,
-                                   WideUnsigned rhs) noexcept {
-  while (rhs != 0) {
-    const WideUnsigned remainder = lhs % rhs;
-    lhs = rhs;
-    rhs = remainder;
-  }
-  return lhs;
-}
-
-[[nodiscard]] std::optional<MediaTime> checkedTimeSum(
-    MediaTime lhs, MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-  const std::uint64_t lhsScale =
-      static_cast<std::uint32_t>(lhs.timescale);
-  const std::uint64_t rhsScale =
-      static_cast<std::uint32_t>(rhs.timescale);
-  const std::uint64_t divisor = std::gcd(lhsScale, rhsScale);
-  const std::uint64_t lhsFactor = rhsScale / divisor;
-  const std::uint64_t rhsFactor = lhsScale / divisor;
-  const std::uint64_t commonScale = lhsScale * lhsFactor;
-  WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) * lhsFactor +
-      static_cast<WideSigned>(rhs.value) * rhsFactor;
-  WideUnsigned reduction = wideGcd(
-      magnitude(numerator), static_cast<WideUnsigned>(commonScale));
-  if (reduction == 0) {
-    reduction = 1;
-  }
-  numerator /= static_cast<WideSigned>(reduction);
-  const WideUnsigned scale =
-      static_cast<WideUnsigned>(commonScale) / reduction;
-  if (scale == 0 ||
-      scale > static_cast<WideUnsigned>(
-                  std::numeric_limits<std::int32_t>::max()) ||
-      numerator < static_cast<WideSigned>(
-                      std::numeric_limits<std::int64_t>::min()) ||
-      numerator > static_cast<WideSigned>(
-                      std::numeric_limits<std::int64_t>::max())) {
-    return std::nullopt;
-  }
-  return MediaTime{static_cast<std::int64_t>(numerator),
-                   static_cast<std::int32_t>(scale)};
 }
 
 [[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
@@ -988,7 +933,7 @@ struct NativeVideoConsumer::Impl {
             "decoded video frame timing is invalid", error);
       return PumpStatus::Failed;
     }
-    const auto intervalEnd = checkedTimeSum(*presentation, *duration);
+    const auto intervalEnd = media::addMediaTime(*presentation, *duration);
     if (!intervalEnd) {
       latch(NativeVideoConsumerFailure::InvalidFrameTiming,
             "decoded video frame interval is not exact", error);
@@ -2010,7 +1955,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
     return media::NativeMediaConsumeResult::Failed;
   }
   const auto intervalEnd =
-      checkedTimeSum(sample.presentationTime, sample.duration);
+      media::addMediaTime(sample.presentationTime, sample.duration);
   const auto endAgainstFloor = intervalEnd
       ? media::compareMediaTime(*intervalEnd,
                                impl.timeline.presentationFloor)
@@ -2779,7 +2724,7 @@ bool NativeVideoConsumerTestAccess::pumpScheduler(
 
 std::optional<MediaTime> NativeVideoConsumerTestAccess::checkedIntervalEnd(
     MediaTime presentation, MediaTime duration) noexcept {
-  return checkedTimeSum(presentation, duration);
+  return media::addMediaTime(presentation, duration);
 }
 
 std::optional<MediaTimeOrder>

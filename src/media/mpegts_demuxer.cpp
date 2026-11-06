@@ -491,7 +491,7 @@ struct AssetState {
       delta > std::numeric_limits<std::int64_t>::max()) {
     return std::nullopt;
   }
-  return mediaTimeFromTicks(static_cast<std::int64_t>(delta));
+  return mediaTimeFromTicks(static_cast<std::int64_t>(delta), kTimestampHz);
 }
 
 // ---------------------------------------------------------------------------
@@ -1086,7 +1086,8 @@ finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
     // the 90 kHz base so the interval arithmetic downstream stays integral.
     if (state.videoFrameDurationTicks > 0) {
       const std::optional<MediaTime> extent = mediaTimeFromTicks(
-          static_cast<std::int64_t>(state.videoFrameDurationTicks));
+          static_cast<std::int64_t>(state.videoFrameDurationTicks),
+          kTimestampHz);
       if (extent) {
         sample.duration = *extent;
       }
@@ -2536,7 +2537,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       }
       if (endTick > first) {
         const std::optional<MediaTime> span =
-            mediaTimeFromTicks(endTick - state->originTick);
+            mediaTimeFromTicks(endTick - state->originTick,
+                               kTimestampHz);
         if (span && span->value > 0) {
           duration = *span;
         }

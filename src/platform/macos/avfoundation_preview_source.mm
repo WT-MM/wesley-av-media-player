@@ -267,7 +267,7 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
     assignError(error, "preview video sample exceeds its bounded contract");
     return std::nullopt;
   }
-  const auto intervalEnd = checkedExactTimeSum(*presentation, *duration);
+  const auto intervalEnd = media::addMediaTime(*presentation, *duration);
   const auto endAgainstTarget =
       intervalEnd ? media::compareMediaTime(*intervalEnd, target)
                   : std::nullopt;

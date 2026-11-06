@@ -73,94 +73,14 @@ trackId(std::uint64_t number) noexcept {
 
 [[nodiscard]] std::optional<MediaTime>
 timeFromNanosecondsUnsigned(std::uint64_t nanoseconds) noexcept {
-  const std::uint64_t divisor = std::gcd(nanoseconds, UINT64_C(1'000'000'000));
-  const std::uint64_t numerator = nanoseconds / divisor;
-  const std::uint64_t denominator = UINT64_C(1'000'000'000) / divisor;
-  if (numerator > static_cast<std::uint64_t>(
-                      std::numeric_limits<std::int64_t>::max()) ||
-      denominator > static_cast<std::uint64_t>(
-                        std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return MediaTime{static_cast<std::int64_t>(numerator),
-                   static_cast<std::int32_t>(denominator)};
-}
-
-// Exact difference of two container rationals, in 128-bit so a
-// nanosecond-timescale delta -- already above 2^53 for adjacent frames --
-// cannot round the way a conversion through double would. This is the
-// subtraction counterpart of checkedExactTimeSum() in
-// platform/macos/core_media_source_support.hpp, which does the addition for
-// the same reason.
-[[nodiscard]] std::optional<MediaTime>
-exactTimeDifference(MediaTime lhs, MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-  using Wide = __int128;
-  const Wide numerator =
-      static_cast<Wide>(lhs.value) * static_cast<Wide>(rhs.timescale) -
-      static_cast<Wide>(rhs.value) * static_cast<Wide>(lhs.timescale);
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
-  if (denominator == 0) {
-    return std::nullopt;
-  }
-  const unsigned __int128 magnitude =
-      numerator < 0 ? static_cast<unsigned __int128>(-numerator)
-                    : static_cast<unsigned __int128>(numerator);
-  const std::uint64_t common = std::gcd(
-      denominator, static_cast<std::uint64_t>(magnitude % denominator));
-  const Wide reducedNumerator = numerator / static_cast<Wide>(common);
-  const std::uint64_t reducedDenominator = denominator / common;
-  if (reducedNumerator <
-          static_cast<Wide>(std::numeric_limits<std::int64_t>::min()) ||
-      reducedNumerator >
-          static_cast<Wide>(std::numeric_limits<std::int64_t>::max()) ||
-      reducedDenominator > static_cast<std::uint64_t>(
-                               std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return MediaTime{static_cast<std::int64_t>(reducedNumerator),
-                   static_cast<std::int32_t>(reducedDenominator)};
+  return mediaTimeFromTicks(nanoseconds, UINT64_C(1'000'000'000));
 }
 
 [[nodiscard]] std::optional<MediaTime>
 timeFromSignedTick(std::int64_t tick,
                    std::uint64_t scaleNanoseconds) noexcept {
-  const __int128 product = static_cast<__int128>(tick) *
-                           static_cast<__int128>(scaleNanoseconds);
-  const bool negative = product < 0;
-  const unsigned __int128 magnitude = negative
-      ? static_cast<unsigned __int128>(-product)
-      : static_cast<unsigned __int128>(product);
-  const std::uint64_t denominatorBase = UINT64_C(1'000'000'000);
-  if (magnitude > std::numeric_limits<std::uint64_t>::max()) {
-    return std::nullopt;
-  }
-  const std::uint64_t rawNumerator = static_cast<std::uint64_t>(magnitude);
-  const std::uint64_t divisor = std::gcd(rawNumerator, denominatorBase);
-  const std::uint64_t numerator = rawNumerator / divisor;
-  const std::uint64_t denominator = denominatorBase / divisor;
-  const std::uint64_t maximumMagnitude = negative
-      ? static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) +
-            1U
-      : static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-  if (numerator > maximumMagnitude ||
-      denominator > static_cast<std::uint64_t>(
-                        std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  std::int64_t signedNumerator = 0;
-  if (negative) {
-    signedNumerator = numerator == maximumMagnitude
-                          ? std::numeric_limits<std::int64_t>::min()
-                          : -static_cast<std::int64_t>(numerator);
-  } else {
-    signedNumerator = static_cast<std::int64_t>(numerator);
-  }
-  return MediaTime{signedNumerator, static_cast<std::int32_t>(denominator)};
+  return mediaTimeFromTicks(static_cast<__int128_t>(tick) * scaleNanoseconds,
+                            UINT64_C(1'000'000'000));
 }
 
 [[nodiscard]] std::optional<std::int64_t>
@@ -3440,7 +3360,7 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
     // Exact rational difference; the same checked arithmetic the rest of this
     // demuxer uses, so a nanosecond-timescale delta cannot round.
     const auto delta =
-        exactTimeDifference(nextSample->presentationTime,
+        subtractMediaTime(nextSample->presentationTime,
                             sample->presentationTime);
     // A non-positive delta is a non-monotonic or duplicated timestamp, and
     // this cursor may not invent a duration for it. The frame keeps its absent

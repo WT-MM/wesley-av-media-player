@@ -28,7 +28,6 @@
 #include <cstring>
 #include <limits>
 #include <new>
-#include <numeric>
 #include <optional>
 #include <utility>
 
@@ -63,60 +62,22 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
                    : static_cast<std::uint64_t>(value);
 }
 
-// Converts an exact rational time to an integral output-frame coordinate
-// without relying on a wide compiler extension. Reducing both factors before
-// multiplication also makes overflow a checkable admission fact.
-[[nodiscard]] bool exactFrame(std::int64_t value, std::int32_t timescale,
-                              std::uint32_t sampleRate,
-                              std::int64_t *result) noexcept {
-  if (timescale <= 0 || sampleRate == 0 || result == nullptr) {
-    return false;
-  }
-  std::uint64_t numerator = magnitude(value);
-  std::uint64_t denominator = static_cast<std::uint32_t>(timescale);
-  std::uint64_t rate = sampleRate;
-  const std::uint64_t first = std::gcd(numerator, denominator);
-  numerator /= first;
-  denominator /= first;
-  const std::uint64_t second = std::gcd(rate, denominator);
-  rate /= second;
-  denominator /= second;
-  if (denominator != 1 ||
-      (rate != 0 &&
-       numerator > std::numeric_limits<std::uint64_t>::max() / rate)) {
-    return false;
-  }
-  const std::uint64_t absolute = numerator * rate;
-  if (value < 0) {
-    constexpr std::uint64_t negativeLimit =
-        std::uint64_t{1} << (std::numeric_limits<std::uint64_t>::digits - 1);
-    if (absolute > negativeLimit) {
-      return false;
-    }
-    *result = absolute == negativeLimit
-                  ? std::numeric_limits<std::int64_t>::min()
-                  : -static_cast<std::int64_t>(absolute);
-    return true;
-  }
-  if (absolute >
-      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-    return false;
-  }
-  *result = static_cast<std::int64_t>(absolute);
-  return true;
-}
-
 [[nodiscard]] bool exactFrame(media::MediaTime time, std::uint32_t sampleRate,
                               std::int64_t *result) noexcept {
-  return time.valid() &&
-         exactFrame(time.value, time.timescale, sampleRate, result);
+  const auto frame = media::exactAudioFrameIndex(time, sampleRate);
+  if (!frame || result == nullptr) {
+    return false;
+  }
+  *result = *frame;
+  return true;
 }
 
 [[nodiscard]] bool exactFrame(CMTime time, std::uint32_t sampleRate,
                               std::int64_t *result) noexcept {
   return CMTIME_IS_NUMERIC(time) && time.epoch == 0 &&
          (time.flags & kCMTimeFlags_HasBeenRounded) == 0 &&
-         exactFrame(time.value, time.timescale, sampleRate, result);
+         exactFrame(media::MediaTime{time.value, time.timescale}, sampleRate,
+                    result);
 }
 
 [[nodiscard]] bool optionalFrame(CMTime time, std::uint32_t sampleRate,

@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <limits>
 #include <mutex>
-#include <numeric>
 #include <utility>
 #include <variant>
 
@@ -29,7 +28,6 @@ using media::MediaSample;
 using media::MediaTime;
 using media::MediaTimeOrder;
 using WideSigned = __int128_t;
-using WideUnsigned = __uint128_t;
 
 constexpr std::size_t kMaximumPreviewReorderFrames = 8;
 // Sequential decode is cheaper than rebuilding for normal pointer motion, but
@@ -37,59 +35,6 @@ constexpr std::size_t kMaximumPreviewReorderFrames = 8;
 // to a short local window while allowing an arbitrary forward drag to reuse
 // the graph through many small replacements.
 constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
-
-[[nodiscard]] WideUnsigned magnitude(WideSigned value) noexcept {
-  return value >= 0 ? static_cast<WideUnsigned>(value)
-                    : static_cast<WideUnsigned>(-(value + 1)) + 1;
-}
-
-[[nodiscard]] WideUnsigned wideGcd(WideUnsigned lhs,
-                                   WideUnsigned rhs) noexcept {
-  while (rhs != 0) {
-    const WideUnsigned remainder = lhs % rhs;
-    lhs = rhs;
-    rhs = remainder;
-  }
-  return lhs;
-}
-
-[[nodiscard]] std::optional<MediaTime> checkedTimeSum(
-    MediaTime lhs, MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-  const std::uint64_t lhsScale =
-      static_cast<std::uint32_t>(lhs.timescale);
-  const std::uint64_t rhsScale =
-      static_cast<std::uint32_t>(rhs.timescale);
-  const std::uint64_t divisor = std::gcd(lhsScale, rhsScale);
-  const std::uint64_t lhsFactor = rhsScale / divisor;
-  const std::uint64_t rhsFactor = lhsScale / divisor;
-  const std::uint64_t commonScale = lhsScale * lhsFactor;
-  WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) * lhsFactor +
-      static_cast<WideSigned>(rhs.value) * rhsFactor;
-  WideUnsigned reduction =
-      wideGcd(magnitude(numerator),
-              static_cast<WideUnsigned>(commonScale));
-  if (reduction == 0) {
-    reduction = 1;
-  }
-  numerator /= static_cast<WideSigned>(reduction);
-  const WideUnsigned scale =
-      static_cast<WideUnsigned>(commonScale) / reduction;
-  if (scale == 0 ||
-      scale > static_cast<WideUnsigned>(
-                  std::numeric_limits<std::int32_t>::max()) ||
-      numerator < static_cast<WideSigned>(
-                      std::numeric_limits<std::int64_t>::min()) ||
-      numerator > static_cast<WideSigned>(
-                      std::numeric_limits<std::int64_t>::max())) {
-    return std::nullopt;
-  }
-  return MediaTime{static_cast<std::int64_t>(numerator),
-                   static_cast<std::int32_t>(scale)};
-}
 
 [[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
   if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0 || time.epoch != 0 ||
@@ -162,7 +107,7 @@ constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
   const auto presentation = exactMediaTime(timing.presentationTime);
   const auto duration = exactMediaTime(timing.duration);
   const auto end = presentation && duration
-                       ? checkedTimeSum(*presentation, *duration)
+                       ? media::addMediaTime(*presentation, *duration)
                        : std::optional<MediaTime>{};
   const auto order = end ? media::compareMediaTime(*end, target)
                          : std::optional<MediaTimeOrder>{};
@@ -935,7 +880,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       const auto presentation = exactMediaTime(timing->presentationTime);
       const auto duration = exactMediaTime(timing->duration);
       const auto end = presentation && duration
-                           ? checkedTimeSum(*presentation, *duration)
+                           ? media::addMediaTime(*presentation, *duration)
                            : std::optional<MediaTime>{};
       const auto againstTarget = end ? media::compareMediaTime(
                                            *end, active.request.target)
@@ -1003,7 +948,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
               exactMediaTime(active.cachedFrame.timing().presentationTime)) {
         if (const auto cachedDuration =
                 exactMediaTime(active.cachedFrame.timing().duration)) {
-          if (const auto cachedEnd = checkedTimeSum(*cachedPresentation, *cachedDuration)) {
+          if (const auto cachedEnd = media::addMediaTime(*cachedPresentation, *cachedDuration)) {
             impl_->advanceDecodedFrontier(active, *cachedEnd);
           }
         }
@@ -1109,7 +1054,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       impl_->peakLaneCompressedBytes = std::max(
           impl_->peakLaneCompressedBytes,
           static_cast<std::uint64_t>(active.sample->payload.byteSize()));
-      if (const auto end = checkedTimeSum(active.sample->presentationTime,
+      if (const auto end = media::addMediaTime(active.sample->presentationTime,
                                           active.sample->duration)) {
         impl_->advanceDecodedFrontier(active, *end);
       }

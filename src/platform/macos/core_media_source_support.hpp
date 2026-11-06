@@ -9,7 +9,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <numeric>
 #include <optional>
 #include <span>
 #include <string>
@@ -67,50 +66,6 @@ inline void assignError(std::string* error, const char* message) {
   return integral;
 }
 
-// Exact sum of two container rationals. The intermediate product needs the
-// full 128-bit range: adjacent media ticks at a nanosecond timescale are
-// already above 2^53, so converting through double would silently move a
-// sample across the accurate-seek boundary.
-[[nodiscard]] inline std::optional<media::MediaTime> checkedExactTimeSum(
-    media::MediaTime lhs, media::MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-
-  using WideSigned = __int128_t;
-  using WideUnsigned = __uint128_t;
-  const WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) *
-          static_cast<WideSigned>(rhs.timescale) +
-      static_cast<WideSigned>(rhs.value) *
-          static_cast<WideSigned>(lhs.timescale);
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
-  if (denominator == 0) {
-    return std::nullopt;
-  }
-
-  const WideUnsigned magnitude =
-      numerator < 0 ? static_cast<WideUnsigned>(-(numerator + 1)) + 1
-                    : static_cast<WideUnsigned>(numerator);
-  const std::uint64_t common = std::gcd(
-      denominator, static_cast<std::uint64_t>(magnitude % denominator));
-  const WideSigned reducedNumerator =
-      numerator / static_cast<WideSigned>(common);
-  const std::uint64_t reducedDenominator = denominator / common;
-  if (reducedNumerator <
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::min()) ||
-      reducedNumerator >
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::max()) ||
-      reducedDenominator >
-          static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return media::MediaTime{static_cast<std::int64_t>(reducedNumerator),
-                          static_cast<std::int32_t>(reducedDenominator)};
-}
-
 // True when the sample's whole presentation interval closes at or before the
 // accurate-seek target, which is exactly the decodeOnly predicate. Empty when
 // the interval is not exactly representable or comparable, with the reason
@@ -122,7 +77,7 @@ inline void assignError(std::string* error, const char* message) {
     assignError(error, "accurate video sample has no exact positive interval");
     return std::nullopt;
   }
-  const auto intervalEnd = checkedExactTimeSum(presentationTime, duration);
+  const auto intervalEnd = media::addMediaTime(presentationTime, duration);
   if (!intervalEnd) {
     assignError(error,
                 "accurate video sample interval is not exactly representable");

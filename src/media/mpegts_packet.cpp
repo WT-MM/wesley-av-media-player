@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
-#include <numeric>
 
 namespace wam::media::mpegts {
 namespace {
@@ -85,39 +84,6 @@ std::uint32_t mpegCrc32(std::span<const std::byte> data) noexcept {
     crc = crcStep(crc, static_cast<std::uint8_t>(value));
   }
   return crc;
-}
-
-std::optional<MediaTime> mediaTimeFromTicks(std::int64_t ticks) noexcept {
-  const bool negative = ticks < 0;
-  const std::uint64_t magnitude =
-      negative ? static_cast<std::uint64_t>(-(ticks + 1)) + 1U
-               : static_cast<std::uint64_t>(ticks);
-  const std::uint64_t divisor =
-      std::gcd(magnitude, static_cast<std::uint64_t>(kTimestampHz));
-  const std::uint64_t numerator = magnitude / divisor;
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(kTimestampHz) / divisor;
-  const std::uint64_t ceiling =
-      negative
-          ? static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) +
-                1U
-          : static_cast<std::uint64_t>(
-                std::numeric_limits<std::int64_t>::max());
-  if (numerator > ceiling) {
-    return std::nullopt;
-  }
-  std::int64_t signedNumerator = 0;
-  if (negative) {
-    signedNumerator =
-        numerator == static_cast<std::uint64_t>(
-                         std::numeric_limits<std::int64_t>::max()) +
-                         1U
-            ? std::numeric_limits<std::int64_t>::min()
-            : -static_cast<std::int64_t>(numerator);
-  } else {
-    signedNumerator = static_cast<std::int64_t>(numerator);
-  }
-  return MediaTime{signedNumerator, static_cast<std::int32_t>(denominator)};
 }
 
 // ---------------------------------------------------------------------------

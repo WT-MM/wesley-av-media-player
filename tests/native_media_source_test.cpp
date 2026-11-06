@@ -840,6 +840,29 @@ void checkExactAudioFrameGrid() {
          "invalid and out-of-int64 audio-grid projections fail closed");
 }
 
+void checkExactTickArithmetic() {
+  constexpr auto kMin = std::numeric_limits<std::int64_t>::min();
+  constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+  static_assert(mediaTimeFromTicks(3'003, 90'000) == MediaTime{1'001, 30'000});
+  expect(mediaTimeFromTicks(0, 1'000'000'000) == MediaTime{0, 1} &&
+             mediaTimeFromTicks(-90'000, 90'000) == MediaTime{-1, 1} &&
+             mediaTimeFromTicks(kMin, 1) == MediaTime{kMin, 1} &&
+             !mediaTimeFromTicks(1, 0) &&
+             !mediaTimeFromTicks(1, 3'000'000'000U) &&
+             !mediaTimeFromTicks(static_cast<__int128_t>(kMax) + 1, 1) &&
+             !mediaTimeFromTicks(static_cast<__int128_t>(kMin) - 1, 1),
+         "tick reduction is exact, signed and fails closed outside MediaTime");
+  // A product beyond 64 bits that reduces back into range stays exact.
+  expect(mediaTimeFromTicks(static_cast<__int128_t>(kMax) * 1'000'000'000,
+                            1'000'000'000) == MediaTime{kMax, 1},
+         "128-bit tick products reduce exactly");
+  expect(addMediaTime({1, 3}, {1, 6}) == MediaTime{1, 2} &&
+             subtractMediaTime({1, 3}, {1, 2}) == MediaTime{-1, 6} &&
+             subtractMediaTime({5, 10}, {1, 2}) == MediaTime{0, 1} &&
+             !addMediaTime({kMax, 1}, {1, 1}) && !addMediaTime({}, {1, 1}),
+         "exact add and subtract reduce and fail closed");
+}
+
 // mediaVideoDisplaySize / mediaSourceDisplaySize are the single rule every
 // window-geometry behaviour is shaped from -- aspect lock, the once-per-source
 // aspect snap, Actual Size and fit-to-screen all read one number, and it comes
@@ -2043,6 +2066,7 @@ int main() {
   static_assert(std::is_trivially_copyable_v<MediaAudioGenerationWindow>);
   checkHardLimitClamping();
   checkExactAudioFrameGrid();
+  checkExactTickArithmetic();
   checkPreparedContextIdentity();
   checkDescriptorValidation();
   checkVideoDisplaySize();
