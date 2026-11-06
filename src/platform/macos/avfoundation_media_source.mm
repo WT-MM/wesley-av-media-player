@@ -15,6 +15,7 @@
 #include "media/video_codec_configuration.hpp"
 #include "core_media_codec_facts.hpp"
 #include "core_media_source_support.hpp"
+#include "native_custom_source_core.hpp"
 #include "native_audio_channel_map.hpp"
 #include "native_video_codec_capability.hpp"
 #include "native_video_color.hpp"
@@ -4318,38 +4319,42 @@ class ProductionBackend final : public AVFoundationBackend {
       static_cast<CMAudioFormatDescriptionRef>(format), track);
 }
 
-struct StagedSample {
-  MediaTrackId track{0};
-  MediaTime orderTime{};
-  std::variant<MediaSample, media::MediaDiscontinuity> value;
-  std::size_t payloadBytes{0};
+struct AVFoundationSourceTraits {
+  static constexpr const char* kName = "AVFoundation";
+  using AssetContext = AVFoundationAssetContext;
 };
+
+[[nodiscard]] media::MediaSourceOpenStatus openStatus(
+    AVFoundationGenerationStatus status) noexcept {
+  switch (status) {
+    case AVFoundationGenerationStatus::Ready:
+      return media::MediaSourceOpenStatus::Ready;
+    case AVFoundationGenerationStatus::Unsupported:
+      return media::MediaSourceOpenStatus::Unsupported;
+    case AVFoundationGenerationStatus::Cancelled:
+      return media::MediaSourceOpenStatus::Cancelled;
+    case AVFoundationGenerationStatus::Failed:
+      break;
+  }
+  return media::MediaSourceOpenStatus::Failed;
+}
 
 }  // namespace
 
-struct AVFoundationMediaSource::Impl {
+struct AVFoundationMediaSource::Impl final
+    : NativeSourceCore<Impl, AVFoundationSourceTraits> {
   explicit Impl(std::shared_ptr<AVFoundationBackend> suppliedBackend)
       : backend(suppliedBackend != nullptr
                     ? std::move(suppliedBackend)
                     : std::make_shared<ProductionBackend>()) {}
 
   std::shared_ptr<AVFoundationBackend> backend;
-  std::filesystem::path path;
-  media::MediaSourceOpenOptions options;
-  MediaSourceLimits limits;
-  std::shared_ptr<const MediaSourceDescriptor> descriptor;
-  std::shared_ptr<const AVFoundationAssetContext> assetContext;
   std::shared_ptr<AVFoundationGeneration> ownerGeneration;
   // Apple libc++ deployments supported by WAM do not all provide the C++20
   // atomic<shared_ptr> specialization. The standard shared_ptr atomic free
   // functions provide the same lifetime-safe publication on those runtimes.
   std::shared_ptr<AVFoundationGeneration> publishedGeneration;
   std::atomic<unsigned> cancellationReaders{0};
-  std::optional<StagedSample> videoHead;
-  std::optional<StagedSample> audioHead;
-  std::optional<MediaTime> requestedTarget;
-  media::MediaSeekMode seekMode{media::MediaSeekMode::Accurate};
-  std::string failure;
 
   // Per-generation admission cache for the compressed sample's format
   // description. sampleFormatMatchesTrack walks roughly two dozen
@@ -4386,87 +4391,9 @@ struct AVFoundationMediaSource::Impl {
   RetainedFormat admittedFormat;
   const MediaTrackDescriptor* admittedFormatTrack{nullptr};
 
-  MediaGeneration generation{0};
-  MediaGeneration armedGeneration{0};
-  bool open{false};
-  bool videoTerminal{true};
-  bool audioTerminal{true};
-  // A consumed capacity-one head is refilled only when the downstream owner
-  // asks for another result.  Keeping the lane identity explicit prevents the
-  // first delivered sample from waiting on a speculative replacement pull.
-  bool videoRefillPending{false};
-  bool audioRefillPending{false};
-  bool videoEosEmitted{false};
-  bool audioEosEmitted{false};
-
-  std::atomic<MediaGeneration> operationGeneration{0};
-  std::atomic<MediaGeneration> cancelledGeneration{0};
-  std::atomic<MediaGeneration> generationHighWater{0};
-  std::atomic<MediaGeneration> stagedGeneration{0};
-  std::atomic<std::size_t> stagedVideoHeads{0};
-  std::atomic<std::size_t> stagedAudioHeads{0};
-  std::atomic<std::size_t> stagedPayloadBytes{0};
-  std::atomic<std::size_t> peakStagedPayloadBytes{0};
-  std::atomic<std::uint64_t> samplesEmitted{0};
-  std::atomic<std::uint64_t> seeksAccepted{0};
-  std::atomic<bool> openSnapshot{false};
-
-  [[nodiscard]] bool arm(MediaGeneration requested) noexcept {
-    if (requested == 0 || armedGeneration != 0) {
-      return false;
-    }
-    MediaGeneration observed =
-        generationHighWater.load(std::memory_order_acquire);
-    while (observed < requested) {
-      if (generationHighWater.compare_exchange_weak(
-              observed, requested, std::memory_order_acq_rel,
-              std::memory_order_acquire)) {
-        cancelledGeneration.store(0, std::memory_order_release);
-        armedGeneration = requested;
-        operationGeneration.store(requested, std::memory_order_release);
-        return true;
-      }
-    }
-    return false;
-  }
-
-  [[nodiscard]] bool consumeArm(MediaGeneration requested) noexcept {
-    if (armedGeneration != requested ||
-        operationGeneration.load(std::memory_order_acquire) != requested) {
-      return false;
-    }
-    armedGeneration = 0;
-    return true;
-  }
-
-  [[nodiscard]] bool operationCancelled(
-      MediaGeneration requested) const noexcept {
-    return requested != 0 &&
-           cancelledGeneration.load(std::memory_order_acquire) == requested;
-  }
-
-  void restoreCurrentPublicationAfterRejectedOperation() noexcept {
-    operationGeneration.store(open ? generation : 0,
-                              std::memory_order_release);
-  }
-
-  [[nodiscard]] bool isCancelled() const noexcept {
-    return cancelledGeneration.load(std::memory_order_acquire) == generation &&
-           generation != 0;
-  }
-
-  void publishCancellation(MediaGeneration requested) noexcept {
-    if (requested == 0 ||
-        operationGeneration.load(std::memory_order_acquire) != requested) {
-      return;
-    }
-    MediaGeneration observed =
-        cancelledGeneration.load(std::memory_order_relaxed);
-    while (observed < requested &&
-           !cancelledGeneration.compare_exchange_weak(
-               observed, requested, std::memory_order_release,
-               std::memory_order_relaxed)) {
-    }
+  // The reader does not poll the cancellation latch, so a published
+  // cancellation also cancels the live generation directly.
+  void cancellationPublished(MediaGeneration requested) noexcept {
     struct Pin {
       std::atomic<unsigned>& readers;
       explicit Pin(std::atomic<unsigned>& value) : readers(value) { readers.fetch_add(1); }
@@ -4477,33 +4404,6 @@ struct AVFoundationMediaSource::Impl {
     if (active != nullptr && active->generation() == requested) {
       active->cancel();
     }
-  }
-
-  void publishHeadFacts() noexcept {
-    const std::size_t videoCount = videoHead ? 1 : 0;
-    const std::size_t audioCount = audioHead ? 1 : 0;
-    const std::size_t videoBytes = videoHead ? videoHead->payloadBytes : 0;
-    const std::size_t audioBytes = audioHead ? audioHead->payloadBytes : 0;
-    const std::size_t total = videoBytes + audioBytes;
-    stagedVideoHeads.store(videoCount, std::memory_order_relaxed);
-    stagedAudioHeads.store(audioCount, std::memory_order_relaxed);
-    stagedPayloadBytes.store(total, std::memory_order_relaxed);
-    updatePeak(total);
-    stagedGeneration.store(videoCount + audioCount == 0 ? 0 : generation,
-                           std::memory_order_release);
-  }
-
-  void clearHead(std::optional<StagedSample>& head) noexcept {
-    head.reset();
-    publishHeadFacts();
-  }
-
-  void clearHeads() noexcept {
-    videoHead.reset();
-    audioHead.reset();
-    videoRefillPending = false;
-    audioRefillPending = false;
-    publishHeadFacts();
   }
 
   void retireActive() noexcept {
@@ -4519,25 +4419,6 @@ struct AVFoundationMediaSource::Impl {
     while (readers != 0) {
       cancellationReaders.wait(readers);
       readers = cancellationReaders.load();
-    }
-  }
-
-  void withdrawFailedOperation() noexcept {
-    operationGeneration.store(0, std::memory_order_release);
-    retireActive();
-    clearHeads();
-    descriptor.reset();
-    assetContext.reset();
-    open = false;
-    openSnapshot.store(false, std::memory_order_release);
-  }
-
-  void updatePeak(std::size_t total) noexcept {
-    std::size_t peak = peakStagedPayloadBytes.load(std::memory_order_relaxed);
-    while (peak < total &&
-           !peakStagedPayloadBytes.compare_exchange_weak(
-               peak, total, std::memory_order_relaxed,
-               std::memory_order_relaxed)) {
     }
   }
 
@@ -4785,23 +4666,6 @@ struct AVFoundationMediaSource::Impl {
     }
   }
 
-  [[nodiscard]] bool refillPendingLane(bool video, std::string* error) {
-    bool& pending = video ? videoRefillPending : audioRefillPending;
-    std::optional<StagedSample>& head = video ? videoHead : audioHead;
-    const bool terminal = video ? videoTerminal : audioTerminal;
-    if (!pending) {
-      return true;
-    }
-
-    // Consume the demand edge before entering AVFoundation.  A read failure is
-    // sticky and must not turn later readNext() calls into implicit retries.
-    pending = false;
-    if (head || terminal) {
-      return true;
-    }
-    return stage(video, false, error);
-  }
-
   // The staged audio head is the first compressed access unit this generation
   // will ever deliver, so it is this source's own proof of the window decode
   // start D. Accurate keeps the exact ceiling frame A at the requested target;
@@ -4915,62 +4779,48 @@ struct AVFoundationMediaSource::Impl {
         presentationEnd, audioEnd};
   }
 
-  [[nodiscard]] bool refillPendingHeads(std::string* error) {
-    // Keep the source's established deterministic lane precedence.  In normal
-    // operation exactly one lane is pending, but handling both makes recovery
-    // from a terminal edge explicit without weakening the capacity-one bound.
-    return refillPendingLane(true, error) &&
-           refillPendingLane(false, error);
+  [[nodiscard]] GenerationStart generationStart(
+      AVFoundationGenerationStart&& started) const {
+    GenerationStart out;
+    out.status = openStatus(started.status);
+    out.actualDecodeStart = started.actualDecodeStart;
+    out.descriptor = std::move(started.descriptor);
+    out.context = std::move(started.assetContext);
+    out.audioWindow = started.audioWindow;
+    out.error = std::move(started.error);
+    return out;
   }
 
-  [[nodiscard]] AVFoundationGenerationStart begin(
-      AVFoundationGenerationRequest request) {
-    const std::filesystem::path requestedPath = request.path;
-    const media::MediaSourceOpenOptions requestedOptions = request.options;
-    const std::shared_ptr<const AVFoundationAssetContext> requestedContext =
-        request.assetContext;
-    generation = request.generation;
-    limits = media::clampMediaSourceLimits(request.options.limits);
-    requestedTarget = request.target;
-    seekMode = request.seekMode;
-
-    // armOperation() already published this exact cancellation slot before an
-    // outer owner could expose the operation. Never clear that latch here.
-    if (isCancelled()) {
-      AVFoundationGenerationStart cancelled;
-      cancelled.status = AVFoundationGenerationStatus::Cancelled;
-      withdrawFailedOperation();
+  [[nodiscard]] GenerationStart begin(
+      const std::filesystem::path& requestedPath,
+      const media::MediaSourceOpenOptions& requestedOptions,
+      MediaGeneration requestedGeneration,
+      const std::optional<MediaTime>& target, media::MediaSeekMode mode,
+      const std::shared_ptr<const AVFoundationAssetContext>& requestedContext) {
+    if (!resetForGeneration(requestedOptions, requestedGeneration, target,
+                            mode)) {
+      GenerationStart cancelled;
+      cancelled.status = media::MediaSourceOpenStatus::Cancelled;
       return cancelled;
     }
-    retireActive();
-
-    videoTerminal = false;
-    audioTerminal = false;
-    videoRefillPending = false;
-    audioRefillPending = false;
-    videoEosEmitted = false;
-    audioEosEmitted = false;
-    failure.clear();
-    clearHeads();
-    descriptor.reset();
-    assetContext.reset();
-    open = false;
-    openSnapshot.store(false, std::memory_order_release);
-
-    if (isCancelled()) {
-      AVFoundationGenerationStart cancelled;
-      cancelled.status = AVFoundationGenerationStatus::Cancelled;
-      withdrawFailedOperation();
-      return cancelled;
+    AVFoundationGenerationRequest request;
+    request.path = requestedPath;
+    request.options = requestedOptions;
+    request.generation = requestedGeneration;
+    request.target = target;
+    request.seekMode = mode;
+    request.assetContext = requestedContext;
+    // Rejected audio tracks steer only the cold open's track selection.
+    if (requestedContext == nullptr) {
+      request.rejectedAudio = rejectedAudio;
     }
-
     ownerGeneration = backend->makeGeneration(std::move(request));
     if (ownerGeneration == nullptr ||
         ownerGeneration->generation() != generation) {
       AVFoundationGenerationStart invalid;
       invalid.error = "AVFoundation backend returned the wrong generation";
       withdrawFailedOperation();
-      return invalid;
+      return generationStart(std::move(invalid));
     }
     std::atomic_store_explicit(&publishedGeneration, ownerGeneration,
                                std::memory_order_seq_cst);
@@ -4982,7 +4832,7 @@ struct AVFoundationMediaSource::Impl {
         started.status == AVFoundationGenerationStatus::Cancelled) {
       started.status = AVFoundationGenerationStatus::Cancelled;
       withdrawFailedOperation();
-      return started;
+      return generationStart(std::move(started));
     }
     if (started.status != AVFoundationGenerationStatus::Ready ||
         started.descriptor == nullptr || !started.actualDecodeStart.valid()) {
@@ -4991,13 +4841,13 @@ struct AVFoundationMediaSource::Impl {
         started.error = "AVFoundation ready proof is incomplete";
       }
       withdrawFailedOperation();
-      return started;
+      return generationStart(std::move(started));
     }
     if (!media::validateMediaSourceDescriptor(*started.descriptor, limits,
                                               &started.error)) {
       started.status = AVFoundationGenerationStatus::Unsupported;
       withdrawFailedOperation();
-      return started;
+      return generationStart(std::move(started));
     }
     if (started.assetContext == nullptr ||
         started.descriptor.get() !=
@@ -5011,7 +4861,7 @@ struct AVFoundationMediaSource::Impl {
       started.error =
           "AVFoundation generation changed its immutable asset identity";
       withdrawFailedOperation();
-      return started;
+      return generationStart(std::move(started));
     }
     if (requestedTarget) {
       const auto targetAgainstDuration = media::compareMediaTime(
@@ -5026,14 +4876,14 @@ struct AVFoundationMediaSource::Impl {
         started.error =
             "requested position is outside the exact source timeline";
         withdrawFailedOperation();
-        return started;
+        return generationStart(std::move(started));
       }
     }
     if (!preservesLegacyNativeAdmission(*started.descriptor,
                                         &started.error)) {
       started.status = AVFoundationGenerationStatus::Unsupported;
       withdrawFailedOperation();
-      return started;
+      return generationStart(std::move(started));
     }
     if ((options.selection.requireVideo &&
          !started.descriptor->selectedVideo) ||
@@ -5042,7 +4892,7 @@ struct AVFoundationMediaSource::Impl {
       started.status = AVFoundationGenerationStatus::Unsupported;
       started.error = "AVFoundation did not select every required track";
       withdrawFailedOperation();
-      return started;
+      return generationStart(std::move(started));
     }
     descriptor = started.descriptor;
     assetContext = started.assetContext;
@@ -5055,7 +4905,7 @@ struct AVFoundationMediaSource::Impl {
                            ? AVFoundationGenerationStatus::Cancelled
                            : AVFoundationGenerationStatus::Unsupported;
       withdrawFailedOperation();
-      return started;
+      return generationStart(std::move(started));
     }
     started.audioWindow =
         audioGenerationWindow(started.actualDecodeStart,
@@ -5065,7 +4915,7 @@ struct AVFoundationMediaSource::Impl {
             .value_or(media::MediaAudioGenerationWindow{});
     open = true;
     openSnapshot.store(true, std::memory_order_release);
-    return started;
+    return generationStart(std::move(started));
   }
 };
 
@@ -5080,319 +4930,44 @@ AVFoundationMediaSource::~AVFoundationMediaSource() { close(); }
 
 bool AVFoundationMediaSource::armOperation(
     MediaGeneration generation) noexcept {
-  const bool armed = impl_ != nullptr && impl_->arm(generation);
-  if (armed) {
-    rejectedAudio_ = {};
-  }
-  return armed;
+  return impl_ != nullptr && impl_->arm(generation);
 }
 
 media::MediaSourceOpenOutcome AVFoundationMediaSource::openLocalFile(
     const std::filesystem::path& path,
     const media::MediaSourceOpenOptions& options,
     MediaGeneration generation) {
-  media::MediaSourceOpenOutcome outcome;
-  outcome.generation = generation;
-  try {
-    if (!impl_->consumeArm(generation)) {
-      outcome.error = "AVFoundation open generation was not armed";
-      return outcome;
-    }
-    if (impl_->operationCancelled(generation)) {
-      impl_->generation = generation;
-      impl_->withdrawFailedOperation();
-      outcome.status = media::MediaSourceOpenStatus::Cancelled;
-      outcome.error = "AVFoundation open was cancelled before entry";
-      return outcome;
-    }
-    if (path.empty() || impl_->open ||
-        !media::validateMediaSourceInitialPosition(options.initialPosition,
-                                                   &outcome.error)) {
-      if (outcome.error.empty()) {
-        outcome.error = "invalid AVFoundation open path or state";
-      }
-      impl_->restoreCurrentPublicationAfterRejectedOperation();
-      return outcome;
-    }
-    impl_->path = path;
-    impl_->options = options;
-    AVFoundationGenerationRequest request;
-    request.path = path;
-    request.options = options;
-    request.rejectedAudio = rejectedAudio_;
-    request.generation = generation;
-    if (options.initialPosition) {
-      request.target = options.initialPosition->target;
-      request.seekMode = options.initialPosition->mode;
-    }
-    AVFoundationGenerationStart started = impl_->begin(std::move(request));
-    switch (started.status) {
-      case AVFoundationGenerationStatus::Ready:
-        outcome.status = media::MediaSourceOpenStatus::Ready;
-        break;
-      case AVFoundationGenerationStatus::Unsupported:
-        outcome.status = media::MediaSourceOpenStatus::Unsupported;
-        break;
-      case AVFoundationGenerationStatus::Cancelled:
-        outcome.status = media::MediaSourceOpenStatus::Cancelled;
-        break;
-      case AVFoundationGenerationStatus::Failed:
-        outcome.status = media::MediaSourceOpenStatus::Failed;
-        break;
-    }
-    outcome.actualDecodeStart = started.actualDecodeStart;
-    outcome.descriptor = std::move(started.descriptor);
-    outcome.error = std::move(started.error);
-    if (outcome.status == media::MediaSourceOpenStatus::Ready) {
-      outcome.preparedContext = std::move(started.assetContext);
-      outcome.audioWindow = started.audioWindow;
-    }
-  } catch (const std::exception& exception) {
-    impl_->withdrawFailedOperation();
-    outcome.error = exception.what();
-  } catch (...) {
-    impl_->withdrawFailedOperation();
-    outcome.error = "AVFoundation open raised an unknown exception";
-  }
-  return outcome;
+  return impl_->openLocalFile(path, options, generation);
 }
 
 media::MediaSourceOpenOutcome AVFoundationMediaSource::retryAudioTrack(
     const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
     media::MediaGeneration generation, media::MediaTrackId rejected) {
-  if (options.selection.preferredAudio || !impl_->descriptor ||
-      impl_->descriptor->selectedAudio != rejected || impl_->generation != generation ||
-      !rejectedAudio_.add(rejected)) {
-    media::MediaSourceOpenOutcome out;
-    out.generation = generation;
-    out.refusal = media::MediaRefusalClass::AudioTrackRetryExhausted;
-    out.error = media::mediaRefusalClassName(out.refusal);
-    return out;
-  }
-  impl_->retireActive();
-  impl_->clearHeads();
-  impl_->descriptor.reset();
-  impl_->assetContext.reset();
-  impl_->open = false;
-  impl_->openSnapshot.store(false, std::memory_order_release);
-  // Retry is part of the same cold open; cancellation and its generation
-  // high-water survive source retirement and cannot be cleared by retry.
-  impl_->armedGeneration = generation;
-  impl_->operationGeneration.store(generation, std::memory_order_release);
-  return openLocalFile(path, options, generation);
+  return impl_->retryAudioTrack(path, options, generation, rejected);
 }
 
 media::MediaSourceSeekOutcome AVFoundationMediaSource::seek(
     const media::MediaSourceSeekRequest& request) {
-  media::MediaSourceSeekOutcome outcome;
-  outcome.generation = request.generation;
-  try {
-    if (!impl_->consumeArm(request.generation)) {
-      outcome.error = "AVFoundation seek generation was not armed";
-      return outcome;
-    }
-    if (impl_->operationCancelled(request.generation)) {
-      impl_->generation = request.generation;
-      impl_->withdrawFailedOperation();
-      outcome.error = "AVFoundation seek was cancelled before entry";
-      return outcome;
-    }
-    const std::optional<media::MediaSourceInitialPosition> position{
-        media::MediaSourceInitialPosition{request.target, request.mode}};
-    if (!impl_->open || request.generation == 0 ||
-        request.generation <= impl_->generation ||
-        !media::validateMediaSourceInitialPosition(position, &outcome.error) ||
-        impl_->descriptor == nullptr ||
-        !exactNonnegativeTimeWithinDuration(request.target,
-                                            impl_->descriptor->duration)) {
-      if (outcome.error.empty()) {
-        outcome.error = "invalid AVFoundation seek request";
-      }
-      impl_->restoreCurrentPublicationAfterRejectedOperation();
-      return outcome;
-    }
-    const auto priorDescriptor = impl_->descriptor;
-    const auto priorContext = impl_->assetContext;
-    AVFoundationGenerationRequest generationRequest;
-    generationRequest.path = impl_->path;
-    generationRequest.options = impl_->options;
-    generationRequest.generation = request.generation;
-    generationRequest.target = request.target;
-    generationRequest.seekMode = request.mode;
-    generationRequest.assetContext = impl_->assetContext;
-    AVFoundationGenerationStart started =
-        impl_->begin(std::move(generationRequest));
-    if (started.status != AVFoundationGenerationStatus::Ready) {
-      outcome.error = std::move(started.error);
-      return outcome;
-    }
-    if (priorDescriptor == nullptr || priorContext == nullptr ||
-        impl_->descriptor.get() != priorDescriptor.get() ||
-        impl_->assetContext.get() != priorContext.get()) {
-      outcome.error =
-          "AVFoundation prepared identity changed across seek";
-      impl_->withdrawFailedOperation();
-      return outcome;
-    }
-    outcome.accepted = true;
-    outcome.actualDecodeStart = started.actualDecodeStart;
-    outcome.preparedContext = impl_->assetContext;
-    outcome.audioWindow = started.audioWindow;
-    impl_->seeksAccepted.store(
-        saturatingIncrement(
-            impl_->seeksAccepted.load(std::memory_order_relaxed)),
-        std::memory_order_relaxed);
-  } catch (const std::exception& exception) {
-    impl_->withdrawFailedOperation();
-    outcome.error = exception.what();
-  } catch (...) {
-    impl_->withdrawFailedOperation();
-    outcome.error = "AVFoundation seek raised an unknown exception";
-  }
-  return outcome;
+  return impl_->seek(request);
 }
 
 media::MediaSourceReadResult AVFoundationMediaSource::readNext(
     MediaGeneration expectedGeneration) {
-  try {
-    if (!impl_->open || expectedGeneration != impl_->generation ||
-        impl_->isCancelled()) {
-      if (impl_->isCancelled()) {
-        impl_->withdrawFailedOperation();
-      }
-      return media::MediaSourceCancelled{expectedGeneration};
-    }
-
-    // Admission already owns one exact head per selected output.  Once a head
-    // has been consumed, replenish that lane only on the next downstream pull,
-    // then restore the complete A/V merge frontier before comparing times.
-    if (impl_->failure.empty()) {
-      std::string refillError;
-      bool refilled = false;
-      try {
-        refilled = impl_->refillPendingHeads(&refillError);
-      } catch (const std::exception& exception) {
-        refillError = exception.what();
-      } catch (...) {
-        refillError = "AVFoundation staging raised an unknown exception";
-      }
-      if (!refilled) {
-        if (impl_->isCancelled()) {
-          impl_->withdrawFailedOperation();
-          return media::MediaSourceCancelled{expectedGeneration};
-        }
-        impl_->failure =
-            refillError.empty()
-                ? "AVFoundation could not stage the next sample"
-                : std::move(refillError);
-      }
-    }
-
-    std::optional<StagedSample>* chosen = nullptr;
-    bool chosenVideo = false;
-    if (impl_->videoHead && impl_->audioHead) {
-      const auto order = media::compareMediaTime(impl_->videoHead->orderTime,
-                                                 impl_->audioHead->orderTime);
-      if (!order) {
-        impl_->failure = "staged samples have incomparable timestamps";
-      } else {
-        chosenVideo = *order != MediaTimeOrder::Greater;
-        chosen = chosenVideo ? &impl_->videoHead : &impl_->audioHead;
-      }
-    } else if (impl_->videoHead) {
-      chosenVideo = true;
-      chosen = &impl_->videoHead;
-    } else if (impl_->audioHead) {
-      chosen = &impl_->audioHead;
-    }
-    if (chosen != nullptr) {
-      StagedSample emitted = std::move(**chosen);
-      impl_->clearHead(*chosen);
-      (chosenVideo ? impl_->videoRefillPending
-                   : impl_->audioRefillPending) = true;
-      if (std::holds_alternative<MediaSample>(emitted.value)) {
-        impl_->samplesEmitted.store(
-            saturatingIncrement(
-                impl_->samplesEmitted.load(std::memory_order_relaxed)),
-            std::memory_order_relaxed);
-        return std::get<MediaSample>(std::move(emitted.value));
-      }
-      return std::get<media::MediaDiscontinuity>(std::move(emitted.value));
-    }
-    if (!impl_->failure.empty()) {
-      return media::MediaSourceFailure{impl_->generation, impl_->failure};
-    }
-    if (impl_->videoTerminal && !impl_->videoEosEmitted &&
-        impl_->descriptor->selectedVideo) {
-      impl_->videoEosEmitted = true;
-      return media::MediaEndOfStream{impl_->generation,
-                                     *impl_->descriptor->selectedVideo};
-    }
-    if (impl_->audioTerminal && !impl_->audioEosEmitted &&
-        impl_->descriptor->selectedAudio) {
-      impl_->audioEosEmitted = true;
-      return media::MediaEndOfStream{impl_->generation,
-                                     *impl_->descriptor->selectedAudio};
-    }
-    return media::MediaSourceExhausted{impl_->generation};
-  } catch (const std::exception& exception) {
-    return media::MediaSourceFailure{expectedGeneration, exception.what()};
-  } catch (...) {
-    return media::MediaSourceFailure{
-        expectedGeneration, "AVFoundation read raised an unknown exception"};
-  }
+  return impl_->readNext(expectedGeneration);
 }
 
 void AVFoundationMediaSource::requestCancel(MediaGeneration generation) noexcept {
-  try {
-    impl_->publishCancellation(generation);
-  } catch (...) {
-  }
+  impl_->requestCancel(generation);
 }
 
 void AVFoundationMediaSource::close() noexcept {
-  if (impl_ == nullptr) {
-    return;
-  }
-  try {
-    impl_->operationGeneration.store(0, std::memory_order_release);
-    impl_->retireActive();
-    impl_->clearHeads();
-    impl_->descriptor.reset();
-    impl_->assetContext.reset();
-    impl_->path.clear();
-    impl_->open = false;
-    impl_->openSnapshot.store(false, std::memory_order_release);
-    impl_->armedGeneration = 0;
-    impl_->requestedTarget.reset();
-    impl_->failure.clear();
-  } catch (...) {
+  if (impl_ != nullptr) {
+    impl_->close();
   }
 }
 
 media::MediaSourceStats AVFoundationMediaSource::stats() const noexcept {
-  media::MediaSourceStats result;
-  result.open = impl_->openSnapshot.load(std::memory_order_acquire);
-  result.operationGeneration =
-      impl_->operationGeneration.load(std::memory_order_acquire);
-  result.generation = impl_->generationHighWater.load(std::memory_order_acquire);
-  result.cancelled = result.operationGeneration != 0 &&
-                     impl_->cancelledGeneration.load(std::memory_order_acquire) ==
-                         result.operationGeneration;
-  result.stagedGeneration =
-      impl_->stagedGeneration.load(std::memory_order_acquire);
-  result.stagedVideoHeads =
-      impl_->stagedVideoHeads.load(std::memory_order_relaxed);
-  result.stagedAudioHeads =
-      impl_->stagedAudioHeads.load(std::memory_order_relaxed);
-  result.stagedPayloadBytes =
-      impl_->stagedPayloadBytes.load(std::memory_order_relaxed);
-  result.peakStagedPayloadBytes = std::max(
-      impl_->peakStagedPayloadBytes.load(std::memory_order_relaxed),
-      result.stagedPayloadBytes);
-  result.samplesEmitted = impl_->samplesEmitted.load(std::memory_order_relaxed);
-  result.seeksAccepted = impl_->seeksAccepted.load(std::memory_order_relaxed);
-  return result;
+  return impl_->stats();
 }
 
 std::shared_ptr<const AVFoundationAssetContext>
