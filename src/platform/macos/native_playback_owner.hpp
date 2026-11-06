@@ -105,6 +105,7 @@ protected:
     std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed;
     float gain{1};
     bool muted{false};
+    bool bufferedStorage{false};
   };
   std::optional<playback_router::Transition> beginNativePrepare(const playback_router::Action&);
   virtual std::optional<Preparation> preparationFor(native_protocol::SourceKey) = 0;

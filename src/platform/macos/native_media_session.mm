@@ -2204,6 +2204,7 @@ if (!transferred) {
     options.selection.requireAudio = false;
     options.initialPosition = media::MediaSourceInitialPosition{
         initialPosition, media::MediaSeekMode::Accurate};
+    options.bufferedStorage = binding.bufferedStorage;
     if (!beginLiveIssue()) {
       acceptPublishedCommands();
       return;

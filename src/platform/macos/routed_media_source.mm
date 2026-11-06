@@ -7,27 +7,22 @@
 #include "platform/macos/matroska_media_source.hpp"
 #include "platform/macos/mpegts_media_source.hpp"
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <fcntl.h>
-#include <sys/mount.h>
 #include <unistd.h>
 namespace wam::macos {
 namespace {
 class RoutedSource final : public media::MediaSource,
                            public media::AudioTrackRetrySource {
 public:
-  RoutedSource() {
-    sources_[0] = std::make_unique<AVFoundationMediaSource>();
-    sources_[1] = std::make_unique<MatroskaMediaSource>();
-    sources_[2] = std::make_unique<MpegTsMediaSource>();
-    sources_[3] = std::make_unique<LibavformatMediaSource>();
-  }
   bool armOperation(media::MediaGeneration generation) noexcept override {
     if (active_)
       return active_->armOperation(generation);
-    for (auto &source : sources_)
+    for (auto *source : all())
       if (!source->armOperation(generation))
         return false;
+    armed_.store(generation, std::memory_order_release);
     return true;
   }
   media::MediaSourceOpenOutcome
@@ -44,39 +39,33 @@ public:
         media::containerBackendForBytes(std::span<const std::byte>(bytes).first(
                                             count > 0 ? std::size_t(count) : 0),
                                         path);
-    struct statfs mount{};
-    const bool buffered =
-        ::statfs(path.c_str(), &mount) == 0 && !(mount.f_flags & MNT_LOCAL);
     const media::CancellationToken cancellation{
-        sources_[3].get(), [](const void *source) noexcept {
-          return static_cast<const media::MediaSource *>(source)
-              ->stats()
-              .cancelled;
+        this, [](const void *router) noexcept {
+          return static_cast<const RoutedSource *>(router)->cancelled();
         }};
     const bool recovery =
         backend == media::MediaSourceBackendKind::AVFoundation &&
         media::LibavformatCursor::requiresExactDemuxTimeline(path, cancellation);
-    const auto selected =
-        buffered || recovery ? 3U : static_cast<std::size_t>(backend);
-    auto outcome = sources_[selected]->openLocalFile(path, options, generation);
+    media::MediaSource *selected =
+        options.bufferedStorage || recovery ? &libavformat_ : &sourceFor(backend);
+    auto outcome = selected->openLocalFile(path, options, generation);
     if (outcome.status == media::MediaSourceOpenStatus::Unsupported &&
-        selected != 3 &&
+        selected != &libavformat_ &&
         outcome.refusal != media::MediaRefusalClass::SegmentLayout) {
       const auto firstRefusal = outcome.error;
-      sources_[selected]->close();
-      outcome = sources_[3]->openLocalFile(path, options, generation);
-      if (outcome.status == media::MediaSourceOpenStatus::Ready)
-        active_ = sources_[3].get();
-      else if (outcome.status == media::MediaSourceOpenStatus::Unsupported &&
-               outcome.refusal !=
-                   media::MediaRefusalClass::MissingInitialization)
+      selected->close();
+      selected = &libavformat_;
+      outcome = selected->openLocalFile(path, options, generation);
+      if (outcome.status == media::MediaSourceOpenStatus::Unsupported &&
+          outcome.refusal != media::MediaRefusalClass::MissingInitialization)
         outcome.error = firstRefusal + "; libavformat: " + outcome.error;
-    } else if (outcome.status == media::MediaSourceOpenStatus::Ready)
-      active_ = sources_[selected].get();
-    if (active_ == sources_[3].get())
+    }
+    if (outcome.status == media::MediaSourceOpenStatus::Ready)
+      active_ = selected;
+    if (active_ == &libavformat_)
       std::fprintf(stderr, "WAM: native demux stage=Libavformat\n");
-    for (auto &source : sources_)
-      if (source.get() != active_)
+    for (auto *source : all())
+      if (source != active_)
         source->close();
     return outcome;
   }
@@ -89,8 +78,8 @@ public:
       return retry->retryAudioTrack(path, options, generation, rejected);
     media::MediaSourceOpenOutcome out;
     out.generation = generation;
-    out.error = "LibavformatAudioTrackRetryUnavailable";
     out.refusal = media::MediaRefusalClass::AudioTrackRetryUnavailable;
+    out.error = media::mediaRefusalClassName(out.refusal);
     return out;
   }
   media::MediaSourceSeekOutcome
@@ -109,21 +98,52 @@ public:
                          generation, "DemuxSourceNotOpen"});
   }
   void requestCancel(media::MediaGeneration generation) noexcept override {
-    for (auto &source : sources_)
+    if (generation != 0 &&
+        armed_.load(std::memory_order_acquire) == generation)
+      cancelled_.store(generation, std::memory_order_release);
+    for (auto *source : all())
       source->requestCancel(generation);
   }
   void close() noexcept override {
-    for (auto &source : sources_)
+    for (auto *source : all())
       source->close();
     active_ = nullptr;
+    armed_.store(0, std::memory_order_release);
   }
   media::MediaSourceStats stats() const noexcept override {
     return active_ ? active_->stats() : media::MediaSourceStats{};
   }
 
 private:
-  std::array<std::unique_ptr<media::MediaSource>, 4> sources_;
+  [[nodiscard]] bool cancelled() const noexcept {
+    const auto armed = armed_.load(std::memory_order_acquire);
+    return armed != 0 && cancelled_.load(std::memory_order_acquire) == armed;
+  }
+  media::MediaSource &sourceFor(media::MediaSourceBackendKind kind) noexcept {
+    switch (kind) {
+    case media::MediaSourceBackendKind::AVFoundation:
+      return avfoundation_;
+    case media::MediaSourceBackendKind::Matroska:
+      return matroska_;
+    case media::MediaSourceBackendKind::MpegTs:
+      return mpegts_;
+    case media::MediaSourceBackendKind::Libavformat:
+      return libavformat_;
+    }
+    return libavformat_;
+  }
+  [[nodiscard]] std::array<media::MediaSource *, 4> all() noexcept {
+    return {&avfoundation_, &matroska_, &mpegts_, &libavformat_};
+  }
+
+  AVFoundationMediaSource avfoundation_;
+  MatroskaMediaSource matroska_;
+  MpegTsMediaSource mpegts_;
+  LibavformatMediaSource libavformat_;
   media::MediaSource *active_{};
+  // The open's own cancellation, for the pre-open timeline probe.
+  std::atomic<media::MediaGeneration> armed_{0};
+  std::atomic<media::MediaGeneration> cancelled_{0};
 };
 } // namespace
 std::unique_ptr<media::MediaSource> createRoutedMediaSource() {
