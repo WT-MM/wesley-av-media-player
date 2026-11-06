@@ -178,31 +178,25 @@ struct VideoStreamConfiguration {
   bool preferHardwareDecode{true};
   bool requireHardwareDecode{false};
   std::uint64_t generation{0};
-  // APPENDED 2026-08-27 under amendment 6. True when the stream's transfer
-  // function is PQ (ST 2084) or HLG, i.e. when the decoded surface must be
-  // presented through the system's HDR path rather than as SDR.
+  // True when the stream's transfer function is PQ (ST 2084) or HLG, i.e.
+  // when the decoded surface must be presented through the system's HDR path
+  // rather than as SDR.
   //
-  // It exists because the decode OUTPUT DEPTH is what switches that path on,
-  // and the coded depth is not the same question. MEASURED on this platform
-  // 2026-08-27: an 8-bit BT.2020/PQ H.264 stream decodes to an 8-bit `420v`
-  // surface that carries every correct colour attachment -- primaries,
-  // transfer, and a resolved "Rec. ITU-R BT.2100 PQ" CGColorSpace -- and
-  // AVSampleBufferDisplayLayer presents it as if it were SDR anyway. Screen-
-  // captured against QuickTime Player on the identical file, that render was
-  // off by 98/255 on the colour-bar means with a ramp histogram L1 of 0.65,
-  // while the SAME pattern encoded as 10-bit PQ HEVC matched QuickTime to
-  // 3.3/255 and 0.050. The tag is not what engages the HDR path; a >=10-bit
-  // surface is. So an HDR-tagged 8-bit stream asks VideoToolbox for a 10-bit
-  // output surface and is presented correctly.
-  //
-  // This is the shape of the user's own movie -- 8-bit yuv420p tagged
-  // bt2020nc/bt2020/smpte2084 -- so it is the load-bearing case, not an edge.
+  // The decode OUTPUT DEPTH is what switches that path on, and the coded depth
+  // is not the same question: an 8-bit BT.2020/PQ H.264 stream decodes to an
+  // 8-bit `420v` surface that carries every correct colour attachment --
+  // primaries, transfer, and a resolved "Rec. ITU-R BT.2100 PQ" CGColorSpace --
+  // and AVSampleBufferDisplayLayer still presents it as SDR. The tag is not
+  // what engages the HDR path; a >=10-bit surface is. So an HDR-tagged 8-bit
+  // stream asks VideoToolbox for a 10-bit output surface and is presented
+  // correctly. 8-bit yuv420p tagged bt2020nc/bt2020/smpte2084 is a common
+  // shape, not an edge case.
   bool highDynamicRangeTransfer{false};
 
-  // APPENDED 2026-08-27 (Matroska HDR). The colour description the session's
-  // format description must carry, as the CoreMedia extension values, or
-  // nullptr for "write no key" -- see applyColorExtensions() in
-  // native_video_color.hpp, which is where these come from.
+  // The colour description the session's format description must carry, as
+  // the CoreMedia extension values, or nullptr for "write no key" -- see
+  // applyColorExtensions() in native_video_color.hpp, which is where these
+  // come from.
   //
   // Why the DECODER needs them and the sample buffer's own description is not
   // enough. createFormatDescription() reconstructs its description from the
@@ -212,13 +206,10 @@ struct VideoStreamConfiguration {
   // when the live session cannot already accept it, so for a codec whose
   // acceptance test is lenient the colr-less reconstruction simply stays.
   //
-  // MEASURED, and this is what made the case: with the colour on the sample
-  // buffer alone, 8-bit PQ H.264 in Matroska matched QuickTime to 4.6/255
-  // while 10-bit PQ HEVC in Matroska was off by 98.6/255 -- rendering as SDR.
-  // The 8-bit case only came out right because an HDR-tagged 8-bit stream
-  // PINS its output format, and the pin routes every frame through a pixel
-  // transfer that re-tags it. The 10-bit case does not pin, so it presented
-  // whatever the colr-less session produced. Carrying the colour here fixes
+  // With the colour on the sample buffer alone, 10-bit PQ HEVC in Matroska
+  // renders as SDR. 8-bit PQ H.264 comes out right only because an HDR-tagged
+  // 8-bit stream PINS its output format, and the pin routes every frame
+  // through a pixel transfer that re-tags it. Carrying the colour here fixes
   // the class directly instead of relying on a side effect of the pin.
   CFStringRef colorPrimaries{nullptr};
   CFStringRef transferFunction{nullptr};
@@ -295,7 +286,7 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-// Future demuxers can feed this interface without depending on VideoToolbox.
+// Demuxers feed this interface without depending on VideoToolbox.
 // Implementations must consume or copy packet/configuration spans before the
 // call returns; the caller retains ownership of those byte ranges.
 class VideoDecodeBackend {

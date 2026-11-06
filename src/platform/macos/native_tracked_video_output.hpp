@@ -148,11 +148,17 @@ class NativeTrackedVideoOutput {
   // pixel format unpinned and take the AGX lossless-compressed surface the
   // hardware produces natively -- which is worth roughly half of the decoder
   // service's CPU, because the pinned format costs a VTPixelTransferSession per
-  // frame. Defaults to false: an output that samples the surface (Qt's GL or
-  // Metal scene graph) must keep the pinned uncompressed contract, and a new
+  // frame. Defaults to false: an output that samples the surface (Qt's GL
+  // scene graph) must keep the pinned uncompressed contract, and a new
   // output that forgets to answer gets the safe answer.
   [[nodiscard]] virtual bool presentsDecodedSurfacesDirectly() const noexcept {
     return false;
+  }
+
+  // Capability question like the rotation below: the default admits only an
+  // integral display size; the layer route overrides it.
+  virtual bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept {
+    return size.width.denominator == 1 && size.height.denominator == 1;
   }
 
   // Ask this output to present its frames turned by `degrees` clockwise. The
@@ -169,12 +175,8 @@ class NativeTrackedVideoOutput {
   // Defaults to "only the identity", which is both the truth for an output
   // that has no rotation code and the safe answer for a new output that
   // forgets to override this -- the same rule the flag above follows. The
-  // layer route overrides it; Qt's GL and Metal scene-graph items do not,
-  // which is a documented refusal rather than a wrong picture.
-  virtual bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept {
-    return size.width.denominator == 1 && size.height.denominator == 1;
-  }
-
+  // layer route overrides it; Qt's GL scene-graph item does not, which is a
+  // documented refusal rather than a wrong picture.
   [[nodiscard]] virtual bool setPresentationRotation(int degrees) noexcept {
     return degrees == 0;
   }

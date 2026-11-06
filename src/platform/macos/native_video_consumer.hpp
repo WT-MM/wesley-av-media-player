@@ -167,7 +167,7 @@ struct NativeVideoConsumerQuarantineFacts {
 // a Done close, including the whole interval it spends in quarantine. create()
 // number kMaximumConcurrentPlayerWindows + 1 is rejected, quietly and
 // deterministically, rather than admitted over the envelope.
-// The future NativeMediaSession/playback owner must reject/fallback before
+// The playback owner (NativeMediaSession) must reject/fallback before
 // resource activation unless the selected audio and video durations are exact
 // and the audio duration covers the video duration apart from the bounded
 // container-artefact shortfall documented in native_video_limits.hpp
@@ -178,22 +178,21 @@ struct NativeVideoConsumerQuarantineFacts {
 class NativeVideoConsumer final : public media::NativeVideoConsumer {
  public:
   // Compressed read-ahead inside the video route is maxInFlight + the decoded
-  // queue + the scheduler-held frame. Two in-flight frames left only four
+  // queue + the scheduler-held frame. Two in-flight frames leave only four
   // frames (~133 ms at 30 fps) of lead, and a reordered H.264 High stream
   // spends more than that on its own decode/reorder latency: measured frames
   // reached the scheduler about 43 ms *after* their presentation interval had
   // closed, so every other frame was retired late once the media clock ran at
-  // a true 1.0x. Five in-flight frames restore a positive lead. This value
+  // a true 1.0x. Five in-flight frames give a positive lead. This value
   // alone does not bound decoded IOSurface ownership: VideoToolbox retains
   // maxInFlight + codecReorderFrames decoded frames, so
   // kMaximumDecodedSurfaceOwnership below is what actually keeps the route
-  // inside the process-wide budget (kNativeSurfaceBudgetMaximumSurfaces = 10):
+  // inside the per-session budget (kNativeSurfaceBudgetMaximumSurfaces = 10):
   // at most five decoder-held surfaces, one decoded-queue lease, one
   // scheduler-held lease and the tracked output's one accepted lease.
   static constexpr std::size_t kMaximumDecoderInFlightFrames = 5;
   static constexpr std::size_t kDecodedQueueCapacity = 1;
-  // Decoded frames are IOSurfaces charged against the process-wide
-  // NativeSurfaceBudget, and VideoToolboxDecoder's own admission credit bounds
+  // Decoded frames are IOSurfaces charged against NativeSurfaceBudget, and VideoToolboxDecoder's own admission credit bounds
   // only decode ownership: it admits maxInFlightFrames + codecReorderFrames
   // retained decoded frames, which for any reordered stream is strictly more
   // than the five decoder-retained surfaces the ownership paragraph above
@@ -222,7 +221,7 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   //                                  longer charges against NativeSurfaceBudget
   //                                  -- an accounting lie, and the decoder pool
   //                                  would grow behind the budget's back.
-  //                                  Phase A measured renderer retention at
+  //                                  Measured renderer retention is at
   //                                  max 1 (median 1) in decoded mode, so one
   //                                  retirement slot covers it with the
   //                                  capacity-one admission this boundary
@@ -235,7 +234,7 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   // The ownership paragraph above is arithmetic, so assert it rather than
   // trusting the prose to stay true: at most five decoder-held surfaces, one
   // decoded-queue lease, one scheduler-held lease and the tracked output's
-  // accepted-plus-retiring leases, inside the process-wide budget.
+  // accepted-plus-retiring leases, inside the per-session budget.
   // 5 + 1 + 1 + 2 = 9 <= 10, leaving one surface of headroom.
   static_assert(
       kMaximumDecodedSurfaceOwnership + kDecodedQueueCapacity + 1U +
@@ -245,13 +244,10 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
 
   // The assert above counts SURFACES, and a count is resolution-blind: 9 <= 10
   // stays true at any coded ceiling while the bytes behind those nine surfaces
-  // scale with it. The 4K-class ceiling is where that gap became load-bearing
-  // -- nine worst-case surfaces are 264,854,952 B, four times what they were
-  // at 1920x1080 -- so the byte side is now stated as its own proof rather
-  // than left implicit in the budget's sizing.
+  // scale with it, so the byte side is stated as its own proof:
   //
-  //   9 leases * (9,502,720 px * 3 B/px + 920,168 B alignment)
-  //     = 9 * 29,428,328 = 264,854,952 B <= 301,989,888 B (288 MiB)
+  //   9 leases * kNativeSurfaceBudgetWorstCaseSurfaceBytes (40,132,608 B)
+  //     = 361,193,472 B <= 402,653,184 B (384 MiB)
   //
   // Both sides are symbolic, so raising either the coded ceiling or a lease
   // count re-evaluates this instead of quietly invalidating it.
@@ -271,7 +267,7 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   // footprint -- which is what makes these two asserts the entire accounting
   // rather than a sample of it. The pool must additionally cover what the
   // renderer retains past WAM's last lease, which no lease count can see and
-  // which was therefore measured (software_vp8_decoder.hpp).
+  // which is therefore measured (software_vp8_decoder.hpp).
   // 1 + 1 + 1 + 2 + 1 = 6 <= 10, leaving four surfaces of headroom.
   static_assert(kSoftwareVp8PoolDepth ==
                     kSoftwareVp8DecoderOwnedSurfaces + kDecodedQueueCapacity +
@@ -286,10 +282,10 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
                 "budget");
   // And the same byte-side proof for VP8. VP8 is 8-bit only (RFC 6386 defines
   // no high-bit-depth profile), so its surfaces are NV12 at 1.5 B/px rather
-  // than the 3 B/px worst case the process-wide budget is sized for:
+  // than the 10-bit worst case the budget is sized for:
   //
-  //   6 * (9,502,720 px * 3/2 B/px + 920,168 B alignment)
-  //     = 6 * 15,174,248 = 91,045,488 B <= 301,989,888 B (288 MiB)
+  //   6 * (9,502,720 px * 3/2 B/px + 1,599,488 B alignment)
+  //     = 6 * 15,853,568 = 95,121,408 B <= 402,653,184 B (384 MiB)
   //
   // software_vp8_decoder.hpp restates this footprint in prose next to the
   // depth it belongs to; this is the machine-checked half.
@@ -394,10 +390,10 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   [[nodiscard]] NativeVideoConsumerFacts facts() const noexcept;
 
   // Narrow read of the single field the video due-hint publisher needs.
-  // publishVideoDueHint runs on the worker loop at roughly 94 Hz and used to
-  // reach this value through facts(), which assembles the whole fact block and
-  // — on the tracked-output side — is not even a pure read (MainOutput::facts
-  // drains the event mailbox). Reading the one scalar keeps the worker's
+  // publishVideoDueHint runs on the worker loop at roughly 94 Hz; facts()
+  // assembles the whole fact block and -- on the tracked-output side -- is
+  // not even a pure read (MainOutput::facts drains the event mailbox).
+  // Reading the one scalar keeps the worker's
   // window against the GUI thread as small as the value actually needs.
   // Both members are plain scalars written only by setDueHint/clearDueHint on
   // this same worker thread, so no synchronisation is required or implied.

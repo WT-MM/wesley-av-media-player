@@ -99,7 +99,6 @@ double vividBoostForWindow(NSWindow* window) noexcept {
   return std::isfinite(boost) && boost > 1.0 ? boost : 1.0;
 }
 
-// The whole mechanism, in one place.
 void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
   if (layer == nil) {
     return;
@@ -143,10 +142,10 @@ void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
   [CATransaction commit];
 }
 
-// Where a window's presentation rotation lives, by the same reasoning as the
-// vivid boost above: it belongs to the video layer, is set once when a track
-// is configured, and has to be readable again on every resize without the
-// resize path knowing who set it.
+// Where a layer's presentation display size and rotation live, by the same
+// reasoning as the vivid boost above: they belong to the video layer, are set
+// once when a track is configured, and have to be readable again on every
+// resize without the resize path knowing who set them.
 const void* videoDisplaySizeAssociationKey() {
   static const char key = 0;
   return &key;
@@ -248,10 +247,9 @@ void layoutVideoLayer(CALayer* videoLayer) noexcept {
 // NativeLayerHostView and works the same whether the layer was installed
 // before or after the boost was asked for.
 //
-// It searches SUBLAYERS as well as each view's own layer: since the rotation
-// work the display layer is a sublayer of a plain container, so stopping at
-// view.layer would quietly stop finding it -- and the only symptom would have
-// been Vivid boost silently doing nothing.
+// It searches SUBLAYERS as well as each view's own layer: the display layer is
+// a sublayer of a plain container, so stopping at view.layer would not find
+// it -- and the only symptom would be Vivid boost silently doing nothing.
 AVSampleBufferDisplayLayer* findDisplayLayerInTree(CALayer* layer) {
   if (layer == nil) {
     return nil;
@@ -415,13 +413,10 @@ bool setNativeLayerPresentationRotation(void* displayLayer,
                              @(*normalized), OBJC_ASSOCIATION_RETAIN);
     // This is called from the SESSION WORKER thread -- the consumer settles
     // rotation while configuring a generation, which is nowhere near the GUI
-    // thread -- so the CoreAnimation half hops rather than refusing.
-    //
-    // Refusing off-main was a real defect, not a hypothetical one: it made
-    // this function answer "no" for every file including unrotated ones, and
-    // since the consumer treats that answer as "this route cannot present
-    // this track", every file in the app fell back to the compatibility
-    // renderer. The capability answer must not depend on which thread asks.
+    // thread -- so the CoreAnimation half hops rather than refusing. The
+    // consumer treats "no" as "this route cannot present this track", so
+    // refusing off-main would send every file to the compatibility renderer:
+    // the capability answer must not depend on which thread asks.
     //
     // The retained NSNumber above is the source of truth and is already set,
     // so a resize racing this hop reads the new rotation either way.
@@ -519,9 +514,8 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
     //   |__ NSTitlebarContainerView (traffic lights)                  ABOVE
     //
     // Walking up from Qt's view to whichever ancestor is a direct child of the
-    // content view keeps the older arrangement (Qt hosted inside the content
-    // view) working unchanged; the loop simply stops one level higher when Qt
-    // owns the content view itself.
+    // content view also handles Qt hosted inside the content view; the loop
+    // simply stops one level higher when Qt owns the content view itself.
     NSView* sibling = qtView;
     while (sibling != contentView && sibling.superview != nil &&
            sibling.superview != contentView) {
@@ -538,6 +532,8 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
     if (!result) return {};
     NSView* hostView = result->impl_->hostView;
     AVSampleBufferDisplayLayer* layer = result->impl_->layer;
+    // sibling.frame is already in siblingParent's coordinates, so this covers
+    // exactly the area Qt covers whichever level the insertion landed on.
     hostView.frame = sibling.frame;
     [siblingParent addSubview:hostView
                    positioned:NSWindowBelow
@@ -628,8 +624,6 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::createDetached(
     };
     [container addSublayer:layer];
 
-    // sibling.frame is already in siblingParent's coordinates, so this covers
-    // exactly the area Qt covers whichever level the insertion landed on.
     NSView* hostView =
         [[WAMNativeVideoHostView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
     // Layer-HOSTED, not layer-backed: the layer must be assigned before

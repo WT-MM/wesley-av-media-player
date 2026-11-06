@@ -42,7 +42,7 @@ struct NativeLayerVideoOutputHealth {
 // sampleBufferRenderer (AVSampleBufferVideoRenderer). Decoded, IOSurface-backed
 // CVPixelBuffers are wrapped in CMSampleBuffers carrying the exact submitted
 // FrameTiming and enqueued directly; the process issues no render pass, which
-// is the entire point of the pivot (DESIGN.md section 6).
+// is the point of the layer route (DESIGN.md section 6).
 //
 // CLOCK AUTHORITY. The layer is driven in manual-enqueue mode: no
 // controlTimebase and no AVSampleBufferRenderSynchronizer is ever attached, and
@@ -56,7 +56,7 @@ struct NativeLayerVideoOutputHealth {
 // exists here.
 //
 // DRAW PROOF CLASS. FrameDrawn is an acceptance-class fact, exactly as the GL
-// path's fence-created proof is (qt_gl_video_item.hpp:44-46): it means the
+// path's fence-created proof is (QtGlDrawEvent, qt_gl_video_item.hpp): it means the
 // renderer irrevocably took this exact frame for display and cannot now un-take
 // it. It does not claim photons. It is published after enqueueSampleBuffer:
 // with the renderer still reporting Rendering and the generation still
@@ -124,10 +124,9 @@ class NativeLayerVideoOutput final : public NativeTrackedVideoOutput {
   bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept override;
   [[nodiscard]] bool setPresentationRotation(int degrees) noexcept override;
 
-  // Activates the first generation. The tracked contract requires an accepted
-  // generation before any submit; the GL output reaches this through its
-  // scheduler seam, and the layer output exposes it directly because it has no
-  // scheduler of its own.
+  // Activates the first generation directly. The tracked contract requires an
+  // accepted generation before any submit; production arms through
+  // flushProgress(0, generation), and only the contract tests call this.
   [[nodiscard]] bool startGeneration(std::uint64_t generation,
                                      std::string* error = nullptr) noexcept;
 

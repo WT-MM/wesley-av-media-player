@@ -11,10 +11,8 @@ namespace {
 void assignError(std::string* error, const char* message) noexcept {
   if (error && error->empty()) { try { *error = message; } catch (...) {} }
 }
-// The Qt view handle the layer must be installed beneath. Derived from the
-// video item's own window, so no change to main.cpp's window plumbing is
-// needed: the item already lives in the window whose content view hosts the
-// scene.
+// The layer is installed beneath the content view of the window that hosts
+// the video item's scene.
 [[nodiscard]] void* qtViewHandleForItem(QtGlVideoItem* videoItem) noexcept {
   if (videoItem == nullptr) {
     return nullptr;

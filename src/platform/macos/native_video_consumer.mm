@@ -62,20 +62,19 @@ using media::MediaTimeOrder;
 using WideSigned = __int128_t;
 using WideUnsigned = __uint128_t;
 
-// Lowered 8 -> 4 on 2026-08-17. This value is handed to VideoToolbox as
-// maxPendingPresentationFrames, and decodedSurfaceOwnershipBound() raises the
-// route's own ownership ceiling to codecReorderFrames + 1 whenever the codec
-// demands it -- so a reorder cap of 8 quietly authorised 9 decoded surfaces
-// against a documented share of 5, and the static_assert below is what makes
-// that contradiction fail to compile instead of failing in the field.
+// This value is handed to VideoToolbox as maxPendingPresentationFrames, and
+// decodedSurfaceOwnershipBound() raises the route's own ownership ceiling to
+// codecReorderFrames + 1 whenever the codec demands it -- so a larger cap
+// would authorise more decoded surfaces than the documented share of 5, and
+// the static_assert below makes that contradiction fail to compile instead of
+// failing in the field.
 //
 // The trade, stated plainly: a stream whose SPS declares a reorder depth
-// above 4 now fails configure() and routes to the compatibility fallback,
+// above 4 fails configure() and routes to the compatibility fallback,
 // loudly, instead of silently overrunning the surface budget. Typical x264
 // and x265 output has a reorder depth of 2-4, so this refuses deep-reorder
-// encodes and nothing that a normal encoder produces. Raising the budget was
-// the other way to satisfy the assert and was rejected: the surface budget is
-// a memory contract, not a tuning knob.
+// encodes and nothing that a normal encoder produces. The budget is not
+// raised to fit: the surface budget is a memory contract, not a tuning knob.
 constexpr std::size_t kMaximumPresentationReorderFrames = 4;
 static_assert(kMaximumPresentationReorderFrames + 1 <=
                   NativeVideoConsumer::kMaximumDecodedSurfaceOwnership,
@@ -94,8 +93,7 @@ std::mutex& gQuarantineMutex = gQuarantineMutexStorage.get();
 // graph is still charged, because it still owns its decoder, its IOSurface
 // share and its callback contexts -- quarantine changes who holds the graph,
 // not whether the process is paying for it. The invariant is
-// 0 <= gRetainedGraphs <= kMaximumConcurrentPlayerWindows, and the count is
-// exactly the old single `bool gConsumerClaimed` widened from one window to N.
+// 0 <= gRetainedGraphs <= kMaximumConcurrentPlayerWindows.
 int gRetainedGraphs{0};
 std::atomic<std::uint64_t> gRejectedCreates{0};
 std::atomic<std::uint64_t> gQuarantineTransfers{0};
@@ -108,7 +106,7 @@ void assignError(std::string* error, const char* message) {
 }
 
 // Exact ceiling on decoded-surface ownership for one compressed admission.
-// kMaximumDecodedSurfaceOwnership is the documented share of the process-wide
+// kMaximumDecodedSurfaceOwnership is the documented share of the per-session
 // budget, raised only as far as the codec's own reorder floor requires:
 // VideoToolboxDecoder::drainPresentation() delivers nothing until retention
 // exceeds codecReorderFrames, so a bound at or below that floor would refuse
@@ -122,12 +120,12 @@ void assignError(std::string* error, const char* message) {
 // Decoder credit alone is not a decoded-surface bound. VideoToolbox retains
 // maxInFlightFrames + codecReorderFrames decoded frames, and every retained
 // frame holds one IOSurface charge from the shared
-// kNativeSurfaceBudgetMaximumSurfaces pool. An audio-paced route never reached
-// that ceiling because PCM-ring backpressure closed the dispatcher's merged
-// read gate long before decoded read-ahead could grow. A host-paced route has
-// no such throttle, so decoded read-ahead expanded until the budget saturated
-// and FrameLease's acquire started failing inside the decode callback -- which
-// retires the frame as an ordered budget tombstone, invisible to every
+// kNativeSurfaceBudgetMaximumSurfaces pool. An audio-paced route does not reach
+// that ceiling because PCM-ring backpressure closes the dispatcher's merged
+// read gate long before decoded read-ahead can grow. A host-paced route has
+// no such throttle, so without this bound decoded read-ahead expands until the
+// budget saturates and FrameLease's acquire fails inside the decode callback --
+// which retires the frame as an ordered budget tombstone, invisible to every
 // preroll/late/superseded counter, and silently halves the drawn frame rate.
 // Bounding ownership here keeps the same read-ahead as compressed bytes in the
 // dispatcher's video lane, which is bounded by payload size rather than by
@@ -351,9 +349,7 @@ void assignError(std::string* error, const char* message) {
       return nativeVp9StageAdmitted();
     case media::MediaCodec::Av1:
       return nativeVideoToolboxSupportsAv1();
-    // No Apple silicon has ever had a VP8 block and none ever will, so VP8 is
-    // admitted exactly when this build linked the libvpx software stage, and
-    // never consults VideoToolbox at all.
+    // See the function comment: VP8 depends only on the libvpx build.
     case media::MediaCodec::Vp8:
       return VideoDecodeLane::softwareVp8Available();
     default:
@@ -370,17 +366,6 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
               "the facts table's four-character code must be the one the "
               "software stage keys on");
 
-// ProRes states the CANONICAL member of the 422 family, not the file's own
-// flavor -- one enumerator cannot carry four FourCCs. That is the description
-// the session is first created from, and it decodes every 422-family flavor
-// because VideoToolbox treats them as one contract. The decoder then adopts the
-// container's exact description through adoptDirectFormatLocked(), so an HQ
-// file ends up on a real 'apch' session rather than staying on this stand-in;
-// equivalentSessionCodecTypes() is what permits that swap.
-//
-// This was a switch whose default arm returned H.264, so a codec that forgot to
-// name itself was silently decoded as H.264. The table has one row per
-// enumerator and no default to fall into.
 
 [[nodiscard]] bool supportedVideoTrack(
     const media::MediaTrackDescriptor& track) noexcept {
@@ -412,16 +397,13 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
   }
   const media::MediaVideoFormat& video = *track.video;
   // ONE colour rule, shared with avfoundation_media_source.mm's
-  // preservesLegacyNativeAdmission. This used to be an independent restatement
-  // of the same predicate; the two drifting apart is what turns a clean
-  // Unsupported verdict into a mid-startup Failed one, because the source
-  // would admit a descriptor this function then refuses. Amendment 6 widened
-  // it to BT.2020/PQ/HLG in exactly one place.
+  // preservesLegacyNativeAdmission. The two drifting apart is what turns a
+  // clean Unsupported verdict into a mid-startup Failed one, because the
+  // source would admit a descriptor this function then refuses.
   const bool supportedColor = media::mediaVideoColorAdmitted(video);
   // ONE dimension rule too, for exactly the reason the colour comment above
   // gives: this route refusing a shape the source admitted turns a clean
-  // Unsupported into a mid-startup Failed. Orientation-agnostic since
-  // amendment 8.
+  // Unsupported into a mid-startup Failed. Orientation-agnostic.
   return media::MediaSourceLimits::codedDimensionsWithinHardCeiling(
              video.codedWidth, video.codedHeight) &&
          video.displayWidth != 0 && video.displayHeight != 0 &&
@@ -436,7 +418,7 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
          // construction, so this term would refuse it. It is exempted for
          // exactly the reason given at the matching term in
          // preservesLegacyNativeAdmission -- which this MUST stay in lockstep
-         // with, and now reads the same field to do so -- namely that such a
+         // with, and reads the same field to do so -- namely that such a
          // codec pins its decode output format and has every delivered surface
          // validated against that pin, which is a stronger guarantee than the
          // parsed record this term reads.
@@ -508,8 +490,8 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
 
 // Random access into an open-GOP stream begins on a picture whose *leading*
 // pictures follow it in decode order but present before it. HEVC calls them
-// RASL/RADL; x265 emits them at every CRA, while the closed-GOP H.264 streams
-// this route was first proven against never produce the shape. When the
+// RASL/RADL; x265 emits them at every CRA, while closed-GOP H.264 streams
+// never produce the shape. When the
 // random-access point itself starts the decode, VideoToolbox has none of the
 // pictures those leading pictures reference and answers
 // kVTVideoDecoderReferenceMissingErr, which the decoder correctly reports as a
@@ -836,15 +818,15 @@ struct NativeVideoConsumer::Impl {
     // establish, and it already does, exactly: the sole caller proves
     // startAgainstClock == Greater through compareTimeToDouble, which is an
     // exact rational comparison. Repeating the test here in double seconds
-    // re-decided it lossily, so a presentation time that is genuinely later
-    // could compare equal after rounding and silently drop the due hint --
-    // leaving scheduleHeld to return Blocked with no deadline at all. The
+    // would re-decide it lossily, so a presentation time that is genuinely
+    // later could compare equal after rounding and silently drop the due hint
+    // -- leaving scheduleHeld to return Blocked with no deadline at all. The
     // audio route self-heals on its ~10 ms pump, but a silent-timebase
     // generation is driven entirely by these deadlines.
     //
-    // The !seconds check stays: the tick arithmetic below needs the value.
-    // The nonpositive-delta guard below still rejects a caller that violated
-    // the precondition, so nothing is admitted that was not admitted before.
+    // The !seconds check is needed: the tick arithmetic below uses the value.
+    // The nonpositive-delta guard below rejects a caller that violated the
+    // precondition.
     const auto seconds = media::mediaTimeSeconds(presentation);
     if (!seconds) {
       return;
@@ -994,9 +976,9 @@ struct NativeVideoConsumer::Impl {
     // handles it is the very next thing this function does. VideoToolbox
     // reports each frame at its sample's movie-timeline stamp, so the preroll
     // pictures a head-trimmed edit list makes the reader walk back to arrive
-    // here before the origin. Rejecting them on sign latched the consumer --
-    // a permanent, generation-poisoning failure -- three lines above the
-    // presentation-floor comparison written to retire exactly these frames.
+    // here before the origin. Rejecting them on sign would latch the consumer
+    // -- a permanent, generation-poisoning failure -- ahead of the
+    // presentation-floor comparison that retires exactly these frames.
     // The floor is the real gate: it is what distinguishes preroll from
     // presentable, it already handles a frame that straddles the floor, and it
     // does not care which side of zero the frame is on.
@@ -1138,9 +1120,9 @@ struct NativeVideoConsumer::Impl {
     }
     // An outstanding accepted draw is deliberately not a decoder-drain gate.
     // Frame ownership stays bounded at one scheduler-held lease, one decoded
-    // queue lease and the output's one accepted lease exactly as before; only
-    // the moment at which the queue lease is taken moves earlier. Draining
-    // here is what lets a non-presenting compositor stop pinning the decoder.
+    // queue lease and the output's accepted lease; only the moment at which
+    // the queue lease is taken does not wait for the draw. Draining here is
+    // what lets a non-presenting compositor stop pinning the decoder.
     if (sink.size() != 0) {
       latch(NativeVideoConsumerFailure::Decoder,
             "decoded video queue still holds a frame after scheduling", error);
@@ -1245,7 +1227,6 @@ struct NativeVideoConsumer::Impl {
   VideoDecodeLane decoder;
 
   NativeVideoConsumerFailure failure{NativeVideoConsumerFailure::None};
-  // Gate text for the latched failure. Set once, by the first latch.
   std::string failureText;
   Lifecycle lifecycle{Lifecycle::None};
   MediaGeneration generation{0};
@@ -1322,8 +1303,7 @@ struct NativeVideoConsumer::Impl {
   bool cancelled{false};
   bool closed{false};
   // True from create() until this graph's own Done close gives its envelope
-  // slot back. The envelope used to be a single bool, so releasing it twice
-  // was harmless; it is now a count, where a double release would silently
+  // slot back. The envelope is a count, where a double release would silently
   // manufacture a slot and let N + 1 graphs live at once. The terminal paths
   // are already single-shot by their own latches, so this flag is a belt on
   // top of braces -- but it is the belt that makes the count's arithmetic true
@@ -1477,8 +1457,8 @@ NativeVideoConsumer::quarantineFacts() noexcept {
   result.recoveries =
       gQuarantineRecoveries.load(std::memory_order_relaxed);
   std::lock_guard lock(gQuarantineMutex);
-  // "Any slot occupied", which is the same question the single-slot form
-  // answered: is there a graph the owner still has to drive to Done? Callers
+  // "Any slot occupied": is there a graph the owner still has to drive to
+  // Done? Callers
   // recover in a loop, so the exact occupancy is not reported here.
   result.quarantined = std::any_of(
       quarantineSlots().begin(), quarantineSlots().end(),
@@ -1870,9 +1850,9 @@ media::NativeMediaConsumeResult NativeVideoConsumer::capacity(
   }
   // Each gate below names itself. A Failed result from this method is terminal
   // for the route -- the dispatcher turns it straight into failStep(Consumer)
-  // -- but capacity() carries no error out-parameter, so before these latches
-  // existed every one of them reached the stderr failure line as
-  // class=Consumer error="" and named neither the gate nor the branch.
+  // -- but capacity() carries no error out-parameter, so without these latches
+  // every one of them would reach the stderr failure line as
+  // class=Consumer error="" and name neither the gate nor the branch.
   if (impl.failed()) {
     // Already latched: failureText still names the gate that failed first,
     // which is the more informative of the two.
@@ -1918,10 +1898,10 @@ media::NativeMediaConsumeResult NativeVideoConsumer::capacity(
     // This port's admission bound is decoder ownership -- five in-flight
     // frames, one decoded-queue lease and one scheduler-held lease -- not
     // whether the next frame happens to be due or whether the compositor has
-    // acknowledged the last draw. Reporting Backpressure here made the whole
-    // pipeline presentation-paced: the dispatcher's read gate closed on the
-    // display's cadence, the PCM ring could not be refilled, and the
-    // audio-owned clock stalled, which in turn stopped frames from ever
+    // acknowledged the last draw. Reporting Backpressure here would make the
+    // whole pipeline presentation-paced: the dispatcher's read gate closes on
+    // the display's cadence, the PCM ring cannot be refilled, and the
+    // audio-owned clock stalls, which in turn stops frames from ever
     // becoming due. Worse, when a compositor stops presenting entirely, the
     // route can reach a state with an accepted-but-undrawn frame, an empty
     // decoder and an empty scheduler, whose only wake was the draw event that
@@ -1997,20 +1977,14 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
     assignError(error, decoderError->c_str());
     return media::NativeMediaConsumeResult::Failed;
   }
-  // Compressed admission is bounded by decoder ownership alone. It used to be
-  // additionally serialized on the scheduler, the decoded queue and the
-  // tracked output, which made the whole route present-one-decode-one: the
-  // dispatcher's read gate then followed the display's cadence, the PCM ring
-  // could not be refilled ahead of it, and the audio-owned clock ran slow or
-  // stalled -- which stopped frames becoming due, which kept the gate shut.
-  // It also made a compositor that stops presenting terminal: an accepted but
-  // undrawn frame blocked decode, so nothing could become late, so nothing
-  // could be retired, and the only wake left was the draw that was never
-  // coming. Decoder credit remains the presentation-independent part of that
-  // bound; decodedSurfaceAdmissionOpen() adds the resource half of it, because
+  // Compressed admission is bounded by decoder ownership alone, never by the
+  // scheduler, the decoded queue or the tracked output: see the Blocked case
+  // in capacity() for why presentation must not pace admission. Decoder
+  // credit is the presentation-independent part of that bound;
+  // decodedSurfaceAdmissionOpen() adds the resource half of it, because
   // decoder credit alone permits maxInFlightFrames + codecReorderFrames
   // decoded surfaces and that is more than this route's share of the
-  // process-wide decoded-surface budget.
+  // per-session decoded-surface budget.
   const VideoToolboxDecoderStats admission = impl.decoder.stats();
   if (admission.generation != impl.generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
@@ -2046,8 +2020,8 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
                "encoded video sample interval is not exact", error);
     return media::NativeMediaConsumeResult::Failed;
   }
-  // A compressed picture may be stated BEFORE the movie origin, and no sign
-  // check stands here any more. On the movie timeline a head-trimmed edit list
+  // A compressed picture may be stated BEFORE the movie origin, so there is
+  // no sign check here. On the movie timeline a head-trimmed edit list
   // hides media ahead of the movie start, so the random-access point the
   // reader walks back to -- the picture whose decode produces the frame AT the
   // origin -- is itself at a negative movie time, as is every picture between
@@ -2055,15 +2029,15 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
   // states for the audio lane's priming access unit: "negative values are
   // valid (for example, edit-list and preroll timestamps)".
   //
-  // Nothing is loosened by removing the sign test, because sign was never the
-  // discriminator. Every sample is already classified exhaustively by the
+  // Sign is not the discriminator. Every sample is already classified
+  // exhaustively by the
   // comparison just made: interval ending at or before the presentation floor
   // is preroll, anything later is presentable, and the two cases are then
   // cross-checked against the source's own decodeOnly marking below. A picture
   // that straddles the origin -- starting before it, ending after it -- is
   // presentable and must stay so: it is the picture visible at time zero, and
-  // a sign test here would have discarded the first frame of exactly the files
-  // this restatement exists to play.
+  // a sign test here would discard the first frame of exactly the files this
+  // restatement exists to play.
   const bool expectedDecodeOnly =
       impl.timeline.mode == media::MediaSeekMode::Accurate &&
       *endAgainstFloor != MediaTimeOrder::Greater;
@@ -2689,7 +2663,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::close() noexcept {
 const std::string& NativeVideoConsumer::failureText() const noexcept {
   // A null impl_ is itself the explanation: the graph was handed to the
   // quarantine slot, so every entry point now returns Failed with nothing to
-  // say. Naming it beats the empty string it used to produce.
+  // say.
   static const std::string quarantined =
       "native video consumer has no live graph (quarantined)";
   return impl_ == nullptr ? quarantined : impl_->failureText;
