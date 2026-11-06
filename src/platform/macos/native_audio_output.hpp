@@ -317,8 +317,7 @@ struct NativeAudioOutputFacts {
 //
 // Thus premature owner release quarantines that window's AudioUnit rather than
 // freeing its callback context, the process holds at most
-// kMaximumConcurrentPlayerWindows such quarantines, and recoverQuarantined()
-// can finish teardown one at a time.
+// kMaximumConcurrentPlayerWindows such quarantines.
 class NativeAudioOutput final
     : public std::enable_shared_from_this<NativeAudioOutput> {
  public:
@@ -448,9 +447,10 @@ class NativeAudioOutput final
 
   [[nodiscard]] NativeAudioOutputFacts facts() const noexcept;
 
-  // Test/lifecycle recovery seam for the bounded process retention. Production
-  // code normally never calls this: retaining the returned owner until close()
-  // is Done prevents quarantine. A non-null result gives the caller an owner
+#if defined(WAM_NATIVE_TEST_SEAMS)
+  // Recovery seam for the bounded process retention. Production never needs
+  // it: an output is owned by its audio session, whose own quarantine drain
+  // finishes the output's close. A non-null result gives the caller an owner
   // with which it can finish close().
   //
   // At most one output per call, so a caller draining the registry repeats
@@ -460,6 +460,7 @@ class NativeAudioOutput final
   // window is never handed to a caller that would close it.
   [[nodiscard]] static std::shared_ptr<NativeAudioOutput>
   recoverQuarantined() noexcept;
+#endif
 
  private:
   [[nodiscard]] NativeAudioOutputProgress stopImpl(bool keepUnitRunning) noexcept;

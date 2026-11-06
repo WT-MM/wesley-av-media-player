@@ -52,7 +52,7 @@ struct CallbackBridge {
 // One player window's worth of callback plumbing. claimed is the admission
 // token create() competes for; callbackOwner is the bounded retention that
 // keeps a prematurely released output alive while either callback context is
-// still attached, and is what recoverQuarantined() scans for.
+// still attached.
 struct OutputSlot {
   std::atomic<bool> claimed{false};
   std::atomic<NativeAudioOutput *> callbackOwner{nullptr};
@@ -454,6 +454,7 @@ void NativeAudioOutput::releaseClaim() noexcept {
   }
 }
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
 std::shared_ptr<NativeAudioOutput>
 NativeAudioOutput::recoverQuarantined() noexcept {
   // At most one recovery per call; the caller repeats until this returns null.
@@ -492,6 +493,7 @@ NativeAudioOutput::recoverQuarantined() noexcept {
   }
   return {};
 }
+#endif
 
 bool NativeAudioOutput::usableDeviceRate(
     const AudioStreamBasicDescription &format) const noexcept {

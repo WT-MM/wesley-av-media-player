@@ -96,7 +96,7 @@ struct TimelinePlan {
 
 // Guards the session-envelope registry below: gRetainedSessions and every
 // quarantine slot. Taken only on create(), on the Done-close release, on a
-// destructor's quarantine transfer, on recoverQuarantined() and on
+// destructor's quarantine transfer, on the quarantine drain and on
 // quarantineFacts(). No render callback, no trySample(), no clock publication
 // and no owner-thread steady-state path touches it, so it can never appear on
 // the audio hot path.
@@ -609,6 +609,26 @@ struct NativeAudioRenderCoreTestAccess {
   }
 };
 
+std::unique_ptr<NativeAudioSession>
+NativeAudioSessionTestAccess::recoverQuarantined() noexcept {
+  std::lock_guard<std::mutex> lock(gSessionMutex);
+  for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
+    if (slot == nullptr) {
+      continue;
+    }
+    try {
+      auto recovered =
+          std::unique_ptr<NativeAudioSession>(new NativeAudioSession(slot));
+      slot.reset();
+      saturatingAdd(gQuarantineRecoveries, 1);
+      return recovered;
+    } catch (...) {
+      return {};
+    }
+  }
+  return {};
+}
+
 NativeAudioSubmitResult NativeAudioSessionTestAccess::occupyConverter(
     NativeAudioSession& session, media::MediaSample&& sample) noexcept {
   try {
@@ -683,8 +703,8 @@ void releaseClaim(NativeAudioSessionControl& control) noexcept {
 // Moves a graph whose owner could not prove a Done close into the registry, so
 // a device callback still inside the bridge keeps a live graph under it. The
 // envelope count is deliberately unchanged: the graph is still charged, it has
-// only swapped a NativeAudioSession owner for the registry until
-// recoverQuarantined() drives it to Done.
+// only swapped a NativeAudioSession owner for the registry until the drain in
+// create() drives it to Done.
 void quarantine(
     const std::shared_ptr<NativeAudioSessionControl>& control) noexcept {
   if (control == nullptr || !control->claimHeld || control->closeDone) {
@@ -1445,6 +1465,7 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
     saturatingAdd(gRejectedCreates, 1);
     return {};
   }
+  drainQuarantine();
   {
     std::lock_guard<std::mutex> lock(gSessionMutex);
     // The envelope is full when N sessions are already charged against it,
@@ -1486,29 +1507,26 @@ NativeAudioSession::~NativeAudioSession() {
   control_.reset();
 }
 
-std::unique_ptr<NativeAudioSession>
-NativeAudioSession::recoverQuarantined() noexcept {
-  std::lock_guard<std::mutex> lock(gSessionMutex);
-  // First occupied slot wins. The registry is a bag of graphs that still owe a
-  // Done close, not a queue: recovery order carries no meaning, and a caller
-  // draining quarantine simply repeats this until it returns nullptr. The
-  // envelope count is unchanged -- ownership moves back to a
-  // NativeAudioSession, the charge stays until that owner reaches Done.
-  for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
-    if (slot == nullptr) {
-      continue;
-    }
-    try {
-      auto recovered =
-          std::unique_ptr<NativeAudioSession>(new NativeAudioSession(slot));
-      slot.reset();
+// A graph is quarantined because a device callback was still inside it when
+// its owner let go. Once that callback has exited, nothing else would ever
+// finish its close, and it would hold its envelope slot for the life of the
+// process. So each create() takes every quarantined graph out of the registry
+// and gives it one close attempt as a fresh owner; one still quiescing goes
+// straight back (the registry is empty while this runs, so it always fits).
+// The envelope count is unchanged throughout: the charge stays until a graph
+// proves a Done close.
+void NativeAudioSession::drainQuarantine() noexcept {
+  SessionQuarantine held;
+  {
+    std::lock_guard<std::mutex> lock(gSessionMutex);
+    held.swap(gSessionQuarantine);
+  }
+  for (std::shared_ptr<NativeAudioSessionControl>& control : held) {
+    if (control != nullptr) {
       saturatingAdd(gQuarantineRecoveries, 1);
-      return recovered;
-    } catch (...) {
-      return {};
+      NativeAudioSession owner(std::move(control));
     }
   }
-  return {};
 }
 
 NativeAudioSessionQuarantineFacts

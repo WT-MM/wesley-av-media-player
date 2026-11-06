@@ -1687,11 +1687,16 @@ void testQuiescingDestructorQuarantineRecovery() {
   }
   platform->hostCondition.notify_all();
   callback.join();
-  auto recovered = NativeAudioSession::recoverQuarantined();
-  expect(recovered != nullptr,
-         "quarantined graph has a discoverable recovery owner");
-  expect(recovered->close() == NativeMediaConsumerProgress::Done,
-         "recovered owner completes exact close after callback exit");
+  // The next create() drains quarantine: with the callback gone, the
+  // quarantined graph now closes Done and gives its slot back.
+  auto next = NativeAudioSession::create(
+      8, dependencies(neighbourPlatform,
+                      std::make_unique<FakeBackend>(neighbourBackend)));
+  expect(next != nullptr && !NativeAudioSession::quarantineFacts().quarantined,
+         "create() finishes the close of a graph whose callback has exited");
+  expect(next->close() == NativeMediaConsumerProgress::Done,
+         "the session that drained quarantine closes cleanly");
+  next.reset();
   const NativeAudioSessionQuarantineFacts quarantine =
       NativeAudioSession::quarantineFacts();
   expect(!quarantine.claimed && !quarantine.quarantined &&
@@ -1743,7 +1748,7 @@ void testBoundedSessionEnvelope() {
                                  std::make_shared<BackendState>()))) == nullptr,
          "a quarantined session keeps consuming its slot in the envelope");
 
-  auto recovered = NativeAudioSession::recoverQuarantined();
+  auto recovered = NativeAudioSessionTestAccess::recoverQuarantined();
   expect(recovered != nullptr,
          "the bounded registry hands the quarantined graph back");
   NativeAudioSessionTestAccess::forceCloseQuiescing(*recovered, false);
