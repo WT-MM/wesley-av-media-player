@@ -83,17 +83,6 @@ private:
   std::atomic<std::uint64_t> state_{0};
 };
 
-// Allocates the next strictly increasing tracked-event sequence; false (and
-// the caller latches fatal) once the sequence space is exhausted.
-[[nodiscard]] inline bool allocateTrackedEventSequence(
-    std::uint64_t& last, std::uint64_t* sequence) noexcept {
-  if (last == std::numeric_limits<std::uint64_t>::max()) {
-    return false;
-  }
-  *sequence = ++last;
-  return true;
-}
-
 enum class NativeTrackedVideoSubmitStatus : std::uint8_t {
   Accepted,
   Backpressure,
@@ -141,6 +130,149 @@ struct NativeTrackedVideoEvent {
   FrameTiming timing{};
 };
 
+// The tracked-output protocol state every presenter shares: the capacity-one
+// frame mailbox, its event sequence, and the flush/close lifecycle. A
+// presenter holds it under its own lock and supplies only the renderer side
+// (starting a renderer flush and observing that it took effect), so the
+// contract's transitions are stated once.
+struct NativeTrackedOutputProtocol {
+  // The admitted frame awaiting its terminal event, and that event once
+  // published. The consumer takes the event; the frame identity clears with it.
+  NativeTrackedFrameSequence frame{};
+  std::uint64_t frameGeneration{0};
+  FrameTiming frameTiming{};
+  std::optional<NativeTrackedVideoEvent> event;
+  std::uint64_t lastEventSequence{0};
+  std::uint64_t drawnFrames{0};
+  std::uint64_t supersededFrames{0};
+
+  bool flushPending{false};
+  bool flushDone{false};
+  std::uint64_t flushRetired{0};
+  std::uint64_t flushNext{0};
+  // The generation the next flush must name as retired.
+  std::uint64_t retiredGeneration{0};
+  bool closePending{false};
+  bool closeDone{false};
+  std::uint64_t closeGeneration{0};
+
+  [[nodiscard]] bool frameOutstanding() const noexcept {
+    return frame.valid() || event.has_value();
+  }
+
+  void admit(NativeTrackedFrameSequence sequence,
+             const FrameTiming& timing) noexcept {
+    frame = sequence;
+    frameTiming = timing;
+    frameGeneration = timing.generation;
+  }
+
+  void clearFrame() noexcept {
+    frame = {};
+    frameTiming = {};
+    frameGeneration = 0;
+  }
+
+  // Publishes the admitted frame's one terminal event. False when there is no
+  // frame, an event is already waiting, or (sequenceExhausted set) the event
+  // sequence space is spent, which the presenter treats as fatal.
+  [[nodiscard]] bool publish(NativeTrackedVideoEventKind kind,
+                             bool* sequenceExhausted = nullptr) noexcept {
+    if (!frame.valid() || event) {
+      return false;
+    }
+    if (lastEventSequence == std::numeric_limits<std::uint64_t>::max()) {
+      if (sequenceExhausted != nullptr) {
+        *sequenceExhausted = true;
+      }
+      return false;
+    }
+    event.emplace(NativeTrackedVideoEvent{kind, ++lastEventSequence, frame,
+                                          frameGeneration, frameTiming});
+    if (kind == NativeTrackedVideoEventKind::FrameDrawn) {
+      ++drawnFrames;
+    } else if (kind == NativeTrackedVideoEventKind::FrameSuperseded) {
+      ++supersededFrames;
+    }
+    return true;
+  }
+
+  [[nodiscard]] std::optional<NativeTrackedVideoEvent> take() noexcept {
+    std::optional<NativeTrackedVideoEvent> result = std::move(event);
+    event.reset();
+    if (result && result->frameSequence.valid()) {
+      clearFrame();
+    }
+    return result;
+  }
+
+  enum class Step : std::uint8_t {
+    Done,        // the exact operation already completed
+    Stale,       // a different operation is pending or completed
+    Failed,      // the request itself is invalid
+    Started,     // first entry: the presenter must start its renderer side
+    Continuing,  // already started: the presenter re-checks completion
+  };
+
+  [[nodiscard]] Step beginFlush(std::uint64_t retired,
+                                std::uint64_t next) noexcept {
+    if (next == 0 || next <= retired) {
+      return Step::Failed;
+    }
+    if (flushDone && flushRetired == retired && flushNext == next) {
+      return Step::Done;
+    }
+    if (flushPending) {
+      return flushRetired == retired && flushNext == next ? Step::Continuing
+                                                          : Step::Stale;
+    }
+    if (retired != retiredGeneration) {
+      return Step::Stale;
+    }
+    flushPending = true;
+    flushDone = false;
+    flushRetired = retired;
+    flushNext = next;
+    return Step::Started;
+  }
+
+  // The renderer proved the flush: the target is the next retirement point.
+  void completeFlush() noexcept {
+    flushPending = false;
+    flushDone = true;
+    retiredGeneration = flushNext;
+  }
+
+  // `accepted` is the presenter's current generation; a first close must
+  // move past it.
+  [[nodiscard]] Step beginClose(std::uint64_t final,
+                                std::uint64_t accepted) noexcept {
+    if (closeDone) {
+      return closeGeneration == final ? Step::Done : Step::Stale;
+    }
+    if (final == 0 || (!closePending && final <= accepted)) {
+      return Step::Failed;
+    }
+    if (closePending) {
+      return closeGeneration == final ? Step::Continuing : Step::Stale;
+    }
+    closePending = true;
+    closeDone = false;
+    closeGeneration = final;
+    return Step::Started;
+  }
+
+  // A terminal invalidation supersedes any flush: no lifecycle work remains.
+  void completeClose() noexcept {
+    flushPending = false;
+    flushDone = false;
+    flushRetired = 0;
+    flushNext = 0;
+    closePending = false;
+    closeDone = true;
+  }
+};
+
 struct NativeTrackedVideoOutputFacts {
   std::uint64_t generation{0};
   NativeTrackedFrameSequence admittedFrame{};
@@ -151,6 +283,10 @@ struct NativeTrackedVideoOutputFacts {
   // still pending in the output mailbox. This makes Start baseline sampling
   // linearizable with a concurrent render publication.
   std::uint64_t lastEventSequence{0};
+  // The capacity-one credit: 1 while a frame is admitted and its terminal
+  // event has not been taken, else 0. Surface leases a presenter keeps past
+  // that (a renderer still displaying the predecessor) are not counted here;
+  // NativeSurfaceBudget accounts for them.
   std::size_t retainedFrames{0};
   bool eventPending{false};
   bool invalidationPending{false};

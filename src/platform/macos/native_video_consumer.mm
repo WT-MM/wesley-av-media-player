@@ -665,10 +665,10 @@ enum class PumpStatus : std::uint8_t {
 //
 // admittedFrame must be clear: the contract makes BOTH operations return
 // Quiescing until every terminal frame fact has been consumed, so a Done that
-// still names an admitted frame is the output contradicting itself. It is not
-// implied by retainedFrames, which counts leases the output still holds while
-// this is the delivery identity it still claims, nor by the caller's own
-// awaitingDraw, which is this side's record of the same handshake.
+// still names an admitted frame is the output contradicting itself. It is the
+// delivery identity the output still claims, checked alongside its
+// retainedFrames credit and independently of the caller's own awaitingDraw,
+// which is this side's record of the same handshake.
 //
 // fatalIsHistorical admits a frame-scoped fatal that the caller already
 // matched: it stays diagnostic evidence and must not make an exact terminal

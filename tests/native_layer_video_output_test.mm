@@ -346,9 +346,10 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   WAM_CHECK(!consumed.eventPending);
   WAM_CHECK(consumed.drawnFrames == 1);
   WAM_CHECK(consumed.supersededFrames == 0);
-  // The admitted lease outlives its own terminal event by design; it is retired
-  // one enqueue later, while the renderer may still be displaying it.
-  WAM_CHECK(consumed.retainedFrames == 1);
+  // The capacity credit returns with the terminal event. The lease itself
+  // outlives it by design and is retired one enqueue later, while the renderer
+  // may still be displaying it (case 8 proves that against the budget).
+  WAM_CHECK(consumed.retainedFrames == 0);
   WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   const FrameTiming secondTiming = makeTiming(1, 1);
@@ -744,8 +745,7 @@ void verifyCloseSupersedesPendingFlush() {
 // The presenter holds at most kRetainedFrameLeaseCeiling leases in steady
 // state, and those leases are really released, not merely uncounted. The
 // surface budget is the independent witness: it charges one unique IOSurface
-// per live lease process-wide, so its count is a fact about retention that
-// facts().retainedFrames cannot fake.
+// per live lease process-wide, so its count is the fact about retention.
 void verifyRetainedLeaseCeilingAndRelease() {
   const auto baseline = NativeSurfaceBudget::stats();
   std::atomic<std::uint64_t> wakes{0};
@@ -780,14 +780,13 @@ void verifyRetainedLeaseCeilingAndRelease() {
     const auto facts = output->facts();
     WAM_CHECK(facts.submittedFrames == index);
     WAM_CHECK(facts.drawnFrames + facts.supersededFrames == index);
-    // One lease for the admitted frame, one for the predecessor the renderer
+    // One lease for the latest frame, one for the predecessor the renderer
     // may still be displaying. Never a third.
-    WAM_CHECK(facts.retainedFrames <=
-              NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
-    WAM_CHECK(facts.retainedFrames == (index == 1 ? std::size_t{1}
-                                                  : std::size_t{2}));
+    const std::size_t leases = index == 1 ? 1U : 2U;
+    WAM_CHECK(leases <= NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
+    WAM_CHECK(facts.retainedFrames == 0);
     WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
-              baseline.currentSurfaces + facts.retainedFrames);
+              baseline.currentSurfaces + leases);
   }
   WAM_CHECK(output->health().peakRetainedLeases ==
             NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
@@ -812,7 +811,7 @@ void verifyRetainedLeaseCeilingAndRelease() {
               NativeTrackedVideoSubmitStatus::Accepted);
   }
   WAM_CHECK(output->takeEvent().has_value());
-  WAM_CHECK(output->facts().retainedFrames == 1);
+  WAM_CHECK(output->facts().retainedFrames == 0);
   WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
             baseline.currentSurfaces + 1);
 

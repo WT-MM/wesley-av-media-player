@@ -82,21 +82,14 @@ struct NativeLayerVideoOutput::State
 
   // Generation lifecycle.
   std::uint64_t acceptedGeneration{0};
-  std::uint64_t retiredGeneration{0};
 
-  // Capacity-one admission and its terminal mailbox.
-  NativeTrackedFrameSequence trackedFrame{};
+  // Capacity-one admission, its terminal mailbox and the flush/close
+  // lifecycle.
+  NativeTrackedOutputProtocol tracked;
   NativeTrackedFrameSequence lastTrackedFrame{};
-  FrameTiming trackedTiming{};
-  std::uint64_t trackedGeneration{0};
-  std::optional<NativeTrackedVideoEvent> trackedEvent{};
-
-  std::uint64_t nextEventSequence{0};
   std::uint64_t submittedFrames{0};
-  std::uint64_t drawnFrames{0};
-  std::uint64_t supersededFrames{0};
 
-  // Lease retirement. admittedLease belongs to trackedFrame; retiringLease is
+  // Lease retirement. admittedLease belongs to tracked.frame; retiringLease is
   // its predecessor, which the renderer may still be displaying. See
   // kRetainedFrameLeaseCeiling.
   FrameLease admittedLease{};
@@ -106,14 +99,6 @@ struct NativeLayerVideoOutput::State
   std::string failureMessage;
   bool fatal{false};
   bool closed{false};
-
-  bool flushPending{false};
-  bool flushDone{false};
-  std::uint64_t flushRetired{0};
-  std::uint64_t flushNext{0};
-  bool closePending{false};
-  bool closeDone{false};
-  std::uint64_t closeGeneration{0};
 
   // Set from the renderer's flush completion handler, which is the layer
   // route's terminal invalidation proof: it is the documented edge meaning
@@ -156,30 +141,13 @@ struct NativeLayerVideoOutput::State
 
   // ------------------------------------------------------------- bookkeeping
 
-  [[nodiscard]] bool nextEventSequenceLocked(std::uint64_t* sequence) noexcept {
-    if (!allocateTrackedEventSequence(nextEventSequence, sequence)) {
-      fatal = true;
-      return false;
-    }
-    return true;
-  }
-
   [[nodiscard]] bool publishFrameEventLocked(
       NativeTrackedVideoEventKind kind) noexcept {
-    if (!trackedFrame.valid() || trackedEvent) {
+    if (!tracked.publish(kind, &fatal)) {
       return false;
     }
-    std::uint64_t sequence = 0;
-    if (!nextEventSequenceLocked(&sequence)) {
-      return false;
-    }
-    trackedEvent.emplace(NativeTrackedVideoEvent{
-        kind, sequence, trackedFrame, trackedGeneration, trackedTiming});
     if (kind == NativeTrackedVideoEventKind::FrameDrawn) {
-      ++drawnFrames;
       ++healthCounters.drawnFrames;
-    } else if (kind == NativeTrackedVideoEventKind::FrameSuperseded) {
-      ++supersededFrames;
     }
     return true;
   }
@@ -548,17 +516,17 @@ bool NativeLayerVideoOutput::startGeneration(std::uint64_t generation,
   }
   std::lock_guard lock(state->mutex);
   if (state->failureLatched || state->fatal || state->closed ||
-      state->closePending) {
+      state->tracked.closePending) {
     assignErrorNoexcept(error, "layer video output is not accepting generations");
     return false;
   }
   if (generation == 0 || generation <= state->acceptedGeneration ||
-      state->flushPending) {
+      state->tracked.flushPending) {
     assignErrorNoexcept(error, "layer video output generation is invalid");
     return false;
   }
   state->acceptedGeneration = generation;
-  state->retiredGeneration = generation;
+  state->tracked.retiredGeneration = generation;
   state->dropBaselineValid = false;
   state->dropDebt = 0;
   state->observedInvalidationGeneration.store(generation,
@@ -575,14 +543,14 @@ NativeTrackedVideoCapacity NativeLayerVideoOutput::capacity(
   if (state->failureLatched || state->fatal) {
     return NativeTrackedVideoCapacity::Failed;
   }
-  if (state->closed || state->closePending) {
+  if (state->closed || state->tracked.closePending) {
     return NativeTrackedVideoCapacity::Failed;
   }
   if (generation == 0 || generation != state->acceptedGeneration) {
     return NativeTrackedVideoCapacity::StaleGeneration;
   }
-  return state->trackedFrame.valid() || state->trackedEvent ||
-                 state->flushPending
+  return state->tracked.frameOutstanding() ||
+                 state->tracked.flushPending
              ? NativeTrackedVideoCapacity::Backpressure
              : NativeTrackedVideoCapacity::Available;
 }
@@ -635,7 +603,7 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
 #endif
 
     if (state->failureLatched || state->fatal || state->closed ||
-        state->closePending) {
+        state->tracked.closePending) {
       assignErrorNoexcept(error, state->failureMessage.empty()
                                      ? std::string("layer video output failed")
                                      : state->failureMessage);
@@ -645,8 +613,8 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
       assignErrorNoexcept(error, "tracked layer video generation is stale");
       return NativeTrackedVideoSubmitStatus::StaleGeneration;
     }
-    if (state->trackedFrame.valid() || state->trackedEvent ||
-        state->flushPending) {
+    if (state->tracked.frameOutstanding() ||
+        state->tracked.flushPending) {
       return NativeTrackedVideoSubmitStatus::Backpressure;
     }
     if (state->lastTrackedFrame.valid() &&
@@ -724,10 +692,8 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
     // this process has stopped charging against NativeSurfaceBudget.
     state->retiringLease = std::move(state->admittedLease);
     state->admittedLease = std::move(retained);
-    state->trackedFrame = sequence;
+    state->tracked.admit(sequence, timing);
     state->lastTrackedFrame = sequence;
-    state->trackedTiming = timing;
-    state->trackedGeneration = timing.generation;
     ++state->submittedFrames;
     ++state->healthCounters.enqueuedFrames;
     state->noteRetentionLocked();
@@ -764,13 +730,7 @@ NativeLayerVideoOutput::takeEvent() noexcept {
   std::optional<NativeTrackedVideoEvent> result;
   {
     std::lock_guard lock(state->mutex);
-    result = std::move(state->trackedEvent);
-    state->trackedEvent.reset();
-    if (result && result->frameSequence.valid()) {
-      state->trackedFrame = {};
-      state->trackedTiming = {};
-      state->trackedGeneration = 0;
-    }
+    result = state->tracked.take();
   }
   return result;
 }
@@ -782,35 +742,26 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::flushProgress(
   {
     std::lock_guard lock(state->mutex);
     if (state->failureLatched || state->fatal || state->closed ||
-        state->closePending || nextGeneration == 0 ||
-        nextGeneration <= retiredGeneration) {
+        state->tracked.closePending) {
       return NativeTrackedVideoOutputProgress::Failed;
     }
-    if (state->flushDone && state->flushRetired == retiredGeneration &&
-        state->flushNext == nextGeneration) {
+    switch (state->tracked.beginFlush(retiredGeneration, nextGeneration)) {
+    case NativeTrackedOutputProtocol::Step::Failed:
+      return NativeTrackedVideoOutputProgress::Failed;
+    case NativeTrackedOutputProtocol::Step::Stale:
+      return NativeTrackedVideoOutputProgress::StaleGeneration;
+    case NativeTrackedOutputProtocol::Step::Done:
       return NativeTrackedVideoOutputProgress::Done;
-    }
-    if (state->flushPending) {
-      if (state->flushRetired != retiredGeneration ||
-          state->flushNext != nextGeneration) {
-        return NativeTrackedVideoOutputProgress::StaleGeneration;
-      }
-    } else {
-      if (retiredGeneration != state->retiredGeneration) {
-        return NativeTrackedVideoOutputProgress::StaleGeneration;
-      }
-      state->flushPending = true;
-      state->flushDone = false;
-      state->flushRetired = retiredGeneration;
-      state->flushNext = nextGeneration;
+    case NativeTrackedOutputProtocol::Step::Continuing:
+      break;
+    case NativeTrackedOutputProtocol::Step::Started:
       state->acceptedGeneration = nextGeneration;
       // An admitted frame cannot survive the flush that is about to discard it.
       // Superseded is the contract's only non-failure terminal for that.
-      if (state->trackedFrame.valid() && !state->trackedEvent) {
-        (void)state->publishFrameEventLocked(
-            NativeTrackedVideoEventKind::FrameSuperseded);
-      }
+      (void)state->publishFrameEventLocked(
+          NativeTrackedVideoEventKind::FrameSuperseded);
       mustApply = true;
+      break;
     }
   }
   if (mustApply) {
@@ -824,13 +775,11 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::flushProgress(
   }
   {
     std::lock_guard lock(state->mutex);
-    if (state->trackedFrame.valid() || state->trackedEvent ||
+    if (state->tracked.frameOutstanding() ||
         !state->invalidationObservedLocked(nextGeneration)) {
       return NativeTrackedVideoOutputProgress::Quiescing;
     }
-    state->flushPending = false;
-    state->flushDone = true;
-    state->retiredGeneration = state->flushNext;
+    state->tracked.completeFlush();
     // The renderer has completed its flush, so it holds nothing of ours.
     state->releaseAllLeasesLocked();
     // Flush drops belong to the retired timeline; re-baseline rather than
@@ -848,46 +797,32 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::closeProgress(
   bool mustApply = false;
   {
     std::lock_guard lock(state->mutex);
-    if (state->closeDone) {
-      if (state->closeGeneration != finalGeneration) {
-        return NativeTrackedVideoOutputProgress::StaleGeneration;
-      }
+    switch (state->tracked.beginClose(finalGeneration,
+                                      state->acceptedGeneration)) {
+    case NativeTrackedOutputProtocol::Step::Failed:
+      return NativeTrackedVideoOutputProgress::Failed;
+    case NativeTrackedOutputProtocol::Step::Stale:
+      return NativeTrackedVideoOutputProgress::StaleGeneration;
+    case NativeTrackedOutputProtocol::Step::Done:
       state->wakeGate.close();
       if (!state->wakeGate.drained()) {
         return NativeTrackedVideoOutputProgress::Quiescing;
       }
       state->wake = {};
       return NativeTrackedVideoOutputProgress::Done;
-    }
-    if (finalGeneration == 0 ||
-        (!state->closePending &&
-         finalGeneration <= state->acceptedGeneration)) {
-      return NativeTrackedVideoOutputProgress::Failed;
-    }
-    if (state->closePending) {
-      if (state->closeGeneration != finalGeneration) {
-        return NativeTrackedVideoOutputProgress::StaleGeneration;
-      }
-    } else {
-      state->closePending = true;
-      state->closeDone = false;
-      state->closeGeneration = finalGeneration;
+    case NativeTrackedOutputProtocol::Step::Continuing:
+      break;
+    case NativeTrackedOutputProtocol::Step::Started:
       // Terminal invalidation moves this output onto the invalidation
-      // generation, exactly as flushProgress() moves it onto the flush target
-      // above. facts().generation reports acceptedGeneration, and
-      // NativeVideoConsumer::retire()'s post-close gate requires it to equal
-      // the invalidation generation -- without this the gate can never be
-      // satisfied and every terminal retirement of this route fails. The guard
-      // above already proved
-      // finalGeneration > acceptedGeneration on this first entry, so the
-      // assignment is monotonic (the OpenGL route states the same rule as an
-      // explicit std::max).
+      // generation, as flushProgress() moves it onto the flush target:
+      // facts().generation reports acceptedGeneration, and the consumer's
+      // post-close retirement gate requires it to equal the invalidation
+      // generation. beginClose() proved finalGeneration > acceptedGeneration.
       state->acceptedGeneration = finalGeneration;
-      if (state->trackedFrame.valid() && !state->trackedEvent) {
-        (void)state->publishFrameEventLocked(
-            NativeTrackedVideoEventKind::FrameSuperseded);
-      }
+      (void)state->publishFrameEventLocked(
+          NativeTrackedVideoEventKind::FrameSuperseded);
       mustApply = true;
+      break;
     }
   }
   if (mustApply) {
@@ -897,7 +832,7 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::closeProgress(
   }
   {
     std::lock_guard lock(state->mutex);
-    if (state->trackedFrame.valid() || state->trackedEvent ||
+    if (state->tracked.frameOutstanding() ||
         !state->invalidationObservedLocked(finalGeneration)) {
       return NativeTrackedVideoOutputProgress::Quiescing;
     }
@@ -907,12 +842,7 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::closeProgress(
     }
     state->wake = {};
     state->releaseAllLeasesLocked();
-    state->flushPending = false;
-    state->flushDone = false;
-    state->flushRetired = 0;
-    state->flushNext = 0;
-    state->closePending = false;
-    state->closeDone = true;
+    state->tracked.completeClose();
     state->closed = true;
   }
   // This output is no longer presenting. Once the last one has released, the
@@ -926,14 +856,14 @@ NativeTrackedVideoOutputFacts NativeLayerVideoOutput::facts() const noexcept {
   std::lock_guard lock(state->mutex);
   NativeTrackedVideoOutputFacts result;
   result.generation = state->acceptedGeneration;
-  result.admittedFrame = state->trackedFrame;
+  result.admittedFrame = state->tracked.frame;
   result.submittedFrames = state->submittedFrames;
-  result.drawnFrames = state->drawnFrames;
-  result.supersededFrames = state->supersededFrames;
-  result.lastEventSequence = state->nextEventSequence;
-  result.retainedFrames = state->retainedLeaseCountLocked();
-  result.eventPending = state->trackedEvent.has_value();
-  result.invalidationPending = state->flushPending || state->closePending;
+  result.drawnFrames = state->tracked.drawnFrames;
+  result.supersededFrames = state->tracked.supersededFrames;
+  result.lastEventSequence = state->tracked.lastEventSequence;
+  result.retainedFrames = state->tracked.frame.valid() ? 1U : 0U;
+  result.eventPending = state->tracked.event.has_value();
+  result.invalidationPending = state->tracked.flushPending || state->tracked.closePending;
   result.closed = state->closed;
   result.fatal = state->failureLatched || state->fatal;
   return result;
