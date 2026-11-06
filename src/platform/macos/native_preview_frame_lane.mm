@@ -16,11 +16,9 @@
 
 namespace wam::macos {
 namespace {
-#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+// The same decoder selection as main playback, so every codec the main lane
+// decodes (VP8 in software included) can also be scrubbed.
 using PreviewDecoder = VideoDecodeLane;
-#else
-using PreviewDecoder = VideoToolboxDecoder;
-#endif
 
 using media::MediaSample;
 using media::MediaTime;

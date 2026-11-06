@@ -213,12 +213,12 @@ void testRouteMemberships() {
              mediaCodecFacts(MediaCodec::Mpeg2Video).previewScrubAdmitted &&
              mediaCodecFacts(MediaCodec::Mpeg4Visual).previewScrubAdmitted &&
              mediaCodecFacts(MediaCodec::ProRes).previewScrubAdmitted &&
-             mediaCodecFacts(MediaCodec::Mjpeg).previewScrubAdmitted,
-         "the preview lane admits the six codecs it can decode");
+             mediaCodecFacts(MediaCodec::Mjpeg).previewScrubAdmitted &&
+             mediaCodecFacts(MediaCodec::Vp8).previewScrubAdmitted,
+         "the preview lane admits the seven codecs it can decode");
   expect(!mediaCodecFacts(MediaCodec::Av1).previewScrubAdmitted &&
-             !mediaCodecFacts(MediaCodec::Vp9).previewScrubAdmitted &&
-             !mediaCodecFacts(MediaCodec::Vp8).previewScrubAdmitted,
-         "the capability-gated and software-stage codecs are not scrubbed");
+             !mediaCodecFacts(MediaCodec::Vp9).previewScrubAdmitted,
+         "the capability-gated codecs are not scrubbed");
   for (const auto &facts : kMediaCodecFacts) {
     if (facts.kind == MediaCodecKind::Audio) {
       expect(!facts.avfoundationVideoAdmitted && !facts.previewScrubAdmitted,
