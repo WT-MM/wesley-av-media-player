@@ -46,7 +46,7 @@ struct NativeAudioStretchStage {
   // Rate and pitch move together, in one call, because they are one decision:
   // the pitch offset a stage applies is a pure function of the rate and the
   // preserve-pitch preference, so no ordering between them can ever be
-  // observed. preservePitch true is the historical behaviour (offset zero).
+  // observed. preservePitch true means a pitch offset of zero.
   bool (*setRate)(void *context, std::uint32_t numerator,
                   std::uint32_t denominator,
                   bool preservePitch) noexcept {nullptr};
@@ -249,7 +249,7 @@ public:
   // frames are rendered as zeros, publish media time exactly like rendered
   // ones, and consume nothing from the ring. A default-constructed value --
   // what every source that declares no silence passes -- reduces every
-  // expression that reads it to the prior arithmetic verbatim.
+  // expression that reads it to the no-silence arithmetic.
   [[nodiscard]] bool activate(
       std::uint64_t generation, std::uint64_t streamFrameCursor,
       media::MediaTime mediaOrigin, media::MediaTime pausedClockPosition,
@@ -305,7 +305,7 @@ public:
   // owner once the unit is initialized and before callbacks are admitted; it
   // is a property of the configured unit, so it survives activate(). Zero --
   // the default, and what a unit that declares nothing gets -- reduces every
-  // expression that reads it to the prior arithmetic verbatim.
+  // expression that reads it to the uncompensated arithmetic.
   void setOutputLatencyFrames(std::uint32_t frames) noexcept;
   [[nodiscard]] std::uint32_t outputLatencyFrames() const noexcept;
 
@@ -421,7 +421,7 @@ private:
       (std::uint64_t{1} << 32U) | 1U};
   // Independent of the rate, so it needs no packing: a callback that latches
   // one without the other simply applies the pair it reads, and both are
-  // idempotent. Default true is the behaviour every route already had.
+  // idempotent. Default true preserves pitch.
   std::atomic<bool> requested_preserve_pitch_{true};
   // Release/acquire publication of stretch_. False means the callback must
   // not read that table at all, which is also what pins it to the unit rate.

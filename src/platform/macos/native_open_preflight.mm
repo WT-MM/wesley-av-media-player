@@ -339,4 +339,4 @@ void NativeOpenPreflight::stop() noexcept {
   state->completion = {};
 }
 
-} // namespace wam::qt
+} // namespace wam::macos

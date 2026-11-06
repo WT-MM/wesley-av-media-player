@@ -115,7 +115,6 @@ playback_router::Tick NativePlaybackOwner::nextTick() noexcept {
 
 void NativePlaybackOwner::refreshNativePhaseWatchdog() {
   if (retirementPending() || !nativePhaseIsBounded(router_.snapshot().state)) {
-    // Leaving the bounded phases invalidates any in-flight timer.
     ++nativePhaseWatchdogEpoch_;
     nativePhaseWatchdogArmed_ = false;
     return;
