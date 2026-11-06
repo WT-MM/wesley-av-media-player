@@ -38,7 +38,7 @@ enum class MatroskaSampleBuildStatus : std::uint8_t {
 
 struct MatroskaSampleBuildInputs {
   const media::matroska::MatroskaPreparedAsset* asset{nullptr};
-  media::matroska::CancellationToken cancellation{};
+  media::CancellationToken cancellation{};
   CMFormatDescriptionRef format{nullptr};
   bool video{true};
   // Only meaningful for audio: the exact media-timeline extent of one access

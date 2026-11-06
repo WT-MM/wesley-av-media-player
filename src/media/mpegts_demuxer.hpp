@@ -1,6 +1,6 @@
 #pragma once
 
-#include "media/matroska_ebml.hpp"
+#include "media/byte_source.hpp"
 #include "media/mpegts_packet.hpp"
 #include "media/native_media_source.hpp"
 
@@ -15,17 +15,6 @@
 #include <variant>
 
 namespace wam::media::mpegts {
-
-// SeekableByteReader, CancellationToken, ByteRange and FrameRange are
-// container-neutral and already exist; they live in the Matroska namespace only
-// because that is where the first demuxer needed them. Aliasing rather than
-// re-declaring keeps one definition and leaves the frozen Matroska headers
-// untouched. If a third container ever appears they should be hoisted into a
-// neutral header; two is not yet enough to earn that churn.
-using matroska::ByteRange;
-using matroska::CancellationToken;
-using matroska::FrameRange;
-using matroska::SeekableByteReader;
 
 struct MpegTsPrepareOutcome;
 
@@ -54,10 +43,9 @@ inline constexpr std::size_t kMpegTsIndexProbeCount{512};
 // guessed at.
 inline constexpr std::size_t kMpegTsProbeWindowBytes{512U * 1024U};
 
-// Sequential read-ahead window used by the cursor and every scan. 64 KiB is
-// 348 whole 188-byte packets, matching the Matroska copy chunk so the two
-// demuxers present the same I/O shape to the page cache.
-inline constexpr std::size_t kMpegTsReadWindowBytes{64U * 1024U};
+// Sequential read-ahead window used by the cursor and every scan: 348 whole
+// 188-byte packets.
+inline constexpr std::size_t kMpegTsReadWindowBytes{kSequentialReadBytes};
 static_assert(kMpegTsReadWindowBytes % kMaximumPacketStrideBytes != 0,
               "the window is deliberately not a stride multiple; the cursor "
               "must handle a packet straddling the window edge");

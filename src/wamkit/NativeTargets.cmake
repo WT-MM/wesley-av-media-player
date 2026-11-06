@@ -19,6 +19,8 @@ if(APPLE OR WAM_BUILD_APP)
     src/media/matroska_flac.cpp
     src/media/matroska_mpeg_audio.hpp
     src/media/matroska_mpeg_audio.cpp
+    src/media/byte_source.hpp
+    src/media/byte_source.cpp
     src/media/matroska_ebml.hpp
     src/media/matroska_ebml.cpp
     src/media/matroska_demuxer.hpp
@@ -202,7 +204,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
       ${WAM_MACOS_NATIVE_BACKEND_SOURCES})
     if(WAM_ENABLE_AVFORMAT_STAGE)
       target_link_libraries(wam_macos_native_backend PUBLIC wam_avcodec_worker)
-      target_sources(wam_avcodec_worker PRIVATE src/media/libavformat_cursor.cpp)
+      target_sources(wam_avcodec_worker PRIVATE src/media/libavformat_cursor.cpp
+        src/media/byte_source.cpp)
       target_sources(wam_macos_native_backend PRIVATE
         src/platform/macos/libavformat_media_source.mm
         src/platform/macos/libavformat_aac_timing.mm

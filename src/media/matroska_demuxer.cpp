@@ -17,33 +17,20 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <limits>
 #include <numeric>
 #include <optional>
 #include <span>
 #include <string_view>
-#include <sys/stat.h>
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <io.h>
-#else
-#include <unistd.h>
-#endif
 #include <utility>
 
 namespace wam::media::matroska {
 namespace {
 
-constexpr std::size_t kCopyChunkBytes{64U * 1024U};
 constexpr std::uint32_t kAacFormatTag{0x61616320U};
 constexpr std::uint32_t kOpusFormatTag{0x6F707573U};
 constexpr std::uint32_t kVorbisFormatTag{kVorbisAudioFormatTag};
@@ -112,192 +99,6 @@ signedBlockTick(std::uint64_t clusterTick, std::int16_t relative) noexcept {
   }
   return MatroskaDemuxError::InvalidContainer;
 }
-
-class StableFileReader final : public SeekableByteReader {
- public:
-  static std::shared_ptr<StableFileReader>
-  open(const std::filesystem::path& path) noexcept {
-#if defined(_WIN32)
-    const int descriptor = ::_wopen(path.c_str(), _O_RDONLY | _O_BINARY | _O_NOINHERIT);
-#else
-    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-#endif
-    if (descriptor < 0) {
-      return nullptr;
-    }
-#if defined(_WIN32)
-    struct _stati64 facts {};
-#else
-    struct stat facts {};
-#endif
-    if (
-#if defined(_WIN32)
-        ::_fstati64(descriptor, &facts)
-#else
-        ::fstat(descriptor, &facts)
-#endif
-        != 0 || facts.st_size < 0 ||
-        !S_ISREG(facts.st_mode)) {
-      ::close(descriptor);
-      return nullptr;
-    }
-    try {
-      return std::shared_ptr<StableFileReader>(
-          new StableFileReader(descriptor, facts));
-    } catch (...) {
-      ::close(descriptor);
-      return nullptr;
-    }
-  }
-
-  ~StableFileReader() override { ::close(descriptor_); }
-
-  [[nodiscard]] std::uint64_t size() const noexcept override {
-    return size_;
-  }
-
-  [[nodiscard]] bool readAt(
-      std::uint64_t offset,
-      std::span<std::byte> destination) noexcept override {
-#if defined(_WIN32)
-    // The CRT's off_t can be 32-bit; ReadFile accepts 64-bit offsets.
-    using off_t = std::int64_t;
-#endif
-    if (destination.empty()) {
-      return offset <= size_;
-    }
-    if (offset > size_ || destination.size() > size_ - offset ||
-        offset > static_cast<std::uint64_t>(
-                     std::numeric_limits<off_t>::max())) {
-      return false;
-    }
-    std::size_t copied = 0;
-    while (copied < destination.size()) {
-      const std::uint64_t current = offset + copied;
-      if (current > static_cast<std::uint64_t>(
-                        std::numeric_limits<off_t>::max())) {
-        return false;
-      }
-#if defined(_WIN32)
-      const std::uint64_t readOffset = current;
-      OVERLAPPED position{};
-      position.Offset = static_cast<DWORD>(readOffset);
-      position.OffsetHigh = static_cast<DWORD>(readOffset >> 32);
-      DWORD transferred = 0;
-      const bool succeeded = ::ReadFile(
-          reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor_)),
-          destination.data() + copied,
-          static_cast<DWORD>(std::min<std::size_t>(destination.size() - copied, MAXDWORD)),
-          &transferred, &position);
-      if (!succeeded) return false;
-      const auto result = static_cast<std::int64_t>(transferred);
-#else
-      const ssize_t result = ::pread(
-          descriptor_, destination.data() + copied, destination.size() - copied,
-          static_cast<off_t>(current));
-#endif
-      if (result < 0 && errno == EINTR) {
-        continue;
-      }
-      if (result <= 0) {
-        return false;
-      }
-      copied += static_cast<std::size_t>(result);
-    }
-    return true;
-  }
-
-  // The property this proves is exactly one thing: the bytes reachable through
-  // the retained descriptor are still the bytes the cluster/cue plan was built
-  // against. dev+ino catch a replaced file, size catches truncation and
-  // extension, and mtime catches any write to the content.
-  //
-  // st_ctime is deliberately NOT part of that identity. ctime
-  // is the INODE-metadata timestamp: it moves for xattr writes, chmod, chown,
-  // link-count and rename -- none of which touch a single content byte. On
-  // macOS those happen to a media file constantly and from outside this
-  // process: Spotlight/mds indexing, iCloud/FileProvider sync bookkeeping,
-  // quarantine and last-used-date stamping. Including ctime would make this
-  // predicate report "the file changed" for events that are, by construction,
-  // not changes to the file's content -- a false positive whose probability
-  // grows with how long the demuxer holds the plan and with how busy the
-  // machine's metadata daemons are. It surfaces as a load-dependent
-  // Matroska-only open/playback failure (FileChanged -> SourceOpen/SourceRead
-  // -> Protocol/Decode -> fallback) that the AVFoundation route, which makes
-  // no such assertion, never shows.
-  //
-  // What dropping ctime gives up is only the case of an in-place, byte-count-
-  // preserving write whose mtime is then restored by an explicit utimes()
-  // call. That is deliberate forgery, not a hazard a local media player is
-  // defending against, and every honest mutation still moves mtime or size.
-  [[nodiscard]] bool unchanged() const noexcept {
-#if defined(_WIN32)
-    struct _stati64 facts {};
-#else
-    struct stat facts {};
-#endif
-#if defined(_WIN32)
-    BY_HANDLE_FILE_INFORMATION identity{};
-    if (!::GetFileInformationByHandle(
-            reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor_)), &identity))
-      return false;
-#endif
-    return
-#if defined(_WIN32)
-        ::_fstati64(descriptor_, &facts)
-#else
-        ::fstat(descriptor_, &facts)
-#endif
-        == 0 && facts.st_size >= 0 &&
-           facts.st_dev == device_ && facts.st_ino == inode_ &&
-           static_cast<std::uint64_t>(facts.st_size) == size_ &&
-#if defined(_WIN32)
-           ::CompareFileTime(&identity.ftLastWriteTime, &modified_) == 0;
-#elif defined(__APPLE__)
-           facts.st_mtimespec.tv_sec == modifiedSeconds_ &&
-           facts.st_mtimespec.tv_nsec == modifiedNanoseconds_;
-#else
-           facts.st_mtim.tv_sec == modifiedSeconds_ &&
-           facts.st_mtim.tv_nsec == modifiedNanoseconds_;
-#endif
-  }
-
- private:
-  StableFileReader(int descriptor,
-#if defined(_WIN32)
-                   const struct _stati64& facts
-#else
-                   const struct stat& facts
-#endif
-                   ) noexcept
-      : descriptor_(descriptor), size_(static_cast<std::uint64_t>(facts.st_size)),
-        device_(facts.st_dev), inode_(facts.st_ino),
-#if defined(_WIN32)
-        modified_{} {
-    BY_HANDLE_FILE_INFORMATION identity{};
-    if (::GetFileInformationByHandle(
-            reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor)), &identity))
-      modified_ = identity.ftLastWriteTime;
-  }
-#elif defined(__APPLE__)
-        modifiedSeconds_(facts.st_mtimespec.tv_sec),
-        modifiedNanoseconds_(facts.st_mtimespec.tv_nsec) {}
-#else
-        modifiedSeconds_(facts.st_mtim.tv_sec),
-        modifiedNanoseconds_(facts.st_mtim.tv_nsec) {}
-#endif
-
-  int descriptor_{-1};
-  std::uint64_t size_{0};
-  dev_t device_{};
-  ino_t inode_{};
-#if defined(_WIN32)
-  FILETIME modified_{};
-#else
-  time_t modifiedSeconds_{};
-  long modifiedNanoseconds_{};
-#endif
-};
 
 struct CollectedDocument final : Visitor {
   explicit CollectedDocument(std::size_t maximumTracks,
@@ -565,7 +366,7 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
       return false;
     }
     const std::size_t amount =
-        std::min(kCopyChunkBytes, bytes->size() - copied);
+        std::min(kSequentialReadBytes, bytes->size() - copied);
     if (!reader.readAt(range.offset + copied,
                        std::span<std::byte>(*bytes).subspan(copied, amount))) {
       return false;
@@ -3798,7 +3599,7 @@ bool MatroskaPreparedAsset::copyRanges(
         }
         return false;
       }
-      const std::size_t amount = std::min(kCopyChunkBytes, remaining);
+      const std::size_t amount = std::min(kSequentialReadBytes, remaining);
       if (!state.reader->readAt(
               sourceOffset,
               destination.subspan(destinationOffset, amount))) {

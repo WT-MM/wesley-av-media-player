@@ -119,7 +119,7 @@ struct MpegTsAudioFrameLayout {
 
 struct MpegTsSampleBuildInputs {
   const media::mpegts::MpegTsPreparedAsset* asset{nullptr};
-  media::mpegts::CancellationToken cancellation{};
+  media::CancellationToken cancellation{};
   CMFormatDescriptionRef format{nullptr};
   media::MediaCodec codec{media::MediaCodec::Unknown};
   bool video{true};

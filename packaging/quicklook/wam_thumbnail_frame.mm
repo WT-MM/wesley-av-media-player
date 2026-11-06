@@ -127,12 +127,7 @@ bool DeadlineProbe(const void* context) noexcept {
   return static_cast<const Deadline*>(context)->expired();
 }
 
-wam::media::matroska::CancellationToken MatroskaToken(
-    const Deadline& deadline) noexcept {
-  return {&deadline, &DeadlineProbe};
-}
-
-wam::media::mpegts::CancellationToken MpegTsToken(
+wam::media::CancellationToken DeadlineToken(
     const Deadline& deadline) noexcept {
   return {&deadline, &DeadlineProbe};
 }
@@ -352,7 +347,7 @@ bool CopyMatroskaKeyframe(const std::filesystem::path& path,
   options.selection.requireVideo = true;
   options.selection.requireAudio = false;
 
-  const auto token = MatroskaToken(deadline);
+  const auto token = DeadlineToken(deadline);
   auto outcome = mkv::prepareMatroskaLocalFile(path, options, token);
   if (outcome.status != mkv::MatroskaDemuxStatus::Ready || !outcome.asset) {
     if (error) {
@@ -461,7 +456,7 @@ bool CopyMpegTsKeyframe(const std::filesystem::path& path,
   options.selection.requireVideo = true;
   options.selection.requireAudio = false;
 
-  const auto token = MpegTsToken(deadline);
+  const auto token = DeadlineToken(deadline);
   auto outcome = ts::prepareMpegTsLocalFile(path, options, token);
   if (outcome.status != ts::MpegTsDemuxStatus::Ready || !outcome.asset) {
     if (error) {

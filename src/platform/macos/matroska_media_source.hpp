@@ -37,7 +37,7 @@ struct MatroskaSourceTraits {
   using Plan = media::matroska::MatroskaGenerationPlan;
   using PrepareOutcome = media::matroska::MatroskaPrepareOutcome;
   using PlanOutcome = media::matroska::MatroskaPlanOutcome;
-  using CancellationToken = media::matroska::CancellationToken;
+  using CancellationToken = media::CancellationToken;
 
   // How far ahead of its own presentation time a video sample sorts in the
   // A/V merge. Matroska carries no decode timestamp, and the cursor emits in

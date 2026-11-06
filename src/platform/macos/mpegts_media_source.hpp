@@ -35,7 +35,7 @@ struct MpegTsSourceTraits {
   using Plan = media::mpegts::MpegTsGenerationPlan;
   using PrepareOutcome = media::mpegts::MpegTsPrepareOutcome;
   using PlanOutcome = media::mpegts::MpegTsPlanOutcome;
-  using CancellationToken = media::mpegts::CancellationToken;
+  using CancellationToken = media::CancellationToken;
 
   [[nodiscard]] static PrepareOutcome prepare(
       const std::filesystem::path& path,

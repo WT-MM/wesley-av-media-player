@@ -39,6 +39,10 @@
 namespace {
 
 using namespace wam::media::matroska;
+using wam::media::ByteRange;
+using wam::media::CancellationToken;
+using wam::media::FrameRange;
+using wam::media::SeekableByteReader;
 using wam::media::MediaAudioGenerationWindow;
 using wam::media::MediaCodec;
 using wam::media::MediaCodecConfigurationKind;

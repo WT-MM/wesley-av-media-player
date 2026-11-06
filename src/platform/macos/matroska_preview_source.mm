@@ -20,7 +20,7 @@ using media::MediaTime;
 using media::MediaTimeOrder;
 using media::MediaTrackDescriptor;
 using media::MediaTrackKind;
-using media::matroska::CancellationToken;
+using media::CancellationToken;
 using media::matroska::MatroskaCompressedSample;
 using media::matroska::MatroskaCursor;
 using media::matroska::MatroskaCursorCancelled;

@@ -47,7 +47,7 @@ public:
     struct statfs mount{};
     const bool buffered =
         ::statfs(path.c_str(), &mount) == 0 && !(mount.f_flags & MNT_LOCAL);
-    const media::LibavformatCursor::Cancellation cancellation{
+    const media::CancellationToken cancellation{
         sources_[3].get(), [](const void *source) noexcept {
           return static_cast<const media::MediaSource *>(source)
               ->stats()

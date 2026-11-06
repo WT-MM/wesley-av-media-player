@@ -24,6 +24,7 @@
 namespace {
 
 using namespace wam::media::mpegts;
+using wam::media::SeekableByteReader;
 using wam::media::MediaCodec;
 using wam::media::MediaCodecConfigurationKind;
 using wam::media::MediaSampleKind;

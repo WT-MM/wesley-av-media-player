@@ -37,7 +37,7 @@ public:
   }
   std::vector<MediaTime> raps;
   unsigned selectedStream{};
-  LibavformatCursor::Identity identity{};
+  FileIdentity identity{};
   bool audioOnly{};
   bool aacBoundedSeek{};
   std::shared_ptr<AacPacketTimeline> aacTimeline;
@@ -402,7 +402,7 @@ struct LibavformatMediaSource::Impl {
     const auto active = operation.load(std::memory_order_acquire);
     return active && cancelled.load(std::memory_order_acquire) == active;
   }
-  LibavformatCursor::Cancellation cancellation() const noexcept {
+  CancellationToken cancellation() const noexcept {
     return {this, [](const void *value) noexcept {
               return static_cast<const Impl *>(value)->isCancelled();
             }};
@@ -981,7 +981,7 @@ public:
       ++facts_.backend.readersCreated;
       if (!reader_->cursor.open(
               context_->localPath(),
-              LibavformatCursor::Cancellation{
+              CancellationToken{
                   this,
                   [](const void *value) noexcept {
                     return static_cast<const Preview *>(value)->isCancelled();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/byte_source.hpp"
 #include "media/native_media_source.hpp"
 
 #include <array>
@@ -12,31 +13,8 @@
 namespace wam::media::matroska {
 
 // Matroska parsing is deliberately independent of Apple and Qt
-// frameworks. Readers must either fill the complete destination or return
-// false. The parser never requests more than kHardMaximumReadBytes at once.
-class SeekableByteReader {
- public:
-  virtual ~SeekableByteReader() = default;
-  [[nodiscard]] virtual std::uint64_t size() const noexcept = 0;
-  [[nodiscard]] virtual bool
-  readAt(std::uint64_t offset, std::span<std::byte> destination) noexcept = 0;
-};
-
-struct CancellationToken {
-  const void* context{nullptr};
-  bool (*probe)(const void*) noexcept{nullptr};
-
-  [[nodiscard]] bool cancelled() const noexcept {
-    return probe != nullptr && probe(context);
-  }
-};
-
-struct ByteRange {
-  std::uint64_t offset{0};
-  std::uint64_t size{0};
-
-  friend constexpr bool operator==(ByteRange, ByteRange) = default;
-};
+// frameworks. The parser never requests more than kHardMaximumReadBytes from a
+// SeekableByteReader at once.
 
 enum class VintKind : std::uint8_t {
   ElementId,
@@ -233,12 +211,6 @@ enum class Lacing : std::uint8_t {
   Xiph,
   Fixed,
   Ebml,
-};
-
-struct FrameRange {
-  ByteRange bytes;
-
-  friend constexpr bool operator==(FrameRange, FrameRange) = default;
 };
 
 struct BlockHeader {
