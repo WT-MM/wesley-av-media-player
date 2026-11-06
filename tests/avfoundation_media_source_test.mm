@@ -873,10 +873,8 @@ void testAccurateVideoUsesWholeExactInterval() {
              largeEnd.videoDecodeOnly == true,
          "an exact interval end above 2^53 remains wholly preroll");
 
-  // Both of these used to be refused, back when a compressed video sample was
-  // stated on the track's MEDIA timeline and a negative time could therefore
-  // only be a malformation. On the MOVIE timeline a head-trimmed edit list
-  // states real pictures before the origin, and each of the two shapes below
+  // Compressed video samples are stated on the MOVIE timeline, where a
+  // head-trimmed edit list states real pictures before the origin, and each of the two shapes below
   // is one that a real specimen produces (measured on a 24000-timescale file
   // whose video edit starts at media 19246): the pictures the reader walked
   // back to, and the one picture that straddles the origin.
@@ -2410,10 +2408,9 @@ void testDescriptorExtractionAndBounds() {
   auto pqTrack = inspectVideoFormat(
       static_cast<CMVideoFormatDescriptionRef>(pqFormat.get()), 14, {60, 1},
       MediaSourceLimits{}, &error);
-  // AMENDMENT 6 (2026-08-27). PQ is a MODELLED fact now, not an opaque
-  // "unsupported metadata" bit: the presentation path carries BT.2020/PQ/HLG
-  // correctly end to end, so the transfer must still be reported exactly, but
-  // it must no longer set the fail-closed bit. mediaVideoColorAdmitted() owns
+  // PQ is a modelled fact, not an opaque "unsupported metadata" bit: the
+  // presentation path carries BT.2020/PQ/HLG end to end, so the transfer must
+  // be reported exactly without setting the fail-closed bit. mediaVideoColorAdmitted() owns
   // the admission decision, and it admits this.
   expect(pqTrack && pqTrack->video &&
              pqTrack->video->transferFunction == MediaTransferFunction::Pq &&
@@ -2448,12 +2445,10 @@ void testDescriptorExtractionAndBounds() {
     auto ambientTrack = inspectVideoFormat(
         static_cast<CMVideoFormatDescriptionRef>(ambientFormat.get()), 17,
         {60, 1}, MediaSourceLimits{}, &error);
-    // AMENDMENT 6 moved ambient-viewing metadata out of the opaque bit into
-    // its own typed presence fact, so that a later session can admit it
-    // without re-deriving the whole bit. It is still REFUSED -- no fixture in
-    // the corpus carries it and its presentation effect was never verified --
-    // but the refusal now comes from mediaVideoColorAdmitted() reading the
-    // named field rather than from the catch-all.
+    // Ambient-viewing metadata is its own typed presence fact. It is REFUSED
+    // -- no fixture in the corpus carries it and its presentation effect was
+    // never verified -- and the refusal comes from mediaVideoColorAdmitted()
+    // reading the named field rather than from the catch-all.
     expect(ambientTrack && ambientTrack->video &&
                ambientTrack->video->ambientViewingEnvironmentPresent &&
                !mediaVideoColorAdmitted(*ambientTrack->video),
@@ -2528,8 +2523,7 @@ void testDescriptorExtractionAndBounds() {
   multipleVideo.inventory.total = 3;
   expect(!preservesLegacyNativeAdmission(multipleVideo, &error),
          "a second unselected video track must preserve fallback behavior");
-  // EMBEDDED TIMED TEXT IS ADMITTED (2026-09-04, the tx3g/CEA-608 lane).
-  // A subtitle, legacy 'text' or closed-caption track is inert to this
+  // EMBEDDED TIMED TEXT IS ADMITTED. A subtitle, legacy 'text' or closed-caption track is inert to this
   // backend: it is never selected, opened by the reader, or decoded. Refusing
   // it sent every captioned MP4 to the fallback engine and cost the file its
   // hardware video path, which is a steep price for a track we simply ignore.
@@ -2660,8 +2654,8 @@ void testHevcDescriptorHardening() {
          "CoreMedia should validate the complete fixture-free Main parameter sets");
 
   // array_completeness is a muxer convention (ISO/IEC 14496-15 lets it be
-  // zero when parameter sets may also travel in band), aligned with the
-  // neutral inspector's 2026-08-17 decision: clearing it on every array must
+  // zero when parameter sets may also travel in band), matching the neutral
+  // inspector: clearing it on every array must
   // not change the verdict, while a NAL length that overruns the record must.
   const auto asBytes = [](const std::vector<std::uint8_t>& record) {
     return std::span<const std::byte>(
@@ -2756,7 +2750,7 @@ void testHevcDescriptorHardening() {
     injected.tracks[0].video->transferFunction = MediaTransferFunction::Unknown;
     expect(preservesLegacyNativeAdmission(injected, &error),
            "an injected untagged Main10 descriptor is admitted as SDR");
-    // AMENDMENT 6: BT.2020/PQ/HLG are admitted at both depths.
+    // BT.2020/PQ/HLG are admitted at both depths.
     injected.tracks[0].video->transferFunction = MediaTransferFunction::Pq;
     expect(preservesLegacyNativeAdmission(injected, &error),
            "an injected Main10 descriptor with a PQ transfer is admitted");
@@ -2813,13 +2807,9 @@ void testHevcDescriptorHardening() {
                      main10WithoutTransfer.get()),
                  33, {60, 1}, MediaSourceLimits{}, &error),
          "Main10 with unspecified primaries or transfer is admitted as SDR");
-  // AMENDMENT 6 separates the two questions this expectation used to conflate.
-  // A Main 10 stream with a PQ transfer is now ADMITTED -- that is the whole
-  // point of the amendment, and the 10-bit-only colour gate that used to
-  // refuse it here has been deleted rather than widened, because there is no
-  // colour question that depends on the depth. A descriptor that CONTRADICTS
-  // its hvcC depth is still refused, and that is the only thing this depth
-  // check now asks.
+  // A Main 10 stream with a PQ transfer is ADMITTED: no colour question
+  // depends on the depth. A descriptor that CONTRADICTS its hvcC depth is
+  // refused, and that is the only thing this depth check asks.
   expect(inspectVideoFormat(
              static_cast<CMVideoFormatDescriptionRef>(main10PqTransfer.get()),
              38, {60, 1}, MediaSourceLimits{}, &error)
@@ -3230,12 +3220,10 @@ void testInjectedBackendCannotBypassLegacyAdmission() {
   expectRejected(std::move(invalidInventory),
                  "common owner gate must reject injected inventory before heads");
 
-  // AMENDMENT 6 (2026-08-27) admits BT.2020 primaries, the PQ/HLG transfers
-  // and the BT.2020 NCL matrix, so those three cases are no longer rejections
-  // to assert. What this owner gate must still prove is that it INDEPENDENTLY
-  // refuses colour outside the widened envelope -- otherwise the widening
-  // would have quietly turned the gate into a pass-through. Two values that
-  // stayed outside it stand in for the three that moved.
+  // BT.2020 primaries, the PQ/HLG transfers and the BT.2020 NCL matrix are
+  // admitted. This owner gate must still prove that it INDEPENDENTLY refuses
+  // colour outside that envelope, or it would be a pass-through. Two values
+  // outside it stand in.
   auto inconsistentSrgb =
       std::make_shared<MediaSourceDescriptor>(*descriptor());
   inconsistentSrgb->tracks[0].video->transferFunction =

@@ -1786,14 +1786,13 @@ NESTED_CODE_CONTAINERS=("${(@Oa)NESTED_CODE_CONTAINERS}")
 # Both modes now seal nested containers explicitly, inner-to-outer, and the
 # outer app WITHOUT --deep.
 #
-# The ad-hoc path used to lean on one `codesign --force --deep` over the whole
-# app. That is wrong once any nested code carries entitlements: --deep re-signs
+# Not one `codesign --force --deep` over the whole app: once any nested code
+# carries entitlements, --deep re-signs
 # nested bundles with the OUTER invocation's arguments, so it would strip the
 # appex's app-sandbox entitlement moments after the leaf loop applied it, and
 # the extension would silently stop registering. Apple warns against --deep for
 # exactly this reason. Every Mach-O leaf is already signed individually by the
-# loop above, so --deep was only ever a catch-all; sealing the containers in
-# reverse-path order is strictly more correct and costs one pass.
+# loop above, so sealing the containers in reverse-path order costs one pass.
 for code_container in "${NESTED_CODE_CONTAINERS[@]}"; do
   validate_bundle_tree "$APP_PATH" || return 1
   if [[ ! -d "$code_container" || -L "$code_container" ||
