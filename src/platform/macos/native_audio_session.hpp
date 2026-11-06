@@ -71,9 +71,8 @@ struct NativeAudioSessionQuarantineFacts {
   std::uint64_t recoveries{0};
   // claimed: at least one session is charged against the process envelope,
   // live or quarantined. quarantined: at least one quarantine slot is
-  // occupied, so a graph still owes the owner a Done close. Both are
-  // deliberately booleans and not occupancy counts -- the owner drains
-  // quarantine by looping recoverQuarantined() and never needs the number.
+  // occupied, so a graph still owes a Done close. recoveries counts close
+  // attempts made on quarantined graphs, whatever their outcome.
   bool claimed{false};
   bool quarantined{false};
 };
@@ -90,15 +89,11 @@ struct NativeAudioSessionFacts {
   bool resourceEntered{false};
   bool configured{false};
   bool requestedPaused{true};
-  // Normalized owner requests and the exact pair most recently published to
-  // the render core's lock-free callback controls. "Applied" means callback-
-  // visible, not that the render core's bounded gain ramp has completed.
+  // Normalized owner requests; each is published to the render core's
+  // lock-free callback controls as it is accepted.
   float requestedGain{1.0F};
-  float appliedGain{1.0F};
   bool requestedMuted{false};
-  bool appliedMuted{false};
   std::uint64_t controlRevision{0};
-  std::uint64_t appliedControlRevision{0};
   bool endOfStreamRequested{false};
   bool terminalPublished{false};
   bool terminalObserved{false};
@@ -118,7 +113,7 @@ struct NativeAudioSessionFacts {
 };
 
 struct NativeAudioSessionControl;
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct NativeAudioSessionTestAccess;
 #endif
 
@@ -134,8 +129,10 @@ struct NativeAudioSessionTestAccess;
 // resourceEntered is true, every fault fails closed; Router-authorized
 // retire() or emergency close() may then tear the epoch down. A destructor
 // that cannot prove a Done close transfers the complete graph to a
-// process-wide, discoverable quarantine registry of
-// kMaximumConcurrentPlayerWindows slots -- one per admissible player window.
+// process-wide quarantine registry of kMaximumConcurrentPlayerWindows slots --
+// one per admissible player window. Every create() first gives each
+// quarantined graph another close attempt, so a graph whose callbacks have
+// since drained gives its slot back.
 //
 // A session occupies one slot of that same envelope from create() until it
 // proves a Done close, quarantine included: a quarantined graph still owns its
@@ -154,12 +151,6 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   NativeAudioSession(NativeAudioSession&&) = delete;
   NativeAudioSession& operator=(NativeAudioSession&&) = delete;
 
-  // Returns ownership of one quarantined graph, if any slot holds one; call it
-  // again until it returns nullptr to drain the registry. The caller
-  // repeatedly invokes close() after each injected wake until Done. Releasing
-  // a still-quiescing recovered owner returns the same graph to quarantine.
-  [[nodiscard]] static std::unique_ptr<NativeAudioSession>
-  recoverQuarantined() noexcept;
   [[nodiscard]] static NativeAudioSessionQuarantineFacts
   quarantineFacts() noexcept;
 
@@ -272,33 +263,37 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
  private:
   explicit NativeAudioSession(
       std::shared_ptr<NativeAudioSessionControl> control) noexcept;
+  static void drainQuarantine() noexcept;
 
   std::shared_ptr<NativeAudioSessionControl> control_;
 
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeAudioSessionTestAccess;
 #endif
 };
 
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Source-only deterministic lifecycle seam used by the focused injected test.
 // Production code must not bypass flush() through this type.
 struct NativeAudioSessionTestAccess {
   using CallbackHook = void (*)(void* context) noexcept;
 
+  // Returns ownership of one quarantined graph, if any slot holds one.
+  // Releasing a still-quiescing recovered owner returns it to quarantine.
+  [[nodiscard]] static std::unique_ptr<NativeAudioSession>
+  recoverQuarantined() noexcept;
   [[nodiscard]] static NativeAudioSubmitResult occupyConverter(
       NativeAudioSession& session, media::MediaSample&& sample) noexcept;
   static void setAfterRenderPreflightHook(
       NativeAudioSession& session, CallbackHook hook,
       void* context) noexcept;
-  static void stageFlushAfterStop(
+  // Stages a flush whose Stop stage already completed, with the plan the real
+  // flush() would compute for timeline. False when that plan is refused.
+  [[nodiscard]] static bool stageFlushAfterStop(
       NativeAudioSession& session,
       media::MediaGeneration retiredGeneration,
       media::MediaGeneration nextGeneration,
-      media::NativeMediaGenerationTimeline timeline,
-      NativeAudioGenerationTimeline converterTimeline,
-      media::MediaTime mediaOrigin,
-      std::int64_t floorFrame) noexcept;
+      const media::NativeMediaGenerationTimeline& timeline) noexcept;
   static void forceCloseQuiescing(
       NativeAudioSession& session, bool enabled) noexcept;
 };

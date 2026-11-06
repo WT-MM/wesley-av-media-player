@@ -70,38 +70,33 @@ struct NativeAudioRenderCoreTestAccess {
 
 struct NativeAudioOutputTestAccess {
   static void setBeforeAdmissionHook(NativeAudioOutput &output,
-                                     NativeAudioOutput::TestHook hook,
+                                     NativeTestHook::Function hook,
                                      void *context) noexcept {
-    output.before_admission_hook_ = hook;
-    output.before_admission_context_ = context;
+    output.before_admission_hook_ = {hook, context};
   }
 
   static void setBeforeStartCommitHook(NativeAudioOutput &output,
-                                       NativeAudioOutput::TestHook hook,
+                                       NativeTestHook::Function hook,
                                        void *context) noexcept {
-    output.before_start_commit_hook_ = hook;
-    output.before_start_commit_context_ = context;
+    output.before_start_commit_hook_ = {hook, context};
   }
 
   static void setAfterCallbackWakeHook(NativeAudioOutput &output,
-                                       NativeAudioOutput::TestHook hook,
+                                       NativeTestHook::Function hook,
                                        void *context) noexcept {
-    output.after_callback_wake_hook_ = hook;
-    output.after_callback_wake_context_ = context;
+    output.after_callback_wake_hook_ = {hook, context};
   }
 
   static void setAfterListenerWakeHook(NativeAudioOutput &output,
-                                       NativeAudioOutput::TestHook hook,
+                                       NativeTestHook::Function hook,
                                        void *context) noexcept {
-    output.after_listener_wake_hook_ = hook;
-    output.after_listener_wake_context_ = context;
+    output.after_listener_wake_hook_ = {hook, context};
   }
 
   static void setAfterFactsBridgeOwnerHook(
-      NativeAudioOutput &output, NativeAudioOutput::TestHook hook,
+      NativeAudioOutput &output, NativeTestHook::Function hook,
       void *context) noexcept {
-    output.after_facts_bridge_owner_hook_ = hook;
-    output.after_facts_bridge_owner_context_ = context;
+    output.after_facts_bridge_owner_hook_ = {hook, context};
   }
 
   // Seeds the exactly-adjacent carry state the render callback would have left

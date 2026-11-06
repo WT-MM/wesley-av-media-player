@@ -8,7 +8,9 @@
 namespace wam::macos {
 namespace {
 std::array<std::atomic<bool>, kMaximumConcurrentPlayerWindows> slots{};
+#if defined(WAM_NATIVE_TEST_SEAMS)
 std::atomic<bool> testPaused{false};
+#endif
 std::atomic<unsigned> pendingDestructions{0};
 }
 std::shared_ptr<NativeRetirement> NativeRetirement::reserve() noexcept {
@@ -30,10 +32,12 @@ void NativeRetirement::drainForProcessExit() noexcept {
     pendingDestructions.wait(pending, std::memory_order_acquire);
   }
 }
+#if defined(WAM_NATIVE_TEST_SEAMS)
 void NativeRetirement::setTestPaused(bool paused) noexcept {
   testPaused.store(paused, std::memory_order_release);
   if (!paused) testPaused.notify_all();
 }
+#endif
 unsigned NativeRetirement::charged() noexcept {
   unsigned result = 0;
   for (const auto& slot : slots) result += slot.load(std::memory_order_acquire);
@@ -51,7 +55,9 @@ void NativeRetirement::retire(std::shared_ptr<void> graph,
   const auto retained = shared_from_this();
   pendingDestructions.fetch_add(1, std::memory_order_release);
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+#if defined(WAM_NATIVE_TEST_SEAMS)
     while (testPaused.load(std::memory_order_acquire)) testPaused.wait(true);
+#endif
     @autoreleasepool {
       retained->graph_.reset();
     }
