@@ -90,6 +90,54 @@ struct NativeAudioOutputWakeSeam {
   std::atomic<std::uint64_t> *videoDueHostTicks{nullptr};
 };
 
+// The capacity-one wake transition above: signals only when *pending moves
+// from false to true. True when this call signalled.
+[[nodiscard]] inline bool signalNativeAudioOutputWake(
+    NativeAudioOutputWakeSeam wake) noexcept {
+  if (wake.pending == nullptr || wake.signal == nullptr) {
+    return false;
+  }
+  bool expected = false;
+  if (wake.pending->compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel,
+          std::memory_order_acquire)) {
+    wake.signal(wake.context);
+    return true;
+  }
+  return false;
+}
+
+// Every entry of an injected AudioUnit call table must be present.
+[[nodiscard]] inline bool validNativeAudioUnitCallTable(
+    const NativeAudioUnitCallTable &calls) noexcept {
+  return calls.findNext != nullptr && calls.instanceNew != nullptr &&
+         calls.instanceDispose != nullptr && calls.setProperty != nullptr &&
+         calls.getProperty != nullptr && calls.initialize != nullptr &&
+         calls.uninitialize != nullptr && calls.start != nullptr &&
+         calls.stop != nullptr && calls.addPropertyListener != nullptr &&
+         calls.removePropertyListener != nullptr &&
+         calls.hostClockFrequency != nullptr;
+}
+
+// Saturating diagnostic counter add, usable from the real-time callback. The
+// compare-exchange is tried at most twice so the callback stays wait-free; a
+// contended (or spuriously failed) pair of attempts drops the increment, so
+// the counters are a lower bound, never an overcount.
+inline void saturatingAdd(std::atomic<std::uint64_t> &counter,
+                          std::uint64_t amount) noexcept {
+  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
+  std::uint64_t current = counter.load(std::memory_order_relaxed);
+  for (unsigned attempt = 0; attempt != 2; ++attempt) {
+    const std::uint64_t next =
+        amount > maximum - current ? maximum : current + amount;
+    if (counter.compare_exchange_weak(current, next,
+                                      std::memory_order_relaxed,
+                                      std::memory_order_relaxed)) {
+      return;
+    }
+  }
+}
+
 enum class NativeAudioOutputProgress : std::uint8_t {
   Done,
   Quiescing,
@@ -273,7 +321,8 @@ struct NativeAudioOutputFacts {
 class NativeAudioOutput final
     : public std::enable_shared_from_this<NativeAudioOutput> {
  public:
-  static constexpr std::uint32_t kChannels = 2;
+  static constexpr std::uint32_t kChannels =
+      static_cast<std::uint32_t>(NativePcmRing::kChannels);
   static constexpr std::uint32_t kMaximumFramesPerSlice =
       static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab);
 
@@ -298,7 +347,9 @@ class NativeAudioOutput final
   // frames but eats rate times as many media frames, and the ring is stocked
   // in MEDIA frames. Every headroom inequality in this file is stated in that
   // unit.
-  static constexpr std::uint32_t kMaximumRateNumerator = 4;
+  static constexpr std::uint32_t kMaximumRateNumerator =
+      static_cast<std::uint32_t>(media::native_playback::kMaximumNativeRate);
+  static_assert(kMaximumRateNumerator == media::native_playback::kMaximumNativeRate);
 
   // Device IO buffer size requested from the HAL. Every render callback is a
   // real-time thread wake and the wake rate is exactly sampleRate/frames, so
@@ -430,12 +481,26 @@ class NativeAudioOutput final
       std::uint64_t admissionEpoch,
       bool bridgeAdmissionOpen,
       std::uint32_t *wakeReasons) noexcept;
-  [[nodiscard]] static bool signalWake(
-      NativeAudioOutputWakeSeam wake) noexcept;
   [[nodiscard]] NativeAudioOutputProgress quiescing() noexcept;
-  [[nodiscard]] NativeAudioOutputProgress closeStep() noexcept;
 
-  [[nodiscard]] bool validCallTable() const noexcept;
+  // Which facts, beyond the device rate itself, a device revalidation must
+  // also refuse on. See revalidateDevice().
+  enum DeviceCheck : unsigned {
+    kDeviceRateOnly = 0,
+    // Latch the rate (first query) instead of comparing with the latched one.
+    kDeviceLatchRate = 1U << 0U,
+    kDeviceInvalidation = 1U << 1U,
+    kDeviceFailureLatched = 1U << 2U,
+    kDeviceSerialMoved = 1U << 3U,
+  };
+  [[nodiscard]] NativeAudioOutputFailure revalidateDevice(
+      unsigned checks, std::uint64_t serial, OSStatus *status) noexcept;
+  // The render bridge, its exit pins, the inner callback entries and the
+  // admission count have all drained. bridge is the gate value the caller's
+  // own fetch_or returned.
+  [[nodiscard]] bool renderBridgeDrained(std::uint64_t bridge) const noexcept;
+  void resetTimingCarry() noexcept;
+  void releaseClaim() noexcept;
   [[nodiscard]] bool usableDeviceRate(
       const AudioStreamBasicDescription &format) const noexcept;
   [[nodiscard]] bool validDeviceRate(
@@ -459,8 +524,6 @@ class NativeAudioOutput final
   static void zeroValidBuffer(AudioUnitRenderActionFlags *actionFlags,
                               std::uint32_t frameCount,
                               AudioBufferList *data) noexcept;
-  static void boundedCounterAdd(std::atomic<std::uint64_t> &counter,
-                                std::uint64_t amount) noexcept;
   void latchFailure(NativeAudioOutputFailure failure,
                     OSStatus status) noexcept;
   // The configure() refusal epilogue. Every refusal after the AudioUnit

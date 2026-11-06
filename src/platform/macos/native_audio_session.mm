@@ -121,18 +121,6 @@ std::atomic<std::uint64_t> gRejectedCreates{0};
 std::atomic<std::uint64_t> gQuarantineTransfers{0};
 std::atomic<std::uint64_t> gQuarantineRecoveries{0};
 
-void saturatingIncrement(std::atomic<std::uint64_t>& counter) noexcept {
-  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
-  std::uint64_t current = counter.load(std::memory_order_relaxed);
-  for (unsigned attempt = 0; attempt != 2 && current != maximum; ++attempt) {
-    if (counter.compare_exchange_weak(current, current + 1U,
-                                      std::memory_order_relaxed,
-                                      std::memory_order_relaxed)) {
-      return;
-    }
-  }
-}
-
 void assignError(std::string* error, const char* message) noexcept {
   if (error == nullptr) {
     return;
@@ -210,23 +198,12 @@ void assignError(std::string* error, const char* message) noexcept {
          ceilingFrame > 0;
 }
 
-[[nodiscard]] bool validCallTable(
-    const NativeAudioUnitCallTable& calls) noexcept {
-  return calls.findNext != nullptr && calls.instanceNew != nullptr &&
-         calls.instanceDispose != nullptr && calls.setProperty != nullptr &&
-         calls.getProperty != nullptr && calls.initialize != nullptr &&
-         calls.uninitialize != nullptr && calls.start != nullptr &&
-         calls.stop != nullptr && calls.addPropertyListener != nullptr &&
-         calls.removePropertyListener != nullptr &&
-         calls.hostClockFrequency != nullptr;
-}
-
 [[nodiscard]] bool validDependencies(
     const NativeAudioSessionDependencies& dependencies) noexcept {
   return dependencies.externalLifetime != nullptr &&
          dependencies.hostClock.readTicks != nullptr &&
          dependencies.hostClock.ticksPerSecond != 0 &&
-         validCallTable(dependencies.outputCalls) &&
+         validNativeAudioUnitCallTable(dependencies.outputCalls) &&
          dependencies.outputWake.pending != nullptr &&
          dependencies.outputWake.signal != nullptr &&
          dependencies.outputWake.pending->is_lock_free();
@@ -504,10 +481,20 @@ void assignError(std::string* error, const char* message) noexcept {
   return false;
 }
 
-void advanceControlRevision(std::uint64_t& revision) noexcept {
-  if (revision != std::numeric_limits<std::uint64_t>::max()) {
-    ++revision;
+void saturatingIncrement(std::uint64_t& counter) noexcept {
+  if (counter != std::numeric_limits<std::uint64_t>::max()) {
+    ++counter;
   }
+}
+
+// Every operation that feeds the converter or drains it refuses once the
+// session has failed or begun tearing down.
+[[nodiscard]] bool acceptsWork(NativeAudioSessionState state) noexcept {
+  return state != NativeAudioSessionState::Failed &&
+         state != NativeAudioSessionState::Retiring &&
+         state != NativeAudioSessionState::Closing &&
+         state != NativeAudioSessionState::Closed &&
+         state != NativeAudioSessionState::Cancelled;
 }
 
 } // namespace
@@ -530,11 +517,8 @@ struct NativeAudioSessionControl final {
         converter(ring, std::move(backend)),
         generation(initialGeneration) {
     converter.setBackendWake({[](void* context) noexcept {
-      auto& control = *static_cast<NativeAudioSessionControl*>(context);
-      bool expected = false;
-      if (control.outputWake.pending->compare_exchange_strong(expected, true,
-          std::memory_order_acq_rel, std::memory_order_acquire))
-        control.outputWake.signal(control.outputWake.context);
+      static_cast<void>(signalNativeAudioOutputWake(
+          static_cast<NativeAudioSessionControl*>(context)->outputWake));
     }, this});
   }
 
@@ -717,7 +701,7 @@ void quarantine(
   for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
     if (slot == nullptr) {
       slot = control;
-      saturatingIncrement(gQuarantineTransfers);
+      saturatingAdd(gQuarantineTransfers, 1);
       return;
     }
   }
@@ -884,6 +868,26 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
   return true;
 }
 
+// The start-admission rule: a running output that cannot be fed would
+// underrun on its very first callback, so it opens only over prebuffered PCM
+// or a generation whose terminal is already published.
+[[nodiscard]] bool canStartOutput(NativeAudioSessionControl& control) noexcept {
+  return control.ring.readableFrames(control.generation).frames != 0 ||
+         control.terminalPublished;
+}
+
+// The tail of every output suspension (pause and device recovery alike), once
+// the output has proved a Done stop: settle the callback-local running fact
+// and leave the session Ready over the idle device.
+[[nodiscard]] bool finishSuspend(NativeAudioSessionControl& control) noexcept {
+  if (!settleStopped(control, control.generation)) {
+    return false;
+  }
+  control.outputSuspension = OutputSuspension::Suspended;
+  control.state = NativeAudioSessionState::Ready;
+  return true;
+}
+
 [[nodiscard]] bool verifyPublishedOrigin(
     NativeAudioSessionControl& control) noexcept {
   const NativeAudioConverterStats stats = control.converter.stats();
@@ -942,9 +946,13 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
              control.generation;
 }
 
-[[nodiscard]] media::NativeMediaConsumeResult mapPumpForCapacity(
-    NativeAudioSessionControl& control,
-    NativeAudioPumpResult result) noexcept {
+// One converter pump outcome as a consumer result. capacity() and
+// endOfStream() differ only where end of stream changes the meaning: once
+// requested, a converter asking for input is a converter fault and a drained
+// one publishes the generation's terminal; before it, both are protocol facts.
+[[nodiscard]] media::NativeMediaConsumeResult mapPumpForConsume(
+    NativeAudioSessionControl& control, NativeAudioPumpResult result,
+    bool endOfStream) noexcept {
   switch (result) {
   case NativeAudioPumpResult::Published:
     return verifyPublishedOrigin(control)
@@ -955,12 +963,24 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
   case NativeAudioPumpResult::Backpressure:
     return media::NativeMediaConsumeResult::Backpressure;
   case NativeAudioPumpResult::NeedsInput:
-    return media::NativeMediaConsumeResult::Accepted;
+    if (!endOfStream) {
+      return media::NativeMediaConsumeResult::Accepted;
+    }
+    control.latch(NativeAudioSessionFailure::Converter);
+    return media::NativeMediaConsumeResult::Failed;
   case NativeAudioPumpResult::StaleGeneration:
     return media::NativeMediaConsumeResult::StaleGeneration;
   case NativeAudioPumpResult::Drained:
-    control.latch(NativeAudioSessionFailure::ConsumerProtocol);
-    return media::NativeMediaConsumeResult::Failed;
+    if (!endOfStream) {
+      control.latch(NativeAudioSessionFailure::ConsumerProtocol);
+      return media::NativeMediaConsumeResult::Failed;
+    }
+    if (!publishTerminal(control)) {
+      return media::NativeMediaConsumeResult::Failed;
+    }
+    return terminalObserved(control)
+               ? media::NativeMediaConsumeResult::Drained
+               : media::NativeMediaConsumeResult::Draining;
   case NativeAudioPumpResult::NotConfigured:
   case NativeAudioPumpResult::Failed:
     control.latch(NativeAudioSessionFailure::Converter);
@@ -1035,12 +1055,8 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
   if (stopped != NativeAudioSessionProgress::Done) {
     return stopped;
   }
-  if (!settleStopped(control, control.generation)) {
-    return NativeAudioSessionProgress::Failed;
-  }
-  control.outputSuspension = OutputSuspension::Suspended;
-  control.state = NativeAudioSessionState::Ready;
-  return NativeAudioSessionProgress::Done;
+  return finishSuspend(control) ? NativeAudioSessionProgress::Done
+                                : NativeAudioSessionProgress::Failed;
 }
 
 // Outcome of one reconciliation pass over an outstanding StreamFormat
@@ -1113,12 +1129,9 @@ enum class DeviceReconcile : std::uint8_t {
     }
     // reconcileDeviceChange() proved a Done stop; finish the suspend
     // bookkeeping so the session and the output agree the device is idle.
-    if (control.outputSuspension == OutputSuspension::Stopping) {
-      if (!settleStopped(control, control.generation)) {
-        return DeviceReconcile::Failed;
-      }
-      control.outputSuspension = OutputSuspension::Suspended;
-      control.state = NativeAudioSessionState::Ready;
+    if (control.outputSuspension == OutputSuspension::Stopping &&
+        !finishSuspend(control)) {
+      return DeviceReconcile::Failed;
     }
     return DeviceReconcile::Progressed;
   }
@@ -1133,11 +1146,7 @@ enum class DeviceReconcile : std::uint8_t {
     control.deviceChangeResumePending = false;
     return DeviceReconcile::Idle;
   }
-  // Same admission rule start() applies: a running output that cannot be fed
-  // would underrun on its very first callback.
-  const NativePcmRing::ReadableFramesResult readable =
-      control.ring.readableFrames(control.generation);
-  if (readable.frames == 0 && !control.terminalPublished) {
+  if (!canStartOutput(control)) {
     return DeviceReconcile::Progressed;
   }
   control.renderCore.setPaused(false);
@@ -1153,10 +1162,7 @@ enum class DeviceReconcile : std::uint8_t {
   control.outputSuspension = OutputSuspension::None;
   control.state = NativeAudioSessionState::Started;
   control.deviceChangeResumePending = false;
-  if (control.deviceChangeRecoveries !=
-      std::numeric_limits<std::uint64_t>::max()) {
-    ++control.deviceChangeRecoveries;
-  }
+  saturatingIncrement(control.deviceChangeRecoveries);
   // Always on, and one grep-able line: a recovery that leaves no trace would
   // make device-change problems invisible. Bounded: one line per notification, and notifications are rare.
   std::fprintf(stderr,
@@ -1167,6 +1173,23 @@ enum class DeviceReconcile : std::uint8_t {
                static_cast<unsigned long long>(control.deviceChangeRecoveries));
   std::fflush(stderr);
   return DeviceReconcile::Progressed;
+}
+
+// close() progress in the session's own vocabulary, for stop().
+[[nodiscard]] NativeAudioSessionProgress
+sessionProgress(media::NativeMediaConsumerProgress progress) noexcept {
+  switch (progress) {
+  case media::NativeMediaConsumerProgress::Done:
+    return NativeAudioSessionProgress::Done;
+  case media::NativeMediaConsumerProgress::Quiescing:
+  case media::NativeMediaConsumerProgress::Progress:
+    return NativeAudioSessionProgress::Quiescing;
+  case media::NativeMediaConsumerProgress::StaleGeneration:
+  case media::NativeMediaConsumerProgress::Unsupported:
+  case media::NativeMediaConsumerProgress::Failed:
+    return NativeAudioSessionProgress::Failed;
+  }
+  return NativeAudioSessionProgress::Failed;
 }
 
 [[nodiscard]] media::NativeMediaConsumerProgress mapLifecycleProgress(
@@ -1422,7 +1445,7 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
     media::MediaGeneration initialGeneration,
     NativeAudioSessionDependencies dependencies) noexcept {
   if (initialGeneration == 0 || !validDependencies(dependencies)) {
-    saturatingIncrement(gRejectedCreates);
+    saturatingAdd(gRejectedCreates, 1);
     return {};
   }
   {
@@ -1433,7 +1456,7 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
     // kMaximumConcurrentPlayerWindows exists to bound, and the owner is meant
     // to report "no more windows" rather than retry.
     if (gRetainedSessions >= kMaximumConcurrentPlayerWindows) {
-      saturatingIncrement(gRejectedCreates);
+      saturatingAdd(gRejectedCreates, 1);
       return {};
     }
     ++gRetainedSessions;
@@ -1451,7 +1474,7 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
     // straight back instead of leaving a permanent hole in the envelope.
     std::lock_guard<std::mutex> lock(gSessionMutex);
     --gRetainedSessions;
-    saturatingIncrement(gRejectedCreates);
+    saturatingAdd(gRejectedCreates, 1);
     return {};
   }
 }
@@ -1482,7 +1505,7 @@ NativeAudioSession::recoverQuarantined() noexcept {
       auto recovered =
           std::unique_ptr<NativeAudioSession>(new NativeAudioSession(slot));
       slot.reset();
-      saturatingIncrement(gQuarantineRecoveries);
+      saturatingAdd(gQuarantineRecoveries, 1);
       return recovered;
     } catch (...) {
       return {};
@@ -1649,12 +1672,7 @@ media::NativeMediaConsumeResult NativeAudioSession::capacity(
   if (generation != control.generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
-  if (!control.configured ||
-      control.state == NativeAudioSessionState::Failed ||
-      control.state == NativeAudioSessionState::Retiring ||
-      control.state == NativeAudioSessionState::Closing ||
-      control.state == NativeAudioSessionState::Closed ||
-      control.state == NativeAudioSessionState::Cancelled ||
+  if (!control.configured || !acceptsWork(control.state) ||
       outputFailed(control)) {
     return media::NativeMediaConsumeResult::Failed;
   }
@@ -1663,7 +1681,7 @@ media::NativeMediaConsumeResult NativeAudioSession::capacity(
                ? media::NativeMediaConsumeResult::Drained
                : media::NativeMediaConsumeResult::Backpressure;
   }
-  return mapPumpForCapacity(control, control.converter.pump(nullptr));
+  return mapPumpForConsume(control, control.converter.pump(nullptr), false);
 }
 
 media::NativeMediaConsumeResult NativeAudioSession::trySample(
@@ -1678,14 +1696,8 @@ media::NativeMediaConsumeResult NativeAudioSession::trySample(
   if (sample.generation != control.generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
-  if (!control.configured ||
-      control.endOfStreamRequested ||
-      control.state == NativeAudioSessionState::Failed ||
-      control.state == NativeAudioSessionState::Retiring ||
-      control.state == NativeAudioSessionState::Closing ||
-      control.state == NativeAudioSessionState::Closed ||
-      control.state == NativeAudioSessionState::Cancelled ||
-      outputFailed(control)) {
+  if (!control.configured || control.endOfStreamRequested ||
+      !acceptsWork(control.state) || outputFailed(control)) {
     assignError(error, "native audio session is not accepting samples");
     return media::NativeMediaConsumeResult::Failed;
   }
@@ -1777,34 +1789,8 @@ media::NativeMediaConsumeResult NativeAudioSession::endOfStream(
     return media::NativeMediaConsumeResult::Failed;
   }
   control.endOfStreamRequested = true;
-  const NativeAudioPumpResult result =
-      control.converter.endOfStream(end.generation, error);
-  switch (result) {
-  case NativeAudioPumpResult::Published:
-    return verifyPublishedOrigin(control)
-               ? media::NativeMediaConsumeResult::Draining
-               : media::NativeMediaConsumeResult::Failed;
-  case NativeAudioPumpResult::Progress:
-    return media::NativeMediaConsumeResult::Draining;
-  case NativeAudioPumpResult::Backpressure:
-    return media::NativeMediaConsumeResult::Backpressure;
-  case NativeAudioPumpResult::Drained:
-    if (!publishTerminal(control)) {
-      return media::NativeMediaConsumeResult::Failed;
-    }
-    return terminalObserved(control)
-               ? media::NativeMediaConsumeResult::Drained
-               : media::NativeMediaConsumeResult::Draining;
-  case NativeAudioPumpResult::StaleGeneration:
-    return media::NativeMediaConsumeResult::StaleGeneration;
-  case NativeAudioPumpResult::NeedsInput:
-  case NativeAudioPumpResult::NotConfigured:
-  case NativeAudioPumpResult::Failed:
-    control.latch(NativeAudioSessionFailure::Converter);
-    return media::NativeMediaConsumeResult::Failed;
-  }
-  control.latch(NativeAudioSessionFailure::ConsumerProtocol);
-  return media::NativeMediaConsumeResult::Failed;
+  return mapPumpForConsume(
+      control, control.converter.endOfStream(end.generation, error), true);
 }
 
 media::NativeMediaConsumerProgress NativeAudioSession::drain(
@@ -1818,12 +1804,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::drain(
   if (generation != control.generation) {
     return media::NativeMediaConsumerProgress::StaleGeneration;
   }
-  if (!control.configured ||
-      control.state == NativeAudioSessionState::Failed ||
-      control.state == NativeAudioSessionState::Retiring ||
-      control.state == NativeAudioSessionState::Closing ||
-      control.state == NativeAudioSessionState::Closed ||
-      control.state == NativeAudioSessionState::Cancelled) {
+  if (!control.configured || !acceptsWork(control.state)) {
     publishFailureText(control, error);
     return media::NativeMediaConsumerProgress::Failed;
   }
@@ -1878,10 +1859,7 @@ NativeAudioSessionProgress NativeAudioSession::start() noexcept {
   if (outputFailed(control)) {
     return NativeAudioSessionProgress::Failed;
   }
-  const NativePcmRing::ReadableFramesResult readable =
-      control.ring.readableFrames(control.generation);
-  if (!control.requestedPaused && readable.frames == 0 &&
-      !control.terminalPublished) {
+  if (!control.requestedPaused && !canStartOutput(control)) {
     return NativeAudioSessionProgress::WaitingForData;
   }
   control.renderCore.setPaused(control.requestedPaused);
@@ -1936,13 +1914,9 @@ NativeAudioSession::setPaused(bool paused) noexcept {
       control.latch(NativeAudioSessionFailure::Output);
       return NativeAudioSessionProgress::Failed;
     }
-    // Same admission rule start() applies: a running output that cannot be
-    // fed would underrun on its very first callback. The ring was never
-    // flushed by the suspend, so this is satisfied immediately for any pause
-    // that did not empty it.
-    const NativePcmRing::ReadableFramesResult readable =
-        control.ring.readableFrames(control.generation);
-    if (readable.frames == 0 && !control.terminalPublished) {
+    // The suspend never flushed the ring, so this holds immediately for any
+    // pause that did not empty it.
+    if (!canStartOutput(control)) {
       return NativeAudioSessionProgress::WaitingForData;
     }
     const NativeAudioSessionProgress started = mapOutputProgress(
@@ -1983,8 +1957,7 @@ NativeAudioSession::suspendOutputForPause() noexcept {
   // before the boundary would be equally exact but would freeze the clock up
   // to one device period earlier than an in-place pause does.
   const NativeMediaClockSnapshot clock = control.clock.sample();
-  if (!clock.publicationCurrent || !clock.valid || clock.running ||
-      clock.generation != control.generation) {
+  if (!clockPaused(clock) || clock.generation != control.generation) {
     return NativeAudioSessionProgress::Invalid;
   }
   control.outputSuspension = OutputSuspension::Stopping;
@@ -2001,7 +1974,7 @@ NativeAudioSessionProgress NativeAudioSession::setGain(float gain) noexcept {
   }
 
   control.requestedGain = normalizedGain(gain);
-  advanceControlRevision(control.controlRevision);
+  saturatingIncrement(control.controlRevision);
   control.renderCore.setGain(control.requestedGain);
   control.appliedGain = control.requestedGain;
   control.appliedMuted = control.requestedMuted;
@@ -2034,7 +2007,7 @@ NativeAudioSessionProgress NativeAudioSession::setRate(
     }
   }
   control.requestedRate = rate;
-  advanceControlRevision(control.controlRevision);
+  saturatingIncrement(control.controlRevision);
   control.appliedControlRevision = control.controlRevision;
   return NativeAudioSessionProgress::Done;
 }
@@ -2049,7 +2022,7 @@ NativeAudioSessionProgress NativeAudioSession::setMuted(bool muted) noexcept {
   }
 
   control.requestedMuted = muted;
-  advanceControlRevision(control.controlRevision);
+  saturatingIncrement(control.controlRevision);
   control.renderCore.setMuted(control.requestedMuted);
   control.appliedGain = control.requestedGain;
   control.appliedMuted = control.requestedMuted;
@@ -2073,34 +2046,13 @@ NativeAudioSessionProgress NativeAudioSession::stop() noexcept {
     if (control.closeDone || control.state == NativeAudioSessionState::Closed) {
       return NativeAudioSessionProgress::Done;
     }
-    switch (close()) {
-    case media::NativeMediaConsumerProgress::Done:
-      return NativeAudioSessionProgress::Done;
-    case media::NativeMediaConsumerProgress::Quiescing:
-    case media::NativeMediaConsumerProgress::Progress:
-      return NativeAudioSessionProgress::Quiescing;
-    case media::NativeMediaConsumerProgress::StaleGeneration:
-    case media::NativeMediaConsumerProgress::Unsupported:
-    case media::NativeMediaConsumerProgress::Failed:
-      return NativeAudioSessionProgress::Failed;
-    }
+    return sessionProgress(close());
   }
   if (control.lifecycle == SessionLifecycle::Flush ||
       control.state == NativeAudioSessionState::Flushing) {
     control.terminalOverride = TerminalOverride::Stop;
     control.terminalOverrideGeneration = control.generation;
-    switch (close()) {
-    case media::NativeMediaConsumerProgress::Done:
-      return NativeAudioSessionProgress::Done;
-    case media::NativeMediaConsumerProgress::Quiescing:
-    case media::NativeMediaConsumerProgress::Progress:
-      return NativeAudioSessionProgress::Quiescing;
-    case media::NativeMediaConsumerProgress::StaleGeneration:
-    case media::NativeMediaConsumerProgress::Unsupported:
-    case media::NativeMediaConsumerProgress::Failed:
-      return NativeAudioSessionProgress::Failed;
-    }
-    return NativeAudioSessionProgress::Failed;
+    return sessionProgress(close());
   }
   if (control.state == NativeAudioSessionState::Cancelled) {
     return NativeAudioSessionProgress::Done;
