@@ -291,14 +291,13 @@ struct NativeAudioSessionTestAccess {
   static void setAfterRenderPreflightHook(
       NativeAudioSession& session, CallbackHook hook,
       void* context) noexcept;
-  static void stageFlushAfterStop(
+  // Stages a flush whose Stop stage already completed, with the plan the real
+  // flush() would compute for timeline. False when that plan is refused.
+  [[nodiscard]] static bool stageFlushAfterStop(
       NativeAudioSession& session,
       media::MediaGeneration retiredGeneration,
       media::MediaGeneration nextGeneration,
-      media::NativeMediaGenerationTimeline timeline,
-      NativeAudioGenerationTimeline converterTimeline,
-      media::MediaTime mediaOrigin,
-      std::int64_t floorFrame) noexcept;
+      const media::NativeMediaGenerationTimeline& timeline) noexcept;
   static void forceCloseQuiescing(
       NativeAudioSession& session, bool enabled) noexcept;
 };

@@ -1322,11 +1322,6 @@ void testFirstAudioSampleBindsSourceDecodeStart() {
 
 void testCloseSupersedesStagedFlush() {
   const NativeMediaGenerationTimeline next = timeline(2, 4096, 0);
-  NativeAudioGenerationTimeline converterNext;
-  converterNext.presentationFloor = {4096,
-                                     static_cast<std::int32_t>(kRate)};
-  converterNext.trimBeforeFloor = true;
-  converterNext.startsAtStreamOrigin = true;
   const auto makeStaged = [&]() {
     auto platform = std::make_shared<FakePlatform>();
     auto backendState = std::make_shared<BackendState>();
@@ -1337,9 +1332,9 @@ void testCloseSupersedesStagedFlush() {
                session->configure(audioTrack(), 1, timeline(1, 0), nullptr) ==
                    NativeMediaConsumeResult::Accepted,
            "lifecycle precedence fixture configures");
-    NativeAudioSessionTestAccess::stageFlushAfterStop(
-        *session, 1, 2, next, converterNext,
-        {4096, static_cast<std::int32_t>(kRate)}, 4096);
+    expect(NativeAudioSessionTestAccess::stageFlushAfterStop(
+               *session, 1, 2, next),
+           "staged flush plan is admitted");
     return session;
   };
 
@@ -1549,11 +1544,6 @@ void testExactTerminalRetirement() {
 
   {
     const NativeMediaGenerationTimeline next = timeline(2, 4096, 0);
-    NativeAudioGenerationTimeline converterNext;
-    converterNext.presentationFloor = {
-        4096, static_cast<std::int32_t>(kRate)};
-    converterNext.trimBeforeFloor = true;
-    converterNext.startsAtStreamOrigin = true;
     auto platform = std::make_shared<FakePlatform>();
     auto backendState = std::make_shared<BackendState>();
     auto session = NativeAudioSession::create(
@@ -1562,9 +1552,9 @@ void testExactTerminalRetirement() {
     expect(session->configure(audioTrack(), 1, timeline(1, 0), nullptr) ==
                NativeMediaConsumeResult::Accepted,
            "staged-flush retirement fixture configures");
-    NativeAudioSessionTestAccess::stageFlushAfterStop(
-        *session, 1, 2, next, converterNext,
-        {4096, static_cast<std::int32_t>(kRate)}, 4096);
+    expect(NativeAudioSessionTestAccess::stageFlushAfterStop(
+               *session, 1, 2, next),
+           "staged flush plan is admitted");
     expect(session->retire(1, 9) ==
                    NativeMediaConsumerProgress::StaleGeneration &&
                session->facts().state == NativeAudioSessionState::Flushing,
