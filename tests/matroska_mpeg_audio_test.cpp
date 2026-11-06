@@ -16,13 +16,13 @@ namespace {
 using namespace wam::media::matroska;
 
 
-// The first frame header of scratchpad/fixtures/sw/c_mp3.mkv, byte for byte as
-// LAME produced it: MPEG-1 Layer III, 192 kbit/s, 44.1 kHz, no padding, joint
+// The first frame header of an ffmpeg/LAME MP3 Matroska fixture, byte for
+// byte as LAME produced it: MPEG-1 Layer III, 192 kbit/s, 44.1 kHz, no padding, joint
 // stereo -> 626 bytes.
 constexpr std::array<std::uint8_t, 4> kReal44kHeader{0xFF, 0xFB, 0xB0, 0x64};
 constexpr std::size_t kReal44kFrameBytes{626};
 
-// The first frame header of mp48.mkv: the same at 48 kHz -> 576 bytes.
+// The first frame header of the 48 kHz fixture: the same at 48 kHz -> 576 bytes.
 constexpr std::array<std::uint8_t, 4> kReal48kHeader{0xFF, 0xFB, 0xB4, 0x64};
 constexpr std::size_t kReal48kFrameBytes{576};
 
@@ -198,7 +198,7 @@ void testPerPacketMatch() {
 
 // The trim identity, stated as the arithmetic the demuxer performs.
 void testTrimArithmetic() {
-  // scratchpad/fixtures/sw/c_mp3.mkv: 231 packets, CodecDelay 25,056,689 ns,
+  // The 44.1 kHz fixture: 231 packets, CodecDelay 25,056,689 ns,
   // DiscardPadding 9,229,025 ns, both at 44.1 kHz.
   constexpr std::uint64_t kPackets = 231;
   constexpr std::uint64_t kDecoded = kPackets * kMpegLayer3SamplesPerAccessUnit;

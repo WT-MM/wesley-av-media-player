@@ -1824,8 +1824,8 @@ int main(int argc, char **argv) {
     Access::seedCommittedRecovery(controller, source, 63, ready, 904, 93.0,
                                   false);
 
-    // Model the transient reload observations that previously survived the
-    // recovery gate and left QML showing Play while libmpv was advancing.
+    // Model transient reload observations that must not survive the recovery
+    // gate and leave QML showing Play while libmpv is advancing.
     Access::setCachedTransportState(controller, 93.0, true, true, true);
     int paused_changes = 0;
     int playing_changes = 0;
@@ -2644,13 +2644,9 @@ int main(int argc, char **argv) {
            "native release creates one exact identity at the final target and "
            "retains pause intent");
     const std::uint64_t first_request = Access::nativeSeekRequest(controller);
-    // A target at or past the duration used to clamp to the duration exactly,
-    // which NativeMediaSession::preflightCommitTarget always refuses (it
-    // requires seconds < duration), so the seek was surfaced as an error
-    // instead of happening. The clamp reserves exactly one 1/64 s grid step,
-    // which is the whole of what that strict inequality needs. It briefly
-    // reserved 1/8 s to hide the near-EOF commit defect, which is now fixed
-    // in NativeMediaSession itself (commitRunStatePending).
+    // NativeMediaSession::preflightCommitTarget requires seconds < duration,
+    // so a target at or past the duration clamps to one 1/64 s grid step
+    // before it, which is the whole of what that strict inequality needs.
     expect(Access::stageNativeSeek(controller, 500.0) &&
                Access::nativeSeekGesture(controller) != gesture &&
                Access::nativeSeekRequest(controller) > first_request &&

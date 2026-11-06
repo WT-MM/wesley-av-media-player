@@ -1,9 +1,7 @@
 // Bounds test for the multi-window resource envelope.
 //
-// WAM became a multi-window player: every open gets its own window, all of
-// them playing at once. Every native per-session resource that used to be a
-// strict one-per-process claim is now a bounded registry sized from ONE
-// number, wam::macos::kMaximumConcurrentPlayerWindows. The individual
+// Every open gets its own window, all of them playing at once. Every native
+// per-session resource is a bounded registry sized from ONE number, wam::macos::kMaximumConcurrentPlayerWindows. The individual
 // registries are covered by their own suites (native_audio_output,
 // native_video_consumer, native_audio_session); what this file pins is the
 // arithmetic that ties them together, and the layer-presentation counter,

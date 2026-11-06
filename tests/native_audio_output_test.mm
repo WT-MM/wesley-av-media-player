@@ -1656,8 +1656,8 @@ void testStopRaceAndQuarantineLifetime() {
                                    kHostTicksPerSecond);
   WakeCounter secondWake;
   // A quarantine holds ONE slot of the bounded registry, not the registry. The
-  // next player window is admitted into a slot of its own -- what used to be a
-  // process-wide refusal is now a refusal only when all of them are held.
+  // next player window is admitted into a slot of its own; refusal comes only
+  // when all of them are held.
   std::shared_ptr<NativeAudioOutput> second = NativeAudioOutput::create(
       secondCore, fixture.fake.table(), secondWake.seam());
   expect(second && second.get() != recovered.get(),

@@ -759,12 +759,10 @@ void testSelectedDurationAdmission() {
              {3000, 1000}, {10, 1}),
          "audio meaningfully shorter than video must fall back before "
          "activation");
-  // 2026-08-27. A one-second shortfall was a refusal while the bound sized the
-  // tail the clock could not present. The clock now advances across
-  // container-declared trailing silence and the video tail draws to the end
-  // (see native_video_limits.hpp), so a shortfall of this size is admitted
-  // rather than refused. The refusal above moved to a shortfall the widened
-  // bound still rejects; it did not go away.
+  // The clock advances across container-declared trailing silence and the
+  // video tail draws to the end (see native_video_limits.hpp), so a shortfall
+  // of this size is admitted. The refusal above uses a shortfall the bound
+  // still rejects.
   expect(NativeVideoConsumer::selectedTrackDurationsSupported(
              {9000, 1000}, {10, 1}),
          "a one-second declared trailing silence is now admitted natively");
@@ -1266,7 +1264,7 @@ void testBoundedProcessGraphEnvelope() {
 // still naming an admitted delivery contradicts its own answer. Nothing else in
 // the audit catches it: retainedFrames counts leases rather than identities,
 // and awaitingDraw is this side's record of the same handshake. Pinned at all
-// three post-operation audits because they used to state the rule differently.
+// three post-operation audits so they state the rule the same way.
 void testDoneOutputMayNotStillClaimAnAdmittedFrame() {
   {
     Fixture arming;
