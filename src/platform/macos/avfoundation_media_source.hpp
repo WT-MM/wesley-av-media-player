@@ -3,7 +3,6 @@
 #include "media/native_media_source.hpp"
 #include "media/audio_track_admission.hpp"
 #include "platform/macos/avfoundation_asset_context.hpp"
-#include "platform/macos/core_media_source_support.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -15,34 +14,6 @@
 #include <string>
 
 namespace wam::macos {
-
-// Places a located sync start in the neutral timeline window
-// (timelineWindowDecodeStart). A container edit list can legitimately put it
-// outside `0 <= start <= target` at either end:
-//
-//   * a head-TRIMMED edit (elst media_time > 0) restates the RAP that decodes
-//     the picture at movie time 0 to a NEGATIVE movie time (measured:
-//     -0.801917 s on a 24000-timescale file whose video edit starts at media
-//     19246). AVAssetReader walks back to that RAP by itself from range start
-//     0, so nothing is lost by clamping;
-//   * a leading EMPTY EDIT (elst media_time == -1) puts the first RAP AFTER
-//     the target (measured: +0.023 s on an ffmpeg-muxed file whose video edit
-//     is [(23, -1), (N, 1024)]). A start can only be late when no sync sample
-//     exists at or before the search target, so it is the track's first
-//     picture: the video origin.
-//
-// Both AVFoundation lanes locate a sync start the same way and must answer
-// identically: on a head-trimmed file every target before the first in-window
-// RAP walks back to the pre-origin IDR, and a preview lane that refused it
-// would fail, latch, and veto the COMMIT seek. A start that is not exact is
-// returned unchanged for the caller to refuse.
-[[nodiscard]] inline CMTime syncStartWithinTimelineWindow(
-    CMTime located, media::MediaTime target) noexcept {
-  const auto exact = exactMediaTime(located);
-  const auto window =
-      exact ? timelineWindowDecodeStart(*exact, target, exact) : std::nullopt;
-  return window ? CMTimeMake(window->value, window->timescale) : located;
-}
 
 // The AVFoundation bridge is split at the lifetime boundary, rather than at
 // individual Objective-C calls. One session-scoped immutable AssetContext

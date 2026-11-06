@@ -1,4 +1,5 @@
 #include "platform/macos/libavformat_aac_timing.hpp"
+#include "platform/macos/avfoundation_media_support.hpp"
 #import <AVFoundation/AVFoundation.h>
 #include <vector>
 #include <algorithm>
@@ -15,14 +16,9 @@ std::optional<LibavformatAacEdit> inspectLibavformatAacEdit(
     AVAssetTrack* track = [asset trackWithTrackID:trackId];
     NSArray<AVAssetTrackSegment*>* segments = track.segments;
 #pragma clang diagnostic pop
-    if (!track || segments.count < 1 || segments.count > 2) return {};
-    AVAssetTrackSegment* last = segments.lastObject;
-    if (last.empty || (segments.count == 2 && !segments.firstObject.empty)) return {};
-    const auto m = last.timeMapping;
-    for (const auto t : {m.source.start,m.target.start,m.source.duration,m.target.duration})
-      if (!CMTIME_IS_NUMERIC(t) || t.epoch || (t.flags & kCMTimeFlags_HasBeenRounded)) return {};
-    if (CMTimeCompare(m.source.duration,m.target.duration) != 0 ||
-        CMTimeCompare(m.target.start,kCMTimeZero) < 0) return {};
+    const auto mapping = track ? singleMediaEditMapping(segments) : std::nullopt;
+    if (!mapping) return {};
+    const auto& m = *mapping;
     const auto end = CMTimeAdd(m.target.start,m.target.duration);
     if (!CMTIME_IS_NUMERIC(end) || (end.flags & kCMTimeFlags_HasBeenRounded)) return {};
     return LibavformatAacEdit{{m.target.start.value,m.target.start.timescale},{end.value,end.timescale}};

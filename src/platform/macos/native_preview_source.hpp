@@ -36,10 +36,10 @@ struct NativePreviewBinding {
   std::filesystem::path localPath;
   std::shared_ptr<const media::MediaSourceDescriptor> descriptor;
   media::MediaSourceLimits limits{};
-  // Production sessions provide the immutable context admitted by the main
-  // source; its backendKind() is what selects the concrete preview source.
-  // Null keeps the standalone cold-load path available for isolated preview
-  // use and injected tests, and only the AVFoundation backend offers one.
+  // The immutable context admitted by the main source; its backendKind() is
+  // what selects the concrete preview source. Every production preview
+  // requires one: preview never repeats the asset load behind a scrub gesture.
+  // Only tests that inject a backend may leave it null.
   std::shared_ptr<const media::MediaSourcePreparedContext> assetContext{};
 };
 
@@ -84,9 +84,9 @@ using NativePreviewReadResult =
                  NativePreviewEndOfStream, NativePreviewCancelled,
                  NativePreviewFailure>;
 
-// Production facts are cumulative across reader replacement. assetLoad* is
-// the cold immutable-asset/track admission cost; later preview requests reuse
-// that cache and create only the per-epoch streaming object.
+// Production facts are cumulative across reader replacement. assetLoad* stays
+// zero on every backend: the asset is admitted by the main source and every
+// preview request creates only the per-epoch streaming object.
 //
 // "Reader" is the backend's unit of streaming state: one AVAssetReader on the
 // AVFoundation route, one demuxer cursor on the custom-container routes. The
@@ -169,9 +169,8 @@ class NativePreviewSource {
 
 // Selects the concrete preview source from the admitted context's
 // backendKind(). This is the single site that knows which containers can be
-// previewed; a binding whose context is null falls back to the AVFoundation
-// cold-load path, and an unrecognized backend returns null so the caller
-// leaves the scrub lane inactive rather than guessing.
+// previewed; a null context or an unrecognized backend returns null so the
+// caller leaves the scrub lane inactive rather than guessing.
 [[nodiscard]] std::unique_ptr<NativePreviewSource> createNativePreviewSource(
     NativePreviewBinding binding) noexcept;
 
