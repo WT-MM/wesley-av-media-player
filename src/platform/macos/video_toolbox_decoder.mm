@@ -1306,19 +1306,8 @@ std::size_t avcCoreLength(std::span<const std::byte> record) {
   const auto inspection = media::inspectVideoCodecConfiguration(
       media::MediaCodec::H264, media::MediaCodecConfigurationKind::AvcC,
       record, recordLimits());
-  if (!inspection.admitted()) return record.size();
-  std::size_t offset = 6;
-  auto skipSets = [&](unsigned count) {
-    for (unsigned i = 0; i < count; ++i) {
-      const auto length = (std::to_integer<unsigned>(record[offset]) << 8U) |
-                           std::to_integer<unsigned>(record[offset + 1]);
-      offset += 2 + length;
-    }
-  };
-  skipSets(std::to_integer<unsigned>(record[5]) & 31U);
-  const auto count = std::to_integer<unsigned>(record[offset++]);
-  skipSets(count);
-  return offset;
+  return inspection.admitted() ? inspection.facts->avcCoreBytes
+                               : record.size();
 }
 
 bool equivalentAvcAtoms(const CodecConfigurationAtomMetadata &a,
