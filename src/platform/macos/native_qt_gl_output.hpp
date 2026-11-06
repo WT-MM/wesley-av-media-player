@@ -70,6 +70,19 @@ class NativeQtGlOutput final : public NativeScheduledFrameOutput,
       std::uint64_t finalGeneration) noexcept override;
   [[nodiscard]] NativeTrackedVideoOutputFacts facts()
       const noexcept override;
+  // The GL item samples only 4:2:0 NV12/P010 (QtGlVideoItem's
+  // colorParameters), with no transfer or gamut conversion, integral display
+  // sizes and no rotation.
+  [[nodiscard]] NativePresentationCapabilities presentationCapabilities()
+      const noexcept override {
+    return {};
+  }
+  [[nodiscard]] bool applyPresentationGeometry(
+      media::MediaDisplaySize displaySize,
+      int quarterTurnDegrees) noexcept override {
+    return quarterTurnDegrees == 0 && displaySize.width.denominator == 1 &&
+           displaySize.height.denominator == 1;
+  }
 
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
   void failNextFailureNotificationCopyForTesting() noexcept;

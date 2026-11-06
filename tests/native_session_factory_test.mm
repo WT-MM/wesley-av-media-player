@@ -28,6 +28,14 @@ class Output final : public NativeTrackedVideoOutput {
     return NativeTrackedVideoOutputProgress::Done;
   }
   NativeTrackedVideoOutputFacts facts() const noexcept override { return {}; }
+  NativePresentationCapabilities presentationCapabilities()
+      const noexcept override {
+    return {};
+  }
+  bool applyPresentationGeometry(wam::media::MediaDisplaySize,
+                                 int quarterTurnDegrees) noexcept override {
+    return quarterTurnDegrees == 0;
+  }
  private:
   std::weak_ptr<void> lifetime_;
 };

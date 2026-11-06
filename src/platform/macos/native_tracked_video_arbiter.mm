@@ -363,17 +363,16 @@ class NativeTrackedVideoArbiter::MainOutput final
 
   // Capability facts are forwarded: the arbiter neither samples, converts nor
   // draws the surface, so only the wrapped presenter can answer them.
-  [[nodiscard]] bool presentsDecodedSurfacesDirectly() const noexcept override {
-    return state_->output->presentsDecodedSurfacesDirectly();
+  [[nodiscard]] NativePresentationCapabilities presentationCapabilities()
+      const noexcept override {
+    return state_->output->presentationCapabilities();
   }
 
-  [[nodiscard]] bool setPresentationDisplaySize(
-      media::MediaDisplaySize size) noexcept override {
-    return state_->output->setPresentationDisplaySize(size);
-  }
-
-  [[nodiscard]] bool setPresentationRotation(int degrees) noexcept override {
-    return state_->output->setPresentationRotation(degrees);
+  [[nodiscard]] bool applyPresentationGeometry(
+      media::MediaDisplaySize displaySize,
+      int quarterTurnDegrees) noexcept override {
+    return state_->output->applyPresentationGeometry(displaySize,
+                                                     quarterTurnDegrees);
   }
 
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY

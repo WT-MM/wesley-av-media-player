@@ -74,8 +74,16 @@ FrameLease makeFrame(std::uint64_t generation, std::int64_t value) {
 class FakeTrackedOutput final : public NativeTrackedVideoOutput {
  public:
   wam::media::MediaDisplaySize displaySize;
-  bool setPresentationDisplaySize(wam::media::MediaDisplaySize size) noexcept override {
-    displaySize = size; return true;
+  int quarterTurn{0};
+  wam::macos::NativePresentationCapabilities presentationCapabilities()
+      const noexcept override {
+    return {.rationalDisplaySize = true, .quarterTurns = true};
+  }
+  bool applyPresentationGeometry(wam::media::MediaDisplaySize size,
+                                 int quarterTurnDegrees) noexcept override {
+    displaySize = size;
+    quarterTurn = quarterTurnDegrees;
+    return true;
   }
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
   [[nodiscard]] wam::macos::late_display_trace::Snapshot diagnosticDisplayPhase() const noexcept override {
@@ -468,9 +476,11 @@ int main() {
     auto output = std::make_shared<FakeTrackedOutput>(7);
     auto arbiter = NativeTrackedVideoArbiter::create(output);
     const wam::media::MediaDisplaySize exact{{615240,307},{1080,1}};
-    expect(arbiter && arbiter->mainOutput()->setPresentationDisplaySize(exact) &&
-               output->displaySize == exact,
-           "the arbiter forwards the exact rational geometry to the actual presenter");
+    expect(arbiter && arbiter->mainOutput()->applyPresentationGeometry(exact, 90) &&
+               output->displaySize == exact && output->quarterTurn == 90 &&
+               arbiter->mainOutput()->presentationCapabilities().quarterTurns,
+           "the arbiter forwards capabilities and the exact rational geometry "
+           "to the actual presenter");
   }
 
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY

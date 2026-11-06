@@ -748,7 +748,9 @@ class NativeVideoConsumer::Sink final : public DecodedFrameSink {
 // post-configure proof read this same function, so they cannot disagree.
 [[nodiscard]] VideoDecoderOutputInterop decodedSurfaceInteropFor(
     const NativeTrackedVideoOutput* output) noexcept {
-  return output != nullptr && output->presentsDecodedSurfacesDirectly()
+  return output != nullptr &&
+                 output->presentationCapabilities()
+                     .presentsDecodedSurfacesDirectly
              ? VideoDecoderOutputInterop::DisplayLayer
              : VideoDecoderOutputInterop::OpenGL;
 }
@@ -1797,10 +1799,19 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
     assignError(error, "video track is outside native video admission");
     return media::NativeMediaConsumeResult::Unsupported;
   }
-  if (const char* refusal = nativePresentationRefusal(*track.video,
-                                                     *impl.output, track.codec)) {
+  if (const char* refusal = nativePresentationRefusal(
+          *track.video, impl.output->presentationCapabilities(),
+          track.codec)) {
     assignError(error, refusal);
     return media::NativeMediaConsumeResult::Unsupported;
+  }
+  if (!impl.output->applyPresentationGeometry(
+          media::mediaVideoDisplaySize(*track.video),
+          normalizedQuarterTurn(track.video->rotationDegrees).value_or(0))) {
+    impl.latch(NativeVideoConsumerFailure::Output,
+               "tracked video output refused admitted presentation geometry",
+               error);
+    return media::NativeMediaConsumeResult::Failed;
   }
   if (!validTimeline(timeline, generation, track.duration)) {
     impl.latch(NativeVideoConsumerFailure::InvalidTimeline,

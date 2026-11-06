@@ -97,6 +97,29 @@ enum class NativeTrackedVideoCapacity : std::uint8_t {
   Failed,
 };
 
+// What a tracked output can present. A presenter that samples the surface in
+// process (Qt's GL scene graph) answers false to everything a sampled
+// 4:2:0 NV12/P010 path cannot do; the display-layer route, which hands the
+// surface to CoreAnimation untouched, answers true.
+struct NativePresentationCapabilities {
+  // The decoded surface goes straight to a CoreAnimation display layer and
+  // nothing in this process samples it. Only then may the decoder leave its
+  // output pixel format unpinned and take the AGX lossless-compressed surface
+  // the hardware produces natively, which is worth roughly half of the decoder
+  // service's CPU (a pinned format costs a VTPixelTransferSession per frame).
+  bool presentsDecodedSurfacesDirectly{false};
+  // 4:2:2 and 4:4:4 surfaces, and ProRes 4444's packed opaque RGB.
+  bool samplesBeyondYuv420{false};
+  // PQ/HLG and non-BT.709 transfers and primaries are converted for display.
+  bool convertsTransferAndGamut{false};
+  // Exact rational (anamorphic) display sizes, not only integral ones.
+  bool rationalDisplaySize{false};
+  // Quarter-turn rotation. An output that cannot rotate produces a clean
+  // Unsupported, so the file opens on the compatibility renderer correctly
+  // oriented instead of drawing sideways in a native window.
+  bool quarterTurns{false};
+};
+
 enum class NativeTrackedVideoOutputProgress : std::uint8_t {
   Done,
   Quiescing,
@@ -336,45 +359,19 @@ class NativeTrackedVideoOutput {
   [[nodiscard]] virtual NativeTrackedVideoOutputFacts facts()
       const noexcept = 0;
 
-  // True when this output hands the decoded surface straight to a
-  // CoreAnimation display layer and nothing in this process ever samples it.
-  // That is the only condition under which the decoder may leave its output
-  // pixel format unpinned and take the AGX lossless-compressed surface the
-  // hardware produces natively -- which is worth roughly half of the decoder
-  // service's CPU, because the pinned format costs a VTPixelTransferSession per
-  // frame. Defaults to false: an output that samples the surface (Qt's GL
-  // scene graph) must keep the pinned uncompressed contract, and a new
-  // output that forgets to answer gets the safe answer.
-  [[nodiscard]] virtual bool presentsDecodedSurfacesDirectly() const noexcept {
-    return false;
-  }
+  // What this output can present, answered whole so a wrapper forwards one
+  // value and a new capability cannot be silently answered by a default.
+  // Admission (native_presentation_admission.hpp) reads only this.
+  [[nodiscard]] virtual NativePresentationCapabilities
+  presentationCapabilities() const noexcept = 0;
 
-  // Capability question like the rotation below: the default admits only an
-  // integral display size; the layer route overrides it.
-  [[nodiscard]] virtual bool setPresentationDisplaySize(
-      media::MediaDisplaySize size) noexcept {
-    return size.width.denominator == 1 && size.height.denominator == 1;
-  }
-
-  // Ask this output to present its frames turned by `degrees` clockwise. The
-  // argument is always one of 0, 90, 180, 270 -- the source refuses every
-  // other transform long before a frame exists -- and it is stated at
-  // admission and configure time. Repeating the same rotation is idempotent.
-  //
-  // Returns whether the output can actually do it. This is a CAPABILITY
-  // question, not a request that may fail later: the consumer asks before it
-  // admits the track, so an output that cannot rotate produces a clean
-  // Unsupported and the file opens on the compatibility renderer, correctly
-  // oriented, instead of drawing sideways in a native window.
-  //
-  // Defaults to "only the identity", which is both the truth for an output
-  // that has no rotation code and the safe answer for a new output that
-  // forgets to override this -- the same rule the flag above follows. The
-  // layer route overrides it; Qt's GL scene-graph item does not, which is a
-  // documented refusal rather than a wrong picture.
-  [[nodiscard]] virtual bool setPresentationRotation(int degrees) noexcept {
-    return degrees == 0;
-  }
+  // Applies an admitted track's presentation geometry: its exact display size
+  // and a quarter turn clockwise (0, 90, 180 or 270). Called only after
+  // admission accepted the track against presentationCapabilities(), so a
+  // false return is an output failure, not a refusal. Repeating the same
+  // geometry is idempotent.
+  [[nodiscard]] virtual bool applyPresentationGeometry(
+      media::MediaDisplaySize displaySize, int quarterTurnDegrees) noexcept = 0;
 };
 
 }  // namespace wam::macos

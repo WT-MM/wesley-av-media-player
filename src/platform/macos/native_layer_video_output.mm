@@ -482,30 +482,34 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
   }
 }
 
-bool NativeLayerVideoOutput::setPresentationDisplaySize(media::MediaDisplaySize size) noexcept {
-  const auto state = state_;
-  if (!state) return false;
-  AVSampleBufferDisplayLayer* layer = nil;
-  { std::lock_guard lock(state->mutex); layer = state->layer; }
-  return layer == nil || setNativeLayerPresentationDisplaySize((__bridge void*)layer, size);
+NativePresentationCapabilities
+NativeLayerVideoOutput::presentationCapabilities() const noexcept {
+  bool hasLayer = false;
+  {
+    std::lock_guard lock(state_->mutex);
+    hasLayer = state_->layer != nil;
+  }
+  return {.presentsDecodedSurfacesDirectly = true,
+          .samplesBeyondYuv420 = true,
+          .convertsTransferAndGamut = true,
+          .rationalDisplaySize = true,
+          .quarterTurns = hasLayer};
 }
 
-bool NativeLayerVideoOutput::setPresentationRotation(int degrees) noexcept {
-  const std::shared_ptr<State> state = state_;
-  if (state == nullptr) {
-    return degrees == 0;
-  }
+bool NativeLayerVideoOutput::applyPresentationGeometry(
+    media::MediaDisplaySize displaySize, int quarterTurnDegrees) noexcept {
   AVSampleBufferDisplayLayer* layer = nil;
   {
-    std::lock_guard lock(state->mutex);
-    layer = state->layer;
+    std::lock_guard lock(state_->mutex);
+    layer = state_->layer;
   }
-  // A detached, layer-less output (the contract test builds one) can honour
-  // exactly the identity, which is the same answer the base class gives.
   if (layer == nil) {
-    return degrees == 0;
+    return quarterTurnDegrees == 0;
   }
-  return setNativeLayerPresentationRotation((__bridge void*)layer, degrees);
+  return setNativeLayerPresentationRotation((__bridge void*)layer,
+                                            quarterTurnDegrees) &&
+         setNativeLayerPresentationDisplaySize((__bridge void*)layer,
+                                               displaySize);
 }
 
 bool NativeLayerVideoOutput::startGeneration(std::uint64_t generation,

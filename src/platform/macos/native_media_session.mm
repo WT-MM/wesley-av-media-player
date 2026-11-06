@@ -313,7 +313,8 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
       const auto* video = selectedTrack(*result.descriptor,
                                        result.descriptor->selectedVideo);
       if (video != nullptr && video->video) {
-        refusal = nativePresentationRefusal(*video->video, *output_, video->codec);
+        refusal = nativePresentationRefusal(
+            *video->video, output_->presentationCapabilities(), video->codec);
       }
     }
     if (refusal != nullptr) {
