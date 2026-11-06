@@ -576,13 +576,10 @@ struct NativeAudioSessionControl final {
   bool firstAudioSampleAccepted{false};
   bool requestedPaused{true};
   float requestedGain{1.0F};
-  float appliedGain{1.0F};
   bool requestedMuted{false};
-  bool appliedMuted{false};
   NativePlaybackRate requestedRate{};
   bool requestedPreservePitch{true};
   std::uint64_t controlRevision{0};
-  std::uint64_t appliedControlRevision{0};
   bool endOfStreamRequested{false};
   bool terminalPublished{false};
   bool clockActivated{false};
@@ -593,7 +590,7 @@ struct NativeAudioSessionControl final {
   bool closeDone{false};
   TerminalOverride terminalOverride{TerminalOverride::None};
   media::MediaGeneration terminalOverrideGeneration{0};
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   bool forceCloseQuiescing{false};
 #endif
 };
@@ -601,7 +598,7 @@ struct NativeAudioSessionControl final {
 
 
 
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct NativeAudioRenderCoreTestAccess {
   static void setAfterPreflightHook(
       NativeAudioRenderCore& core,
@@ -1625,9 +1622,6 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
   // therefore does not mint a control revision.
   control.renderCore.setGain(control.requestedGain);
   control.renderCore.setMuted(control.requestedMuted);
-  control.appliedGain = control.requestedGain;
-  control.appliedMuted = control.requestedMuted;
-  control.appliedControlRevision = control.controlRevision;
   const NativeAudioOutputProgress outputConfigured =
       control.output->configure({generation, 0, plan->mediaOrigin,
                                  control.hostClock.ticksPerSecond,
@@ -1976,9 +1970,6 @@ NativeAudioSessionProgress NativeAudioSession::setGain(float gain) noexcept {
   control.requestedGain = normalizedGain(gain);
   saturatingIncrement(control.controlRevision);
   control.renderCore.setGain(control.requestedGain);
-  control.appliedGain = control.requestedGain;
-  control.appliedMuted = control.requestedMuted;
-  control.appliedControlRevision = control.controlRevision;
   return NativeAudioSessionProgress::Done;
 }
 
@@ -2008,7 +1999,6 @@ NativeAudioSessionProgress NativeAudioSession::setRate(
   }
   control.requestedRate = rate;
   saturatingIncrement(control.controlRevision);
-  control.appliedControlRevision = control.controlRevision;
   return NativeAudioSessionProgress::Done;
 }
 
@@ -2024,9 +2014,6 @@ NativeAudioSessionProgress NativeAudioSession::setMuted(bool muted) noexcept {
   control.requestedMuted = muted;
   saturatingIncrement(control.controlRevision);
   control.renderCore.setMuted(control.requestedMuted);
-  control.appliedGain = control.requestedGain;
-  control.appliedMuted = control.requestedMuted;
-  control.appliedControlRevision = control.controlRevision;
   return NativeAudioSessionProgress::Done;
 }
 
@@ -2357,7 +2344,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
   control.outputSuspension = OutputSuspension::None;
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (control.forceCloseQuiescing) {
     return media::NativeMediaConsumerProgress::Quiescing;
   }
@@ -2426,11 +2413,8 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.configured = control.configured;
   result.requestedPaused = control.requestedPaused;
   result.requestedGain = control.requestedGain;
-  result.appliedGain = control.appliedGain;
   result.requestedMuted = control.requestedMuted;
-  result.appliedMuted = control.appliedMuted;
   result.controlRevision = control.controlRevision;
-  result.appliedControlRevision = control.appliedControlRevision;
   result.endOfStreamRequested = control.endOfStreamRequested;
   result.terminalPublished = control.terminalPublished;
   result.terminalObserved = terminalObserved(control);

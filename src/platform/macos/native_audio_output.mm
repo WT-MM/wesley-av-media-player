@@ -1089,10 +1089,12 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
     media::MediaTime mediaOrigin,
     media::MediaTime pausedClockPosition,
     NativeAudioDeclaredSilence declaredSilence) noexcept {
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (nativeAudioDeviceRecoverySeekTestGate().exchange(false, std::memory_order_acq_rel)) {
     devicePropertyChanged(&gSlots[slot_index_].deviceListener, unit_,
                           kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0);
   }
+#endif
   // Generation activation must reconcile pending format invalidation on its owner.
   if ((admission_gate_.load(std::memory_order_acquire) & kAdmissionDeviceInvalid) != 0) {
     const auto reconciled = reconcileDeviceChange();
@@ -1210,9 +1212,7 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
     return NativeAudioOutputProgress::Failed;
   }
 
-  if (before_start_commit_hook_ != nullptr) {
-    before_start_commit_hook_(before_start_commit_context_);
-  }
+  WAM_NATIVE_TEST_HOOK(before_start_commit_hook_);
 
   render_core_.setAccepting(true);
   admission_epoch_.store(epoch + 1U, std::memory_order_release);
@@ -1678,9 +1678,7 @@ OSStatus NativeAudioOutput::renderCallback(
     return noErr;
   }
   const NativeAudioOutputWakeSeam wake = output->wake_;
-  if (output->before_admission_hook_ != nullptr) {
-    output->before_admission_hook_(output->before_admission_context_);
-  }
+  WAM_NATIVE_TEST_HOOK(output->before_admission_hook_);
   const std::uint64_t admissionEpoch =
       output->admission_epoch_.load(std::memory_order_acquire);
   OSStatus status = kAudio_ParamError;
@@ -1734,10 +1732,7 @@ OSStatus NativeAudioOutput::renderCallback(
     if (signalNativeAudioOutputWake(wake)) {
       saturatingAdd(output->callback_wake_signals_, 1);
     }
-    if (output->after_callback_wake_hook_ != nullptr) {
-      output->after_callback_wake_hook_(
-          output->after_callback_wake_context_);
-    }
+    WAM_NATIVE_TEST_HOOK(output->after_callback_wake_hook_);
   } else {
     saturatingAdd(output->suppressed_callback_wakes_, 1);
   }
@@ -1790,10 +1785,7 @@ void NativeAudioOutput::devicePropertyChanged(
   // on the serialized owner re-reads StreamFormat and decides.
   BridgeExitPinGuard exitPin(bridge);
   static_cast<void>(signalNativeAudioOutputWake(wake));
-  if (output->after_listener_wake_hook_ != nullptr) {
-    output->after_listener_wake_hook_(
-        output->after_listener_wake_context_);
-  }
+  WAM_NATIVE_TEST_HOOK(output->after_listener_wake_hook_);
   const std::uint64_t released = bridgeEntry.release();
   if (finalDrainingBridgeEntry(released)) {
     static_cast<void>(signalNativeAudioOutputWake(wake));
@@ -2074,10 +2066,7 @@ NativeAudioOutputFacts NativeAudioOutput::facts() const noexcept {
   const CallbackBridge &renderBridge = gSlots[slot_index_].render;
   NativeAudioOutput *const bridgeOwnerBefore =
       renderBridge.owner.load(std::memory_order_acquire);
-  if (after_facts_bridge_owner_hook_ != nullptr) {
-    after_facts_bridge_owner_hook_(
-        after_facts_bridge_owner_context_);
-  }
+  WAM_NATIVE_TEST_HOOK(after_facts_bridge_owner_hook_);
   const std::uint64_t callbackBridgeGate =
       renderBridge.gate.load(std::memory_order_acquire);
   const std::uint32_t callbackBridgeExitPins =

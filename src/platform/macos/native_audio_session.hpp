@@ -90,15 +90,11 @@ struct NativeAudioSessionFacts {
   bool resourceEntered{false};
   bool configured{false};
   bool requestedPaused{true};
-  // Normalized owner requests and the exact pair most recently published to
-  // the render core's lock-free callback controls. "Applied" means callback-
-  // visible, not that the render core's bounded gain ramp has completed.
+  // Normalized owner requests; each is published to the render core's
+  // lock-free callback controls as it is accepted.
   float requestedGain{1.0F};
-  float appliedGain{1.0F};
   bool requestedMuted{false};
-  bool appliedMuted{false};
   std::uint64_t controlRevision{0};
-  std::uint64_t appliedControlRevision{0};
   bool endOfStreamRequested{false};
   bool terminalPublished{false};
   bool terminalObserved{false};
@@ -118,7 +114,7 @@ struct NativeAudioSessionFacts {
 };
 
 struct NativeAudioSessionControl;
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct NativeAudioSessionTestAccess;
 #endif
 
@@ -275,12 +271,12 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
 
   std::shared_ptr<NativeAudioSessionControl> control_;
 
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeAudioSessionTestAccess;
 #endif
 };
 
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Source-only deterministic lifecycle seam used by the focused injected test.
 // Production code must not bypass flush() through this type.
 struct NativeAudioSessionTestAccess {

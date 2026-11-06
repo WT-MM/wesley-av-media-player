@@ -3,6 +3,7 @@
 #include "native_audio_render_core.hpp"
 #include "native_audio_stretch_stage.hpp"
 #include "native_audio_test_mute.hpp"
+#include "native_test_seams.hpp"
 #include "media/native_audio_benchmark.hpp"
 
 #include <AudioToolbox/AudioToolbox.h>
@@ -609,17 +610,13 @@ class NativeAudioOutput final
   int slot_index_{-1};
   std::shared_ptr<NativeAudioOutput> callback_self_owner_;
 
-  using TestHook = void (*)(void *context) noexcept;
-  TestHook before_admission_hook_{nullptr};
-  void *before_admission_context_{nullptr};
-  TestHook before_start_commit_hook_{nullptr};
-  void *before_start_commit_context_{nullptr};
-  TestHook after_callback_wake_hook_{nullptr};
-  void *after_callback_wake_context_{nullptr};
-  TestHook after_listener_wake_hook_{nullptr};
-  void *after_listener_wake_context_{nullptr};
-  TestHook after_facts_bridge_owner_hook_{nullptr};
-  void *after_facts_bridge_owner_context_{nullptr};
+#if defined(WAM_NATIVE_TEST_SEAMS)
+  NativeTestHook before_admission_hook_;
+  NativeTestHook before_start_commit_hook_;
+  NativeTestHook after_callback_wake_hook_;
+  NativeTestHook after_listener_wake_hook_;
+  NativeTestHook after_facts_bridge_owner_hook_;
+#endif
 
   static constexpr std::uint64_t kAdmissionClosed =
       std::uint64_t{1} << 63U;
@@ -673,7 +670,9 @@ class NativeAudioOutput final
   std::atomic<bool> underrun_active_{false};
   std::atomic<bool> failure_wake_emitted_{false};
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeAudioOutputTestAccess;
+#endif
 };
 
 // Media frames one device period of `deviceBufferFrames` can consume at the

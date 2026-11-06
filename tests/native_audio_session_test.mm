@@ -1,4 +1,4 @@
-#define WAM_NATIVE_AUDIO_SESSION_TESTING 1
+#define WAM_NATIVE_TEST_SEAMS 1
 
 #include "media/native_media_dispatcher.hpp"
 #include "platform/macos/native_audio_session.hpp"
@@ -744,11 +744,8 @@ MediaSourceOpenOptions audioOptions(std::int64_t targetFrame) {
                                     const NativeAudioSessionFacts& rhs)
     noexcept {
   return lhs.requestedGain == rhs.requestedGain &&
-         lhs.appliedGain == rhs.appliedGain &&
          lhs.requestedMuted == rhs.requestedMuted &&
-         lhs.appliedMuted == rhs.appliedMuted &&
-         lhs.controlRevision == rhs.controlRevision &&
-         lhs.appliedControlRevision == rhs.appliedControlRevision;
+         lhs.controlRevision == rhs.controlRevision;
 }
 
 void expectTerminalControlsInert(NativeAudioSession& session,
@@ -784,10 +781,8 @@ void testCachedGainMuteControls() {
              session->setMuted(true) == NativeAudioSessionProgress::Done,
          "Fresh audio controls accept a cached gain and independent mute");
   const NativeAudioSessionFacts cached = session->facts();
-  expect(cached.requestedGain == 0.25F && cached.appliedGain == 0.25F &&
-             cached.requestedMuted && cached.appliedMuted &&
-             cached.controlRevision == 2 &&
-             cached.appliedControlRevision == 2,
+  expect(cached.requestedGain == 0.25F && cached.requestedMuted &&
+             cached.controlRevision == 2,
          "Fresh controls publish one exact normalized pair per request");
 
   NativeAudioSession* audio = session.get();
@@ -823,10 +818,8 @@ void testCachedGainMuteControls() {
   expect(std::fabs(unmutedSamples[254] - expectedLastLeft) < 0.000001F,
          "unmute ramps to the preconfigure quarter-gain target");
   const NativeAudioSessionFacts unmuted = audio->facts();
-  expect(unmuted.requestedGain == 0.25F &&
-             unmuted.appliedGain == 0.25F && !unmuted.requestedMuted &&
-             !unmuted.appliedMuted && unmuted.controlRevision == 3 &&
-             unmuted.appliedControlRevision == 3,
+  expect(unmuted.requestedGain == 0.25F && !unmuted.requestedMuted &&
+             unmuted.controlRevision == 3,
          "mute changes never overwrite gain or lose callback publication");
 
   allocations.store(0, std::memory_order_relaxed);
@@ -860,10 +853,8 @@ void testCachedGainMuteControls() {
   expect(rapidAccepted && allocations.load(std::memory_order_relaxed) == 0 &&
              clampedLow == 0.0F && boosted == 4.0F && clampedHigh == 4.0F &&
              failSafeNonFinite == 0.0F &&
-             rapid.requestedGain == 0.75F &&
-             rapid.appliedGain == 0.75F && !rapid.requestedMuted &&
-             !rapid.appliedMuted && rapid.controlRevision == 11 &&
-             rapid.appliedControlRevision == 11,
+             rapid.requestedGain == 0.75F && !rapid.requestedMuted &&
+             rapid.controlRevision == 11,
          "rapid normalized controls are allocation-free and last-write wins");
 
   expect(dispatcher.close(1).status ==

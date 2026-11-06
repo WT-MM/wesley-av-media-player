@@ -1393,6 +1393,8 @@ if(BUILD_TESTING)
         src/platform/macos/native_audio_stretch_stage.hpp
         src/platform/macos/native_audio_stretch_stage.mm)
       target_include_directories(wam_native_audio_output_test PRIVATE src)
+      target_compile_definitions(wam_native_audio_output_test PRIVATE
+        WAM_NATIVE_TEST_SEAMS=1)
       target_link_libraries(wam_native_audio_output_test PRIVATE
         wam_native_core
         "${WAM_COREMEDIA_FRAMEWORK}"

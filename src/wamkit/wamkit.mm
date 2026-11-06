@@ -3,7 +3,7 @@
 #include "platform/macos/native_open_preflight.hpp"
 #include "platform/macos/native_layer_host_view.hpp"
 #include "platform/macos/native_layer_video_output.hpp"
-#include "platform/macos/native_audio_test_mute.hpp"
+#include "platform/macos/native_test_seams.hpp"
 #include "platform/macos/native_embedding_support.hpp"
 #include "platform/macos/native_surface_budget.hpp"
 #include <array>
@@ -11,6 +11,10 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+
+#if defined(WAMKIT_ENABLE_TEST_SUPPORT) && !defined(WAM_NATIVE_TEST_SEAMS)
+#error "WAMKit test support needs the native test seams compiled in"
+#endif
 
 using namespace wam::macos;
 namespace media = wam::media;
