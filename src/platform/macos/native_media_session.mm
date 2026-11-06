@@ -4068,47 +4068,6 @@ NativeMediaSession::takeObservations() noexcept {
   return result;
 }
 
-NativeMediaSessionFacts NativeMediaSession::facts() const noexcept {
-  NativeMediaSessionFacts result;
-  if (impl_ == nullptr) {
-    result.ownership = NativeMediaSessionOwnershipPhase::Closed;
-    return result;
-  }
-  std::lock_guard lock(impl_->mutex);
-  result.ownership = impl_->publicOwnership;
-  result.generation = impl_->publicActiveGeneration;
-  result.generationHighWater = impl_->generationHighWater;
-  result.invalidationGeneration =
-      impl_->publishedStop.has_value()
-          ? impl_->publishedStop->invalidationGeneration.value
-          : 0;
-  result.workerRunning = impl_->worker.joinable() && !impl_->exitRequested;
-  result.prepareAccepted = impl_->publishedPrepare.has_value();
-  result.prepared = impl_->publicPrepared;
-  result.started = impl_->publicStarted;
-  result.dispatcherObservedVideo = impl_->publicDispatcherObservedVideo;
-  result.directVideoRetired = impl_->publicDirectVideoRetired;
-  result.directAudioRetired = impl_->publicDirectAudioRetired;
-  result.factPending = impl_->factMailbox.has_value();
-  result.stopLatched = impl_->publishedStop.has_value();
-  result.stoppedProofPublished = impl_->publicStopped;
-  result.ending = impl_->publicEnding;
-  result.endedProofPublished = impl_->publicEnded;
-  result.liveFailed = impl_->publicLiveFailed;
-  result.previewHandoffPending = impl_->publicPreviewHandoffPending;
-  result.previewHandoffReady = impl_->publicPreviewHandoffReady;
-  result.previewPending = impl_->publicPreviewPending;
-  result.previewPresentedPending = impl_->previewPresentedSlot.has_value();
-  result.previewFailedPending = impl_->previewFailedSlot.has_value();
-  result.commitPending = impl_->publicCommitPending;
-  result.commitReadyPending = impl_->commitReadySlot.has_value();
-  result.requestedRunStateStamp = impl_->publicRequestedRunStamp;
-  result.issuedRunStateStamp = impl_->publicIssuedRunStamp;
-  result.appliedRunStateStamp = impl_->publicAppliedRunStamp;
-  result.appliedPaused = impl_->publicAppliedPaused;
-  result.observationPending = impl_->observationsPresentLocked();
-  return result;
-}
 
 void NativeMediaSession::setMetricsEnabled(bool enabled) noexcept {
   if (impl_) impl_->metricsArmed.store(enabled, std::memory_order_relaxed);
@@ -4178,6 +4137,50 @@ NativeMediaSessionMetrics NativeMediaSession::metrics() const noexcept {
 }
 
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+NativeMediaSessionFacts NativeMediaSessionTestAccess::facts(
+    const NativeMediaSession& session) noexcept {
+  const auto& impl_ = session.impl_;
+  NativeMediaSessionFacts result;
+  if (impl_ == nullptr) {
+    result.ownership = NativeMediaSessionOwnershipPhase::Closed;
+    return result;
+  }
+  std::lock_guard lock(impl_->mutex);
+  result.ownership = impl_->publicOwnership;
+  result.generation = impl_->publicActiveGeneration;
+  result.generationHighWater = impl_->generationHighWater;
+  result.invalidationGeneration =
+      impl_->publishedStop.has_value()
+          ? impl_->publishedStop->invalidationGeneration.value
+          : 0;
+  result.workerRunning = impl_->worker.joinable() && !impl_->exitRequested;
+  result.prepareAccepted = impl_->publishedPrepare.has_value();
+  result.prepared = impl_->publicPrepared;
+  result.started = impl_->publicStarted;
+  result.dispatcherObservedVideo = impl_->publicDispatcherObservedVideo;
+  result.directVideoRetired = impl_->publicDirectVideoRetired;
+  result.directAudioRetired = impl_->publicDirectAudioRetired;
+  result.factPending = impl_->factMailbox.has_value();
+  result.stopLatched = impl_->publishedStop.has_value();
+  result.stoppedProofPublished = impl_->publicStopped;
+  result.ending = impl_->publicEnding;
+  result.endedProofPublished = impl_->publicEnded;
+  result.liveFailed = impl_->publicLiveFailed;
+  result.previewHandoffPending = impl_->publicPreviewHandoffPending;
+  result.previewHandoffReady = impl_->publicPreviewHandoffReady;
+  result.previewPending = impl_->publicPreviewPending;
+  result.previewPresentedPending = impl_->previewPresentedSlot.has_value();
+  result.previewFailedPending = impl_->previewFailedSlot.has_value();
+  result.commitPending = impl_->publicCommitPending;
+  result.commitReadyPending = impl_->commitReadySlot.has_value();
+  result.requestedRunStateStamp = impl_->publicRequestedRunStamp;
+  result.issuedRunStateStamp = impl_->publicIssuedRunStamp;
+  result.appliedRunStateStamp = impl_->publicAppliedRunStamp;
+  result.appliedPaused = impl_->publicAppliedPaused;
+  result.observationPending = impl_->observationsPresentLocked();
+  return result;
+}
+
 void NativeMediaSessionTestAccess::installPreview(
     NativeMediaSession& session, NativeMediaSessionTestPreview preview) noexcept {
   if (session.impl_ == nullptr) {

@@ -328,39 +328,6 @@ enum class NativeMediaSessionOwnershipPhase : std::uint8_t {
   Closed,
 };
 
-struct NativeMediaSessionFacts {
-  NativeMediaSessionOwnershipPhase ownership{
-      NativeMediaSessionOwnershipPhase::Empty};
-  media::MediaGeneration generation{0};
-  media::MediaGeneration generationHighWater{0};
-  media::MediaGeneration invalidationGeneration{0};
-  bool workerRunning{false};
-  bool prepareAccepted{false};
-  bool prepared{false};
-  bool started{false};
-  bool dispatcherObservedVideo{false};
-  bool directVideoRetired{false};
-  bool directAudioRetired{false};
-  bool factPending{false};
-  bool stopLatched{false};
-  bool stoppedProofPublished{false};
-  bool ending{false};
-  bool endedProofPublished{false};
-  bool liveFailed{false};
-  bool previewHandoffPending{false};
-  bool previewHandoffReady{false};
-  bool previewPending{false};
-  bool previewPresentedPending{false};
-  bool previewFailedPending{false};
-  bool commitPending{false};
-  bool commitReadyPending{false};
-  native_playback::Stamp requestedRunStateStamp{};
-  native_playback::Stamp issuedRunStateStamp{};
-  native_playback::Stamp appliedRunStateStamp{};
-  bool appliedPaused{true};
-  bool observationPending{false};
-};
-
 // Diagnostic-only cumulative playback counters for an out-of-band metrics
 // stream. Every counter is cumulative since this session was constructed, not
 // since process start: a new open builds a new session and restarts them at
@@ -471,7 +438,6 @@ class NativeMediaSession final {
   stop(native_playback::Stop command) noexcept;
 
   [[nodiscard]] NativeMediaSessionObservations takeObservations() noexcept;
-  [[nodiscard]] NativeMediaSessionFacts facts() const noexcept;
   // Diagnostic sampler for an out-of-band metrics stream. Safe to call from
   // any thread. The first call arms worker-side publication; until the worker
   // has completed one pass afterwards the returned validity flags are false.
@@ -524,7 +490,42 @@ struct NativeMediaSessionTestCommitPhaseTrace {
   std::size_t length{0};
 };
 
+struct NativeMediaSessionFacts {
+  NativeMediaSessionOwnershipPhase ownership{
+      NativeMediaSessionOwnershipPhase::Empty};
+  media::MediaGeneration generation{0};
+  media::MediaGeneration generationHighWater{0};
+  media::MediaGeneration invalidationGeneration{0};
+  bool workerRunning{false};
+  bool prepareAccepted{false};
+  bool prepared{false};
+  bool started{false};
+  bool dispatcherObservedVideo{false};
+  bool directVideoRetired{false};
+  bool directAudioRetired{false};
+  bool factPending{false};
+  bool stopLatched{false};
+  bool stoppedProofPublished{false};
+  bool ending{false};
+  bool endedProofPublished{false};
+  bool liveFailed{false};
+  bool previewHandoffPending{false};
+  bool previewHandoffReady{false};
+  bool previewPending{false};
+  bool previewPresentedPending{false};
+  bool previewFailedPending{false};
+  bool commitPending{false};
+  bool commitReadyPending{false};
+  native_playback::Stamp requestedRunStateStamp{};
+  native_playback::Stamp issuedRunStateStamp{};
+  native_playback::Stamp appliedRunStateStamp{};
+  bool appliedPaused{true};
+  bool observationPending{false};
+};
+
 struct NativeMediaSessionTestAccess {
+  [[nodiscard]] static NativeMediaSessionFacts facts(
+      const NativeMediaSession& session) noexcept;
   static void installPreview(NativeMediaSession& session,
                              NativeMediaSessionTestPreview preview) noexcept;
   static void installFailureLatchBarrier(
