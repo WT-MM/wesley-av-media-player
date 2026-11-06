@@ -686,6 +686,7 @@ struct NativeMediaSession::Impl final {
   [[nodiscard]] bool observationsPresentLocked() const noexcept {
     return factMailbox.has_value() || runStateAppliedSlot.has_value() ||
            audioClockSlot.has_value() || videoDrawSlot.has_value() ||
+           exactDrawSlot.has_value() || diagnosticSlot.has_value() ||
            previewPresentedSlot.has_value() || previewFailedSlot.has_value() ||
            commitReadySlot.has_value();
   }
@@ -4040,26 +4041,20 @@ NativeMediaSession::takeObservations() noexcept {
   }
   {
     std::lock_guard lock(impl_->mutex);
-    result.lifecycle = std::move(impl_->factMailbox);
+    result.lifecycle = std::exchange(impl_->factMailbox, std::nullopt);
     result.admissionRouteChoice = impl_->admissionRouteChoice &&
         result.lifecycle && std::holds_alternative<protocol::Failed>(*result.lifecycle);
-    result.runStateApplied = std::move(impl_->runStateAppliedSlot);
-    result.audioClock = std::move(impl_->audioClockSlot);
-    result.videoDraw = std::move(impl_->videoDrawSlot);
-    result.exactDraw = std::move(impl_->exactDrawSlot);
-    impl_->exactDrawSlot.reset();
-    result.previewPresented = std::move(impl_->previewPresentedSlot);
-    result.previewFailed = std::move(impl_->previewFailedSlot);
-    result.diagnostic = std::move(impl_->diagnosticSlot);
-    impl_->diagnosticSlot.reset();
-    result.commitReady = std::move(impl_->commitReadySlot);
-    impl_->factMailbox.reset();
-    impl_->runStateAppliedSlot.reset();
-    impl_->audioClockSlot.reset();
-    impl_->videoDrawSlot.reset();
-    impl_->previewPresentedSlot.reset();
-    impl_->previewFailedSlot.reset();
-    impl_->commitReadySlot.reset();
+    result.runStateApplied =
+        std::exchange(impl_->runStateAppliedSlot, std::nullopt);
+    result.audioClock = std::exchange(impl_->audioClockSlot, std::nullopt);
+    result.videoDraw = std::exchange(impl_->videoDrawSlot, std::nullopt);
+    result.exactDraw = std::exchange(impl_->exactDrawSlot, std::nullopt);
+    result.previewPresented =
+        std::exchange(impl_->previewPresentedSlot, std::nullopt);
+    result.previewFailed =
+        std::exchange(impl_->previewFailedSlot, std::nullopt);
+    result.diagnostic = std::exchange(impl_->diagnosticSlot, std::nullopt);
+    result.commitReady = std::exchange(impl_->commitReadySlot, std::nullopt);
     impl_->observationQueued = false;
     impl_->observationRetryWakeUsed = false;
     impl_->queuedObservationQueueSerial = 0;
