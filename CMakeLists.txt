@@ -10,9 +10,8 @@ endif()
 project(WAM VERSION 0.4.46 LANGUAGES CXX)
 
 if(APPLE)
-  # Apple-native targets below use Objective-C++ even when the dormant legacy
-  # video option is off. Enabling the language here keeps target availability
-  # independent of that older feature gate.
+  # Apple-native targets below use Objective-C++ even when
+  # WAM_ENABLE_MACOS_NATIVE_VIDEO is off.
   enable_language(OBJCXX)
 endif()
 
@@ -27,16 +26,13 @@ option(WAM_ENABLE_MACOS_NATIVE_VIDEO
 # VP8 is the one video codec in WAM's envelope that no Apple hardware decodes,
 # so it needs a software decode stage. libvpx supplies it. Discovery is
 # best-effort and the option defaults to whatever discovery found: a machine
-# without libvpx configures cleanly and simply keeps routing VP8 to the
-# compatibility fallback, exactly as before this stage existed.
+# without libvpx configures cleanly and routes VP8 to the compatibility
+# fallback.
 #
 # PACKAGING: this adds a real runtime dependency. Development builds link the
 # Homebrew dylib by absolute path -- the same shape as the staged FFmpeg
-# binary -- but a shipped app needs libvpx added to the pinned, relocatable
-# closure in scripts/bundle_macos.zsh and to the release workflow's
-# checksum-pinned media archive. Until that lands, a bundled WAM.app must be
-# built with WAM_ENABLE_SOFTWARE_VP8=OFF or it will not launch off this
-# machine.
+# binary. Release builds take libvpx from the pinned media closure
+# (scripts/build_media_closure.sh) through PKG_CONFIG_PATH.
 find_package(PkgConfig QUIET)
 set(WAM_LIBVPX_FOUND OFF)
 if(APPLE AND PkgConfig_FOUND)
@@ -165,7 +161,7 @@ find_package(Qt6 6.10 REQUIRED COMPONENTS
 find_package(PkgConfig REQUIRED)
 if(APPLE)
   # The native-first macOS executable needs libmpv's declarations to compile
-  # its dormant compatibility client, but it must not acquire a load command
+  # its compatibility client, but it must not acquire a load command
   # for libmpv. The fallback runtime resolves the complete API table only
   # after the playback router explicitly selects fallback.
   pkg_check_modules(MPV_HEADERS REQUIRED mpv)
@@ -184,7 +180,7 @@ if(TARGET PkgConfig::MPV)
   wam_normalize_msys2_pkgconfig_target(PkgConfig::MPV ${MPV_LIBRARY_DIRS})
 endif()
 if(APPLE AND BUILD_TESTING)
-  # These two legacy integration tests intentionally exercise a real linked
+  # These two integration tests intentionally exercise a real linked
   # mpv client through an injected table. Keep that strong dependency private
   # to tests; the shipping executable sees only wam_mpv_headers.
   pkg_check_modules(MPV_TEST_LINK REQUIRED IMPORTED_TARGET mpv)
@@ -848,9 +844,8 @@ if(BUILD_TESTING)
 
     # This optional benchmark uses POSIX-only fixture I/O.
     if(APPLE)
-      # Regime microbenchmarks for the demuxer. EXCLUDE_FROM_ALL keeps it off the
-      # default build; the ctest entry carries the `benchmark` label so it never
-      # enters the required-test regex, which names tests explicitly.
+      # Not built by default (EXCLUDE_FROM_ALL); run with `ctest -L benchmark`
+      # after building wam_matroska_demuxer_bench, exclude with `-LE benchmark`.
       add_executable(wam_matroska_demuxer_bench EXCLUDE_FROM_ALL
         benchmarks/matroska_demuxer_bench.cpp)
       target_link_libraries(wam_matroska_demuxer_bench PRIVATE wam_native_core)
@@ -860,7 +855,7 @@ if(BUILD_TESTING)
       add_test(NAME matroska_demuxer_bench
         COMMAND wam_matroska_demuxer_bench --quick)
       set_tests_properties(matroska_demuxer_bench PROPERTIES
-        LABELS benchmark TIMEOUT 600 DISABLED FALSE)
+        LABELS benchmark TIMEOUT 600)
 
     endif()
 
@@ -1859,9 +1854,6 @@ if(BUILD_TESTING)
         src/qt/native_benchmark_telemetry.cpp)
       target_include_directories(
         wam_native_benchmark_telemetry_test PRIVATE src)
-      target_compile_definitions(
-        wam_native_benchmark_telemetry_test PRIVATE
-        WAM_NATIVE_BENCHMARK_TELEMETRY_TESTING=1)
       target_compile_features(
         wam_native_benchmark_telemetry_test PRIVATE cxx_std_20)
       target_compile_options(
