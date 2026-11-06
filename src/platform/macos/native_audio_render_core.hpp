@@ -40,6 +40,11 @@ using NativeAudioStretchPull = std::uint32_t (*)(void *context,
                                                  std::uint32_t frames) noexcept;
 
 struct NativeAudioStretchStage {
+  // render() pulls input at most once per slice of this many output frames,
+  // and each pull is at most one ring slab, so a render of N output frames
+  // pulls at most ceil(N / kSliceOutputFrames) slabs.
+  static constexpr std::uint32_t kSliceOutputFrames = 1024;
+
   void *context{nullptr};
   bool (*configure)(void *context, NativeAudioStretchPull pull,
                     void *pullContext) noexcept {nullptr};
@@ -175,10 +180,8 @@ struct NativeAudioRenderStats {
   std::uint64_t metadataCorrections{0};
   std::uint64_t pauseBoundaries{0};
   std::uint64_t endOfStreamFacts{0};
-  // Callbacks that ran through the stretch stage. stretchShortfallFrames is
-  // retained for telemetry compatibility; input chunking is not a shortfall.
+  // Callbacks that ran through the stretch stage.
   std::uint64_t stretchedCallbacks{0};
-  std::uint64_t stretchShortfallFrames{0};
   std::uint64_t rateChanges{0};
   NativePlaybackRate rate{};
   NativeAudioRenderFailure failure{NativeAudioRenderFailure::None};
@@ -384,6 +387,15 @@ private:
   // it has already written.
   NativeAudioRenderResult &refuse(NativeAudioRenderResult &result,
                                   NativeAudioRenderFailure failure) noexcept;
+  // The non-latching rejection: name the admission, mark the next interval
+  // discontinuous and count the rejected callback.
+  NativeAudioRenderResult &reject(NativeAudioRenderResult &result,
+                                  NativeMediaSegmentAdmission admission) noexcept;
+  // True while the stretch stage still holds media the output has not yet
+  // played, which keeps it in the path even at the unit rate.
+  [[nodiscard]] bool stageEngaged() const noexcept {
+    return cursor_frame_ != output_cursor_frame_;
+  }
   // One callback's coverage split in MEDIA order into declared-silence head,
   // real PCM, and declared-silence tail, all exact on the callback's immutable
   // rational. A pure function of the input, the rate, the ring occupancy and
@@ -501,7 +513,6 @@ private:
   std::atomic<std::uint64_t> pause_boundaries_{0};
   std::atomic<std::uint64_t> eof_facts_{0};
   std::atomic<std::uint64_t> stretched_callbacks_{0};
-  std::atomic<std::uint64_t> stretch_shortfall_frames_{0};
   std::atomic<std::uint64_t> rate_changes_{0};
 
   TestHook after_preflight_hook_{nullptr};

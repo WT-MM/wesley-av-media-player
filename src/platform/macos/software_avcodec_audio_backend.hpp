@@ -5,8 +5,9 @@ struct AVFrame;
 namespace wam::macos {
 class SoftwareAvcodecAudioBackend final:public NativeAudioConverterBackend {
 public:
-  explicit SoftwareAvcodecAudioBackend(media::avcodec::Codec codec);
+  explicit SoftwareAvcodecAudioBackend(media::avcodec::Codec codec,NativeAudioBackendWake wake={});
   ~SoftwareAvcodecAudioBackend() override;
+  NativeAudioBackendCapabilities capabilities() const noexcept override;
   bool configure(const NativeAudioBackendConfiguration&,std::string*) override;
   NativeAudioBackendResult convert(NativeAudioBackendInput,std::span<float>) override;
   bool reset(std::string*) override;

@@ -34,6 +34,9 @@ clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
   "$repo_dir/src/platform/macos/native_audio_converter.mm" \
   -o "$build_dir/native_audio_converter.o"
 clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
+  "$repo_dir/src/platform/macos/native_audio_converter_backends.mm" \
+  -o "$build_dir/native_audio_converter_backends.o"
+clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
   "$repo_dir/src/platform/macos/native_audio_stretch_stage.mm" \
   -o "$build_dir/native_audio_stretch_stage.o"
 clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \

@@ -1296,7 +1296,9 @@ if(BUILD_TESTING)
       add_executable(wam_native_audio_converter_test
         tests/native_audio_converter_test.mm
         src/platform/macos/native_audio_converter.hpp
-        src/platform/macos/native_audio_converter.mm)
+        src/platform/macos/native_audio_converter.mm
+        src/platform/macos/native_audio_converter_backends.hpp
+        src/platform/macos/native_audio_converter_backends.mm)
       target_include_directories(wam_native_audio_converter_test PRIVATE src)
       target_link_libraries(wam_native_audio_converter_test PRIVATE
         wam_native_core
@@ -1324,7 +1326,9 @@ if(BUILD_TESTING)
       add_executable(wam_native_audio_converter_opus_test
         tests/native_audio_converter_opus_test.mm
         src/platform/macos/native_audio_converter.hpp
-        src/platform/macos/native_audio_converter.mm)
+        src/platform/macos/native_audio_converter.mm
+        src/platform/macos/native_audio_converter_backends.hpp
+        src/platform/macos/native_audio_converter_backends.mm)
       target_include_directories(wam_native_audio_converter_opus_test
         PRIVATE src)
       target_link_libraries(wam_native_audio_converter_opus_test PRIVATE

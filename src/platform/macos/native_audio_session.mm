@@ -6,8 +6,8 @@
 #include "media/audio_downmix.hpp"
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
+#include "native_audio_admission.hpp"
 #include "native_audio_channel_map.hpp"
-#include "native_audio_sample_rates.hpp"
 #include "native_concurrency_limits.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
@@ -147,57 +147,14 @@ void assignError(std::string* error, const char* message) noexcept {
   return true;
 }
 
-// The same whitelist NativeAudioConverter admits by, asked one layer earlier so
-// an inadmissible track produces a clean fallback rather than a converter
-// failure part-way through graph construction.
-[[nodiscard]] bool supportedCodec(const media::MediaTrackDescriptor& track)
-    noexcept {
-  if (track.audio && media::softwareAudioCodec(track.codec)) {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    return track.audio->formatTag == 0 &&
-        track.codecConfigurationKind == media::MediaCodecConfigurationKind::CodecPrivate;
-#else
-    return false;
-#endif
-  }
-  return track.audio && audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag);
-}
-
-// Whether this track's first access unit legitimately presents before media
-// time zero: Matroska stores a Block's timestamp on the codec grid and states
-// CodecDelay separately, so access unit 0 of an Opus, Vorbis, AC-3, E-AC-3,
-// MP3 or CodecDelay-bearing AAC track starts early. The generation therefore
-// decodes a bounded preroll it must not publish -- exactly what
-// trimBeforeFloor already means.
-[[nodiscard]] bool codecStartsBeforeStreamOrigin(
-    const media::MediaTrackDescriptor& track) noexcept {
-  return media::audioCodecPrecedesStreamOrigin(track.codec);
-}
-
-// Whether this track's stated duration is the exact decoded sample count, and
-// therefore usable as the frame the generation must stop publishing at.
-//
-// This is a different question from codecStartsBeforeStreamOrigin, and the
-// sets differ at both ends: FLAC states an exact duration but starts at the
-// origin, and AAC precedes the origin but reaches this pipeline from
-// AVFoundation as well as from Matroska.
-//
-// AAC (and the software codecs) are the reason for the second clause. Only
-// the Matroska descriptor states a decoded sample count; an AVFoundation
-// track's duration is the container's own number, which is not required to be
-// a whole number of frames at all. The ceiling is therefore taken only when the
-// stated duration IS an exact whole frame count -- which the Matroska path
-// always produces by construction, and which an approximate container duration
-// cannot fake into being wrong: if it is not exact the track simply takes no
-// ceiling instead of failing the whole session, and if it is exact then it is
-// the true end of the track and stopping there is right.
-[[nodiscard]] bool codecStatesExactDecodedDuration(
+// Whether this track's stated duration is an exact whole number of frames,
+// and therefore usable as the frame the generation must stop publishing at.
+// A Matroska descriptor states the exact decoded sample count by construction;
+// another container's duration is its own number, which need not be a whole
+// frame count. Such a track simply takes no ceiling instead of failing the
+// whole session, and a duration that IS exact is the true end of the track.
+[[nodiscard]] bool durationIsExactFrameCount(
     const media::MediaTrackDescriptor& track, std::uint32_t sampleRate) noexcept {
-  if (!media::audioCodecStatesExactDecodedDuration(track.codec)) {
-    if (track.codec != media::MediaCodec::Aac && !media::softwareAudioCodec(track.codec)) {
-      return false;
-    }
-  }
   std::int64_t ceilingFrame = 0;
   return exactFrame(track.duration, sampleRate, &ceilingFrame) &&
          ceilingFrame > 0;
@@ -435,29 +392,14 @@ void assignError(std::string* error, const char* message) noexcept {
     const media::MediaTrackDescriptor& track,
     media::MediaGeneration generation,
     const media::NativeMediaGenerationTimeline& timeline) noexcept {
-  std::uint32_t sampleRate = 0;
-  if (generation == 0 || timeline.generation != generation ||
-      track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
-      !track.audio || !supportedCodec(track) ||
-      track.audio->channels == 0 ||
-      track.audio->channels > media::kMaximumDownmixSourceChannels ||
-      !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
-      !audioChannelLayoutAdmitted(*track.audio) ||
-      !nativeAudioSampleRateSupported(track.audio->sampleRate, &sampleRate) ||
-      track.codecConfiguration.size() >
-          media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes ||
-      (media::softwareAudioCodec(track.codec)
-           ? track.codecConfigurationKind != media::MediaCodecConfigurationKind::CodecPrivate
-           : ((!track.codecConfiguration.empty() &&
-               track.codecConfigurationKind != media::MediaCodecConfigurationKind::AudioMagicCookie) ||
-              (track.codecConfiguration.empty() &&
-               track.codecConfigurationKind != media::MediaCodecConfigurationKind::None)))) {
+  const std::optional<AdmittedAudio> admitted = admitAudioTrack(track);
+  if (generation == 0 || timeline.generation != generation || !admitted) {
     return std::nullopt;
   }
-  return timelinePlanFor(generation, timeline, sampleRate,
-                         codecStartsBeforeStreamOrigin(track),
-                         codecStatesExactDecodedDuration(track, sampleRate),
-                         track.duration);
+  return timelinePlanFor(
+      generation, timeline, admitted->sampleRate,
+      media::audioCodecPrecedesStreamOrigin(track.codec),
+      durationIsExactFrameCount(track, admitted->sampleRate), track.duration);
 }
 
 
@@ -518,16 +460,18 @@ struct NativeAudioSessionControl final {
         ring(initialGeneration),
         clock(this->hostClock),
         renderCore(ring, clock, this->hostClock.ticksPerSecond),
-        converter(ring, std::move(backend)),
-        generation(initialGeneration) {
-    converter.setBackendWake({[](void* context) noexcept {
-      auto& control = *static_cast<NativeAudioSessionControl*>(context);
-      bool expected = false;
-      if (control.outputWake.pending->compare_exchange_strong(expected, true,
-          std::memory_order_acq_rel, std::memory_order_acquire))
-        control.outputWake.signal(control.outputWake.context);
-    }, this});
-  }
+        converter(ring, std::move(backend),
+                  {[](void* context) noexcept {
+                     auto& control =
+                         *static_cast<NativeAudioSessionControl*>(context);
+                     bool expected = false;
+                     if (control.outputWake.pending->compare_exchange_strong(
+                             expected, true, std::memory_order_acq_rel,
+                             std::memory_order_acquire))
+                       control.outputWake.signal(control.outputWake.context);
+                   },
+                   this}),
+        generation(initialGeneration) {}
 
   void latch(NativeAudioSessionFailure value) noexcept {
     if (failure == NativeAudioSessionFailure::None) {
@@ -639,7 +583,15 @@ struct NativeAudioRenderCoreTestAccess {
 NativeAudioSubmitResult NativeAudioSessionTestAccess::occupyConverter(
     NativeAudioSession& session, media::MediaSample&& sample) noexcept {
   try {
-    return session.control_->converter.submit(std::move(sample), nullptr);
+    NativeAudioConverter& converter = session.control_->converter;
+    NativeAudioPrepareOutcome outcome = converter.prepare(sample, nullptr);
+    if (outcome.result != NativeAudioSubmitResult::Accepted) {
+      return outcome.result;
+    }
+    return converter.commitPrepared(std::move(outcome.prepared),
+                                    std::move(sample))
+               ? NativeAudioSubmitResult::Accepted
+               : NativeAudioSubmitResult::Failed;
   } catch (...) {
     return NativeAudioSubmitResult::Failed;
   }
@@ -1635,7 +1587,7 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
 
   control.track = track.id;
   control.sampleRate = plan->sampleRate;
-  control.audioMayPrecedeStreamOrigin = codecStartsBeforeStreamOrigin(track);
+  control.audioMayPrecedeStreamOrigin = media::audioCodecPrecedesStreamOrigin(track.codec);
   control.trimAfterCeiling = plan->converter.trimAfterCeiling;
   control.presentationCeiling = plan->converter.presentationCeiling;
   control.presentationFloorFrame = plan->floorFrame;
