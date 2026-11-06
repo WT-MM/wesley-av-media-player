@@ -668,8 +668,6 @@ struct AdtsHeader {
 
 [[nodiscard]] bool parseAdtsHeader(std::span<const std::byte> bytes,
                                    AdtsHeader& header) noexcept;
-[[nodiscard]] std::uint32_t
-adtsSampleRateForIndex(std::uint8_t index) noexcept;
 
 // --- LOAS / LATM (stream type 0x11) ---------------------------------------
 //

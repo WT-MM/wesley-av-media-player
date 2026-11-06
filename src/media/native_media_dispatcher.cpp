@@ -1311,7 +1311,8 @@ NativeMediaDispatcher::queueBehindLane(bool isVideo, bool isAudio,
     // this one to the consumer. Append it and keep reading. A full lane keeps
     // the event as the head-of-line blocker instead, which shuts the read gate
     // and names the wake that reopens it.
-    const bool queued = queuePendingIntoLane(video_lane_);
+    const bool queued =
+        queuePendingIntoLane(video_lane_, kVideoReadAheadPayloadBytes);
     return makeStep(NativeMediaDispatcherAction::BlockedVideo,
                     queued ? NativeMediaDispatcherWait::CallAgain
                            : NativeMediaDispatcherWait::VideoConsumer,
@@ -1322,7 +1323,8 @@ NativeMediaDispatcher::queueBehindLane(bool isVideo, bool isAudio,
     // Same per-lane order rule for an audio lane the seek-settle window filled.
     // It applies whenever the lane is non-empty, including after the window
     // closes, so the lane always drains in source order.
-    const bool queued = queuePendingIntoLane(audio_lane_);
+    const bool queued =
+        queuePendingIntoLane(audio_lane_, kAudioReadAheadPayloadBytes);
     return makeStep(NativeMediaDispatcherAction::BlockedAudio,
                     queued ? NativeMediaDispatcherWait::CallAgain
                            : NativeMediaDispatcherWait::AudioConsumer,
@@ -2248,8 +2250,9 @@ bool NativeMediaDispatcher::laneHasReadAheadRoom(
 }
 
 bool NativeMediaDispatcher::queuePendingIntoLane(
-    ReadAheadLane& lane) noexcept {
-  if (!pending_ || lane.size == kLaneReadAheadEvents) {
+    ReadAheadLane& lane, std::size_t payloadHighWater) noexcept {
+  if (!pending_ || lane.size == kLaneReadAheadEvents ||
+      lane.payloadBytes >= payloadHighWater) {
     return false;
   }
   const std::size_t tail = (lane.head + lane.size) % kLaneReadAheadEvents;

@@ -82,7 +82,7 @@ std::optional<MediaTime> MatroskaSourceTraits::videoOrigin(
 
 CMVideoFormatDescriptionRef MatroskaSourceTraits::createVideoFormatDescription(
     const MediaTrackDescriptor& track) noexcept {
-  return createMatroskaVideoFormatDescription(track);
+  return macos::createVideoFormatDescription(track);
 }
 
 MediaTime MatroskaSourceTraits::mergeOrderKey(
@@ -97,7 +97,7 @@ MediaTime MatroskaSourceTraits::mergeOrderKey(
 struct MatroskaMediaSource::Impl final
     : NativeCustomSourceCore<Impl, MatroskaSourceTraits> {
   using Base = NativeCustomSourceCore<Impl, MatroskaSourceTraits>;
-  media::AudioTrackRejections rejectedAudio;
+  using Base::rejectedAudio;
   MatroskaSourceTraits::PrepareOutcome prepareAsset(
       const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
       MatroskaSourceTraits::CancellationToken token) noexcept {
@@ -279,7 +279,8 @@ struct MatroskaMediaSource::Impl final
       return true;
     }
     if (!audioHead || !audioDecodeStart.valid() ||
-        audioHead->value.presentationTime != audioDecodeStart) {
+        std::get<MediaSample>(audioHead->value).presentationTime !=
+            audioDecodeStart) {
       assignError(error,
                   "first staged audio access unit does not begin at the "
                   "planned audio window decode start");
@@ -297,12 +298,7 @@ MatroskaMediaSource::~MatroskaMediaSource() { close(); }
 
 bool MatroskaMediaSource::armOperation(
     media::MediaGeneration generation) noexcept {
-  const bool armed = impl_ != nullptr && impl_->arm(generation);
-  if (armed) {
-    rejectedAudio_ = {};
-    impl_->rejectedAudio = {};
-  }
-  return armed;
+  return impl_ != nullptr && impl_->arm(generation);
 }
 
 media::MediaSourceOpenOutcome MatroskaMediaSource::openLocalFile(
@@ -315,27 +311,7 @@ media::MediaSourceOpenOutcome MatroskaMediaSource::openLocalFile(
 media::MediaSourceOpenOutcome MatroskaMediaSource::retryAudioTrack(
     const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
     media::MediaGeneration generation, media::MediaTrackId rejected) {
-  if (options.selection.preferredAudio || !impl_->descriptor ||
-      impl_->descriptor->selectedAudio != rejected || impl_->generation != generation ||
-      !rejectedAudio_.add(rejected)) {
-    media::MediaSourceOpenOutcome out;
-    out.generation = generation;
-    out.refusal = media::MediaRefusalClass::AudioTrackRetryExhausted;
-    out.error = media::mediaRefusalClassName(out.refusal);
-    return out;
-  }
-  impl_->retireActive();
-  impl_->clearHeads();
-  impl_->descriptor.reset();
-  impl_->assetContext.reset();
-  impl_->open = false;
-  impl_->openSnapshot.store(false, std::memory_order_release);
-  impl_->rejectedAudio = rejectedAudio_;
-  // Retry is part of the same cold open; cancellation and its generation
-  // high-water survive source retirement and cannot be cleared by retry.
-  impl_->armedGeneration = generation;
-  impl_->operationGeneration.store(generation, std::memory_order_release);
-  return openLocalFile(path, options, generation);
+  return impl_->retryAudioTrack(path, options, generation, rejected);
 }
 
 media::MediaSourceSeekOutcome MatroskaMediaSource::seek(

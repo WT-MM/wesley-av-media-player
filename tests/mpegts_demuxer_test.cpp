@@ -1,5 +1,6 @@
 #include "media/mpegts_demuxer.hpp"
 
+#include "media/codec/aac.hpp"
 #include "media/codec/ac3.hpp"
 #include "media/codec/mpeg_audio.hpp"
 #include "media/mpegts_packet.hpp"
@@ -949,8 +950,8 @@ void testElementaryAudioFraming() {
   expect(header.channelConfiguration == 2, "channel configuration is stereo");
   expect(header.headerBytes == 7, "protection_absent means a 7-byte header");
   expect(header.frameBytes == 512, "the 13-bit frame length is exact");
-  expect(adtsSampleRateForIndex(3) == 48'000, "index 3 is 48 kHz");
-  expect(adtsSampleRateForIndex(13) == 0, "a reserved index is refused");
+  expect(wam::media::codec::aacSampleRateForIndex(3) == 48'000, "index 3 is 48 kHz");
+  expect(wam::media::codec::aacSampleRateForIndex(13) == 0, "a reserved index is refused");
   Bytes badAdts = adts;
   badAdts[0] = octet(0xFE);
   expect(!parseAdtsHeader(badAdts, header), "a broken syncword is refused");

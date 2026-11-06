@@ -529,12 +529,10 @@ class NativeMediaDispatcher final {
   static constexpr std::size_t kAudioReadAheadPayloadBytes = 512U * 1024U;
 
   // Worst-case retained read-ahead payload: one admission high-water plus one
-  // maximum sample (see above). Asserting it matters because admission checks
-  // bytes (laneHasReadAheadRoom) but the lane writers enforce only the event
-  // count. The structural cap is therefore 24 x 8 MiB = 192 MiB of video
-  // payload -- sixteen times the documented figure -- held down only by an
-  // unchecked ordering invariant. These asserts pin the documented number so a
-  // change to either limit has to confront the real bound.
+  // maximum sample (see above). Every append to a lane checks the high-water
+  // (queuePendingIntoLane), and a refused event is only ever put back at the
+  // front of the lane it was just taken from or of an empty lane, so this is
+  // the real bound rather than 24 events x one maximum sample.
   static constexpr std::size_t kMaximumRetainedVideoReadAheadBytes =
       kVideoReadAheadPayloadBytes +
       MediaSourceLimits::kHardMaximumVideoSampleBytes;
@@ -710,8 +708,11 @@ class NativeMediaDispatcher final {
   void deferPendingIntoLane(ReadAheadLane& lane) noexcept;
   // Appends a validated event that arrived while older events of the same lane
   // are still queued. The consumer is deliberately not called: per-lane order
-  // is preserved by draining the queue head first.
-  [[nodiscard]] bool queuePendingIntoLane(ReadAheadLane& lane) noexcept;
+  // is preserved by draining the queue head first. Refused once the lane holds
+  // its payload high-water, which keeps the pending event as the head-of-line
+  // blocker.
+  [[nodiscard]] bool queuePendingIntoLane(ReadAheadLane& lane,
+                                          std::size_t payloadHighWater) noexcept;
   [[nodiscard]] bool takeLaneHead(ReadAheadLane& lane,
                                   PendingLaneHead head) noexcept;
   [[nodiscard]] static NativeMediaPendingKind eventPendingKind(

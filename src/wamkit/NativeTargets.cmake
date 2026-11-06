@@ -158,6 +158,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
     set(WAM_MACOS_NATIVE_BACKEND_SOURCES
       src/platform/macos/core_media_source_support.hpp
       src/platform/macos/native_custom_source_core.hpp
+      src/platform/macos/avfoundation_media_support.hpp
+      src/platform/macos/avfoundation_media_support.mm
       src/platform/macos/avfoundation_asset_context.hpp
       src/platform/macos/avfoundation_asset_context.mm
       src/platform/macos/avfoundation_media_source.hpp
@@ -170,6 +172,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
       src/platform/macos/matroska_media_source.mm
       src/platform/macos/matroska_preview_source.hpp
       src/platform/macos/matroska_preview_source.mm
+      src/platform/macos/core_media_carriage.hpp
+      src/platform/macos/core_media_carriage.mm
       src/platform/macos/matroska_sample_builder.hpp
       src/platform/macos/matroska_sample_builder.mm
       src/platform/macos/mpegts_asset_context.hpp
