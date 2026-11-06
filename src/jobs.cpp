@@ -181,7 +181,7 @@ int runWindowsChild(const detail::CancellationFlag& cancellation,
 
 int runCommand(const detail::CancellationFlag& cancellation,
                const std::string& command) {
-  // Legacy/test-only shell route. Production exports use runProcessCommand().
+  // Test-only shell route. Production exports use runProcessCommand().
   std::wstring command_line =
       L"cmd.exe /D /S /C \"" + widenUtf8(command) + L"\"";
   return runWindowsChild(cancellation, nullptr, std::move(command_line));
@@ -474,11 +474,10 @@ std::string atempoFilter(double speed) {
 // plays faster and higher together, then resample back to a normal rate.
 //
 // asetrate takes a plain integer -- it has no variable for the stream's own
-// sample rate, so the earlier `asetrate=sample_rate*N` was not a filter
-// expression at all and every pitch-shifted export failed to even open its
-// output ("Undefined constant ... in 'sample_rate*2'", exit 234). Pinning the
-// audio to a known rate first makes the arithmetic possible without probing
-// the input: resample to 48 kHz, relabel that as 48000*speed, resample back.
+// sample rate, so an expression such as `sample_rate*N` fails to open the
+// output. Pinning the audio to a known rate first makes the arithmetic
+// possible without probing the input: resample to 48 kHz, relabel that as
+// 48000*speed, resample back.
 std::string varispeedFilter(double speed) {
   constexpr long kBaseRate = 48000;
   speed = std::clamp(speed, 0.0625, 16.0);
@@ -730,7 +729,7 @@ std::filesystem::path reserveExportStagingFile(
     // the path it is handed is this staging file -- so a WebM or GIF export
     // whose staging file ended in ".mp4" would be muxed as MP4 and then
     // renamed into place, producing a file that lies about itself. An
-    // extensionless destination keeps the historical ".mp4".
+    // extensionless destination gets ".mp4".
     const auto destination_extension = absolute_destination.extension().string();
     std::ostringstream name;
     name << ".wam-export-" << std::hex << token << '-' << attempt
@@ -1089,7 +1088,7 @@ std::string toolSearchFailure(const ToolSearch& search) {
 std::filesystem::path findBundledTool(const char* executable, const char* argv0) {
   const auto search = executableSearch(executable, executable, argv0);
   auto resolved = resolveTool(search, toolIsExecutable);
-  // The bare name preserves this function's historical non-empty contract.
+  // The bare name preserves this function's non-empty contract.
   // Callers that need to explain a miss run the search themselves.
   return resolved.empty() ? std::filesystem::path(executable ? executable : "")
                           : resolved;

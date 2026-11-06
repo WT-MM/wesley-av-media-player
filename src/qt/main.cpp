@@ -221,8 +221,9 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //                       WAM_TEST_WINDOW line and one WAM_TEST_SUBTITLES line
 //                       per window to stderr
 //
-// Telemetry-gated like every other WAM_TEST_* seam, so a shipping launch can
-// never observe it.
+// Like every WAM_TEST_* seam in this file, it is read only when benchmark
+// telemetry is armed (NativeBenchmarkTelemetry::instance().enabled()), so a
+// shipping launch can never observe it.
 // ---------------------------------------------------------------------------
 // Defined below, next to the argv parsing it also serves.
 QUrl mediaUrlFromArgument(const QString &argument);
@@ -302,7 +303,7 @@ int volumeFeedbackActive(const wam::qt::PlayerWindow *window) {
 // reached the aspect lock. It is reported next to the frame because the two
 // answer different questions and a run needs both: the frame is what the
 // window did, and this is what it was told. That separation matters most under
-// the benchmark telemetry every WAM_TEST_* seam is gated behind, under which
+// the benchmark telemetry these seams are gated behind, under which
 // qml/Main.qml suppresses the aspect snap outright (windowChrome.benchmarkMode)
 // -- the frame there proves nothing about geometry, while this still proves
 // the container was measured.
@@ -718,9 +719,8 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
 // application, and WAM_TEST_MUTED=1 launches with silent hardware output.
 // Automated GUI verification runs on the developer's own machine: without
 // these, every correctness round steals the keyboard mid-sentence and plays
-// the clip's audio out loud. Both are gated on nativeBenchmarkTelemetryArmed()
-// like every other WAM_TEST_* seam, so a shipping launch can never observe
-// either.
+// the clip's audio out loud. Both are telemetry-gated like the window script
+// above.
 //
 // Neither seam may change what a measurement sees. WAM_TEST_BACKGROUND leaves
 // the window ON SCREEN and COMPOSITED (accessory activation policy, not a
@@ -739,7 +739,7 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
 // unacceptable thing to leave on the user's screen. A small parked rectangle
 // keeps the compositing proof and stops the window from being in the way.
 //
-// Telemetry-gated like every other WAM_TEST_* seam. qml/Main.qml already
+// Telemetry-gated. qml/Main.qml already
 // suppresses the QuickTime aspect snap under the same opt-in (it reads
 // windowChrome.benchmarkMode), so a parked rectangle stays put.
 #endif  // defined(__APPLE__)
@@ -817,11 +817,11 @@ QUrl mediaUrlFromArgument(const QString &argument) {
   if (!explicit_url.scheme().isEmpty())
     return QUrl::fromUserInput(argument);
 
-  // Sorted, and kept a superset of every extension the open dialog offers.
-  // "webm" being absent from this list meant `wam clip.webm` for a file that
-  // does not exist under the working directory fell through to the web-host
-  // heuristic below and was opened as a URL rather than reported as a missing
-  // local file.
+  // Sorted. A bare argument with one of these suffixes stays a local path, so
+  // a missing file is reported as missing rather than falling through to the
+  // web-host heuristic below and opening as a URL. Hand-kept in step with the
+  // open dialog's media filter (qml/Main.qml); the dialog's playlist suffixes
+  // (m3u, m3u8, pls, cue) are not listed.
   constexpr std::array<std::string_view, 43> media_extensions = {
       "3g2",  "3gp",  "3gpp", "aac",  "ac3",  "aif",  "aiff", "alac",
       "amr",  "asf",  "avi",  "caf",  "dts",  "eac3", "flac", "flv",
@@ -917,8 +917,7 @@ class FileOpenRelay final : public QObject {
 };
 
 // Every media argument on the command line, in order. WAM opens a window per
-// file the way `open -a WAM a.mp4 b.mp4` and Finder's multi-select do; before
-// multi-window it could only honour the first one.
+// file the way `open -a WAM a.mp4 b.mp4` and Finder's multi-select do.
 QList<QUrl> initialMediaUrls(const QCoreApplication &app) {
   QList<QUrl> media;
   const QStringList arguments = app.arguments();
@@ -986,8 +985,7 @@ int verifyRuntime() {
   const QUrl inferred_remote =
       mediaUrlFromArgument(QStringLiteral("www.example.invalid/video.mp4"));
   // A bare, nonexistent container filename must stay local for every
-  // extension the app offers, not just the handful the list happened to
-  // carry. webm and mkv are the two the open dialog leads with.
+  // extension the app offers; webm and mka probe the list beyond mp4.
   const QUrl missing_webm =
       mediaUrlFromArgument(QStringLiteral("definitely-missing.webm"));
   const QUrl missing_mka =
@@ -1062,8 +1060,8 @@ static int runApplication(int argc, char *argv[]) {
   // scene actually contains: on a 16" M3 Max that is a 4096x2048 RGBA8 atlas,
   // 32 MiB of GPU memory allocated the first time anything small is atlassed
   // and held for the window's whole lifetime. Nothing reclaims it --
-  // QQuickWindow::releaseResources() only clears CPU-side caches (measured:
-  // IOAccelerator unchanged at 33 MB with and without it), and the atlas is
+  // QQuickWindow::releaseResources() only clears CPU-side caches (IOAccelerator
+  // is unchanged at 33 MB with and without it), and the atlas is
   // freed only by scene-graph invalidation, which on the basic render loop
   // macOS+OpenGL selects happens once, at window destruction.
   //
@@ -1072,7 +1070,7 @@ static int runApplication(int argc, char *argv[]) {
   // wider than ~60 device pixels. 512x512 is 1 MiB and still atlasses anything
   // up to 128px (Qt's limit is a quarter of the atlas width). Anything larger
   // transparently gets its own texture, so this trades batching, never
-  // correctness. Measured on h264-high.mp4, layer route, window parked
+  // correctness. With an H.264 clip on the layer route, window parked
   // 640x360: IOAccelerator (graphics) 33 MB -> 2.1 MB, process footprint
   // 117 MB -> 61 MB.
   //
@@ -1282,9 +1280,9 @@ static int runApplication(int argc, char *argv[]) {
       windows.requestCheckpoint();
 
     // The menu bar's Quit item calls Qt.quit(), which emits QQmlEngine::quit
-    // -- a signal with NO default receiver on this construction (the runtime
-    // warned "emitted, but no receivers connected" and Cmd-Q silently did
-    // nothing). Wire it, and its exit() sibling, explicitly. Queued, so the
+    // -- a signal with NO default receiver on this construction, so unwired
+    // Cmd-Q does nothing ("emitted, but no receivers connected"). Wire it, and
+    // its exit() sibling, explicitly. Queued, so the
     // quit unwinds from the event loop rather than from inside the menu
     // item's activation.
     QObject::connect(&engine, &QQmlEngine::quit, &app,

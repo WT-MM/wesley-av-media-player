@@ -144,10 +144,9 @@ bool parseRecord(std::string_view line, PersistentState& state,
   if (key == "volume") {
     int value = 0;
     if (!parseNumber(line, value)) return false;
-    // Admits the whole boost range the maximum-volume setting can now open
-    // up. A window is still only ever SEEDED at 100 (see
-    // WindowManager::seedController), so widening what is recorded cannot
-    // make a fresh window loud.
+    // Admits the whole boost range the maximum-volume setting can open up.
+    // A window is only ever SEEDED at 100 (see WindowManager::seedController),
+    // so a recorded boost cannot make a fresh window loud.
     state.volume = std::clamp(value, 0, 400);
     return true;
   }

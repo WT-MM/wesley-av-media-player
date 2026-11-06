@@ -90,8 +90,7 @@ class PlayerController final : public QObject {
   //
   // An empty QSize means "not known" -- audio-only media, no media, or an open
   // that has not reached Prepared yet. It exists because MacWindowChrome's
-  // AVURLAsset probe, which is what qml/Main.qml asked first and still asks
-  // first, cannot demux Matroska/WebM/MPEG-TS and answers (0, 0) for every one
+  // AVURLAsset probe, which qml/Main.qml asks first, cannot demux Matroska/WebM/MPEG-TS and answers (0, 0) for every one
   // of them; Main.qml falls back to this when it does.
   Q_PROPERTY(QSizeF videoDisplaySize READ videoDisplaySize NOTIFY
                  videoDisplaySizeChanged)
@@ -1011,7 +1010,6 @@ private:
   QSizeF video_display_size_;
   media::MediaDisplaySize exact_video_display_size_;
   double volume_ = 1.0;
-  // Default 200%, the user-confirmed default for the Preferences setting.
   double maximum_volume_ = 2.0;
   double rate_ = 1.0;
   double trim_in_ = 0.0;

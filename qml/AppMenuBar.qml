@@ -10,8 +10,8 @@ import Qt.labs.platform as Platform
 // Every action below calls an existing controller/root function; nothing
 // here invents new player behavior. Deliberately not wired: Space, the
 // arrow keys, and F. Main.qml already binds those as bare, unmodified
-// shortcuts (global Shortcut items for Space/Left/Right, a Keys.onPressed
-// filter for F) -- see the App/Playback/View menus' comments below. A
+// shortcuts (window-scoped Shortcut items for Space/Left/Right, a
+// Keys.onPressed filter for F). A
 // native NSMenu key equivalent for a bare, unmodified key intercepts every
 // matching keystroke application-wide, including inside text fields (Quick
 // Edit's fields, the preferences window), which would silently eat normal
@@ -111,9 +111,8 @@ Platform.MenuBar {
             onTriggered: root.controller.toggleMute()
         }
 
-        // No `shortcut:` here -- see the file header comment. The action
-        // remains reachable by click; Space keeps working exactly as before
-        // via Main.qml's own global Shortcut.
+        // No `shortcut:` here -- see the file header comment. Space is
+        // Main.qml's own window-scoped Shortcut.
         Platform.MenuItem {
             text: root.hasController && root.controller.playing ? "Pause" : "Play"
             enabled: root.mediaLoaded
@@ -163,9 +162,9 @@ Platform.MenuBar {
     // compatibility route), so the same menu works either way.
     //
     // A FIXED POOL of items rather than an Instantiator. Qt.labs.platform
-    // mutates the real NSMenu, and this file already documents (see the
-    // Window Hugs Video item below) that its checkable items imperatively
-    // overwrite `checked` and detach any binding on it. A static pool keeps every item's
+    // mutates the real NSMenu, and its checkable items imperatively
+    // overwrite `checked` and detach any binding on it (see the Window
+    // Hugs Video re-sync at the bottom of this file). A static pool keeps every item's
     // identity stable across focus changes and file changes, so the one
     // imperative re-sync at the bottom of this file is the whole story;
     // creating and destroying native menu items on every open would add a
@@ -211,9 +210,7 @@ Platform.MenuBar {
         // next to it and leaves the real selection alone. Nothing then fires
         // activeSubtitleTrackChanged, so the imperative re-sync that carries
         // the radio semantics never runs, `Off` stays checked, and a second
-        // click on the other track adds a third check mark. That was the
-        // reported defect: Off and both "English" rows checked at once, with
-        // no subtitles actually playing.
+        // click on the other track adds a third check mark.
         //
         // syncChecks() runs on EVERY path out of here, including the ones
         // that change nothing (a click on the already-selected row, a slot
@@ -285,10 +282,9 @@ Platform.MenuBar {
         // Reads root.controller DIRECTLY rather than the derived `tracks` and
         // `hasController` bindings. This runs from onControllerChanged, and a
         // handler on a property fires without any guarantee that the bindings
-        // depending on that same property have been re-evaluated yet -- which
-        // showed up as the menu being exactly one update stale after focus
-        // moved between windows: it listed the previous window's tracks with
-        // the previous window's check mark. Reading the thing that actually
+        // depending on that same property have been re-evaluated yet, so the
+        // derived bindings can still hold the previous window's tracks and
+        // check mark after focus moves. Reading the thing that actually
         // changed is the only ordering-independent fix, and it is the same
         // rule the View menu's checkbox handler follows below.
         const controller = root.controller;
@@ -350,21 +346,17 @@ Platform.MenuBar {
         // is on. A second trigger restores the exact frame the window had.
         //
         // Cmd-Shift-F, and this one DOES carry a `shortcut:` -- the file
-        // header's prohibition is on BARE keys, which a native NSMenu key
-        // equivalent would intercept application-wide including inside text
-        // fields. A Cmd-modified sequence can never collide with typed text.
-        // Nothing else in the app binds any Cmd-Shift sequence.
+        // header's prohibition is on BARE keys only. Nothing else in the app
+        // binds any Cmd-Shift sequence.
         Platform.MenuItem {
             id: fillPaddedMenuItem
             text: "Fill Screen (Padded)"
             shortcut: "Ctrl+Shift+F"
             checkable: true
-            // Qt.labs.platform writes `checked` imperatively on every click,
-            // which detaches a plain binding for good -- the same hazard the
-            // hugs-video item documents below. The Connections block at the
-            // end of this file re-syncs it from the focused window's real
-            // state instead, so it survives any number of clicks and follows
-            // focus between windows.
+            // Only the initial value: Qt.labs.platform's click write detaches
+            // this binding (see the hugs-video re-sync at the end of this
+            // file), so the Connections block there re-syncs it from the
+            // focused window's real state.
             checked: root.hasWindow ? root.appRoot.fillScreenPadded : false
             // Fullscreen owns the window frame outright; padding underneath
             // it would be invisible and a frame AppKit would fight on the way
@@ -381,9 +373,9 @@ Platform.MenuBar {
             }
         }
         Platform.MenuSeparator {}
-        // No `shortcut:` (F is a bare key -- see file header); the existing
-        // F key handling in Main.qml is untouched, this just adds a
-        // clickable, discoverable path to the same action.
+        // No `shortcut:` (F is a bare key -- see file header); F itself is
+        // handled in Main.qml, and this is the clickable, discoverable path
+        // to the same action.
         Platform.MenuItem {
             text: root.hasWindow && root.appRoot.visibility === Window.FullScreen ? "Exit Full Screen" : "Enter Full Screen"
             enabled: root.mediaLoaded && root.hasWindow
@@ -391,14 +383,9 @@ Platform.MenuBar {
         }
         Platform.MenuSeparator {}
         // QuickTime-style floating window: keep the windowed frame hugging
-        // the video's aspect ratio (no letterbox bars). Bound both ways --
-        // `checked` below is only this item's *initial* value; Qt.labs.
-        // platform's own checkable toggle does a direct imperative write to
-        // `checked` on every click, which detaches a plain binding for good
-        // (ordinary QML property semantics). The Connections block at the
-        // bottom of this file re-syncs `checked` imperatively every time the
-        // controller's real value changes, which does not depend on any
-        // binding having survived.
+        // the video's aspect ratio (no letterbox bars). `checked` below is
+        // only this item's *initial* value; the Connections block at the
+        // bottom of this file re-syncs it (see there for why).
         Platform.MenuItem {
             id: hugsVideoMenuItem
             text: "Window Hugs Video"
@@ -441,14 +428,9 @@ Platform.MenuBar {
             }
         }
         Platform.MenuSeparator {}
-        // The "h" macro, made discoverable. Deliberately WITHOUT a `shortcut:`
-        // -- see the file header: a native NSMenu key equivalent for a bare,
-        // unmodified key intercepts that keystroke application-wide, text
-        // fields included, which would eat every "h" typed into Quick Edit or
-        // the Preferences panel. The bare-key gesture itself is bound where
-        // every other bare key in this app is bound, in qml/Main.qml's
-        // Keys.onPressed filter on the video stage, which only ever sees a
-        // keystroke when no text field has focus.
+        // The "h" macro, made discoverable. No `shortcut:` (h is a bare key
+        // -- see the file header); the key itself is bound in qml/Main.qml's
+        // Keys.onPressed filter on the video stage.
         Platform.MenuItem {
             text: "Hide and Pause All"
             enabled: root.host.windowCount > 0

@@ -1093,7 +1093,6 @@ void CaptionService::complete(const fs::path &output) {
 void CaptionService::fail(std::string error) {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Failed;
-  // The worker publishes finished after all request-local cleanup.
   status_.succeeded = false;
   status_.cancelled = false;
   status_.message = "Caption generation failed.";
@@ -1103,7 +1102,6 @@ void CaptionService::fail(std::string error) {
 void CaptionService::cancelled() {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Cancelled;
-  // The worker publishes finished after all request-local cleanup.
   status_.succeeded = false;
   status_.cancelled = true;
   status_.message = "Caption generation was cancelled.";

@@ -37,8 +37,9 @@ namespace native_protocol = ::wam::media::native_playback;
 // application is otherwise timer-throttled and deprioritised, which is exactly
 // the state a background media player runs in. NSActivityUserInitiated covers
 // App Nap, idle system sleep and sudden termination; NSActivityIdleDisplaySleep
-// Disabled covers the display. Calls are idempotent: only one assertion is ever
-// held, and it is released on the first call with held = false.
+// Disabled covers the display. Only one assertion is ever held; calls are
+// reference counted per holding window, and it is released when the last
+// holder calls with held = false.
 void setMacosPlaybackActivityHeld(bool held) noexcept;
 
 // GUI-thread owner for the mutually exclusive native and compatibility

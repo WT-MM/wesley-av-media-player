@@ -46,9 +46,7 @@ inline constexpr int kWindowCascadeStep = 40;
 // Per-file auto-resume bookkeeping.
 //
 // One tracker per window: two windows can hold two different files at two
-// different positions, and each has to persist its own. Lifted verbatim out of
-// src/qt/main.cpp, where it was a single process-wide instance closed over by
-// the single controller's signal handlers.
+// different positions, and each has to persist its own.
 // ---------------------------------------------------------------------------
 struct ResumeSnapshot {
   QString local_source;
@@ -79,13 +77,11 @@ private:
 // One player window: its own controller, its own native playback session, its
 // own window chrome, its own QML context, its own resume tracker.
 //
-// Destruction order is load-bearing and is the reason this is a class with
-// declared members rather than a bag of pointers parented to the manager: the
-// QML root (and with it the MpvVideoItem, which detaches the render surface)
-// must go first, then the chrome bridge (which removes its AppKit event
-// monitor), and only then the controller (whose destructor tears the native
-// playback session down). Members are declared controller, chrome, root; C++
-// destroys in reverse, which is exactly that order.
+// Destruction order is load-bearing: the QML root (and with it the
+// MpvVideoItem, which detaches the render surface) must go first, then the
+// chrome bridge (which removes its AppKit event monitor), and only then the
+// controller (whose destructor tears the native playback session down).
+// ~PlayerWindow deletes them explicitly in that order.
 // ---------------------------------------------------------------------------
 class PlayerWindow final : public QObject {
   Q_OBJECT

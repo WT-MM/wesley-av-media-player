@@ -21,7 +21,7 @@ namespace wam {
 // The enumerator VALUES are persisted through the QML surface and the
 // controller property, so they are append-only.
 enum class ExportFormat : int {
-  Mp4H264 = 0,  // Default. Hardware h264_videotoolbox, exactly as before.
+  Mp4H264 = 0,  // Default. Hardware h264_videotoolbox.
   Mp4Hevc = 1,  // hevc_videotoolbox; half the size, narrower playback support.
   WebmVp9 = 2,  // libvpx-vp9 + Opus. SOFTWARE, and therefore slow.
   MkvCopy = 3,  // Stream copy when that is legal; see exportUsesStreamCopy.

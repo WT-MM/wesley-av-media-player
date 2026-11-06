@@ -635,7 +635,7 @@ PlayerController::PlayerController(QObject *parent)
     // count over those holds (see native_playback_owner.mm). Edge-triggering
     // here is what makes each window contribute at most one: with N windows
     // playing, a pause in one must not end the assertion the other N-1 still
-    // need, and a bare boolean latch did exactly that.
+    // need.
     const bool holding = playing();
     if (holding == macos_activity_held_)
       return;
@@ -815,8 +815,8 @@ bool PlayerController::initializePlaybackEngine() {
   observe(ObservedProperty::Mute, "mute", MPV_FORMAT_FLAG);
   observe(ObservedProperty::Rate, "speed", MPV_FORMAT_DOUBLE);
   // sub-visibility is deliberately NOT observed: it is pinned off above and is
-  // no longer the user's caption switch. captionsVisible now means "a subtitle
-  // source is selected", which is app state on both routes.
+  // not the user's caption switch. captionsVisible means "a subtitle source is
+  // selected", which is app state on both routes.
   observe(ObservedProperty::Path, "path", MPV_FORMAT_STRING);
   observe(ObservedProperty::MediaTitle, "media-title", MPV_FORMAT_STRING);
   observe(ObservedProperty::PreservePitch, "audio-pitch-correction",
@@ -1265,16 +1265,9 @@ double PlayerController::exactNativeSeekTarget(double seconds) const noexcept {
   // this rule rather than adding one, and would drift from it.
   //
   // The guard is exactly one grid step, which is the whole of what the
-  // preflight's strict inequality needs. It was briefly 1/8 s, to hide a
-  // separate defect: a target inside the last frame's presentation interval
-  // was accepted and drawn, end of stream then overtook the commit, and the
-  // commit's own post-promotion SetRunState was refused by the just-ended
-  // session -- retiring the whole native route with "Native playback rejected
-  // an internal lifecycle command". That was never a seek-arithmetic problem;
-  // it was NativeMediaSession latching Ended inside the commit handshake,
-  // before the run command the commit protocol promises. Fixed there
-  // (commitRunStatePending), so the last frame is reachable again and the
-  // final 1/8 s of every clip is no longer dead to the scrubber.
+  // preflight's strict inequality needs. End of stream overtaking a commit
+  // that lands in the last frame is NativeMediaSession's concern
+  // (commitRunStatePending), not seek arithmetic, so no wider guard is needed.
   constexpr double kSeekGrid = 64.0;
   const double bounded = boundedSeekTarget(seconds);
   if (!std::isfinite(bounded) || bounded <= 0.0)
@@ -2556,8 +2549,8 @@ void PlayerController::setCaptionsVisible(bool visible) {
   // press brings back the same track rather than an arbitrary one.
   //
   // captionsVisible is therefore derived state -- "something is selected" --
-  // on both routes. It is no longer mpv's sub-visibility flag, which is pinned
-  // off because WAM draws the text itself.
+  // on both routes. It is not mpv's sub-visibility flag, which is pinned off
+  // because WAM draws the text itself.
   if (!subtitles_)
     return;
   if (!visible) {
@@ -2806,7 +2799,8 @@ void PlayerController::buildNativeSubtitleSources() {
       source.filePath = *local;
       source.language = QString::fromStdString(track.language);
       // tkhd's enabled flag is the closest thing MP4 has to Matroska's
-      // default flag; a disabled track is listed but not auto-selected.
+      // default flag, but it is not used as one: every MP4 text track is
+      // listed and none is auto-selected.
       source.defaultFlag = false;
       source.forcedFlag = false;
       source.label = subtitleSourceLabel(
@@ -3208,10 +3202,9 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   options.input = *input;
   options.in_seconds = trim_in_;
   options.out_seconds = trim_out_;
-  // Export retiming is its own decision. Reading rate_ here used to bake the
-  // current *viewing* speed into every export, so reviewing a clip at 2x
-  // silently shipped a 2x cut; Quick Edit now owns an explicit export speed
-  // that starts at 1x, and the live transport no longer reaches this path.
+  // Export retiming is its own decision: Quick Edit owns an explicit export
+  // speed that starts at 1x, and the live viewing rate (rate_) never reaches
+  // this path, so reviewing a clip at 2x does not ship a 2x cut.
   options.speed = export_speed_;
   options.preserve_pitch = export_preserve_pitch_;
   options.prefer_hardware_encoder = true;
@@ -3574,7 +3567,7 @@ bool PlayerController::attachSubtitleFile(
                 subtitle) == attached_subtitle_files_.end()) {
     attached_subtitle_files_.push_back(subtitle);
   }
-  // Deliberately NOT setCaptionsVisible(true) any more: selecting the source
+  // Deliberately NOT setCaptionsVisible(true): selecting the source
   // is what turns subtitles on, and doing both would fight over which track
   // the switch restores.
   return true;
@@ -3738,9 +3731,9 @@ void PlayerController::drainMpvEvents() {
       }
       case ObservedProperty::CaptionsVisible:
         // Retained so the enumerator stays exhaustively handled. mpv's
-        // sub-visibility is pinned off (WAM draws subtitles itself) and is no
-        // longer observed, so this can only be reached by an mpv-side change
-        // WAM did not ask for, which must not move the user's selection.
+        // sub-visibility is pinned off (WAM draws subtitles itself) and is
+        // not observed, so this can only be reached by an mpv-side change WAM
+        // did not ask for, which must not move the user's selection.
         break;
       case ObservedProperty::Path: {
         const QUrl observed_source = urlFromMpvPath(readString(property));
@@ -3844,7 +3837,6 @@ void PlayerController::requestVideoUpdate() {
   // nothing to paint, so dirtying the scene here would buy a full scene-graph
   // render+swap per frame for no pixels -- measured at ~30 render passes per
   // second, against zero when the item stops updating and the chrome is hidden.
-  // That is the pivot's headline cost, so it is not spent.
   //
   // The route flag is process-wide, but the suppression is NOT: it is only
   // correct for a window whose own playback the native route owns. WAM is a
@@ -4593,9 +4585,9 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
     // is the one hook that fires on a first open and on every fallback the
     // router takes. The dwidth/dheight observations usually land just before
     // this, but they land inside the open and can be dropped by the path
-    // check above while mpv still has the outgoing file; this is the reliable
-    // second look, and updateVideoDisplaySize dedupes so the common case
-    // where both agree costs one comparison.
+    // check in applyObservedDisplaySize while mpv still has the outgoing file;
+    // this is the reliable second look, and updateVideoDisplaySize dedupes so
+    // the common case where both agree costs one comparison.
     applyObservedDisplaySize();
   }
   restoreRenderRecovery();
@@ -4657,12 +4649,10 @@ void PlayerController::applyObservedDisplaySize() {
   if (!core_ || !engineReady() || open_attempt_)
     return;
   // Deliberately NOT gated on acceptsPlaybackObservation(), which every other
-  // observation here does use. Measured: mpv announces dwidth/dheight exactly
-  // once per file, during the open, while that gate is still closed -- and it
-  // never announces them again, because the value has not changed since. So
-  // gating here did not defer the size, it discarded the only announcement
-  // there was, and the fallback route stayed at (0, 0) for the whole session,
-  // which is the very defect this feeder exists to fix.
+  // observation here does use. mpv announces dwidth/dheight once per file,
+  // during the open, while that gate is still closed, and never again unless
+  // the value changes. Gating here would discard the only announcement there
+  // is and leave the fallback route's size at (0, 0) for the whole session.
   //
   // The hazard the gate guards against -- a previous file's value landing on
   // the current one -- is checked directly instead, and more precisely: the

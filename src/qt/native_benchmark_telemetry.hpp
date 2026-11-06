@@ -27,9 +27,13 @@ struct NativeBenchmarkTelemetryTestAccess;
          std::strcmp(value, "ON") == 0;
 }
 
-// The single armed test: the telemetry stream, every WAM_TEST_* seam that may
-// only exist for a measured run, and the window chrome's benchmark mode all
-// key on this one answer, so no launch can arm one of them and not another.
+// The armed-test answer. The telemetry stream and the window chrome's
+// benchmark mode key on it directly; main.cpp's WAM_TEST_* seams and the
+// owner's WAM_TEST_OPEN_DELAY_MS key on the telemetry instance's enabled(),
+// which is derived from it. Not every seam is behind it:
+// WAM_TEST_CAPTION_METRICS / WAM_TEST_CAPTION_ENGINE (player_controller.cpp)
+// are read ungated, and WAM_TEST_CAPTURE_PHYSICAL is read only by
+// captureWindowToFile, which only the gated videograb verb calls.
 [[nodiscard]] inline bool nativeBenchmarkTelemetryArmed() noexcept {
   return wamEnvironmentTruth("WAM_NATIVE_BENCHMARK_TELEMETRY");
 }
@@ -208,10 +212,10 @@ private:
   // terminal preview telemetry without I/O on the measured drag path.
   static constexpr std::size_t kMaximumBufferedPoints = 8192;
   static constexpr std::size_t kMaximumJsonLineBytes = 768;
-  // Checkpoint formatting drains through one reusable chunk.  Keeping an
-  // event-count-sized JSON mirror used to reserve roughly 6 MiB solely for a
-  // benchmark opt-in; a bounded chunk preserves allocation-free event calls
-  // without making enabled telemetry itself distort the memory result.
+  // Checkpoint formatting drains through one reusable chunk rather than an
+  // event-count-sized JSON mirror (roughly 6 MiB): a bounded chunk preserves
+  // allocation-free event calls without making enabled telemetry itself
+  // distort the memory result.
   static constexpr std::size_t kMaximumSerializedBytes = 64 * 1024;
 
   bool enabled_{false};

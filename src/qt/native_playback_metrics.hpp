@@ -95,11 +95,11 @@ private:
                         Clock clock, Sink sink, Flusher flusher,
                         void *sinkContext) noexcept;
 
-  // Fifteen fields whose widest forms are a 20-digit u64 and a 24-character
-  // double: 319 bytes of literal punctuation and keys plus 273 bytes of
-  // widest-case values is 592, so this bound admits every representable line
-  // rather than merely every likely one. Still one fixed allocation made once
-  // at construction, so formatting never allocates.
+  // Widest-case playback_sample line: 369 bytes of literal punctuation and
+  // keys plus twelve 20-digit u64s and two 24-character doubles is 657 bytes,
+  // which exceeds this bound; such a line fails closed (JsonLine never
+  // truncates). One fixed allocation made once at construction, so formatting
+  // never allocates.
   static constexpr std::size_t kMaximumJsonLineBytes = 640;
 
   bool enabled_{false};
