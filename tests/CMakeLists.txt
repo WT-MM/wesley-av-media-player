@@ -813,10 +813,7 @@ if(APPLE)
     set_tests_properties(macos_native_playback_owner_contract PROPERTIES
       TIMEOUT 10)
 
-    add_executable(wam_native_open_preflight_test
-      native_open_preflight_test.mm
-      ${PROJECT_SOURCE_DIR}/src/qt/native_open_preflight.hpp
-      ${PROJECT_SOURCE_DIR}/src/qt/native_open_preflight.mm)
+    add_executable(wam_native_open_preflight_test native_open_preflight_test.mm)
     target_include_directories(wam_native_open_preflight_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_link_libraries(wam_native_open_preflight_test PRIVATE
       wam_macos_native_session_system

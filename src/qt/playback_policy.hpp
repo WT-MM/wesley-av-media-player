@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media/playback_router.hpp"
+
 #include <cctype>
 #include <cstddef>
 #include <string>
@@ -7,11 +9,7 @@
 
 namespace wam::qt {
 
-enum class PlaybackSourceClass {
-  FastLocal,
-  BufferedLocal,
-  Network,
-};
+using PlaybackSourceClass = media::playback_router::SourceClass;
 
 // Buffering is deliberately selected per source instead of applying a large
 // network-oriented cache to every file. The byte limits bound compressed

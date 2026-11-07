@@ -4,7 +4,8 @@
 
 #include "media/playback_router.hpp"
 #include "qt/native_engine.hpp"
-#include "qt/native_open_preflight.hpp"
+#include "platform/macos/native_open_preflight.hpp"
+#include "qt/playback_policy.hpp"
 
 #include <QMetaObject>
 
@@ -151,7 +152,7 @@ private:
     bool terminalResetRequired{false};
   };
 
-  void completeOpenPreflight(NativeOpenPreflightResult result);
+  void completeOpenPreflight(::wam::macos::NativeOpenPreflightResult result);
   [[nodiscard]] std::optional<native_protocol::SourceKey> allocateSourceKey();
   [[nodiscard]] SourceRecord *
   sourceRecord(native_protocol::SourceKey key) noexcept;
@@ -201,7 +202,7 @@ private:
   PlayerController &controller_;
   QPointer<MpvVideoItem> surface_;
   std::map<std::uint64_t, SourceRecord> sources_;
-  NativeOpenPreflight openPreflight_;
+  ::wam::macos::NativeOpenPreflight openPreflight_;
   std::optional<FallbackStop> fallbackStop_;
   std::uint64_t nextSourceKey_{0};
   std::uint64_t nextFallbackStopReplyId_{0};

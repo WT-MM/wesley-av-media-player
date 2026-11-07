@@ -296,8 +296,6 @@ if(APPLE)
       src/qt/native_benchmark_telemetry.cpp
       src/qt/native_playback_metrics.hpp
       src/qt/native_playback_metrics.cpp
-      src/qt/native_open_preflight.hpp
-      src/qt/native_open_preflight.mm
       src/qt/native_playback_owner.hpp
       src/qt/native_playback_owner.mm
       src/qt/native_media_session_adapter.hpp

@@ -11,6 +11,7 @@
 
 #import <Foundation/Foundation.h>
 
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QThread>
@@ -80,14 +81,24 @@ void setMacosPlaybackActivityHeld(bool held) noexcept {
 
 NativePlaybackOwner::NativePlaybackOwner(PlayerController &controller)
     : controller_(controller),
-      openPreflight_([this](NativeOpenPreflightResult result) {
-        if (const TestSeams *seams = testSeams(); seams != nullptr && seams->openDelayMilliseconds > 0) {
-          QTimer::singleShot(seams->openDelayMilliseconds, &controller_,
-              [this, result = std::move(result)]() mutable { completeOpenPreflight(std::move(result)); });
-          return;
-        }
-        completeOpenPreflight(std::move(result));
-      }) {
+      openPreflight_(
+          [this](::wam::macos::NativeOpenPreflightResult result) {
+            if (const TestSeams *seams = testSeams(); seams != nullptr && seams->openDelayMilliseconds > 0) {
+              QTimer::singleShot(seams->openDelayMilliseconds, &controller_,
+                  [this, result = std::move(result)]() mutable { completeOpenPreflight(std::move(result)); });
+              return;
+            }
+            completeOpenPreflight(std::move(result));
+          },
+          {.queueCompletion =
+               [](std::function<void()> completion) {
+                 // Cocoa's main dispatch queue can wait behind Qt's first GL
+                 // scene draw, so deliver through the owning Qt event loop.
+                 // The edge still validates request and lifetime at delivery.
+                 QMetaObject::invokeMethod(QCoreApplication::instance(),
+                                           std::move(completion),
+                                           Qt::QueuedConnection);
+               }}) {
   Q_ASSERT(QThread::currentThread() == controller_.thread());
   NativeBenchmarkTelemetry &telemetry = NativeBenchmarkTelemetry::instance();
   if (telemetry.enabled()) {
@@ -271,7 +282,7 @@ bool NativePlaybackOwner::open(const QUrl &source,
   static_cast<void>(
       routeSetPreservePitch(controller_.preservePitch()));
   const auto request = openPreflight_.enqueue(
-      {*sourceKey, source, initialPositionSeconds, paused,
+      {*sourceKey, source.toEncoded().toStdString(), initialPositionSeconds, paused,
        !surfaceLost_ && surface_ != nullptr &&
            controller_.nativeRouteAdmissionAllowed()});
   if (!request.has_value()) {
@@ -286,7 +297,7 @@ bool NativePlaybackOwner::open(const QUrl &source,
 }
 
 void NativePlaybackOwner::completeOpenPreflight(
-    NativeOpenPreflightResult result) {
+    ::wam::macos::NativeOpenPreflightResult result) {
   WAM_STARTUP_STAMP(PreflightDelivered);
   Q_ASSERT(QThread::currentThread() == controller_.thread());
   if (result.requestId == 0 ||
@@ -300,7 +311,7 @@ void NativePlaybackOwner::completeOpenPreflight(
   }
 
   SourceRecord record;
-  record.url = std::move(result.canonicalSource);
+  record.url = QUrl::fromEncoded(QByteArray::fromStdString(result.canonicalSource));
   record.localPath = std::move(result.absoluteLocalPath);
   record.initialPosition = std::move(result.initialPosition);
   record.sourceClass = result.sourceClass;
