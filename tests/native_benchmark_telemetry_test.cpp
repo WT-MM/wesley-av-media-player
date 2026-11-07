@@ -50,7 +50,7 @@ struct NativeBenchmarkTelemetryTestAccess {
   }
 
   static bool failed(const NativeBenchmarkTelemetry &telemetry) noexcept {
-    return telemetry.failed_;
+    return telemetry.failed();
   }
 
   static std::size_t
