@@ -249,6 +249,7 @@ bool MpvEngine::replaceAfterRenderRelease(
     return false;
   if (!expected->retireFallbackAfterRenderRelease(owner_))
     return false;
+  invalidateScrubGesture();
   core = std::move(replacement_);
   lineage = {};
   return true;
@@ -2640,7 +2641,11 @@ void MpvEngine::applyObservedSubtitleTrack(
 }
 
 
-void MpvEngine::startNewLineage() { lineage = {}; }
+void MpvEngine::startNewLineage() {
+  // The gesture belongs to the lineage it was opened on.
+  invalidateScrubGesture();
+  lineage = {};
+}
 
 bool MpvEngine::beginOpen(const QUrl &source) {
   // Not a new lineage: the committed open, its entry source and the selected

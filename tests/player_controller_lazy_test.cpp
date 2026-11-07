@@ -1118,6 +1118,28 @@ class PlayerControllerTestAccess final {
     controller.mpv_.scheduleRenderRecoveryRetry(error);
   }
 
+  static void scheduleRecoveryRetry(PlayerController &controller,
+                                    const QString &error) {
+    controller.mpv_.scheduleRenderRecoveryRetry(error);
+  }
+
+  static void setRecoveryVideoReselect(PlayerController &controller) {
+    if (controller.mpv_.lineage.render_recovery)
+      controller.mpv_.lineage.render_recovery->mode =
+          PlayerController::RenderRecoveryMode::VideoReselect;
+  }
+
+  static void acceptRecoveryGeneration(PlayerController &controller,
+                                       RenderTicket ticket) {
+    if (controller.mpv_.lineage.render_recovery)
+      controller.mpv_.lineage.render_recovery->accepted_render_stamp =
+          ticket.stamp;
+  }
+
+  static void startNewLineage(PlayerController &controller) {
+    controller.mpv_.startNewLineage();
+  }
+
   static std::int64_t activeEntry(const PlayerController &controller) {
     return controller.mpv_.lineage.active_event_playlist_entry_id;
   }
@@ -1978,6 +2000,7 @@ int main(int argc, char **argv) {
            "degraded recovery accepts live observations again");
   }
 
+
   {
     using Access = wam::qt::PlayerControllerTestAccess;
     wam::qt::PlayerController controller;
@@ -2458,6 +2481,26 @@ int main(int argc, char **argv) {
                Access::scrubTimeoutCommand(controller) == 0,
            "later exact position convergence restores play intent and "
            "cancels the reusable watchdog");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    expect(Access::initializeEngine(controller),
+           "lineage-reset scrub test has a live libmpv client");
+    const auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://scrub/lineage-reset"));
+    Access::seedCommittedMedia(controller, source, 103, ready, 1003, 1, 2,
+                               0, true);
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    controller.beginScrub();
+    controller.previewSeekTo(20.0);
+    expect(Access::hasScrub(controller) && Access::scrubCommand(controller) != 0,
+           "a mid-drag gesture owns an in-flight seek");
+    Access::startNewLineage(controller);
+    expect(!Access::hasScrub(controller) &&
+               !Access::scrubTimeoutActive(controller),
+           "a new lineage (stop, owner error) ends the scrub gesture with it");
   }
 
   {
