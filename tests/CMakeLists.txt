@@ -1632,6 +1632,20 @@ if(APPLE)
     "${PROJECT_SOURCE_DIR}/tests/native_stage_defaults_test.py")
 endif()
 
+# Qt Quick Tests load the real components from qml/. Search only the Qt this
+# build links: another qmltestrunner on PATH may be a different Qt major.
+find_program(WAM_QMLTESTRUNNER qmltestrunner
+  HINTS "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}" NO_DEFAULT_PATH)
+if(WAM_QMLTESTRUNNER)
+  foreach(qml_case IN ITEMS scrubber title_reveal_caret)
+    add_test(NAME qml_${qml_case} COMMAND "${WAM_QMLTESTRUNNER}"
+      -input "${PROJECT_SOURCE_DIR}/tests/tst_${qml_case}.qml")
+    # Basic is the style main.cpp pins.
+    set_tests_properties(qml_${qml_case} PROPERTIES TIMEOUT 60
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic")
+  endforeach()
+endif()
+
 if(APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
   add_library(wam_coexistence_fake_mpv SHARED fakes/mpv_runtime/fake_mpv.cpp)
   target_compile_definitions(wam_coexistence_fake_mpv PRIVATE WAM_FAKE_MPV_NEWER_MINOR=1)

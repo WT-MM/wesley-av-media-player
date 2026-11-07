@@ -69,7 +69,7 @@ pointer movement, or immediately when the pointer leaves the player window.
 ## Playback palette verification
 
 The scrubber's frame-pacing and exact-release contract has deterministic Qt
-Quick Test coverage in `tests/tst_scrubber.qml`. The project does not yet have
+Quick Test coverage in `tests/tst_scrubber.qml` (ctest `qml_scrubber`). The project does not yet have
 a full playback-palette Qt Quick Test target, so palette integration changes
 must also include these deterministic manual checks:
 
