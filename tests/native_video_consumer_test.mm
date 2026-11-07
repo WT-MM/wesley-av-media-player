@@ -1109,6 +1109,26 @@ void testPreviewQuiesceIsSupersededByCommitFlush() {
          "commit flush clears every preview gate fact at its new generation");
 }
 
+void testFlushReplayIsNotDoneAfterClose() {
+  Fixture fixture;
+  expect(fixture.consumer->armFirstGeneration(7) ==
+             NativeVideoConsumerArmProgress::Done &&
+             NativeVideoConsumerTestAccess::installSchedulerGeneration(
+                 *fixture.consumer, timeline(7, {0, 1})),
+         "flush replay fixture installs");
+  expect(fixture.consumer->flush(7, 8, timeline(8, {2, 1})) ==
+                 media::NativeMediaConsumerProgress::Done &&
+             fixture.consumer->flush(7, 8, timeline(8, {2, 1})) ==
+                 media::NativeMediaConsumerProgress::Done,
+         "an exact completed seek flush replays Done while running");
+  expect(fixture.consumer->close() ==
+             media::NativeMediaConsumerProgress::Done,
+         "flush replay fixture closes");
+  expect(fixture.consumer->flush(7, 8, timeline(8, {2, 1})) !=
+             media::NativeMediaConsumerProgress::Done,
+         "a closed consumer never reports a replayed seek flush Done");
+}
+
 void testQuiescingDestructionRetainsCallbackLifetime() {
   FakeClock clock;
   std::atomic<std::uint64_t> wakes{0};
@@ -1299,6 +1319,7 @@ int main() {
   testFailedFrameSupersedesPendingFlushOnClose();
   testHalfOpenFloorAndProvenLateDrop();
   testPreviewQuiesceGatesAdmission();
+  testFlushReplayIsNotDoneAfterClose();
   testPreviewQuiesceWaitsForRealTrackedDraw();
   testPreviewQuiesceIsSupersededByCommitFlush();
   testQuiescingDestructionRetainsCallbackLifetime();
