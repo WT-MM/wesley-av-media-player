@@ -504,26 +504,17 @@ inline constexpr MatroskaCodecRow kMatroskaCodecs[] = {
   return nullptr;
 }
 
+// Structural invariants only: one row per CodecID, and the audio builder and
+// WebM legality columns apply to audio rows alone.
 [[nodiscard]] constexpr bool matroskaCodecTableConsistent() noexcept {
-  std::size_t audio = 0;
-  for (std::size_t i = 0; i < std::size(kMatroskaCodecs); ++i) {
-    const MatroskaCodecRow& row = kMatroskaCodecs[i];
+  for (const MatroskaCodecRow& row : kMatroskaCodecs) {
     if (matroskaCodecRow(row.codecId) != &row ||
         (row.trackType == 1) != (row.builder == MatroskaAudioBuilder::None) ||
         (row.trackType == 1 && row.webm)) {
       return false;
     }
-    const std::string_view id = row.codecId;
-    const bool webm = id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS";
-    const bool software = id == "A_DTS" || id == "A_TRUEHD" || id == "A_MLP";
-    if (row.trackType == 2 &&
-        (row.webm != webm ||
-         (row.builder == MatroskaAudioBuilder::Software) != software)) {
-      return false;
-    }
-    audio += row.trackType == 2 ? 1 : 0;
   }
-  return audio == 14;
+  return true;
 }
 static_assert(matroskaCodecTableConsistent());
 

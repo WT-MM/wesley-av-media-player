@@ -57,9 +57,9 @@ int main(int argc,char** argv) {
   EXPECT((avcodecExactTime(INT64_MAX,2,2)==MediaTime{INT64_MAX,1}));
   EXPECT((avcodecExactTime(-6,5,15)==MediaTime{-2,1}));
   EXPECT(!avcodecExactTime(5,0,1));
-  auto plan=chooseDecodePlan({DecodeRefusal::None,DecodeRefusal::None,DecodeRefusal::NotApplicable,DecodeRefusal::NotApplicable,DecodeRefusal::None});
+  auto plan=chooseDecodePlan({DecodeRefusal::None,DecodeRefusal::None,DecodeRefusal::NotApplicable,DecodeRefusal::None});
   EXPECT(plan.implementation==DecodeImplementation::VideoToolboxHardware);
-  plan=chooseDecodePlan({DecodeRefusal::HardwareUnavailable,DecodeRefusal::AppleProfileUnsupported,DecodeRefusal::NotApplicable,DecodeRefusal::NotApplicable,DecodeRefusal::None});
+  plan=chooseDecodePlan({DecodeRefusal::HardwareUnavailable,DecodeRefusal::AppleProfileUnsupported,DecodeRefusal::NotApplicable,DecodeRefusal::None});
   EXPECT(plan.implementation==DecodeImplementation::Libavcodec);
   std::ifstream file(argv[1],std::ios::binary);
   const auto extraSize=read<std::uint32_t>(file), packets=read<std::uint32_t>(file);

@@ -112,35 +112,6 @@ std::size_t appendCaptionTripletsFromSeiRbsp(std::string_view rbsp,
 
 namespace {
 
-// Yields [start, end) of each NAL payload in an Annex-B range.
-template <typename Fn>
-void forEachAnnexBNal(std::string_view d, Fn&& fn) {
-  std::vector<std::size_t> starts;
-  const std::size_t n = d.size();
-  std::size_t i = 0;
-  while (i + 3 <= n) {
-    if (at(d, i) == 0 && at(d, i + 1) == 0) {
-      if (at(d, i + 2) == 1) {
-        starts.push_back(i + 3);
-        i += 3;
-        continue;
-      }
-      if (i + 4 <= n && at(d, i + 2) == 0 && at(d, i + 3) == 1) {
-        starts.push_back(i + 4);
-        i += 4;
-        continue;
-      }
-    }
-    ++i;
-  }
-  for (std::size_t k = 0; k < starts.size(); ++k) {
-    std::size_t end = (k + 1 < starts.size()) ? starts[k + 1] : n;
-    // Trim the next start code's leading zero bytes off this NAL.
-    while (end > starts[k] && at(d, end - 1) == 0x00U) --end;
-    fn(d.substr(starts[k], end - starts[k]));
-  }
-}
-
 std::size_t appendFromNal(std::string_view nal, std::vector<CcTriplet>* out) {
   if (nal.empty() || !isSeiNalHeader(at(nal, 0))) return 0;
   const std::vector<char> rbsp = removeEmulationPrevention(nal);
@@ -149,15 +120,6 @@ std::size_t appendFromNal(std::string_view nal, std::vector<CcTriplet>* out) {
 }
 
 }  // namespace
-
-std::size_t appendCaptionTripletsFromAnnexB(std::string_view annexB,
-                                            std::vector<CcTriplet>* out) {
-  if (out == nullptr) return 0;
-  std::size_t appended = 0;
-  forEachAnnexBNal(annexB,
-                   [&](std::string_view nal) { appended += appendFromNal(nal, out); });
-  return appended;
-}
 
 std::size_t appendCaptionTripletsFromAvcc(std::string_view sample,
                                           std::size_t lengthSize,

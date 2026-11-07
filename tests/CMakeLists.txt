@@ -156,12 +156,6 @@ if(TARGET wam_native_core)
     wam_native_media_source_test PRIVATE wam_native_core)
   add_test(NAME native_media_source COMMAND wam_native_media_source_test)
 
-  add_executable(wam_native_media_backend_test
-    native_media_backend_test.cpp)
-  target_link_libraries(
-    wam_native_media_backend_test PRIVATE wam_native_core)
-  add_test(NAME native_media_backend COMMAND wam_native_media_backend_test)
-
   add_executable(wam_media_container_routing_test
     media_container_routing_test.cpp)
   target_link_libraries(
@@ -354,7 +348,6 @@ if(TARGET wam_native_core)
       wam_mpegts_demuxer_test
       wam_video_codec_configuration_test
       wam_native_media_source_test
-      wam_native_media_backend_test
       wam_native_playback_contract_test
       wam_native_media_dispatcher_test
       wam_playback_router_test
@@ -386,7 +379,6 @@ if(TARGET wam_native_core)
     mpegts_demuxer
     video_codec_configuration
     native_media_source
-    native_media_backend
     native_playback_contract
     native_media_dispatcher
     playback_router
