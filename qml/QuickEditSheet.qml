@@ -19,29 +19,11 @@ FocusScope {
     signal closeRequested
     signal appearanceRequested(int appearance)
 
-    // Export retiming range. Narrower than the 0.0625x-16x the export command
-    // will accept, on purpose: the extremes are a debugging capability, not an
+    // Export retiming uses the transport's rate window and slider
+    // (RateSlider.qml), narrower than the 0.0625x-16x the export command
+    // accepts on purpose: the extremes are a debugging capability, not an
     // editorial one, and a slider that reaches them makes every useful value
-    // hard to hit. The same log mapping and 1x detent as the transport's speed
-    // popup, so "how far from normal" reads the same in both places.
-    readonly property real minimumExportSpeed: 0.25
-    readonly property real maximumExportSpeed: 4
-    readonly property int exportSpeedGrid: 64
-
-    function snapExportSpeed(speed) {
-        const bounded = Math.min(maximumExportSpeed, Math.max(minimumExportSpeed, speed));
-        return Math.round(bounded * exportSpeedGrid) / exportSpeedGrid;
-    }
-
-    function exportSpeedForTravel(travel) {
-        return snapExportSpeed(Math.pow(2, travel * 4 - 2));
-    }
-
-    function travelForExportSpeed(speed) {
-        const bounded = Math.min(maximumExportSpeed, Math.max(minimumExportSpeed, speed));
-        return (Math.log(bounded) / Math.LN2 + 2) / 4;
-    }
-
+    // hard to hit.
     // "2×" for the whole speeds, "1.36×" for a grid step in between -- the same
     // rule the transport's rate labels use.
     function formatSpeed(speed) {
@@ -249,53 +231,16 @@ FocusScope {
                 }
             }
 
-            Slider {
+            RateSlider {
                 id: exportSpeedSlider
                 width: parent.width
                 height: 32
-                from: 0
-                to: 1
                 live: true
-                hoverEnabled: true
-                focusPolicy: Qt.TabFocus
                 Accessible.name: "Export speed"
-                Accessible.role: Accessible.Slider
-                onMoved: {
-                    const speed = sheet.exportSpeedForTravel(value);
-                    if (speed === 1)
-                        value = 0.5; // magnetic detent at 1x
-                    sheet.player.setExportSpeed(speed);
-                }
-
-                Binding {
-                    target: exportSpeedSlider
-                    property: "value"
-                    value: sheet.travelForExportSpeed(sheet.player.exportSpeed)
-                    when: !exportSpeedSlider.pressed
-                    restoreMode: Binding.RestoreNone
-                }
-
-                background: Item {
-                    x: exportSpeedSlider.leftPadding
-                    y: exportSpeedSlider.topPadding + exportSpeedSlider.availableHeight / 2 - 1
-                    width: exportSpeedSlider.availableWidth
-                    height: 2
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 2
-                        color: sheet.quietSurface
-                    }
-                    // Filled from the 1x detent rather than from the left end,
-                    // so the track reads as "how far from normal speed" and the
-                    // midpoint needs no separate tick to be findable.
-                    Rectangle {
-                        x: Math.min(0.5, exportSpeedSlider.visualPosition) * parent.width
-                        width: Math.abs(exportSpeedSlider.visualPosition - 0.5) * parent.width
-                        height: parent.height
-                        radius: 2
-                        color: sheet.accentColor
-                    }
-                }
+                rate: sheet.player.exportSpeed
+                trackColor: sheet.quietSurface
+                fillColor: sheet.accentColor
+                onRateMoved: speed => sheet.player.setExportSpeed(speed)
 
                 handle: Rectangle {
                     x: exportSpeedSlider.leftPadding + exportSpeedSlider.visualPosition * (exportSpeedSlider.availableWidth - width)

@@ -30,6 +30,8 @@ int main() {
   sample.supersededFrames = sample.discardedLateFrames = maximum;
   sample.audioUnderrunCallbacks = sample.audioClockAdvancedUnderruns = maximum;
   sample.audioRetiredLateFrames = sample.audioCallbacks = sample.audioRenderedFrames = maximum;
-  sample.mediaSeconds = sample.clockRate = std::numeric_limits<double>::max();
+  sample.hasDecoderDiscards = true;
+  sample.decoderDiscardedFrames = maximum;
+  sample.mediaSeconds = sample.clockRate = -std::numeric_limits<double>::max();
   return wam::qt::NativePlaybackMetrics::instance().write(sample) ? 0 : 2;
 }

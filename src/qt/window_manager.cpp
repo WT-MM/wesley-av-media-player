@@ -3,6 +3,7 @@
 
 #include "player_controller.hpp"
 #include "state_store.hpp"
+#include "test_seams.hpp"
 
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
@@ -75,13 +76,6 @@ std::string persistentKey(const QString &local_path) {
   return local_path.toUtf8().toStdString();
 }
 
-// Background-launch and parked-geometry seams. Owned here because they apply
-// to every window this process creates.
-bool g_background_launch = false;
-bool g_parked_geometry_valid = false;
-bool g_parked_all_windows = false;
-QRect g_parked_geometry;
-
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -91,9 +85,9 @@ QRect g_parked_geometry;
 PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
                            QQmlEngine &engine)
     : QObject(&manager), manager_(manager) {
-  // One QML context per window. `player` and `windowChrome` are resolved out
-  // of it, so qml/Main.qml -- which reads both as bare context properties --
-  // works as an N-instance component: each instance sees its own objects.
+  // One QML context per window. `player` is resolved out of it, so
+  // qml/Main.qml works as an N-instance component: each instance sees its
+  // own controller.
   context_ = new QQmlContext(engine.rootContext(), this);
 
   controller_ = new PlayerController(this);
@@ -125,15 +119,9 @@ PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
     connect(controller_, &PlayerController::videoDisplaySizeChanged, chrome_, [this] {
       chrome_->setExactVideoDisplaySize(controller_->exactVideoDisplaySize(), controller_->source());
     });
-    context_->setContextProperty(QStringLiteral("windowChrome"), chrome_);
-    // The chrome cannot exist before the window it wraps, so it is necessarily
-    // published after Component.onCompleted has already run with the name
-    // undefined. Main.qml guards every use with `typeof windowChrome`, which
-    // is deliberately not a binding dependency, so nothing re-evaluates on its
-    // own: this call is what lets the window adopt the bridge (read the real
-    // AppKit titlebar height, arm the aspect lock) at the first moment it
-    // exists.
-    QMetaObject::invokeMethod(qml_root_, "adoptWindowChrome");
+    // The chrome cannot exist before the window it wraps, so it arrives as a
+    // property set after creation; Main.qml adopts it on the change.
+    qml_root_->setProperty("windowChrome", QVariant::fromValue(chrome_));
   }
 #endif
 
@@ -206,7 +194,7 @@ void PlayerWindow::raiseWindow() {
   // Under the background-launch seam the window must come to the front
   // WITHOUT this process becoming active -- that is the entire point of the
   // seam, and an ordinary raise would steal the keyboard mid-measurement.
-  if (g_background_launch) {
+  if (const TestSeams *seams = testSeams(); seams != nullptr && seams->background) {
     ::wam::macos_window_chrome::orderFrontWithoutActivating(window_);
     return;
   }
@@ -386,16 +374,6 @@ WindowManager::~WindowManager() {
   menu_bar_ = nullptr;
 }
 
-void WindowManager::setBackgroundLaunch(bool enabled) {
-  g_background_launch = enabled;
-}
-
-void WindowManager::setParkedGeometry(int x, int y, int width, int height, bool allWindows) {
-  g_parked_all_windows = allWindows;
-  g_parked_geometry_valid = width > 0 && height > 0;
-  g_parked_geometry = QRect(x, y, width, height);
-}
-
 void WindowManager::requestCheckpoint() {
   if (checkpoint_.request())
     checkpoint_timer_->start();
@@ -427,12 +405,14 @@ PlayerWindow *WindowManager::createWindow() {
   last_created_ = window;
 
   if (QQuickWindow *quick = window->window()) {
-    if (g_parked_geometry_valid && (previous == nullptr || g_parked_all_windows)) {
+    const TestSeams *seams = testSeams();
+    if (seams != nullptr && seams->geometry &&
+        (previous == nullptr || seams->allWindowGeometry)) {
       // Park the first window, or every window for a quiet storm proof. It is
       // applied again on the next event-loop passes because QML's own sizing
       // (windowHugsVideo, the first frame's natural size) settles after this
       // point and would otherwise overwrite it.
-      const QRect parked = g_parked_geometry;
+      const QRect parked = *seams->geometry;
       const auto apply = [quick, parked] {
         quick->setGeometry(parked);
       };

@@ -13,7 +13,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 
-#include "native_benchmark_telemetry.hpp"
+#include "test_seams.hpp"
 #include "platform/macos/native_embedding_support.hpp"
 
 
@@ -1170,7 +1170,7 @@ bool captureWindowToFile(QWindow *window, const QString &path) {
   CGImageRef image = CGWindowListCreateImage(
       CGRectNull, kCGWindowListOptionIncludingWindow, windowId,
       static_cast<CGWindowImageOption>(kCGWindowImageBoundsIgnoreFraming |
-                                       (qEnvironmentVariableIntValue("WAM_TEST_CAPTURE_PHYSICAL") == 1
+                                       (wam::qt::testSeams() != nullptr && wam::qt::testSeams()->capturePhysical
                                             ? kCGWindowImageBestResolution
                                             : kCGWindowImageNominalResolution)));
 #pragma clang diagnostic pop
@@ -1488,7 +1488,7 @@ namespace wam::qt {
 
 MacWindowChrome::MacWindowChrome(QWindow *window, QObject *parent)
     : QObject(parent), window_(window),
-      benchmarkMode_(nativeBenchmarkTelemetryArmed()) {
+      benchmarkMode_(testSeams() != nullptr) {
   wam::macos_window_chrome::installFullSizeContentView(window_);
 
   // Blocks capture reference-typed variables by reference; copy what the

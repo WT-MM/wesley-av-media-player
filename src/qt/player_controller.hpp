@@ -32,7 +32,9 @@ class AppSettings;
 class MpvVideoItem;
 class NativePlaybackOwner;
 class PlayerCore;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
 class PlayerControllerTestAccess;
+#endif
 class SubtitleSources;
 
 } // namespace wam::qt
@@ -283,7 +285,6 @@ public:
   // scroll gestures are read from them. Without it those features are off.
   void bindSettings(const AppSettings &settings);
 
-  Q_INVOKABLE void openFileDialog();
   Q_INVOKABLE bool open(const QUrl &source);
   Q_INVOKABLE void play();
   Q_INVOKABLE void pause();
@@ -332,8 +333,6 @@ public:
   Q_INVOKABLE void selectSubtitleTrack(int id);
   // Adds a subtitle file as a source and selects it.
   Q_INVOKABLE bool loadSubtitleFile(const QUrl &file);
-  Q_INVOKABLE void openSubtitleFileDialog();
-  Q_INVOKABLE void toggleFullscreen();
   void setPreservePitch(bool preserve);
   Q_INVOKABLE void setTrimIn(double seconds);
   Q_INVOKABLE void setTrimOut(double seconds);
@@ -421,17 +420,17 @@ signals:
 
   // The QML shell owns platform dialogs/window state. These requests keep the
   // playback core independent of Qt Widgets and native-window assumptions.
-  void openFileDialogRequested();
-  void fullscreenToggleRequested();
   void exportSelectionRequested(double trim_in, double trim_out);
   void generateCaptionsRequested();
-  void openSubtitleFileDialogRequested();
 
 private:
   friend class PlayerCore;
   friend class MpvVideoItem;
   friend class NativePlaybackOwner;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  // test_seams.cpp's `nativefail` verb reaches the native engine.
   friend class PlayerControllerTestAccess;
+#endif
 
   using OpenAttempt = MpvEngine::OpenAttempt;
   using RoutedFallbackOpen = MpvEngine::RoutedFallbackOpen;
