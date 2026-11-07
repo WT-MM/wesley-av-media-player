@@ -214,6 +214,8 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/mpv_video_item.hpp
   src/qt/window_manager.cpp
   src/qt/window_manager.hpp
+  src/qt/media_url.cpp
+  src/qt/media_url.hpp
   src/jobs.cpp
   src/jobs.hpp
   src/caption_service.cpp
@@ -987,6 +989,12 @@ if(BUILD_TESTING)
   add_executable(wam_playback_policy_test tests/playback_policy_test.cpp)
   target_include_directories(wam_playback_policy_test PRIVATE src)
   add_test(NAME playback_policy COMMAND wam_playback_policy_test)
+
+  add_executable(wam_launch_rules_test tests/launch_rules_test.cpp
+    src/qt/media_url.cpp src/qt/media_url.hpp)
+  target_include_directories(wam_launch_rules_test PRIVATE src src/qt)
+  target_link_libraries(wam_launch_rules_test PRIVATE Qt6::Core)
+  add_test(NAME launch_rules COMMAND wam_launch_rules_test)
 
   add_executable(wam_mpv_hwdec_interop_policy_test
     tests/mpv_hwdec_interop_policy_test.cpp

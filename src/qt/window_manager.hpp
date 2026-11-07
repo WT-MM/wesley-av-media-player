@@ -9,6 +9,7 @@
 #include <QString>
 #include <QUrl>
 
+#include <cmath>
 #include <cstdint>
 
 class QQmlComponent;
@@ -62,18 +63,36 @@ public:
   [[nodiscard]] const ResumeSnapshot &snapshot() const { return snapshot_; }
   [[nodiscard]] quint64 generation() const { return generation_; }
 
-  void observePosition(double position);
-  void observeDuration(double duration);
-  void commitZeroPosition(quint64 generation);
-  ResumeSnapshot transitionTo(const QString &local_source);
+  void observePosition(double position) {
+    if (std::isfinite(position) && position > 0.0) {
+      snapshot_.position = position;
+      snapshot_.position_observed = true;
+    }
+  }
+
+  void observeDuration(double duration) {
+    if (std::isfinite(duration) && duration > 0.0)
+      snapshot_.duration = duration;
+  }
+
+  void commitZeroPosition(quint64 generation) {
+    if (generation == generation_) {
+      snapshot_.position = 0.0;
+      snapshot_.position_observed = true;
+    }
+  }
+
+  ResumeSnapshot transitionTo(const QString &local_source) {
+    ResumeSnapshot previous = snapshot_;
+    snapshot_ = ResumeSnapshot{local_source, 0.0, 0.0, false};
+    ++generation_;
+    return previous;
+  }
 
 private:
   ResumeSnapshot snapshot_;
   quint64 generation_ = 0;
 };
-
-// Self-check for the tracker's ordering rules, run by --verify-runtime.
-[[nodiscard]] bool verifyResumeTracker();
 
 // ---------------------------------------------------------------------------
 // One player window: its own controller, its own native playback session, its
