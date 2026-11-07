@@ -207,5 +207,17 @@ elif case == 'hdr':
         check(row['hdr'] == 1 and row['vnat'] == '320x180', f'PQ {ext} must report HDR and its size')
     _, reports, _ = run('sdr', media, 'report@2000', ms=3000)
     check(windows(reports)[-1]['hdr'] == 0, 'An untagged file is SDR')
+elif case == 'playlisttitle':
+    # A playlist opens through the fallback route and redirects to its entry;
+    # the entry's own title must replace the playlist's.
+    titled = root / 'titled.wmv'
+    subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-i', str(fallback), '-c', 'copy',
+                    '-metadata', 'title=Synthetic Entry Title', str(titled)], check=True, timeout=60)
+    playlist = root / 'redirect.m3u'
+    playlist.write_text('#EXTM3U\n' + str(titled) + '\n')
+    _, reports, samples = run(case, playlist, 'layout:0@2500', ms=3500)
+    check(any(s['backend']=='mpv' for s in samples), 'Playlist must use fallback')
+    check(of(reports, 'test_loading')[-1]['title'] == 'Synthetic Entry Title',
+          'A redirected entry must show its own title')
 else:
     raise AssertionError(case)

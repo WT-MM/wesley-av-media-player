@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <variant>
 
 #include <mpv/client.h>
 #include <mpv/render.h>
@@ -187,14 +188,32 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   // immutable table or the dynamically loaded image that implements it.
   std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime_;
   mpv_handle* handle_ = nullptr;
-  mpv_render_context* render_context_ = nullptr;
-  QPointer<QOpenGLContext> render_context_owner_;
-  bool render_context_callback_installed_ = false;
-  // A render context may be destroyed only with its exact creating GL context
-  // current. Keep the entire callback target alive until that release; losing
-  // the GL owner intentionally quarantines this cycle instead of invoking
-  // undefined libmpv teardown or leaving callbacks aimed at freed memory.
-  std::shared_ptr<PlayerCore> render_context_keepalive_;
+  // The render-context resource: none, reserved for creation (owner and
+  // self-keepalive captured, no libmpv object yet), created (a candidate,
+  // possibly from a failed create, with no update callback), or installed
+  // (callback aimed at this core). A render context may be destroyed only
+  // with its exact creating GL context current, so the keepalive holds the
+  // callback target alive until that release; losing the GL owner
+  // intentionally quarantines this cycle instead of invoking undefined
+  // libmpv teardown or leaving callbacks aimed at freed memory.
+  struct RenderReserved {
+    QPointer<QOpenGLContext> owner;
+    std::shared_ptr<PlayerCore> keepalive;
+  };
+  struct RenderCreated {
+    mpv_render_context* context;
+    QPointer<QOpenGLContext> owner;
+    std::shared_ptr<PlayerCore> keepalive;
+  };
+  struct RenderInstalled {
+    mpv_render_context* context;
+    QPointer<QOpenGLContext> owner;
+    std::shared_ptr<PlayerCore> keepalive;
+  };
+  std::variant<std::monostate, RenderReserved, RenderCreated, RenderInstalled>
+      render_resource_;
+  // The created or installed context, or null.
+  [[nodiscard]] mpv_render_context* renderContextLocked() const noexcept;
   RenderLifecycle render_lifecycle_;
   std::atomic<std::uint8_t> render_context_permission_{
       kRenderContextAllowed};
