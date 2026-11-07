@@ -1,13 +1,20 @@
 #pragma once
 
+#include "media/native_display_geometry.hpp"
 #include "playback_policy.hpp"
 #include "native_playback_metrics.hpp"
 
+#include <QByteArray>
+#include <QSize>
 #include <QString>
 #include <QUrl>
 
+#include <mpv/client.h>
+
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -16,10 +23,180 @@ namespace wam::playback::mpv {
 class MpvRuntime;
 }
 
+class QTimer;
+
 namespace wam::qt {
 
+class NativeEngine;
 class PlayerController;
+class PlayerControllerTestAccess;
 class PlayerCore;
+
+struct MpvTransport {
+  bool paused = true;
+  bool idle = true;
+  bool eof_reached = false;
+  double position = 0.0;
+};
+
+struct MpvTransportChange {
+  bool paused_changed = false;
+  bool position_changed = false;
+  bool was_playing = false;
+};
+
+// What MpvEngine may do to its PlayerController: read the controller's
+// request lineage and publish what the compatibility engine observed. This is
+// the engine's whole surface toward the controller.
+class MpvEngineHost {
+public:
+  // The authoritative open intent: the serial of the latest request and its
+  // source (empty after a stop).
+  [[nodiscard]] virtual std::uint64_t requestSerial() const = 0;
+  [[nodiscard]] virtual QUrl requestedSource() const = 0;
+
+  [[nodiscard]] virtual bool paused() const = 0;
+  [[nodiscard]] virtual double position() const = 0;
+  [[nodiscard]] virtual bool eofReached() const = 0;
+
+  virtual void updatePause(bool paused) = 0;
+  virtual void updateIdle(bool idle) = 0;
+  virtual void updateEof(bool eof_reached) = 0;
+  virtual void updateDuration(double duration) = 0;
+  virtual void updatePosition(double position) = 0;
+  virtual void setLastError(const QString &error) = 0;
+  // Replay-from-start at the end, and the controller's seek (either route).
+  [[nodiscard]] virtual bool atEndForReplay(double frame_duration) const = 0;
+  virtual void seekTo(double seconds) = 0;
+  // A transport snapshot assigned in one step while the engine still gates
+  // observations, then announced: no signal handler sees half of it.
+  [[nodiscard]] virtual MpvTransportChange
+  assignTransport(const MpvTransport &transport) = 0;
+  virtual void publishTransport(const MpvTransportChange &change) = 0;
+
+  [[nodiscard]] virtual QUrl source() const = 0;
+  virtual void setRequestedSource(const QUrl &source) = 0;
+  virtual void updateLoading(bool loading) = 0;
+  virtual void updateSource(const QUrl &source) = 0;
+  virtual void updateMediaTitle(const QString &title) = 0;
+  // Forgets the previous file's timeline (position, duration, size, trims).
+  virtual void resetTimeline() = 0;
+  virtual void refreshSubtitleSources() = 0;
+  virtual void requestVideoUpdate() = 0;
+
+  // The native router, which this engine tells about fallback opens, stops,
+  // render state and failures; null in a build without native playback.
+  [[nodiscard]] virtual NativeEngine *nativeEngine() const = 0;
+
+  virtual void updateVideoFacts(media::MediaRational width,
+                                media::MediaRational height, bool hdr) = 0;
+  // Engine-side settings mpv reported; the controller owns their bounds.
+  virtual void applyObservedVolume(double volume) = 0;
+  virtual void applyObservedMute(bool muted) = 0;
+  virtual void applyObservedRate(double rate) = 0;
+  virtual void applyObservedPreservePitch(bool preserve) = 0;
+  virtual void applyObservedSubtitleText(const QString &text) = 0;
+
+protected:
+  ~MpvEngineHost() = default;
+};
+
+[[nodiscard]] inline bool nearlyEqual(double left, double right,
+                                      double epsilon = 0.0005) {
+  return std::abs(left - right) <= epsilon;
+}
+
+// How a source is handed to mpv's loadfile, and the URL it is shown as.
+[[nodiscard]] QString sourceArgument(const QUrl &source);
+[[nodiscard]] QUrl displayUrlForSource(const QUrl &source);
+[[nodiscard]] QString sourceIdentity(const QUrl &source);
+[[nodiscard]] QString displayPath(const std::filesystem::path &path);
+// The title shown for a source mpv has not named.
+[[nodiscard]] QString fallbackTitle(const QUrl &source);
+// Probes a local mount synchronously: only for builds with no native engine,
+// whose open preflight classifies off the GUI thread instead.
+[[nodiscard]] PlaybackSourceClass playbackSourceClass(const QUrl &source);
+
+// mpv's `path` (and playlist filename) as a URL: local paths become file URLs.
+[[nodiscard]] QUrl urlFromMpvPath(const QString &path);
+// mpv's vid/aid/sid text as a selection: 0 for "no", the track id, or -1 when
+// it states neither.
+[[nodiscard]] std::int64_t parseTrackSelection(const QString &text);
+
+// mpv echoes a command's 64-bit reply_userdata back with its reply. The top
+// bits name the protocol that issued the command and the rest is that
+// protocol's command id, so a reply can never be taken for another
+// protocol's. Every asynchronous command this window issues is tagged here.
+enum class MpvReply : std::uint8_t {
+  Untagged,
+  Open,
+  Scrub,
+  RenderRecovery,
+  FallbackStop,
+};
+
+struct MpvReplyTag {
+  MpvReply kind = MpvReply::Untagged;
+  std::uint64_t id = 0;
+};
+
+[[nodiscard]] constexpr std::uint64_t mpvReplyIdMask(MpvReply kind) noexcept {
+  return kind == MpvReply::Open || kind == MpvReply::Scrub
+             ? (1ULL << 61) - 1ULL
+             : (1ULL << 62) - 1ULL;
+}
+
+[[nodiscard]] constexpr std::uint64_t mpvReplyTagBits(MpvReply kind) noexcept {
+  switch (kind) {
+  case MpvReply::Open:
+    return 1ULL << 63;
+  case MpvReply::Scrub:
+    return (1ULL << 63) | (1ULL << 61);
+  case MpvReply::RenderRecovery:
+    return 1ULL << 62;
+  case MpvReply::FallbackStop:
+    return 3ULL << 62;
+  case MpvReply::Untagged:
+    break;
+  }
+  return 0;
+}
+
+[[nodiscard]] constexpr std::uint64_t mpvReplyUserdata(MpvReply kind,
+                                                       std::uint64_t id) noexcept {
+  return mpvReplyTagBits(kind) | (id & mpvReplyIdMask(kind));
+}
+
+[[nodiscard]] constexpr MpvReplyTag parseMpvReply(std::uint64_t userdata) noexcept {
+  for (const MpvReply kind : {MpvReply::Open, MpvReply::Scrub,
+                              MpvReply::RenderRecovery, MpvReply::FallbackStop}) {
+    const std::uint64_t mask = mpvReplyIdMask(kind);
+    if ((userdata & ~mask) == mpvReplyTagBits(kind))
+      return {kind, userdata & mask};
+  }
+  return {MpvReply::Untagged, userdata};
+}
+
+// Advances `counter` to the next nonzero id `kind` can carry and returns it.
+[[nodiscard]] constexpr std::uint64_t nextMpvReplyId(MpvReply kind,
+                                                     std::uint64_t &counter) noexcept {
+  counter = (counter + 1) & mpvReplyIdMask(kind);
+  if (counter == 0)
+    counter = 1;
+  return counter;
+}
+
+static_assert([] {
+  for (const MpvReply kind : {MpvReply::Open, MpvReply::Scrub,
+                              MpvReply::RenderRecovery, MpvReply::FallbackStop}) {
+    for (const std::uint64_t id : {1ULL, mpvReplyIdMask(kind)}) {
+      const MpvReplyTag tag = parseMpvReply(mpvReplyUserdata(kind, id));
+      if (tag.kind != kind || tag.id != id)
+        return false;
+    }
+  }
+  return parseMpvReply(0).kind == MpvReply::Untagged;
+}());
 
 // The compatibility (libmpv) engine of one window: its PlayerCore, the
 // runtime it is provisioned with, and the state of the file lineage it is
@@ -79,6 +256,17 @@ public:
     int restore_retry_count = 0;
     bool restore_retry_queued = false;
     QString restore_failure;
+
+    // Three restarts, each clearing exactly the progress its event voids.
+    // A second render-context loss: re-run the restore from the top, with
+    // the captured position and its override kept.
+    void restartForNewRenderContext();
+    // A video reselect whose entry then failed: reload the file instead,
+    // keeping the captured per-file state and the retry budget.
+    void escalateToFullReload();
+    // The reload started a different playlist entry (a redirect child):
+    // its position and track snapshot are no longer this recovery's.
+    void restartForNewPlaylistEntry();
   };
 
   struct RenderRecoveryAttempt {
@@ -136,7 +324,7 @@ public:
     std::vector<std::filesystem::path> attached_subtitle_files;
   };
 
-  explicit MpvEngine(PlayerController *owner);
+  MpvEngine(PlayerController *owner, MpvEngineHost &host);
   ~MpvEngine();
 
   MpvEngine(const MpvEngine &) = delete;
@@ -176,13 +364,250 @@ public:
   [[nodiscard]] bool renderingReleased() const;
   [[nodiscard]] NativePlaybackMetricsSample metrics() const;
 
+  // The one way to talk to the mpv handle. Every call is a no-op (or empty
+  // answer) until the core is ready; setters warn on failure.
+  [[nodiscard]] QString mpvErrorDetail(int error) const;
+  [[nodiscard]] std::optional<std::int64_t> intProperty(const char *name) const;
+  [[nodiscard]] std::optional<double> doubleProperty(const char *name) const;
+  [[nodiscard]] std::optional<bool> flagProperty(const char *name) const;
+  [[nodiscard]] std::optional<QString> stringProperty(const char *name) const;
+  bool setCoreProperty(const char *name, mpv_format format, void *value);
+  void setPropertyAsync(const char *name, mpv_format format, void *value);
+  // Synchronous command; returns mpv's status.
+  int commandNow(const char **arguments);
+  void abortCommand(std::uint64_t reply_userdata);
+  bool setPlaybackProperty(const char *name, const char *value);
+  void applyPlaybackBufferPolicy(PlaybackSourceClass source_class);
+  // A track selection: 0 deselects, a negative value leaves it alone.
+  bool setTrackSelection(const char *name, std::int64_t selection);
+  int sendCommand(const std::initializer_list<QByteArray> &arguments,
+                  std::uint64_t reply_userdata = 0);
+
+  [[nodiscard]] std::int64_t playlistEntryIdAtPosition(
+      const char *position_property) const;
+  [[nodiscard]] std::int64_t currentPlaylistEntryId() const;
+  [[nodiscard]] std::int64_t playingPlaylistEntryId() const;
+  [[nodiscard]] std::int64_t playlistEntryCount() const;
+  [[nodiscard]] std::int64_t playlistPositionForEntry(std::int64_t entry_id) const;
+  [[nodiscard]] QUrl playlistEntrySource(std::int64_t entry_id) const;
+  // vid/aid/sid as a positive track id, or -1.
+  [[nodiscard]] std::int64_t currentTrackId(const char *name) const;
+  // parseTrackSelection of the live vid/aid/sid.
+  [[nodiscard]] std::int64_t currentTrackSelection(const char *name) const;
+  [[nodiscard]] QSize currentVideoDisplaySize() const;
+  [[nodiscard]] std::optional<bool> currentFileHasTrackType(const char *type) const;
+
   void detachOwner();
+
+  // --- Transport ---------------------------------------------------------
+  // Starts a new file lineage: a routed open, a stop, a failed init.
+  void startNewLineage();
+  // An unrouted user open of `source` for the host's current request serial.
+  bool beginOpen(const QUrl &source);
+  // An open the native router handed to this engine.
+  void beginRoutedOpen(const QUrl &source, const RoutedFallbackOpen &routed);
+  [[nodiscard]] bool opening() const noexcept { return lineage.open_attempt.has_value(); }
+  [[nodiscard]] bool recovering() const noexcept { return lineage.render_recovery.has_value(); }
+  // Each records the intent in an in-flight recovery or startup sync of the
+  // current request, which restores it once mpv is back.
+  void play();
+  void pause();
+  void seek(double target);
+  // `sid` 0 deselects.
+  void selectSubtitleTrack(std::int64_t sid);
+  bool attachSubtitleFile(const std::filesystem::path &subtitle);
+
+  // --- Observation gate -------------------------------------------------
+  // True when an mpv property event describes the committed file of the
+  // current request, with no open, scrub, recovery or startup sync in flight.
+  [[nodiscard]] bool acceptsPlaybackObservation() const;
+
+  // --- Scrub (pointer gesture on this engine) ----------------------------
+  // A capacity-one seek pipeline: keyframe previews while dragging, one exact
+  // seek on release, then the captured pause intent is restored.
+  [[nodiscard]] bool scrubbing() const noexcept { return scrub_seek_.has_value(); }
+  void beginScrub(double position);
+  void previewScrub(double target);
+  // False when no gesture is open (the caller seeks instead). `valid` false
+  // ends the gesture without a seek.
+  [[nodiscard]] bool endScrub(double target, bool valid);
+  void noteSeekStarted();
+  // Feeds an observed time-pos to an open gesture; false when none is open.
+  [[nodiscard]] bool observeScrubPosition(double position);
+  void handleScrubCommandReply(std::uint64_t command, int error);
+  void handleScrubPlaybackRestart();
+  void finishScrubGesture(bool restore_transport);
+  void invalidateScrubGesture();
+
+  // --- Events ----------------------------------------------------------
+  // Drains every pending mpv event and routes it: command replies by their
+  // MpvReply tag, file events to the open lineage, property changes to the
+  // observation handlers below.
+  void observeProperties();
+  void drainMpvEvents();
+  void applyObservedPause(bool paused);
+  void applyObservedPosition(double position);
+  void applyObservedDuration(double duration);
+  // Reads mpv's dwidth/dheight pair and gamma back and publishes them. Takes
+  // no argument on purpose: the observation that triggered it carries only
+  // one of them, and half a size is not a fact to publish.
+  void applyObservedVideoFacts();
+  void applyObservedIdle(bool idle);
+  void applyObservedEof(bool eof_reached);
+  void applyObservedVideoTrack(std::int64_t video_track_id);
+  void applyObservedAudioTrack(std::int64_t audio_track_id);
+  void applyObservedSubtitleTrack(std::int64_t subtitle_track_id);
+
+  // --- Open lineage ------------------------------------------------------
+  // A pending open is flushed as one loadfile once rendering is ready; its
+  // reply, START_FILE/END_FILE and FILE_LOADED/PLAYBACK_RESTART commit it.
+  void continuePendingOpen();
+  bool flushPendingOpen(std::uint64_t render_stamp);
+  // Each takes the command id parseMpvReply extracted for its protocol.
+  void observeOpenCommandReply(std::uint64_t attempt_id, int error);
+  void handleOpenCommandReply(std::uint64_t attempt_id, int error);
+  [[nodiscard]] bool
+  playlistEntryBelongsToCurrentLineage(std::int64_t playlist_entry_id) const;
+  void handleStartFile(std::int64_t playlist_entry_id);
+  void handleEndFile(const mpv_event_end_file &end);
+  void handlePlaybackReady(bool file_loaded);
+  void abandonPendingOpen();
+  void cacheCurrentTrackSelection();
+  void cacheCurrentEntrySource();
+  void notifyRoutedFallbackOpenFailed();
+
+  // --- Render recovery and startup sync --------------------------------
+  // A lost render context reloads (or reselects) the committed file and
+  // restores its per-file state and transport before observations resume.
+  struct LivePlaybackState {
+    bool paused = true;
+    bool idle = true;
+    std::optional<bool> eof_reached;
+    std::optional<double> position;
+    std::optional<double> duration;
+  };
+  bool flushRenderRecovery(std::uint64_t render_stamp);
+  void handleRenderRecoveryCommandReply(std::uint64_t attempt_id, int error);
+  void restoreRenderRecovery();
+  void queueRenderRecoveryCompletion();
+  void finishRenderRecoveryCompletion(std::uint64_t completion_token,
+                                      std::uint64_t request_serial,
+                                      std::uint64_t render_stamp,
+                                      std::int64_t playlist_entry_id);
+  [[nodiscard]] std::optional<LivePlaybackState> readLivePlaybackState() const;
+  [[nodiscard]] static bool
+  livePlaybackStateMatchesRecovery(const RenderRecovery &recovery,
+                                   const LivePlaybackState &live_state);
+  [[nodiscard]] static bool
+  livePlaybackStateMatchesStartupSync(const StartupPlaybackSync &startup_sync,
+                                      const LivePlaybackState &live_state);
+  void commitRenderRecovery(const RenderRecovery &recovery,
+                            const LivePlaybackState &live_state);
+  void queueStartupPlaybackSync();
+  void finishStartupPlaybackSync(std::uint64_t completion_token,
+                                 std::uint64_t request_serial,
+                                 std::uint64_t render_stamp,
+                                 std::int64_t playlist_entry_id);
+  void reconcileStartupPlaybackSync(const LivePlaybackState &live_state);
+  void commitStartupPlaybackSync(const LivePlaybackState &live_state);
+  void scheduleRenderRecoveryRetry(const QString &error);
+  void degradeRenderRecovery(const QString &error);
+  void handleRenderInvalidated(std::uint64_t retired_render_stamp);
+  void handleRenderInitializationFailure(const QString &error,
+                                         std::uint64_t render_stamp);
+  [[nodiscard]] static std::int64_t
+  authoritativePlaylistEntry(std::int64_t live_entry,
+                             std::int64_t captured_start_entry);
 
   std::shared_ptr<PlayerCore> core;
   Lineage lineage;
 
 private:
+  friend class PlayerControllerTestAccess;
+
+  enum class ObservedProperty : uint64_t {
+    Pause = 1,
+    Idle,
+    Position,
+    Duration,
+    Volume,
+    Mute,
+    Rate,
+    Path,
+    MediaTitle,
+    PreservePitch,
+    EofReached,
+    VideoTrack,
+    AudioTrack,
+    SubtitleTrack,
+    // The current subtitle line, as mpv times it. Observed rather than polled
+    // because mpv is the only thing that knows when a cue turns over, and it
+    // keeps publishing this with its own rendering switched off.
+    SubtitleText,
+    // A cheap scalar that changes whenever the track set does -- which is how
+    // a `sub-add` becomes a new entry in the Subtitles menu. Observing
+    // `track-list` itself would mean MPV_FORMAT_NODE and a matching
+    // mpv_free_node_contents, which is not in the resolved symbol table.
+    TrackListCount,
+    // The video facts (see videoDisplaySize). mpv's dwidth/dheight already
+    // apply the container's aspect ratio and rotation.
+    //
+    // Three observations, one fact: they arrive as independent events and
+    // either size half alone would publish half a new aspect over half an old
+    // one. Every handler therefore reads all three back synchronously
+    // (mpv_get_property, an in-process struct read) and publishes them
+    // together; the observation only decides WHEN to look.
+    DisplayWidth,
+    DisplayHeight,
+    VideoGamma,
+  };
+
+  struct ScrubSeek {
+    std::uint64_t gesture = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t command = 0;
+    std::int64_t playlist_entry_id = -1;
+    double target = 0.0;
+    std::optional<double> pending_target;
+    std::optional<double> authoritative_position;
+    bool intended_paused = true;
+    // final records that pointer ownership has been released. command_exact
+    // records the precision of the currently issued capacity-one command;
+    // those states intentionally differ while an approximate preview is
+    // draining after release.
+    bool final = false;
+    bool command_exact = false;
+    bool command_replied = false;
+    bool seek_started = false;
+    bool playback_restarted = false;
+    bool replacement_dispatched = false;
+    bool abort_pending = false;
+  };
+
+  void overrideIntendedPause(bool paused);
+  void overrideIntendedPosition(double target);
+  void dispatchScrubSeek(double target, bool exact);
+  void maybeCompleteScrubSeek();
+  [[nodiscard]] static const char *scrubSeekMode(bool exact);
+  void armScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
+                       std::uint64_t command);
+  void cancelScrubTimeout();
+  void handleScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
+                          std::uint64_t command);
+
   PlayerController *owner_;
+  MpvEngineHost &host_;
+  std::optional<ScrubSeek> scrub_seek_;
+  std::uint64_t next_scrub_gesture_id_ = 0;
+  std::uint64_t next_scrub_command_id_ = 0;
+  std::uint64_t next_open_attempt_id_ = 0;
+  std::uint64_t next_render_recovery_attempt_id_ = 0;
+  std::uint64_t next_render_recovery_completion_token_ = 0;
+  std::uint64_t next_startup_playback_sync_token_ = 0;
+  QTimer *scrub_timeout_timer_ = nullptr;
+  std::uint64_t scrub_timeout_gesture_ = 0;
+  std::uint64_t scrub_timeout_request_serial_ = 0;
+  std::uint64_t scrub_timeout_command_ = 0;
   std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime_;
   std::shared_ptr<PlayerCore> replacement_;
 };

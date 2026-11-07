@@ -377,10 +377,9 @@ static int runApplication(int argc, char *argv[]) {
 
     // The window factory. Everything app-level -- the state store and its
     // persistence checkpoint, the single desktop menu bar, the single
-    // Preferences window, focus routing, and the settings mirror that makes
-    // one Preferences change apply live to every window -- lives here; the
-    // controller, chrome bridge, resume tracker and native playback session
-    // are per window.
+    // Preferences window and focus routing -- lives here; the controller,
+    // chrome bridge, resume tracker and native playback session are per
+    // window.
     wam::qt::WindowManager windows(engine, state_store);
     engine.rootContext()->setContextProperty(QStringLiteral("appHost"),
                                              &windows);

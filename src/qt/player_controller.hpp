@@ -75,7 +75,9 @@ signals:
 // QML-facing playback state and commands. All regular libmpv client calls are
 // made on this object's (GUI) thread; video rendering remains isolated on Qt
 // Quick's render thread in MpvVideoItem.
-class PlayerController final : public QObject {
+class PlayerController final : public QObject,
+                               private NativeEngineHost,
+                               private MpvEngineHost {
   Q_OBJECT
 
   Q_PROPERTY(bool available READ available NOTIFY availableChanged)
@@ -87,19 +89,19 @@ class PlayerController final : public QObject {
   Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
   Q_PROPERTY(double position READ position WRITE seekTo NOTIFY positionChanged)
   Q_PROPERTY(double duration READ duration NOTIFY durationChanged)
-  // The current video's on-screen rectangle in square pixels, as stated by
-  // whichever engine actually demuxed the container: the native route's
-  // Prepared event (AVFoundation, Matroska/WebM, MPEG-TS) or mpv's
-  // dwidth/dheight on the compatibility route. Both already carry pixel aspect
-  // ratio, clean aperture and rotation, so this is a display size and not a
-  // coded size.
+  // The current video's facts, as stated by whichever engine actually
+  // demuxed the container: the native route's Prepared event or mpv's
+  // dwidth/dheight and video-params/gamma on the compatibility route. They are
+  // the only source of video size and HDR in the app; AVFoundation cannot
+  // demux Matroska, WebM or MPEG-TS, so no AVURLAsset probe can stand in.
   //
-  // An empty QSize means "not known" -- audio-only media, no media, or an open
-  // that has not reached Prepared yet. It exists because MacWindowChrome's
-  // AVURLAsset probe, which qml/Main.qml asks first, cannot demux Matroska/WebM/MPEG-TS and answers (0, 0) for every one
-  // of them; Main.qml falls back to this when it does.
+  // videoDisplaySize is the on-screen rectangle in square pixels (pixel
+  // aspect, clean aperture and rotation applied), not the coded size. An
+  // empty QSize means "not known": audio-only media, no media, or an open
+  // that has not stated it yet. videoHdr is true for a PQ or HLG transfer.
   Q_PROPERTY(QSizeF videoDisplaySize READ videoDisplaySize NOTIFY
                  videoDisplaySizeChanged)
+  Q_PROPERTY(bool videoHdr READ videoHdr NOTIFY videoDisplaySizeChanged)
   // Normalized level where 1.0 is 100%. The range runs to maximumVolume
   // below: above unity this is VLC-style amplification, which can clip by
   // design (the native gain stage saturates each sample to [-1, 1]; mpv is
@@ -206,24 +208,19 @@ public:
   PlayerController(const PlayerController &) = delete;
   PlayerController &operator=(const PlayerController &) = delete;
 
-  // Compatibility-router handoff. Provisioning retains an already validated
-  // runtime but does not create an mpv handle; initializePlaybackEngine() can
-  // consume it only after the router has explicitly selected fallback.
-  [[nodiscard]] bool provisionMpvFallbackRuntime(
-      std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime);
-
   [[nodiscard]] bool available() const;
   [[nodiscard]] bool loading() const { return loading_; }
   [[nodiscard]] bool hasMedia() const { return !source_.isEmpty(); }
-  [[nodiscard]] QUrl source() const { return source_; }
+  [[nodiscard]] QUrl source() const override { return source_; }
   [[nodiscard]] QString mediaTitle() const { return media_title_; }
   [[nodiscard]] bool playing() const {
     return !paused_ && !idle_ && !eof_reached_;
   }
-  [[nodiscard]] bool paused() const { return paused_; }
-  [[nodiscard]] double position() const { return position_; }
+  [[nodiscard]] bool paused() const override { return paused_; }
+  [[nodiscard]] double position() const override { return position_; }
   [[nodiscard]] double duration() const { return duration_; }
   [[nodiscard]] QSizeF videoDisplaySize() const { return video_display_size_; }
+  [[nodiscard]] bool videoHdr() const { return video_hdr_; }
   [[nodiscard]] media::MediaDisplaySize exactVideoDisplaySize() const { return exact_video_display_size_; }
   // Normalized UI volume. mpv's 0..400 range maps to 0..4 here; 1.0 is 100%.
   [[nodiscard]] double volume() const { return volume_; }
@@ -292,7 +289,7 @@ public:
   Q_INVOKABLE void togglePlayPause();
   Q_INVOKABLE void stop();
   Q_INVOKABLE void beginScrub();
-  Q_INVOKABLE void seekTo(double seconds);
+  Q_INVOKABLE void seekTo(double seconds) override;
   Q_INVOKABLE void previewSeekTo(double seconds);
   Q_INVOKABLE void endScrub(double seconds);
   Q_INVOKABLE void seekRelative(double seconds);
@@ -427,7 +424,6 @@ signals:
 private:
   friend class PlayerCore;
   friend class MpvVideoItem;
-  friend class NativePlaybackOwner;
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) || defined(WAM_QT_TEST_SEAMS)
   // test_seams.cpp's `nativefail` verb reaches the native engine; the
   // controller and core tests reach the mpv core.
@@ -442,36 +438,6 @@ private:
   using RenderRecoveryAttempt = MpvEngine::RenderRecoveryAttempt;
   using StartupPlaybackSync = MpvEngine::StartupPlaybackSync;
   using PlaylistEntryRange = MpvEngine::PlaylistEntryRange;
-
-  struct LivePlaybackState {
-    bool paused = true;
-    bool idle = true;
-    std::optional<bool> eof_reached;
-    std::optional<double> position;
-    std::optional<double> duration;
-  };
-
-  struct ScrubSeek {
-    std::uint64_t gesture = 0;
-    std::uint64_t request_serial = 0;
-    std::uint64_t command = 0;
-    std::int64_t playlist_entry_id = -1;
-    double target = 0.0;
-    std::optional<double> pending_target;
-    std::optional<double> authoritative_position;
-    bool intended_paused = true;
-    // final records that pointer ownership has been released. command_exact
-    // records the precision of the currently issued capacity-one command;
-    // those states intentionally differ while an approximate preview is
-    // draining after release.
-    bool final = false;
-    bool command_exact = false;
-    bool command_replied = false;
-    bool seek_started = false;
-    bool playback_restarted = false;
-    bool replacement_dispatched = false;
-    bool abort_pending = false;
-  };
 
   // Controller-side ownership for a native pointer gesture. The handle tracks
   // every movement immediately, while native media work is demand-driven: one
@@ -546,67 +512,8 @@ private:
   using NativePreviewDemandObserver = void (*)(
       void *context, const NativePreviewIntent &intent) noexcept;
 
-  enum class ObservedProperty : uint64_t {
-    Pause = 1,
-    Idle,
-    Position,
-    Duration,
-    Volume,
-    Mute,
-    Rate,
-    CaptionsVisible,
-    Path,
-    MediaTitle,
-    PreservePitch,
-    EofReached,
-    VideoTrack,
-    AudioTrack,
-    SubtitleTrack,
-    // The current subtitle line, as mpv times it. Observed rather than polled
-    // because mpv is the only thing that knows when a cue turns over, and it
-    // keeps publishing this with its own rendering switched off.
-    SubtitleText,
-    // A cheap scalar that changes whenever the track set does -- which is how
-    // a `sub-add` becomes a new entry in the Subtitles menu. Observing
-    // `track-list` itself would mean MPV_FORMAT_NODE and a matching
-    // mpv_free_node_contents, which is not in the resolved symbol table.
-    TrackListCount,
-    // The video's display width and height, which is what the compatibility
-    // route has to state for window geometry -- MacWindowChrome's AVURLAsset
-    // probe cannot demux the very containers (Matroska/WebM/MPEG-TS) that end
-    // up on this route. mpv's dwidth/dheight already apply the container's
-    // aspect ratio and rotation, so they are display sizes, not coded sizes.
-    //
-    // Two observations, one fact: the pair arrives as two independent events
-    // and either one alone would publish half a new aspect over half an old
-    // one. Both handlers therefore read BOTH properties back synchronously
-    // (mpv_get_property, an in-process struct read) and publish the pair
-    // atomically; the observation only decides WHEN to look.
-    DisplayWidth,
-    DisplayHeight,
-  };
 
-  void drainMpvEvents();
-  void requestVideoUpdate();
-  void handleRenderInitializationFailure(const QString &error,
-                                         std::uint64_t render_stamp);
-  void handleRenderInvalidated(std::uint64_t retired_render_stamp);
-  void observeOpenCommandReply(std::uint64_t reply_userdata, int error);
-  void handleOpenCommandReply(std::uint64_t reply_userdata, int error);
-  void handleRenderRecoveryCommandReply(std::uint64_t reply_userdata,
-                                        int error);
-  void handleScrubCommandReply(std::uint64_t reply_userdata, int error);
-  void handleScrubPlaybackRestart();
-  void dispatchScrubSeek(double target, bool exact);
-  void maybeCompleteScrubSeek();
-  [[nodiscard]] static const char *scrubSeekMode(bool exact);
-  void armScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
-                       std::uint64_t command);
-  void cancelScrubTimeout();
-  void handleScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
-                          std::uint64_t command);
-  void finishScrubGesture(bool restore_transport);
-  void invalidateScrubGesture();
+  void requestVideoUpdate() override;
   [[nodiscard]] static std::optional<std::uint64_t>
   reserveNativeSeekIdentity(std::uint64_t &high_water) noexcept;
   [[nodiscard]] double boundedSeekTarget(double seconds) const noexcept;
@@ -660,13 +567,13 @@ private:
                            const NativePreviewIntent &intent) noexcept;
   void dispatchNativePreviewIntent(const NativePreviewIntent &intent);
   void nativePreviewPresented(
-      const ::wam::media::native_playback::PreviewPresented &presented);
+      const ::wam::media::native_playback::PreviewPresented &presented) override;
   void nativePreviewFailed(
-      const ::wam::media::native_playback::PreviewFailed &failed);
+      const ::wam::media::native_playback::PreviewFailed &failed) override;
   [[nodiscard]] NativeSeekDispatch
   dispatchNativeSeekIntent(const NativeSeekIntent &intent);
   void
-  nativeCommitReady(const ::wam::media::native_playback::CommitReady &ready);
+  nativeCommitReady(const ::wam::media::native_playback::CommitReady &ready) override;
   [[nodiscard]] bool completeNativePreviewPresented(
       std::uint64_t gesture, std::uint64_t request,
       double actual_presentation_time, void *context,
@@ -678,19 +585,19 @@ private:
                                              std::uint64_t request,
                                              double target);
   void nativeCommitFailed(std::uint64_t gesture,
-                          std::uint64_t request) noexcept;
+                          std::uint64_t request) noexcept override;
   void setNativeScrubPauseIntent(bool paused);
   // A native scrub or seek owns the logical pause intent until it commits.
   // Play at the end, or within one frame of it (never less than 50 ms),
   // replays from the start. `frame_duration` is the playing engine's own
   // frame duration, 0 when it knows none.
-  [[nodiscard]] bool atEndForReplay(double frame_duration) const noexcept;
-  [[nodiscard]] bool nativeSeekInFlight() const noexcept {
+  [[nodiscard]] bool atEndForReplay(double frame_duration) const noexcept override;
+  [[nodiscard]] bool nativeSeekInFlight() const noexcept override {
     return native_scrub_intent_ || native_seek_intent_;
   }
   void invalidateNativeScrubIntent() noexcept;
   void invalidateNativeSeekIntents() noexcept;
-  void publishNativeMainPosition(double position);
+  void publishNativeMainPosition(double position) override;
   // The exact geometry of the frame currently on screen, as proved by the
   // native route's VideoDrawProof (every drawn frame, and every commit's
   // embedded draw proof). This is the ONLY per-sample timing the GUI layer
@@ -698,42 +605,13 @@ private:
   // what makes frame stepping exact under VFR: the next frame's PTS is this
   // frame's start plus this frame's own duration, never a nominal interval.
   void publishNativeFrameGeometry(double start_seconds,
-                                  double duration_seconds);
-  void publishSeekTarget(double target);
-  void handleStartFile(std::int64_t playlist_entry_id);
-  void handleEndFile(const mpv_event_end_file &end);
-  void handlePlaybackReady(bool file_loaded);
-  void restoreRenderRecovery();
-  void queueRenderRecoveryCompletion();
-  void finishRenderRecoveryCompletion(std::uint64_t completion_token,
-                                      std::uint64_t request_serial,
-                                      std::uint64_t render_stamp,
-                                      std::int64_t playlist_entry_id);
-  [[nodiscard]] std::optional<LivePlaybackState> readLivePlaybackState() const;
-  [[nodiscard]] static bool
-  livePlaybackStateMatchesRecovery(const RenderRecovery &recovery,
-                                   const LivePlaybackState &live_state);
-  [[nodiscard]] static bool
-  livePlaybackStateMatchesStartupSync(const StartupPlaybackSync &startup_sync,
-                                      const LivePlaybackState &live_state);
-  void commitRenderRecovery(const RenderRecovery &recovery,
-                            const LivePlaybackState &live_state);
-  void queueStartupPlaybackSync();
-  void finishStartupPlaybackSync(std::uint64_t completion_token,
-                                 std::uint64_t request_serial,
-                                 std::uint64_t render_stamp,
-                                 std::int64_t playlist_entry_id);
-  void reconcileStartupPlaybackSync(const LivePlaybackState &live_state);
-  void commitStartupPlaybackSync(const LivePlaybackState &live_state);
-  void scheduleRenderRecoveryRetry(const QString &error);
-  void degradeRenderRecovery(const QString &error);
-  void applyObservedPause(bool paused);
-  void applyObservedPosition(double position);
+                                  double duration_seconds) override;
+  void updatePosition(double position) override;
   // --- subtitles -------------------------------------------------------
   // Rebuilds the source list for the current media from whichever engine owns
   // it. Idempotent and cheap to call again; it does nothing when the route and
   // the media have not changed since the last successful build.
-  void refreshSubtitleSources();
+  void refreshSubtitleSources() override;
   void buildMpvSubtitleSources();
   void buildNativeSubtitleSources();
   void applySubtitleDefaultPolicy();
@@ -750,77 +628,74 @@ private:
   // Adds a sidecar subtitle file on whichever route is live and selects it.
   bool attachSubtitleSource(const std::filesystem::path &path, int origin,
                             const QString &label);
-  void applyObservedDuration(double duration);
-  // Reads mpv's dwidth/dheight pair back and publishes it. Takes no argument
-  // on purpose: the observation that triggered it carries only one half, and
-  // half a size is not a fact this controller is willing to publish.
-  void applyObservedDisplaySize();
-  void applyObservedIdle(bool idle);
-  void applyObservedEof(bool eof_reached);
-  void applyObservedVideoTrack(std::int64_t video_track_id);
-  void applyObservedAudioTrack(std::int64_t audio_track_id);
-  void applyObservedSubtitleTrack(std::int64_t subtitle_track_id);
-  void cacheCurrentTrackSelection();
-  void cacheCurrentEntrySource();
-  [[nodiscard]] static std::int64_t
-  authoritativePlaylistEntry(std::int64_t live_entry,
-                             std::int64_t captured_start_entry);
-  [[nodiscard]] bool acceptsPlaybackObservation() const;
-  [[nodiscard]] bool
-  playlistEntryBelongsToCurrentLineage(std::int64_t playlist_entry_id) const;
-  [[nodiscard]] bool engineReady() const;
+  [[nodiscard]] bool engineReady() const override;
+  [[nodiscard]] std::uint64_t requestSerial() const override {
+    return request_serial_;
+  }
+  [[nodiscard]] QUrl requestedSource() const override {
+    return requested_source_;
+  }
+  [[nodiscard]] bool eofReached() const override { return eof_reached_; }
+  [[nodiscard]] MpvTransportChange
+  assignTransport(const MpvTransport &transport) override;
+  void publishTransport(const MpvTransportChange &change) override;
+  void applyObservedVolume(double volume) override;
+  void applyObservedMute(bool muted) override;
+  void applyObservedRate(double rate) override;
+  void applyObservedPreservePitch(bool preserve) override { preserve_pitch_ = preserve; }
+  void applyObservedSubtitleText(const QString &text) override;
+  void setRequestedSource(const QUrl &source) override {
+    requested_source_ = source;
+  }
+  [[nodiscard]] NativeEngine *nativeEngine() const override { return native_.get(); }
+  [[nodiscard]] MpvEngine &mpvEngine() noexcept override { return mpv_; }
   [[nodiscard]] bool needsRenderContext() const;
-  bool initializePlaybackEngine();
-  void prepareRoutedOpenIntent(const QUrl &source);
-  [[nodiscard]] bool nativeRouteAdmissionAllowed() const noexcept;
+  bool initializePlaybackEngine() override;
+  void prepareRoutedOpenIntent(const QUrl &source) override;
+  [[nodiscard]] bool nativeRouteAdmissionAllowed() const noexcept override;
   [[nodiscard]] bool
   beginRoutedFallbackOpen(const QUrl &source, std::uint64_t attempt,
                           std::uint64_t serial, std::uint64_t source_key,
-                          bool paused, PlaybackSourceClass source_class);
-  void notifyRoutedFallbackOpenFailed();
+                          bool paused, PlaybackSourceClass source_class) override;
   [[nodiscard]] bool resetRoutedFallbackCoreAfterRelease(
-      const std::shared_ptr<PlayerCore> &expected_core);
-  void finishStopUi(bool stop_compatibility_engine);
-  bool flushPendingOpen(std::uint64_t render_stamp);
-  bool flushRenderRecovery(std::uint64_t render_stamp);
-  void continuePendingOpen();
-  void abandonPendingOpen();
+      const std::shared_ptr<PlayerCore> &expected_core) override;
+  void finishStopUi(bool stop_compatibility_engine) override;
   void attachVideoItem(MpvVideoItem *item);
   void detachVideoItem(MpvVideoItem *item);
   [[nodiscard]] std::shared_ptr<PlayerCore> coreForRendering() const;
 
-  void updatePause(bool paused);
-  void updateIdle(bool idle);
-  void updateLoading(bool loading);
+  void updatePause(bool paused) override;
+  void updateIdle(bool idle) override;
+  void updateLoading(bool loading) override;
   bool loading_ = false;
-  void updateEof(bool eof_reached);
-  void updateDuration(double duration);
+  void updateEof(bool eof_reached) override;
+  void updateDuration(double duration) override;
   // The native route's presentable ceiling (NativeMediaSession::
   // seekCeilingSeconds); 0 while no native session is prepared. Read only by
   // the native target snap, never shown: the timeline keeps the real duration.
-  void updateNativeSeekCeiling(double seconds);
-  // Publishes a display size from whichever engine demuxed the container. Both
-  // callers -- NativePlaybackOwner's Prepared arm and the mpv dwidth/dheight
+  void updateNativeSeekCeiling(double seconds) override;
+  // Publishes the video facts from whichever engine demuxed the container.
+  // Both callers -- NativePlaybackOwner's Prepared arm and the mpv
   // observation -- go through here so the dedupe and the "an empty size never
-  // overwrites a known one" rule are stated once. Pass (0, 0) only through
-  // resetTimeline(), which is the one place a size is deliberately forgotten.
-  void updateVideoDisplaySize(int width, int height);
-  void updateVideoDisplaySize(media::MediaRational width, media::MediaRational height);
-  void updateSource(const QUrl &source);
-  void updateMediaTitle(const QString &title);
-  void resetTimeline();
+  // overwrites a known one" rule are stated once. A backend with no picture
+  // states nothing, HDR included. resetTimeline() is the one place the facts
+  // are deliberately forgotten.
+  void updateVideoFacts(media::MediaRational width, media::MediaRational height,
+                        bool hdr) override;
+  void updateSource(const QUrl &source) override;
+  void updateMediaTitle(const QString &title) override;
+  void resetTimeline() override;
   void cancelCaptionsForMediaChange();
-  void setLastError(const QString &error);
+  void setLastError(const QString &error) override;
   // Non-blocking counterpart to setLastError: fallback-continuation notices
   // (native playback degraded to compatibility playback, or a seek could not
   // be served natively) where playback kept going and a modal dialog would
   // be pure interruption. QML surfaces this as a transient toast.
-  void setLastNotice(const QString &notice);
+  void setLastNotice(const QString &notice) override;
   void setExportStatus(const QString &status);
   void cleanupExportStaging() noexcept;
   void startWorkPolling();
   void pollBackgroundWork();
-  bool attachSubtitleFile(const std::filesystem::path &subtitle);
 
   MpvEngine mpv_;
   // Null when this build has no native engine.
@@ -828,7 +703,6 @@ private:
   QPointer<MpvVideoItem> video_item_;
   const AppSettings *settings_ = nullptr;
   QTimer *work_timer_ = nullptr;
-  QTimer *scrub_timeout_timer_ = nullptr;
   // Pointer-scroll gestures. The model owns the axis lock and the detent; the
   // timer owns "the gesture has settled", which is what both releases the
   // axis lock and commits a timeline sweep. A wheel stream has no release
@@ -891,6 +765,7 @@ private:
   double native_seek_ceiling_ = 0.0;
   QSizeF video_display_size_;
   media::MediaDisplaySize exact_video_display_size_;
+  bool video_hdr_ = false;
   double volume_ = 1.0;
   double maximum_volume_ = 2.0;
   double rate_ = 1.0;
@@ -911,22 +786,12 @@ private:
   // window is on its way out.
   bool tearing_down_ = false;
   std::uint64_t request_serial_ = 0;
-  std::uint64_t next_open_attempt_id_ = 0;
-  std::uint64_t next_render_recovery_attempt_id_ = 0;
-  std::uint64_t next_scrub_gesture_id_ = 0;
-  std::uint64_t next_scrub_command_id_ = 0;
   std::uint64_t next_native_seek_gesture_id_ = 0;
   std::uint64_t next_native_seek_request_id_ = 0;
-  std::uint64_t scrub_timeout_gesture_ = 0;
-  std::uint64_t scrub_timeout_request_serial_ = 0;
-  std::uint64_t scrub_timeout_command_ = 0;
-  std::uint64_t next_render_recovery_completion_token_ = 0;
-  std::uint64_t next_startup_playback_sync_token_ = 0;
-  // The subset of mpv_.lineage.attached_subtitle_files this player GENERATED,
+  // The subset of MpvEngine's attached subtitle files this player GENERATED,
   // so the Subtitles menu can name them honestly. A file the user loaded is
   // not a generated caption.
   std::vector<std::filesystem::path> generated_caption_files_;
-  std::optional<ScrubSeek> scrub_seek_;
   std::optional<NativeScrubIntent> native_scrub_intent_;
   std::optional<NativeSeekIntent> native_seek_intent_;
   NativeSeekSubmissionState *native_seek_submission_ = nullptr;
