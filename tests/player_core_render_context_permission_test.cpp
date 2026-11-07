@@ -5,6 +5,8 @@
 #include "qt/player_controller.hpp"
 #include "qt/player_core_p.hpp"
 
+#include "support/expect.hpp"
+
 #include <QGuiApplication>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
@@ -234,16 +236,6 @@ namespace {
 
 using namespace std::chrono_literals;
 using Access = wam::qt::PlayerControllerTestAccess;
-
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (condition) {
-    return;
-  }
-  std::cerr << "FAIL: " << message << '\n';
-  ++failures;
-}
 
 class TimedHookBarrier final {
 public:

@@ -2,15 +2,11 @@
 #include "media/native_media_clock.hpp"
 #include <bit>
 #include <cfenv>
-#include <cstdlib>
-#include <iostream>
+#include "support/expect.hpp"
 #include <limits>
 
 using namespace wam;
 namespace {
-void expect(bool value, const char* message) {
-  if (!value) { std::cerr << message << '\n'; std::exit(1); }
-}
 std::uint64_t ticks(void* value) noexcept { return *static_cast<std::uint64_t*>(value); }
 }
 int main() {
@@ -41,4 +37,5 @@ int main() {
   expect(clock.seek(1,2,{1001,30000}), "exact seek creates a new anchor");
   expect(clock.sample().generation == 2 && clock.sample().exactPausedTarget == media::MediaTime{1001,30000},
       "seek target and generation survive without reconstruction");
+  return failures == 0 ? 0 : 1;
 }

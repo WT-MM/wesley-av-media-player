@@ -1,4 +1,5 @@
 #include "platform/macos/native_tracked_video_arbiter.hpp"
+#include "support/expect.hpp"
 
 #include <CoreVideo/CoreVideo.h>
 
@@ -42,16 +43,6 @@ concept HasCloseProgress = requires(Port& port) {
 
 static_assert(!HasFlushProgress<NativeTrackedVideoPreviewPort>);
 static_assert(!HasCloseProgress<NativeTrackedVideoPreviewPort>);
-
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (condition) {
-    return;
-  }
-  ++failures;
-  std::cerr << "FAIL: " << message << '\n';
-}
 
 FrameLease makeFrame(std::uint64_t generation, std::int64_t value) {
   CVPixelBufferRef pixelBuffer = nullptr;

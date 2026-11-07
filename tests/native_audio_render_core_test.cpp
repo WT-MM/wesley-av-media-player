@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "support/expect.hpp"
+#include "support/fake_host_clock.hpp"
 
 namespace {
 
@@ -127,27 +128,13 @@ template <typename Range>
                      [expected](float value) { return value == expected; });
 }
 
-struct FakeHostClock {
-  std::atomic<std::uint64_t> ticks{0};
-
-  static std::uint64_t read(void *context) noexcept {
-    return static_cast<FakeHostClock *>(context)->ticks.load(
-        std::memory_order_relaxed);
-  }
-
-  [[nodiscard]] NativeMediaHostClock seam(
-      std::uint64_t ticksPerSecond = kSampleRate) noexcept {
-    return {&read, this, ticksPerSecond};
-  }
-};
-
 struct Fixture {
   FakeHostClock host;
   // The 512 KiB PCM payload belongs on the heap, before callbacks run.
   std::unique_ptr<NativePcmRing> ringStorage =
       std::make_unique<NativePcmRing>(1);
   NativePcmRing &ring = *ringStorage;
-  NativeMediaClock clock{host.seam()};
+  NativeMediaClock clock{host.seam(kSampleRate)};
   NativeAudioRenderCore core{ring, clock, kSampleRate};
   bool ready{false};
 
@@ -1020,7 +1007,7 @@ void testExactNonzeroMediaOrigin() {
   FakeHostClock mismatchedHost;
   auto mismatchedRingStorage = std::make_unique<NativePcmRing>(1);
   auto &mismatchedRing = *mismatchedRingStorage;
-  NativeMediaClock mismatchedClock(mismatchedHost.seam());
+  NativeMediaClock mismatchedClock(mismatchedHost.seam(kSampleRate));
   NativeAudioRenderCore mismatchedCore(mismatchedRing, mismatchedClock,
                                        kSampleRate);
   expect(mismatchedClock.anchor(1, MediaTime{41, 4}, {}, false) &&
@@ -1063,7 +1050,7 @@ void testExactDualSeekOrigins() {
   FakeHostClock host;
   auto ringStorage = std::make_unique<NativePcmRing>(1);
   auto &ring = *ringStorage;
-  NativeMediaClock clock(host.seam());
+  NativeMediaClock clock(host.seam(kSampleRate));
   NativeAudioRenderCore core(ring, clock, kSampleRate);
   expect(targetSeconds && audioSeconds &&
              clock.anchor(1, visualTarget, {}, false) &&
@@ -1097,7 +1084,7 @@ void testExactDualSeekOrigins() {
   FakeHostClock rejectedHost;
   auto rejectedRingStorage = std::make_unique<NativePcmRing>(1);
   auto &rejectedRing = *rejectedRingStorage;
-  NativeMediaClock rejectedClock(rejectedHost.seam());
+  NativeMediaClock rejectedClock(rejectedHost.seam(kSampleRate));
   NativeAudioRenderCore rejectedCore(rejectedRing, rejectedClock,
                                      kSampleRate);
   expect(rejectedClock.anchor(1, visualTarget, {}, false) &&
@@ -1111,7 +1098,7 @@ void testExactDualSeekOrigins() {
   FakeHostClock emptyHost;
   auto emptyRingStorage = std::make_unique<NativePcmRing>(1);
   auto &emptyRing = *emptyRingStorage;
-  NativeMediaClock emptyClock(emptyHost.seam());
+  NativeMediaClock emptyClock(emptyHost.seam(kSampleRate));
   NativeAudioRenderCore emptyCore(emptyRing, emptyClock, kSampleRate);
   expect(emptyClock.anchor(1, visualTarget, {}, false) &&
              emptyCore.activate(1, 0, firstAudioFrame, visualTarget,
@@ -1136,7 +1123,7 @@ void testCanonicalOriginRoundingRegression() {
   FakeHostClock host;
   auto ringStorage = std::make_unique<NativePcmRing>(1);
   auto &ring = *ringStorage;
-  NativeMediaClock clock(host.seam());
+  NativeMediaClock clock(host.seam(kSampleRate));
   NativeAudioRenderCore core(ring, clock, kSampleRate);
   expect(clock.anchor(1, origin, {}, false) &&
              core.activate(1, 0, origin, origin, kSampleRate),

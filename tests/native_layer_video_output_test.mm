@@ -6,6 +6,7 @@
 #include "platform/macos/native_surface_budget.hpp"
 #include "platform/macos/native_tracked_video_output.hpp"
 #include "platform/macos/native_video_presenter.hpp"
+#include "support/expect.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMedia/CoreMedia.h>
@@ -78,23 +79,15 @@ namespace {
 
 using namespace wam::macos;
 
-void check(bool condition, const char* expression, int line,
-           const std::string& detail = {}) {
-  if (condition) {
-    return;
-  }
-  std::cerr << "CHECK failed at line " << line << ": " << expression;
-  if (!detail.empty()) {
-    std::cerr << " (" << detail << ')';
-  }
-  std::cerr << '\n';
-  std::exit(EXIT_FAILURE);
-}
-
-#define WAM_CHECK(expression)                                                  \
-  check(static_cast<bool>(expression), #expression, __LINE__)
+// Detail form built on the shared expect: the failing expression plus context.
 #define WAM_CHECK_DETAIL(expression, detail)                                   \
-  check(static_cast<bool>(expression), #expression, __LINE__, (detail))
+  expect(static_cast<bool>(expression),                                        \
+         std::string(WAM_EXPECT_LOCATION_(__LINE__) ": " #expression " (") +   \
+             (detail) + ")")
+#define WAM_REQUIRE_DETAIL(expression, detail)                                 \
+  require(static_cast<bool>(expression),                                       \
+          std::string(WAM_EXPECT_LOCATION_(__LINE__) ": " #expression " (") +  \
+              (detail) + ")")
 
 // The renderer's flush completion handler may be scheduled on the main run
 // loop of a process that otherwise never runs one. Pump it so a headless test
@@ -189,11 +182,11 @@ FrameTiming makeTiming(std::uint64_t generation, std::int64_t frameIndex) {
 FrameLease makeFrame(std::uint64_t generation, std::int64_t frameIndex,
                      std::uint8_t luma) {
   CVPixelBufferRef buffer = createSolidNv12(luma);
-  WAM_CHECK(buffer != nullptr);
+  REQUIRE(buffer != nullptr);
   FrameLease frame(buffer, makeTiming(generation, frameIndex));
   CVPixelBufferRelease(buffer);
-  WAM_CHECK(static_cast<bool>(frame));
-  WAM_CHECK(frame.isIOSurfaceBacked());
+  REQUIRE(static_cast<bool>(frame));
+  EXPECT(frame.isIOSurfaceBacked());
   return frame;
 }
 
@@ -207,14 +200,14 @@ std::shared_ptr<NativeLayerVideoOutput> createDetached(
   std::string error;
   auto output = NativeLayerVideoOutput::createTracked(
       nullptr, NativeTrackedVideoOutputWakeSeam{trackedWake, wakes}, &error);
-  WAM_CHECK_DETAIL(output != nullptr, error);
-  WAM_CHECK(error.empty());
+  WAM_REQUIRE_DETAIL(output != nullptr, error);
+  EXPECT(error.empty());
   return output;
 }
 
 // Arms the first generation the way production does: a flush from 0.
 void armFirstGeneration(NativeLayerVideoOutput& output) {
-  WAM_CHECK(spinUntil([&] {
+  EXPECT(spinUntil([&] {
     return output.flushProgress(0, 1) ==
            NativeTrackedVideoOutputProgress::Done;
   }));
@@ -225,13 +218,13 @@ void armFirstGeneration(NativeLayerVideoOutput& output) {
 // one. finalGeneration must be strictly newer than the accepted generation.
 void closeAndDrop(std::shared_ptr<NativeLayerVideoOutput> output,
                   std::uint64_t finalGeneration) {
-  WAM_CHECK(spinUntil([&] {
+  EXPECT(spinUntil([&] {
     return output->closeProgress(finalGeneration) ==
            NativeTrackedVideoOutputProgress::Done;
   }));
-  WAM_CHECK(output->facts().closed);
+  EXPECT(output->facts().closed);
   output.reset();
-  WAM_CHECK(!nativeLayerPresentationActive());
+  EXPECT(!nativeLayerPresentationActive());
 }
 
 // ---------------------------------------------------------------- case 1 + 2
@@ -239,60 +232,60 @@ void closeAndDrop(std::shared_ptr<NativeLayerVideoOutput> output,
 // createTracked(nullptr, ...) builds its own detached layer, publishes the
 // presentation flag, and refuses every submit until a generation is armed.
 void verifyDetachedConstructionAndActivation() {
-  WAM_CHECK(!nativeLayerPresentationActive());
+  EXPECT(!nativeLayerPresentationActive());
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
-  WAM_CHECK(nativeLayerPresentationActive());
+  EXPECT(nativeLayerPresentationActive());
 
   const auto initial = output->facts();
-  WAM_CHECK(initial.generation == 0);
-  WAM_CHECK(!initial.admittedFrame.valid());
-  WAM_CHECK(initial.submittedFrames == 0);
-  WAM_CHECK(initial.drawnFrames == 0);
-  WAM_CHECK(initial.supersededFrames == 0);
-  WAM_CHECK(initial.lastEventSequence == 0);
-  WAM_CHECK(initial.retainedFrames == 0);
-  WAM_CHECK(!initial.eventPending);
-  WAM_CHECK(!initial.invalidationPending);
-  WAM_CHECK(!initial.closed);
-  WAM_CHECK(!initial.fatal);
-  WAM_CHECK(!output->takeEvent().has_value());
+  EXPECT(initial.generation == 0);
+  EXPECT(!initial.admittedFrame.valid());
+  EXPECT(initial.submittedFrames == 0);
+  EXPECT(initial.drawnFrames == 0);
+  EXPECT(initial.supersededFrames == 0);
+  EXPECT(initial.lastEventSequence == 0);
+  EXPECT(initial.retainedFrames == 0);
+  EXPECT(!initial.eventPending);
+  EXPECT(!initial.invalidationPending);
+  EXPECT(!initial.closed);
+  EXPECT(!initial.fatal);
+  REQUIRE(!output->takeEvent().has_value());
 
   const auto initialHealth = output->health();
-  WAM_CHECK(initialHealth.enqueuedFrames == 0);
-  WAM_CHECK(initialHealth.drawnFrames == 0);
-  WAM_CHECK(initialHealth.supersededByDropFrames == 0);
-  WAM_CHECK(initialHealth.flushes == 0);
-  WAM_CHECK(initialHealth.metricsLoads == 0);
-  WAM_CHECK(initialHealth.peakRetainedLeases == 0);
+  EXPECT(initialHealth.enqueuedFrames == 0);
+  EXPECT(initialHealth.drawnFrames == 0);
+  EXPECT(initialHealth.supersededByDropFrames == 0);
+  EXPECT(initialHealth.flushes == 0);
+  EXPECT(initialHealth.metricsLoads == 0);
+  EXPECT(initialHealth.peakRetainedLeases == 0);
 
   // Zero is never a generation, and nothing is accepted before the first arm.
-  WAM_CHECK(output->capacity(0) ==
+  EXPECT(output->capacity(0) ==
             NativeTrackedVideoCapacity::StaleGeneration);
-  WAM_CHECK(output->capacity(1) ==
+  EXPECT(output->capacity(1) ==
             NativeTrackedVideoCapacity::StaleGeneration);
   {
     std::string error;
     auto premature = makeFrame(1, 0, 140);
-    WAM_CHECK(output->submit(premature, NativeTrackedFrameSequence{1},
+    EXPECT(output->submit(premature, NativeTrackedFrameSequence{1},
                              &error) ==
               NativeTrackedVideoSubmitStatus::StaleGeneration);
-    WAM_CHECK(!error.empty());
+    REQUIRE(!error.empty());
   }
 
   std::string error;
-  WAM_CHECK(output->flushProgress(0, 0) ==
+  EXPECT(output->flushProgress(0, 0) ==
             NativeTrackedVideoOutputProgress::Failed);
   armFirstGeneration(*output);
   // The arm is repeatable for its exact pair only.
-  WAM_CHECK(output->flushProgress(0, 1) ==
+  EXPECT(output->flushProgress(0, 1) ==
             NativeTrackedVideoOutputProgress::Done);
-  WAM_CHECK(output->flushProgress(0, 2) ==
+  EXPECT(output->flushProgress(0, 2) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
-  WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
-  WAM_CHECK(output->capacity(2) ==
+  EXPECT(output->capacity(1) == NativeTrackedVideoCapacity::Available);
+  EXPECT(output->capacity(2) ==
             NativeTrackedVideoCapacity::StaleGeneration);
-  WAM_CHECK(output->facts().generation == 1);
+  EXPECT(output->facts().generation == 1);
 
   // An armed-but-idle output has nothing to invalidate, so its close needs only
   // the renderer's flush acknowledgment.
@@ -308,97 +301,97 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   auto output = createDetached(&wakes);
   std::string error;
   armFirstGeneration(*output);
-  WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
+  EXPECT(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   const FrameTiming firstTiming = makeTiming(1, 0);
   auto first = makeFrame(1, 0, 160);
-  WAM_CHECK(sameFrameTiming(first.timing(), firstTiming));
-  WAM_CHECK(output->submit(first, NativeTrackedFrameSequence{1}, &error) ==
+  EXPECT(sameFrameTiming(first.timing(), firstTiming));
+  EXPECT(output->submit(first, NativeTrackedFrameSequence{1}, &error) ==
             NativeTrackedVideoSubmitStatus::Accepted);
-  WAM_CHECK(error.empty());
-  WAM_CHECK(wakes.load(std::memory_order_acquire) >= 1);
+  EXPECT(error.empty());
+  EXPECT(wakes.load(std::memory_order_acquire) >= 1);
 
   const auto admitted = output->facts();
-  WAM_CHECK(admitted.generation == 1);
-  WAM_CHECK(admitted.admittedFrame.value == 1);
-  WAM_CHECK(admitted.submittedFrames == 1);
-  WAM_CHECK(admitted.drawnFrames == 1);
-  WAM_CHECK(admitted.supersededFrames == 0);
-  WAM_CHECK(admitted.lastEventSequence == 1);
-  WAM_CHECK(admitted.retainedFrames == 1);
-  WAM_CHECK(admitted.eventPending);
-  WAM_CHECK(!admitted.invalidationPending);
-  WAM_CHECK(!admitted.fatal);
+  EXPECT(admitted.generation == 1);
+  EXPECT(admitted.admittedFrame.value == 1);
+  EXPECT(admitted.submittedFrames == 1);
+  EXPECT(admitted.drawnFrames == 1);
+  EXPECT(admitted.supersededFrames == 0);
+  EXPECT(admitted.lastEventSequence == 1);
+  EXPECT(admitted.retainedFrames == 1);
+  EXPECT(admitted.eventPending);
+  EXPECT(!admitted.invalidationPending);
+  EXPECT(!admitted.fatal);
 
   // Capacity one: the boundary is closed until the terminal fact is consumed.
-  WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Backpressure);
+  EXPECT(output->capacity(1) == NativeTrackedVideoCapacity::Backpressure);
   {
     auto second = makeFrame(1, 1, 170);
-    WAM_CHECK(output->submit(second, NativeTrackedFrameSequence{2}, &error) ==
+    EXPECT(output->submit(second, NativeTrackedFrameSequence{2}, &error) ==
               NativeTrackedVideoSubmitStatus::Backpressure);
   }
-  WAM_CHECK(output->facts().submittedFrames == 1);
+  EXPECT(output->facts().submittedFrames == 1);
 
   const auto drawn = output->takeEvent();
-  WAM_CHECK(drawn.has_value());
-  WAM_CHECK(drawn->kind == NativeTrackedVideoEventKind::FrameDrawn);
-  WAM_CHECK(drawn->eventSequence == 1);
-  WAM_CHECK(drawn->frameSequence.value == 1);
-  WAM_CHECK(drawn->generation == 1);
+  REQUIRE(drawn.has_value());
+  EXPECT(drawn->kind == NativeTrackedVideoEventKind::FrameDrawn);
+  EXPECT(drawn->eventSequence == 1);
+  EXPECT(drawn->frameSequence.value == 1);
+  EXPECT(drawn->generation == 1);
   // Bit-for-bit, not merely CMTimeCompare-equal.
-  WAM_CHECK(sameFrameTiming(drawn->timing, firstTiming));
-  WAM_CHECK(CMTimeCompare(drawn->timing.presentationTime,
+  EXPECT(sameFrameTiming(drawn->timing, firstTiming));
+  EXPECT(CMTimeCompare(drawn->timing.presentationTime,
                           first.timing().presentationTime) == 0);
 
   // Exactly one terminal event: never both kinds, never a second copy.
-  WAM_CHECK(!output->takeEvent().has_value());
+  REQUIRE(!output->takeEvent().has_value());
   const auto consumed = output->facts();
-  WAM_CHECK(!consumed.admittedFrame.valid());
-  WAM_CHECK(!consumed.eventPending);
-  WAM_CHECK(consumed.drawnFrames == 1);
-  WAM_CHECK(consumed.supersededFrames == 0);
+  EXPECT(!consumed.admittedFrame.valid());
+  EXPECT(!consumed.eventPending);
+  EXPECT(consumed.drawnFrames == 1);
+  EXPECT(consumed.supersededFrames == 0);
   // The capacity credit returns with the terminal event. The lease itself
   // outlives it by design and is retired one enqueue later, while the renderer
   // may still be displaying it (case 8 proves that against the budget).
-  WAM_CHECK(consumed.retainedFrames == 0);
-  WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
+  EXPECT(consumed.retainedFrames == 0);
+  EXPECT(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   const FrameTiming secondTiming = makeTiming(1, 1);
   auto second = makeFrame(1, 1, 170);
-  WAM_CHECK(output->submit(second, NativeTrackedFrameSequence{2}, &error) ==
+  EXPECT(output->submit(second, NativeTrackedFrameSequence{2}, &error) ==
             NativeTrackedVideoSubmitStatus::Accepted);
   const auto secondDrawn = output->takeEvent();
-  WAM_CHECK(secondDrawn.has_value());
-  WAM_CHECK(secondDrawn->kind == NativeTrackedVideoEventKind::FrameDrawn);
+  REQUIRE(secondDrawn.has_value());
+  EXPECT(secondDrawn->kind == NativeTrackedVideoEventKind::FrameDrawn);
   // The event identity is output-owned and strictly increasing; the frame
   // identity is echoed exactly as the caller minted it.
-  WAM_CHECK(secondDrawn->eventSequence == drawn->eventSequence + 1);
-  WAM_CHECK(secondDrawn->frameSequence.value == 2);
-  WAM_CHECK(sameFrameTiming(secondDrawn->timing, secondTiming));
-  WAM_CHECK(!sameExactCMTime(secondTiming.presentationTime,
+  EXPECT(secondDrawn->eventSequence == drawn->eventSequence + 1);
+  EXPECT(secondDrawn->frameSequence.value == 2);
+  EXPECT(sameFrameTiming(secondDrawn->timing, secondTiming));
+  EXPECT(!sameExactCMTime(secondTiming.presentationTime,
                              firstTiming.presentationTime));
 
   // A malformed submission is refused without disturbing the admission state.
   {
     FrameLease empty;
-    WAM_CHECK(output->submit(empty, NativeTrackedFrameSequence{3}, &error) ==
+    EXPECT(output->submit(empty, NativeTrackedFrameSequence{3}, &error) ==
               NativeTrackedVideoSubmitStatus::Failed);
     auto valid = makeFrame(1, 2, 180);
-    WAM_CHECK(output->submit(valid, NativeTrackedFrameSequence{0}, &error) ==
+    EXPECT(output->submit(valid, NativeTrackedFrameSequence{0}, &error) ==
               NativeTrackedVideoSubmitStatus::Failed);
   }
-  WAM_CHECK(!output->facts().fatal);
-  WAM_CHECK(output->facts().submittedFrames == 2);
+  EXPECT(!output->facts().fatal);
+  EXPECT(output->facts().submittedFrames == 2);
 
   // No metrics load can have been issued at this submit count, which is what
   // makes "every terminal event is FrameDrawn" a fact and not an assumption.
   const auto health = output->health();
-  WAM_CHECK(health.enqueuedFrames == 2);
-  WAM_CHECK(health.drawnFrames == 2);
-  WAM_CHECK(health.supersededByDropFrames == 0);
-  WAM_CHECK(health.metricsLoads == 0);
-  WAM_CHECK(health.metricsUnavailable == 0);
-  WAM_CHECK(health.peakRetainedLeases ==
+  EXPECT(health.enqueuedFrames == 2);
+  EXPECT(health.drawnFrames == 2);
+  EXPECT(health.supersededByDropFrames == 0);
+  EXPECT(health.metricsLoads == 0);
+  EXPECT(health.metricsUnavailable == 0);
+  EXPECT(health.peakRetainedLeases ==
             NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
 
   closeAndDrop(std::move(output), 2);
@@ -416,31 +409,31 @@ void verifySequenceRegressionIsFatalAndStillCloses() {
 
   {
     auto first = makeFrame(1, 0, 150);
-    WAM_CHECK(output->submit(first, NativeTrackedFrameSequence{7}, &error) ==
+    EXPECT(output->submit(first, NativeTrackedFrameSequence{7}, &error) ==
               NativeTrackedVideoSubmitStatus::Accepted);
   }
   const auto drawn = output->takeEvent();
-  WAM_CHECK(drawn.has_value());
-  WAM_CHECK(drawn->kind == NativeTrackedVideoEventKind::FrameDrawn);
-  WAM_CHECK(!output->facts().fatal);
+  REQUIRE(drawn.has_value());
+  EXPECT(drawn->kind == NativeTrackedVideoEventKind::FrameDrawn);
+  EXPECT(!output->facts().fatal);
 
   {
     auto repeated = makeFrame(1, 1, 151);
-    WAM_CHECK(output->submit(repeated, NativeTrackedFrameSequence{7},
+    EXPECT(output->submit(repeated, NativeTrackedFrameSequence{7},
                              &error) == NativeTrackedVideoSubmitStatus::Failed);
     WAM_CHECK_DETAIL(error.find("sequence") != std::string::npos, error);
   }
   const auto failed = output->facts();
-  WAM_CHECK(failed.fatal);
-  WAM_CHECK(failed.submittedFrames == 1);
-  WAM_CHECK(!failed.eventPending);
-  WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Failed);
+  EXPECT(failed.fatal);
+  EXPECT(failed.submittedFrames == 1);
+  EXPECT(!failed.eventPending);
+  EXPECT(output->capacity(1) == NativeTrackedVideoCapacity::Failed);
   {
     auto later = makeFrame(1, 2, 152);
-    WAM_CHECK(output->submit(later, NativeTrackedFrameSequence{9}, &error) ==
+    EXPECT(output->submit(later, NativeTrackedFrameSequence{9}, &error) ==
               NativeTrackedVideoSubmitStatus::Failed);
   }
-  WAM_CHECK(output->flushProgress(1, 2) ==
+  EXPECT(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Failed);
 
   // Terminal teardown is the one lifecycle operation a latched failure must not
@@ -461,112 +454,112 @@ void verifyFlushProgressRetiresGeneration() {
 
   {
     auto admitted = makeFrame(1, 0, 190);
-    WAM_CHECK(output->submit(admitted, NativeTrackedFrameSequence{1},
+    EXPECT(output->submit(admitted, NativeTrackedFrameSequence{1},
                              &error) == NativeTrackedVideoSubmitStatus::Accepted);
   }
-  WAM_CHECK(output->facts().eventPending);
-  WAM_CHECK(output->facts().retainedFrames == 1);
+  EXPECT(output->facts().eventPending);
+  EXPECT(output->facts().retainedFrames == 1);
 
   // A next generation that is not strictly newer is a caller defect.
-  WAM_CHECK(output->flushProgress(1, 1) ==
+  EXPECT(output->flushProgress(1, 1) ==
             NativeTrackedVideoOutputProgress::Failed);
-  WAM_CHECK(output->flushProgress(1, 0) ==
+  EXPECT(output->flushProgress(1, 0) ==
             NativeTrackedVideoOutputProgress::Failed);
   // A retired generation that is not the one actually accepted is refused
   // before any flush is issued.
-  WAM_CHECK(output->flushProgress(5, 6) ==
+  EXPECT(output->flushProgress(5, 6) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
-  WAM_CHECK(!output->facts().invalidationPending);
+  EXPECT(!output->facts().invalidationPending);
 
   const std::uint64_t wakesBeforeFlush = wakes.load(std::memory_order_acquire);
-  WAM_CHECK(output->flushProgress(1, 2) ==
+  EXPECT(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Quiescing);
   const auto flushing = output->facts();
-  WAM_CHECK(flushing.invalidationPending);
-  WAM_CHECK(flushing.eventPending);
+  EXPECT(flushing.invalidationPending);
+  EXPECT(flushing.eventPending);
   // The new generation is armed the instant the flush starts; the old one is
   // dead to submit() from that same instant.
-  WAM_CHECK(flushing.generation == 2);
-  WAM_CHECK(output->capacity(1) ==
+  EXPECT(flushing.generation == 2);
+  EXPECT(output->capacity(1) ==
             NativeTrackedVideoCapacity::StaleGeneration);
-  WAM_CHECK(output->capacity(2) == NativeTrackedVideoCapacity::Backpressure);
+  EXPECT(output->capacity(2) == NativeTrackedVideoCapacity::Backpressure);
   {
     auto retired = makeFrame(1, 1, 191);
-    WAM_CHECK(output->submit(retired, NativeTrackedFrameSequence{2}, &error) ==
+    EXPECT(output->submit(retired, NativeTrackedFrameSequence{2}, &error) ==
               NativeTrackedVideoSubmitStatus::StaleGeneration);
     auto next = makeFrame(2, 0, 192);
-    WAM_CHECK(output->submit(next, NativeTrackedFrameSequence{2}, &error) ==
+    EXPECT(output->submit(next, NativeTrackedFrameSequence{2}, &error) ==
               NativeTrackedVideoSubmitStatus::Backpressure);
   }
-  WAM_CHECK(output->facts().submittedFrames == 1);
+  EXPECT(output->facts().submittedFrames == 1);
 
   // An unconsumed terminal fact is never overwritten by a flush, and the flush
   // cannot report Done while it is outstanding. Repeating the exact pair is
   // legal and must keep reporting Quiescing.
   pumpFor(120);
-  WAM_CHECK(output->flushProgress(1, 2) ==
+  EXPECT(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Quiescing);
   // A different pair mid-flush is a controller defect, not a new flush.
-  WAM_CHECK(output->flushProgress(1, 3) ==
+  EXPECT(output->flushProgress(1, 3) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
-  WAM_CHECK(output->flushProgress(2, 3) ==
+  EXPECT(output->flushProgress(2, 3) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
 
   const auto terminal = output->takeEvent();
-  WAM_CHECK(terminal.has_value());
+  REQUIRE(terminal.has_value());
   // The frame was admitted, enqueued, and taken by the renderer before the
   // flush was issued, so its proof stands and echoes the generation it was
   // submitted under, not the generation just armed.
-  WAM_CHECK(terminal->kind == NativeTrackedVideoEventKind::FrameDrawn);
-  WAM_CHECK(terminal->frameSequence.value == 1);
-  WAM_CHECK(terminal->generation == 1);
-  WAM_CHECK(sameFrameTiming(terminal->timing, makeTiming(1, 0)));
+  EXPECT(terminal->kind == NativeTrackedVideoEventKind::FrameDrawn);
+  EXPECT(terminal->frameSequence.value == 1);
+  EXPECT(terminal->generation == 1);
+  EXPECT(sameFrameTiming(terminal->timing, makeTiming(1, 0)));
 
-  WAM_CHECK(spinUntil([&] {
+  EXPECT(spinUntil([&] {
     return output->flushProgress(1, 2) ==
            NativeTrackedVideoOutputProgress::Done;
   }));
   const auto flushed = output->facts();
-  WAM_CHECK(flushed.generation == 2);
-  WAM_CHECK(!flushed.invalidationPending);
-  WAM_CHECK(!flushed.eventPending);
+  EXPECT(flushed.generation == 2);
+  EXPECT(!flushed.invalidationPending);
+  EXPECT(!flushed.eventPending);
   // A completed renderer flush proves it holds nothing of ours, so both leases
   // are released rather than waiting for a successor enqueue.
-  WAM_CHECK(flushed.retainedFrames == 0);
-  WAM_CHECK(!flushed.fatal);
-  WAM_CHECK(output->health().flushes == 2);
-  WAM_CHECK(wakes.load(std::memory_order_acquire) > wakesBeforeFlush);
+  EXPECT(flushed.retainedFrames == 0);
+  EXPECT(!flushed.fatal);
+  EXPECT(output->health().flushes == 2);
+  EXPECT(wakes.load(std::memory_order_acquire) > wakesBeforeFlush);
 
   // Done is repeatable for the exact pair, and only for that pair.
-  WAM_CHECK(output->flushProgress(1, 2) ==
+  EXPECT(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Done);
-  WAM_CHECK(output->flushProgress(0, 5) ==
+  EXPECT(output->flushProgress(0, 5) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
-  WAM_CHECK(output->capacity(2) == NativeTrackedVideoCapacity::Available);
+  EXPECT(output->capacity(2) == NativeTrackedVideoCapacity::Available);
 
   // Frames from the retired generation produce no event on the new one.
   {
     auto retired = makeFrame(1, 2, 193);
-    WAM_CHECK(output->submit(retired, NativeTrackedFrameSequence{2}, &error) ==
+    EXPECT(output->submit(retired, NativeTrackedFrameSequence{2}, &error) ==
               NativeTrackedVideoSubmitStatus::StaleGeneration);
   }
-  WAM_CHECK(!output->takeEvent().has_value());
-  WAM_CHECK(output->facts().submittedFrames == 1);
+  REQUIRE(!output->takeEvent().has_value());
+  EXPECT(output->facts().submittedFrames == 1);
 
   // The new generation is fully live: it admits, draws, and echoes its own
   // generation. The caller sequence keeps climbing across the flush boundary.
   {
     auto next = makeFrame(2, 0, 194);
-    WAM_CHECK(output->submit(next, NativeTrackedFrameSequence{2}, &error) ==
+    EXPECT(output->submit(next, NativeTrackedFrameSequence{2}, &error) ==
               NativeTrackedVideoSubmitStatus::Accepted);
   }
   const auto afterFlush = output->takeEvent();
-  WAM_CHECK(afterFlush.has_value());
-  WAM_CHECK(afterFlush->kind == NativeTrackedVideoEventKind::FrameDrawn);
-  WAM_CHECK(afterFlush->frameSequence.value == 2);
-  WAM_CHECK(afterFlush->generation == 2);
-  WAM_CHECK(afterFlush->eventSequence == terminal->eventSequence + 1);
-  WAM_CHECK(output->health().metricsLoads == 0);
+  REQUIRE(afterFlush.has_value());
+  EXPECT(afterFlush->kind == NativeTrackedVideoEventKind::FrameDrawn);
+  EXPECT(afterFlush->frameSequence.value == 2);
+  EXPECT(afterFlush->generation == 2);
+  EXPECT(afterFlush->eventSequence == terminal->eventSequence + 1);
+  EXPECT(output->health().metricsLoads == 0);
 
   closeAndDrop(std::move(output), 3);
 }
@@ -586,73 +579,73 @@ void verifyCloseProgressIsTerminal() {
 
   // Zero is never a final generation, and a final generation must be strictly
   // newer than the accepted one.
-  WAM_CHECK(output->closeProgress(0) ==
+  EXPECT(output->closeProgress(0) ==
             NativeTrackedVideoOutputProgress::Failed);
-  WAM_CHECK(output->closeProgress(1) ==
+  EXPECT(output->closeProgress(1) ==
             NativeTrackedVideoOutputProgress::Failed);
-  WAM_CHECK(!output->facts().invalidationPending);
-  WAM_CHECK(!output->facts().closed);
+  EXPECT(!output->facts().invalidationPending);
+  EXPECT(!output->facts().closed);
 
   {
     auto admitted = makeFrame(1, 0, 200);
-    WAM_CHECK(output->submit(admitted, NativeTrackedFrameSequence{1},
+    EXPECT(output->submit(admitted, NativeTrackedFrameSequence{1},
                              &error) == NativeTrackedVideoSubmitStatus::Accepted);
   }
-  WAM_CHECK(output->facts().eventPending);
-  WAM_CHECK(output->facts().retainedFrames == 1);
+  EXPECT(output->facts().eventPending);
+  EXPECT(output->facts().retainedFrames == 1);
   const std::uint64_t wakesBeforeClose = wakes.load(std::memory_order_acquire);
 
-  WAM_CHECK(output->closeProgress(2) ==
+  EXPECT(output->closeProgress(2) ==
             NativeTrackedVideoOutputProgress::Quiescing);
   const auto closing = output->facts();
-  WAM_CHECK(closing.invalidationPending);
-  WAM_CHECK(closing.eventPending);
-  WAM_CHECK(!closing.closed);
+  EXPECT(closing.invalidationPending);
+  EXPECT(closing.eventPending);
+  EXPECT(!closing.closed);
 
   // Close is a hard gate on admission from the instant it is requested, even
   // before it completes.
-  WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Failed);
-  WAM_CHECK(output->capacity(2) == NativeTrackedVideoCapacity::Failed);
+  EXPECT(output->capacity(1) == NativeTrackedVideoCapacity::Failed);
+  EXPECT(output->capacity(2) == NativeTrackedVideoCapacity::Failed);
   {
     auto rejected = makeFrame(1, 1, 201);
-    WAM_CHECK(output->submit(rejected, NativeTrackedFrameSequence{2},
+    EXPECT(output->submit(rejected, NativeTrackedFrameSequence{2},
                              &error) == NativeTrackedVideoSubmitStatus::Failed);
   }
-  WAM_CHECK(output->flushProgress(1, 2) ==
+  EXPECT(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Failed);
-  WAM_CHECK(output->flushProgress(2, 3) ==
+  EXPECT(output->flushProgress(2, 3) ==
             NativeTrackedVideoOutputProgress::Failed);
   // Close is repeatable for one exact final generation, and only that one.
-  WAM_CHECK(output->closeProgress(3) ==
+  EXPECT(output->closeProgress(3) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
 
   // The pending terminal fact must survive the close request: closing the route
   // may not swallow a proof the owner has not yet consumed. Done cannot be
   // reported while it is outstanding, however long the renderer takes.
   pumpFor(150);
-  WAM_CHECK(output->closeProgress(2) ==
+  EXPECT(output->closeProgress(2) ==
             NativeTrackedVideoOutputProgress::Quiescing);
-  WAM_CHECK(output->facts().eventPending);
+  EXPECT(output->facts().eventPending);
   const auto pending = output->takeEvent();
-  WAM_CHECK(pending.has_value());
-  WAM_CHECK(pending->kind == NativeTrackedVideoEventKind::FrameDrawn);
-  WAM_CHECK(pending->frameSequence.value == 1);
-  WAM_CHECK(pending->generation == 1);
-  WAM_CHECK(sameFrameTiming(pending->timing, makeTiming(1, 0)));
+  REQUIRE(pending.has_value());
+  EXPECT(pending->kind == NativeTrackedVideoEventKind::FrameDrawn);
+  EXPECT(pending->frameSequence.value == 1);
+  EXPECT(pending->generation == 1);
+  EXPECT(sameFrameTiming(pending->timing, makeTiming(1, 0)));
 
-  WAM_CHECK(spinUntil([&] {
+  EXPECT(spinUntil([&] {
     return output->closeProgress(2) == NativeTrackedVideoOutputProgress::Done;
   }));
 
   const auto closed = output->facts();
-  WAM_CHECK(closed.closed);
-  WAM_CHECK(!closed.eventPending);
-  WAM_CHECK(!closed.invalidationPending);
-  WAM_CHECK(!closed.fatal);
+  EXPECT(closed.closed);
+  EXPECT(!closed.eventPending);
+  EXPECT(!closed.invalidationPending);
+  EXPECT(!closed.fatal);
   // Terminal invalidation releases every lease the presenter held.
-  WAM_CHECK(closed.retainedFrames == 0);
-  WAM_CHECK(closed.drawnFrames == 1);
-  WAM_CHECK(closed.supersededFrames == 0);
+  EXPECT(closed.retainedFrames == 0);
+  EXPECT(closed.drawnFrames == 1);
+  EXPECT(closed.supersededFrames == 0);
   // NativeVideoConsumer::retire() gates terminal retirement on
   // `outputFacts.generation == invalidationGeneration`, so an output that did
   // not advance acceptedGeneration during close could never retire ("Native
@@ -660,26 +653,26 @@ void verifyCloseProgressIsTerminal() {
   // closeProgress() moves the output onto the invalidation generation exactly
   // as flushProgress() moves it onto the flush target, and exactly as
   // NativeQtGlOutput does.
-  WAM_CHECK(closed.generation == 2);
+  EXPECT(closed.generation == 2);
 
   // Restate that as the exact predicate the owner applies, so a future change
   // to any single fact here fails at the boundary that actually consumes them
   // rather than only at whichever one this test happened to spell out. This is
   // the conjunction in NativeVideoConsumer::retire()'s post-close gate.
-  WAM_CHECK(!(closed.fatal || !closed.closed ||
+  EXPECT(!(closed.fatal || !closed.closed ||
               closed.generation != 2 || closed.admittedFrame.valid() ||
               closed.retainedFrames != 0 || closed.invalidationPending));
 
   // The renderer's flush completion is the terminal invalidation proof, and it
   // signals the wake seam on its way through.
-  WAM_CHECK(wakes.load(std::memory_order_acquire) > wakesBeforeClose);
+  EXPECT(wakes.load(std::memory_order_acquire) > wakesBeforeClose);
 
   // Done is repeatable for the exact final generation and refuses any other,
   // so a retrying owner cannot be told "not yet" forever or "done" for the
   // wrong generation.
-  WAM_CHECK(output->closeProgress(2) ==
+  EXPECT(output->closeProgress(2) ==
             NativeTrackedVideoOutputProgress::Done);
-  WAM_CHECK(output->closeProgress(4) ==
+  EXPECT(output->closeProgress(4) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
 
   // The wake gate is closed and drained before Done, and the seam is released.
@@ -687,24 +680,24 @@ void verifyCloseProgressIsTerminal() {
   // wake context.
   const std::uint64_t wakesAfterClose = wakes.load(std::memory_order_acquire);
   pumpFor(150);
-  WAM_CHECK(wakes.load(std::memory_order_acquire) == wakesAfterClose);
+  EXPECT(wakes.load(std::memory_order_acquire) == wakesAfterClose);
 
   // Nothing survives the close.
-  WAM_CHECK(!output->takeEvent().has_value());
-  WAM_CHECK(output->capacity(2) == NativeTrackedVideoCapacity::Failed);
-  WAM_CHECK(output->flushProgress(2, 3) ==
+  REQUIRE(!output->takeEvent().has_value());
+  EXPECT(output->capacity(2) == NativeTrackedVideoCapacity::Failed);
+  EXPECT(output->flushProgress(2, 3) ==
             NativeTrackedVideoOutputProgress::Failed);
   {
     auto rejected = makeFrame(1, 2, 202);
-    WAM_CHECK(output->submit(rejected, NativeTrackedFrameSequence{5},
+    EXPECT(output->submit(rejected, NativeTrackedFrameSequence{5},
                              &error) == NativeTrackedVideoSubmitStatus::Failed);
   }
   // The Qt video item's per-frame update must be restored the moment the route
   // stops presenting, so a libmpv fallback still paints.
-  WAM_CHECK(!nativeLayerPresentationActive());
+  EXPECT(!nativeLayerPresentationActive());
 
   output.reset();
-  WAM_CHECK(!nativeLayerPresentationActive());
+  EXPECT(!nativeLayerPresentationActive());
 }
 
 // closeProgress() overtaking an in-flight flushProgress(). The route can be
@@ -718,37 +711,37 @@ void verifyCloseSupersedesPendingFlush() {
 
   {
     auto admitted = makeFrame(1, 0, 210);
-    WAM_CHECK(output->submit(admitted, NativeTrackedFrameSequence{1},
+    EXPECT(output->submit(admitted, NativeTrackedFrameSequence{1},
                              &error) == NativeTrackedVideoSubmitStatus::Accepted);
   }
   const auto drawn = output->takeEvent();
-  WAM_CHECK(drawn.has_value());
-  WAM_CHECK(drawn->kind == NativeTrackedVideoEventKind::FrameDrawn);
+  REQUIRE(drawn.has_value());
+  EXPECT(drawn->kind == NativeTrackedVideoEventKind::FrameDrawn);
 
   // The renderer may acknowledge this flush before the call even returns, so
   // both outcomes are legal here. Only the close below is asserted exactly.
   const auto flushStarted = output->flushProgress(1, 2);
-  WAM_CHECK(flushStarted == NativeTrackedVideoOutputProgress::Quiescing ||
+  EXPECT(flushStarted == NativeTrackedVideoOutputProgress::Quiescing ||
             flushStarted == NativeTrackedVideoOutputProgress::Done);
 
   const auto closeStarted = output->closeProgress(3);
-  WAM_CHECK(closeStarted == NativeTrackedVideoOutputProgress::Quiescing ||
+  EXPECT(closeStarted == NativeTrackedVideoOutputProgress::Quiescing ||
             closeStarted == NativeTrackedVideoOutputProgress::Done);
-  WAM_CHECK(spinUntil([&] {
+  EXPECT(spinUntil([&] {
     return output->closeProgress(3) == NativeTrackedVideoOutputProgress::Done;
   }));
 
   const auto closed = output->facts();
-  WAM_CHECK(closed.closed);
-  WAM_CHECK(!closed.invalidationPending);
-  WAM_CHECK(!closed.eventPending);
-  WAM_CHECK(closed.retainedFrames == 0);
+  EXPECT(closed.closed);
+  EXPECT(!closed.invalidationPending);
+  EXPECT(!closed.eventPending);
+  EXPECT(closed.retainedFrames == 0);
   // The superseded flush leaves no residue that could report Done later.
-  WAM_CHECK(output->flushProgress(1, 2) ==
+  EXPECT(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Failed);
 
   output.reset();
-  WAM_CHECK(!nativeLayerPresentationActive());
+  EXPECT(!nativeLayerPresentationActive());
 }
 
 // ------------------------------------------------------------------- case 8
@@ -773,63 +766,63 @@ void verifyRetainedLeaseCeilingAndRelease() {
       // still charges from here on belongs to the presenter alone.
       auto frame = makeFrame(1, static_cast<std::int64_t>(index - 1),
                              static_cast<std::uint8_t>(120 + index));
-      WAM_CHECK(output->submit(frame, NativeTrackedFrameSequence{index},
+      EXPECT(output->submit(frame, NativeTrackedFrameSequence{index},
                                &error) ==
                 NativeTrackedVideoSubmitStatus::Accepted);
     }
 
     const auto event = output->takeEvent();
-    WAM_CHECK(event.has_value());
+    REQUIRE(event.has_value());
     // Exactly one terminal event per accepted submit, of exactly one kind.
-    WAM_CHECK(event->kind == NativeTrackedVideoEventKind::FrameDrawn ||
+    EXPECT(event->kind == NativeTrackedVideoEventKind::FrameDrawn ||
               event->kind == NativeTrackedVideoEventKind::FrameSuperseded);
-    WAM_CHECK(event->frameSequence.value == index);
-    WAM_CHECK(event->eventSequence > previousEventSequence);
+    EXPECT(event->frameSequence.value == index);
+    EXPECT(event->eventSequence > previousEventSequence);
     previousEventSequence = event->eventSequence;
-    WAM_CHECK(!output->takeEvent().has_value());
+    REQUIRE(!output->takeEvent().has_value());
 
     const auto facts = output->facts();
-    WAM_CHECK(facts.submittedFrames == index);
-    WAM_CHECK(facts.drawnFrames + facts.supersededFrames == index);
+    EXPECT(facts.submittedFrames == index);
+    EXPECT(facts.drawnFrames + facts.supersededFrames == index);
     // One lease for the latest frame, one for the predecessor the renderer
     // may still be displaying. Never a third.
     const std::size_t leases = index == 1 ? 1U : 2U;
-    WAM_CHECK(leases <= NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
-    WAM_CHECK(facts.retainedFrames == 0);
-    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
+    EXPECT(leases <= NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
+    EXPECT(facts.retainedFrames == 0);
+    EXPECT(NativeSurfaceBudget::stats().currentSurfaces ==
               baseline.currentSurfaces + leases);
   }
-  WAM_CHECK(output->health().peakRetainedLeases ==
+  EXPECT(output->health().peakRetainedLeases ==
             NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
-  WAM_CHECK(output->health().enqueuedFrames == kFrames);
-  WAM_CHECK(output->health().metricsLoads == 0);
+  EXPECT(output->health().enqueuedFrames == kFrames);
+  EXPECT(output->health().metricsLoads == 0);
 
   // A completed flush retires both leases, and the budget must see the
   // IOSurfaces come back.
-  WAM_CHECK(spinUntil([&] {
+  EXPECT(spinUntil([&] {
     return output->flushProgress(1, 2) ==
            NativeTrackedVideoOutputProgress::Done;
   }));
-  WAM_CHECK(output->facts().retainedFrames == 0);
-  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
+  EXPECT(output->facts().retainedFrames == 0);
+  EXPECT(NativeSurfaceBudget::stats().currentSurfaces ==
             baseline.currentSurfaces);
 
   // And so does a close that happens while leases are still held.
   {
     auto frame = makeFrame(2, 0, 220);
-    WAM_CHECK(output->submit(frame, NativeTrackedFrameSequence{kFrames + 1},
+    EXPECT(output->submit(frame, NativeTrackedFrameSequence{kFrames + 1},
                              &error) ==
               NativeTrackedVideoSubmitStatus::Accepted);
   }
-  WAM_CHECK(output->takeEvent().has_value());
-  WAM_CHECK(output->facts().retainedFrames == 0);
-  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
+  REQUIRE(output->takeEvent().has_value());
+  EXPECT(output->facts().retainedFrames == 0);
+  EXPECT(NativeSurfaceBudget::stats().currentSurfaces ==
             baseline.currentSurfaces + 1);
 
   closeAndDrop(std::move(output), 3);
-  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
+  EXPECT(NativeSurfaceBudget::stats().currentSurfaces ==
             baseline.currentSurfaces);
-  WAM_CHECK(NativeSurfaceBudget::stats().peakSurfaces >=
+  EXPECT(NativeSurfaceBudget::stats().peakSurfaces >=
             baseline.currentSurfaces +
                 NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
 }
@@ -855,7 +848,7 @@ void verifyStraddlingFrameIsPresentedAndEchoedExactly() {
   auto output = createDetached(&wakes);
   std::string error;
   armFirstGeneration(*output);
-  WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
+  EXPECT(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   // Ends exactly at the origin: never visible, still refused.
   {
@@ -865,13 +858,13 @@ void verifyStraddlingFrameIsPresentedAndEchoedExactly() {
     timing.generation = 1;
     timing.keyFrame = true;
     CVPixelBufferRef buffer = createSolidNv12(90);
-    WAM_CHECK(buffer != nullptr);
+    REQUIRE(buffer != nullptr);
     FrameLease before(buffer, timing);
     CVPixelBufferRelease(buffer);
     error.clear();
-    WAM_CHECK(output->submit(before, NativeTrackedFrameSequence{1}, &error) ==
+    EXPECT(output->submit(before, NativeTrackedFrameSequence{1}, &error) ==
               NativeTrackedVideoSubmitStatus::Failed);
-    WAM_CHECK(!error.empty());
+    REQUIRE(!error.empty());
   }
 
   // Straddles the origin: accepted, and echoed with its own exact timing.
@@ -882,10 +875,10 @@ void verifyStraddlingFrameIsPresentedAndEchoedExactly() {
   straddling.keyFrame = true;
   {
     CVPixelBufferRef buffer = createSolidNv12(120);
-    WAM_CHECK(buffer != nullptr);
+    REQUIRE(buffer != nullptr);
     FrameLease frame(buffer, straddling);
     CVPixelBufferRelease(buffer);
-    WAM_CHECK(static_cast<bool>(frame));
+    REQUIRE(static_cast<bool>(frame));
     error.clear();
     WAM_CHECK_DETAIL(
         output->submit(frame, NativeTrackedFrameSequence{2}, &error) ==
@@ -893,17 +886,17 @@ void verifyStraddlingFrameIsPresentedAndEchoedExactly() {
         error);
   }
   const auto event = output->takeEvent();
-  WAM_CHECK(event.has_value());
+  REQUIRE(event.has_value());
   if (event) {
-    WAM_CHECK(event->kind == NativeTrackedVideoEventKind::FrameDrawn);
+    EXPECT(event->kind == NativeTrackedVideoEventKind::FrameDrawn);
     // The negative stamp survives into the accounting unmodified.
-    WAM_CHECK(CMTimeCompare(event->timing.presentationTime,
+    EXPECT(CMTimeCompare(event->timing.presentationTime,
                             straddling.presentationTime) == 0);
-    WAM_CHECK(CMTimeCompare(event->timing.duration, straddling.duration) == 0);
+    EXPECT(CMTimeCompare(event->timing.duration, straddling.duration) == 0);
   }
 
   closeAndDrop(std::move(output), 2);
-  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
+  EXPECT(NativeSurfaceBudget::stats().currentSurfaces ==
             baseline.currentSurfaces);
 }
 
@@ -916,81 +909,81 @@ void verifyFrameTimingPresentableRule() {
   timing.duration = CMTimeMake(1001, 30000);
 
   timing.presentationTime = CMTimeMake(-500, 30000);
-  WAM_CHECK(frameTimingPresentable(timing));
+  EXPECT(frameTimingPresentable(timing));
   timing.presentationTime = CMTimeMake(0, 30000);
-  WAM_CHECK(frameTimingPresentable(timing));
+  EXPECT(frameTimingPresentable(timing));
   timing.presentationTime = CMTimeMake(-1001, 30000);
-  WAM_CHECK(!frameTimingPresentable(timing));
+  EXPECT(!frameTimingPresentable(timing));
   timing.presentationTime = CMTimeMake(-2000, 30000);
-  WAM_CHECK(!frameTimingPresentable(timing));
+  EXPECT(!frameTimingPresentable(timing));
 
   timing.presentationTime = CMTimeMake(500, 30000);
   timing.duration = CMTimeMake(0, 30000);
-  WAM_CHECK(!frameTimingPresentable(timing));
+  EXPECT(!frameTimingPresentable(timing));
   timing.duration = kCMTimeInvalid;
-  WAM_CHECK(!frameTimingPresentable(timing));
+  EXPECT(!frameTimingPresentable(timing));
   timing.duration = CMTimeMake(1001, 30000);
   timing.generation = 0;
-  WAM_CHECK(!frameTimingPresentable(timing));
+  EXPECT(!frameTimingPresentable(timing));
   timing.generation = 1;
   // A start and a duration on incommensurable timescales round when added;
   // a rounded end is not an exact end and is refused.
   timing.presentationTime = CMTimeMake(-1, 1'000'000'007);
   timing.duration = CMTimeMake(1, 30000);
-  WAM_CHECK(!frameTimingPresentable(timing));
+  EXPECT(!frameTimingPresentable(timing));
 }
 
 // The one rotation classifier: the four exact matrices on the linear part,
 // translation ignored; mirrors, shears, near-misses and non-finite matrices
 // refused. Then the layer setter round-trips through the same rule.
 void verifyQuarterTurnClassifierAndLayerRotation() {
-  WAM_CHECK(quarterTurnDegrees(CGAffineTransformIdentity) == 0);
-  WAM_CHECK(quarterTurnDegrees(CGAffineTransformMake(0, 1, -1, 0, 1080, 0)) ==
+  EXPECT(quarterTurnDegrees(CGAffineTransformIdentity) == 0);
+  EXPECT(quarterTurnDegrees(CGAffineTransformMake(0, 1, -1, 0, 1080, 0)) ==
             90);
-  WAM_CHECK(quarterTurnDegrees(CGAffineTransformMake(-1, 0, 0, -1, 1920,
+  EXPECT(quarterTurnDegrees(CGAffineTransformMake(-1, 0, 0, -1, 1920,
                                                      1080)) == 180);
-  WAM_CHECK(quarterTurnDegrees(CGAffineTransformMake(0, -1, 1, 0, 0, 1920)) ==
+  EXPECT(quarterTurnDegrees(CGAffineTransformMake(0, -1, 1, 0, 0, 1920)) ==
             270);
   // A horizontal mirror has a negative determinant and is not a turn.
-  WAM_CHECK(!quarterTurnDegrees(CGAffineTransformMake(-1, 0, 0, 1, 0, 0)));
+  EXPECT(!quarterTurnDegrees(CGAffineTransformMake(-1, 0, 0, 1, 0, 0)));
   // A matrix merely near a quarter turn is a shear, refused exactly.
-  WAM_CHECK(!quarterTurnDegrees(
+  EXPECT(!quarterTurnDegrees(
       CGAffineTransformMake(0.0001, 1, -1, 0, 0, 0)));
-  WAM_CHECK(!quarterTurnDegrees(CGAffineTransformMakeRotation(0.5)));
-  WAM_CHECK(!quarterTurnDegrees(
+  EXPECT(!quarterTurnDegrees(CGAffineTransformMakeRotation(0.5)));
+  EXPECT(!quarterTurnDegrees(
       CGAffineTransformMake(1, 0, 0, 1, std::nan(""), 0)));
 
-  WAM_CHECK(normalizedQuarterTurn(-90) == 270);
-  WAM_CHECK(normalizedQuarterTurn(450) == 90);
-  WAM_CHECK(normalizedQuarterTurn(360) == 0);
-  WAM_CHECK(!normalizedQuarterTurn(45));
+  EXPECT(normalizedQuarterTurn(-90) == 270);
+  EXPECT(normalizedQuarterTurn(450) == 90);
+  EXPECT(normalizedQuarterTurn(360) == 0);
+  EXPECT(!normalizedQuarterTurn(45));
 
   wam::media::MediaVideoFormat video;
   video.rotationDegrees = 90;
   video.identityTransform = false;
-  WAM_CHECK(quarterTurnRotationAdmitted(video));
+  EXPECT(quarterTurnRotationAdmitted(video));
   video.identityTransform = true;
-  WAM_CHECK(!quarterTurnRotationAdmitted(video));
+  EXPECT(!quarterTurnRotationAdmitted(video));
   video.rotationDegrees = 0;
-  WAM_CHECK(quarterTurnRotationAdmitted(video));
+  EXPECT(quarterTurnRotationAdmitted(video));
   video.identityTransform = false;
-  WAM_CHECK(!quarterTurnRotationAdmitted(video));
+  EXPECT(!quarterTurnRotationAdmitted(video));
   video.rotationDegrees = 30;
-  WAM_CHECK(!quarterTurnRotationAdmitted(video));
+  EXPECT(!quarterTurnRotationAdmitted(video));
 
   CALayer* layer = [CALayer layer];
   void* handle = (__bridge void*)layer;
-  WAM_CHECK(nativeLayerPresentationRotation(handle) == 0);
-  WAM_CHECK(setNativeLayerPresentationRotation(handle, 90));
-  WAM_CHECK(nativeLayerPresentationRotation(handle) == 90);
-  WAM_CHECK(setNativeLayerPresentationRotation(handle, -90));
-  WAM_CHECK(nativeLayerPresentationRotation(handle) == 270);
+  EXPECT(nativeLayerPresentationRotation(handle) == 0);
+  EXPECT(setNativeLayerPresentationRotation(handle, 90));
+  EXPECT(nativeLayerPresentationRotation(handle) == 90);
+  EXPECT(setNativeLayerPresentationRotation(handle, -90));
+  EXPECT(nativeLayerPresentationRotation(handle) == 270);
   // A refused angle leaves the previous rotation in place.
-  WAM_CHECK(!setNativeLayerPresentationRotation(handle, 45));
-  WAM_CHECK(nativeLayerPresentationRotation(handle) == 270);
-  WAM_CHECK(setNativeLayerPresentationRotation(handle, 360));
-  WAM_CHECK(nativeLayerPresentationRotation(handle) == 0);
-  WAM_CHECK(!setNativeLayerPresentationRotation(nullptr, 90));
+  EXPECT(!setNativeLayerPresentationRotation(handle, 45));
+  EXPECT(nativeLayerPresentationRotation(handle) == 270);
+  EXPECT(setNativeLayerPresentationRotation(handle, 360));
+  EXPECT(nativeLayerPresentationRotation(handle) == 0);
+  REQUIRE(!setNativeLayerPresentationRotation(nullptr, 90));
 }
 
 }  // namespace
@@ -1003,13 +996,13 @@ void verifyAutomaticDynamicRange() {
     window.releasedWhenClosed = NO;
     std::string error;
     auto host = wam::macos::NativeLayerHostView::create((__bridge void*)window.contentView, &error);
-    WAM_CHECK_DETAIL(host != nullptr, error);
+    WAM_REQUIRE_DETAIL(host != nullptr, error);
     CALayer* layer = (__bridge CALayer*)host->displayLayer();
     void* symbol = dlsym(RTLD_DEFAULT, "CADynamicRangeAutomatic");
-    WAM_CHECK(symbol != nullptr);
+    REQUIRE(symbol != nullptr);
     NSString* automatic = (__bridge NSString*)*static_cast<void**>(symbol);
-    WAM_CHECK([[layer valueForKey:@"preferredDynamicRange"] isEqual:automatic]);
-    WAM_CHECK(layer.filters.count == 0);
+    EXPECT([[layer valueForKey:@"preferredDynamicRange"] isEqual:automatic]);
+    EXPECT(layer.filters.count == 0);
     host->detach();
     [window close];
   }
@@ -1022,19 +1015,19 @@ void verifyConcurrentDisplayMetadata() {
   CALayer* layer = [CALayer layer];
   void* handle = (__bridge void*)layer;
   const wam::media::MediaDisplaySize size{{640, 1}, {360, 1}};
-  WAM_CHECK(setNativeLayerPresentationDisplaySize(handle, size));
+  EXPECT(setNativeLayerPresentationDisplaySize(handle, size));
   std::atomic<bool> finished{false};
   std::thread writer([&] {
     for (int i = 0; i < 20000; ++i) {
       @autoreleasepool {
-        WAM_CHECK(setNativeLayerPresentationDisplaySize(handle, size));
+        EXPECT(setNativeLayerPresentationDisplaySize(handle, size));
       }
     }
     finished.store(true, std::memory_order_release);
   });
   while (!finished.load(std::memory_order_acquire)) {
     @autoreleasepool {
-      WAM_CHECK(nativeLayerPresentationDisplaySize(handle) == size);
+      EXPECT(nativeLayerPresentationDisplaySize(handle) == size);
     }
   }
   writer.join();
@@ -1065,6 +1058,9 @@ int main() {
     verifyQuarterTurnClassifierAndLayerRotation();
   }
 
+  if (failures != 0) {
+    return EXIT_FAILURE;
+  }
   std::cout << "native layer video output contract tests passed\n";
   return EXIT_SUCCESS;
 }

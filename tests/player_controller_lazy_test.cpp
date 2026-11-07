@@ -5,6 +5,8 @@
 #include "qt/player_core_p.hpp"
 #include "qt/subtitle_sources.hpp"
 
+#include "support/expect.hpp"
+
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QTimer>
@@ -1158,15 +1160,6 @@ class PlayerControllerTestAccess final {
 }  // namespace wam::qt
 
 namespace {
-
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (condition)
-    return;
-  std::cerr << "FAIL: " << message << '\n';
-  ++failures;
-}
 
 bool nearlyEqual(double left, double right, double epsilon = 0.0005) {
   return std::abs(left - right) <= epsilon;

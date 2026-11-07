@@ -1,6 +1,7 @@
 #include "qt/native_benchmark_telemetry.hpp"
 #include "media/native_audio_benchmark.hpp"
 #include "media/startup_benchmark.hpp"
+#include "support/expect.hpp"
 
 #include <cstdlib>
 #include <cerrno>
@@ -136,20 +137,13 @@ bool stringFlush(void *context) noexcept {
   return true;
 }
 
-void expect(bool condition, const char *message) {
-  if (condition) {
-    return;
-  }
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
-
 std::vector<std::string_view> lines(const std::string &output) {
   std::vector<std::string_view> result;
   std::size_t begin = 0;
   while (begin < output.size()) {
     const std::size_t end = output.find('\n', begin);
-    expect(end != std::string::npos, "every telemetry record ends in newline");
+    // Fatal: a missing newline would make `begin` wrap and loop forever.
+    require(end != std::string::npos, "every telemetry record ends in newline");
     const std::string_view line(output.data() + begin, end - begin);
     if (line.find("\"record\":\"event\"") != std::string_view::npos) {
       result.push_back(line);
@@ -164,7 +158,8 @@ std::vector<std::string_view> rawLines(const std::string &output) {
   std::size_t begin = 0;
   while (begin < output.size()) {
     const std::size_t end = output.find('\n', begin);
-    expect(end != std::string::npos, "every telemetry record ends in newline");
+    // Fatal: a missing newline would make `begin` wrap and loop forever.
+    require(end != std::string::npos, "every telemetry record ends in newline");
     result.emplace_back(output.data() + begin, end - begin);
     begin = end + 1;
   }
@@ -326,6 +321,8 @@ void requiredFactsAreStableJsonLines() {
 
   const auto records = lines(probe.output);
   const auto allRecords = rawLines(probe.output);
+  require(allRecords.size() >= 14 && records.size() >= 9,
+          "framing and event records exist before they are indexed");
   expect(allRecords.size() == 15 &&
              contains(allRecords.front(), "\"record\":\"stream_header\"") &&
              contains(allRecords.front(), "\"format_version\":2") &&
@@ -432,7 +429,7 @@ void finiteTargetsAreLocaleIndependentJsonNumbers() {
          "terminal finish serializes locale-independent numeric facts");
 
   const auto records = lines(probe.output);
-  expect(records.size() == std::size(targets),
+  require(records.size() == std::size(targets),
          "all numeric edge cases emit one record");
   expect(contains(records[0], "\"target_seconds\":0.10000000000000001,"),
          "finite target retains max-digits round-trip precision");
@@ -465,6 +462,8 @@ void terminalDestructionPublishesWithoutPerEventIo() {
   }
 
   const auto records = lines(probe.output);
+  require(records.size() == 2,
+          "destruction publishes the terminal batch and durable stream commit");
   expect(probe.writes == 2 && probe.flushes == 2 && records.size() == 2,
          "destruction publishes the terminal batch and durable stream commit");
   expect(contains(records[0], "\"event\":\"open_requested\"") &&
@@ -533,7 +532,7 @@ void previewFactsPreserveDemandAndTerminalIdentity() {
          "one post-drag checkpoint publishes buffered preview proof");
 
   const auto records = lines(probe.output);
-  expect(records.size() == 10,
+  require(records.size() == 10,
          "two startup and eight preview facts are published exactly once");
   expect(contains(records.front(),
                   "\"asset_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"") &&
@@ -887,6 +886,8 @@ int main() {
   fallbackPublicationTracksFirstDrawBoundary();
   laterOpenRestoresFirstDrawWriteBarrier();
   audioMailboxPublishesOffRenderThread();
-  std::cout << "native benchmark telemetry tests passed\n";
-  return 0;
+  if (failures == 0) {
+    std::cout << "native benchmark telemetry tests passed\n";
+  }
+  return failures == 0 ? 0 : 1;
 }

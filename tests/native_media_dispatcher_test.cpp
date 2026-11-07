@@ -1,6 +1,8 @@
 #include "media/audio_track_admission.hpp"
 #include "media/native_media_dispatcher.hpp"
 
+#include "support/expect.hpp"
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -22,17 +24,6 @@
 namespace {
 
 using namespace wam::media;
-
-[[noreturn]] void failTest(const char* message) {
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    failTest(message);
-  }
-}
 
 class TestPayload final : public MediaPayloadStorage {
  public:
@@ -786,7 +777,7 @@ void openRig(TestRig& rig) {
   const NativeMediaGenerationTimeline expected{
       1, MediaSeekMode::Accurate, {0, 1}, {0, 1000}, {0, 1}, true,
       {{0, 1}, {0, 1}, true}};
-  expect(opened.status == NativeMediaDispatcherOpenStatus::Ready &&
+  require(opened.status == NativeMediaDispatcherOpenStatus::Ready &&
              opened.generation == 1 && opened.timeline == expected &&
              rig.dispatcher->timeline() == expected &&
              rig.dispatcher->preparedContext() != nullptr &&
@@ -816,7 +807,7 @@ void checkPreparedContextIdentity() {
   const NativeMediaDispatcherOpenOutcome missingOutcome =
       missing.dispatcher->openLocalFile("missing.mp4", requiredAvOptions(),
                                         1);
-  expect(missingOutcome.status == NativeMediaDispatcherOpenStatus::Ready &&
+  require(missingOutcome.status == NativeMediaDispatcherOpenStatus::Ready &&
              missing.dispatcher->preparedContext() == nullptr &&
              missing.video->configureCalls == 1 &&
              missing.audio->configureCalls == 1,
@@ -825,7 +816,7 @@ void checkPreparedContextIdentity() {
   const NativeMediaDispatcherSeekOutcome missingSeek =
       missing.dispatcher->seek(
           MediaSourceSeekRequest{2, {3, 1}, MediaSeekMode::Accurate});
-  expect(missingSeek.status == NativeMediaDispatcherSeekStatus::Accepted &&
+  require(missingSeek.status == NativeMediaDispatcherSeekStatus::Accepted &&
              missing.dispatcher->stats().generation == 2 &&
              missing.dispatcher->preparedContext() == nullptr &&
              missing.source->seekOrder == 1 &&
@@ -838,7 +829,7 @@ void checkPreparedContextIdentity() {
   forged.source->contextUsesClonedDescriptor = true;
   const NativeMediaDispatcherOpenOutcome forgedOutcome =
       forged.dispatcher->openLocalFile("forged.mp4", requiredAvOptions(), 1);
-  expect(forgedOutcome.status == NativeMediaDispatcherOpenStatus::Failed &&
+  require(forgedOutcome.status == NativeMediaDispatcherOpenStatus::Failed &&
              forged.dispatcher->stats().failure ==
                  NativeMediaDispatcherFailure::InvalidDescriptor &&
              forged.source->preparedContext != nullptr &&
@@ -888,7 +879,7 @@ void checkPreparedContextIdentity() {
   expect(closing.dispatcher->close(1).status ==
              NativeMediaDispatcherLifecycleStatus::Done,
          "prepared-context lifetime fixture closes exactly");
-  expect(closing.dispatcher->preparedContext() == nullptr &&
+  require(closing.dispatcher->preparedContext() == nullptr &&
              lifetime.expired(),
          "terminal close releases the dispatcher and source context owners");
 }
@@ -1761,7 +1752,7 @@ void checkQuiescingCancelAndCloseProofs() {
   const NativeMediaDispatcherLifecycleOutcome pendingClose =
       closing.dispatcher->close(1);
   stats = closing.dispatcher->stats();
-  expect(pendingClose.status == NativeMediaDispatcherLifecycleStatus::Pending &&
+  require(pendingClose.status == NativeMediaDispatcherLifecycleStatus::Pending &&
              stats.state == NativeMediaDispatcherState::Closing &&
              stats.pending == NativeMediaPendingKind::AudioSample &&
              stats.pendingGeneration == 1 &&
@@ -1772,7 +1763,7 @@ void checkQuiescingCancelAndCloseProofs() {
          "close retains state and ownership while one consumer quiesces");
   NativeMediaDispatcherStep closed = closing.dispatcher->step();
   const NativeMediaDispatcherStats closedStats = closing.dispatcher->stats();
-  expect(closed.action == NativeMediaDispatcherAction::Closed &&
+  require(closed.action == NativeMediaDispatcherAction::Closed &&
              closedStats.state == NativeMediaDispatcherState::Closed &&
              closedStats.pendingGeneration == 0 &&
              closedStats.pendingPayloadBytes == 0 &&
@@ -2186,6 +2177,9 @@ int main() {
   checkExactTerminalRetirement();
   checkParallelConfigureJoinsAndRetiresExactly();
   checkFormatChangeFailsClosed();
+  if (failures != 0) {
+    return 1;
+  }
   std::cout << "native media dispatcher checks passed\n";
   return 0;
 }

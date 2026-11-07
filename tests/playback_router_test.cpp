@@ -1,5 +1,7 @@
 #include "media/playback_router.hpp"
 
+#include "support/expect.hpp"
+
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -9,17 +11,10 @@ namespace native = wam::media::native_playback;
 
 namespace {
 
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    std::exit(1);
-  }
-}
-
 const router::Action &action(const router::Transition &transition,
                              router::ActionKind kind, const char *message) {
   expect(transition.status == router::Status::Applied, message);
-  expect(transition.action.has_value(), message);
+  require(transition.action.has_value(), message);
   expect(transition.action->kind == kind, message);
   return *transition.action;
 }
@@ -938,7 +933,7 @@ void hostDeadlineExpiresBoundedPhases() {
   expect(router.retireStoppingAfterSynchronousTeardown({1002}).status ==
              router::Status::Ignored,
          "an unexpired stop keeps the exact proof authoritative");
-  expect(router.expirePhase({1003}).status == router::Status::Applied &&
+  require(router.expirePhase({1003}).status == router::Status::Applied &&
              !router.expirePhase({1003}).action.has_value() &&
              router.snapshot().state == router::State::NativeStopping,
          "host deadline on a stop only records the expiry");
@@ -1129,6 +1124,9 @@ int main() {
   resumeCommitMayStartBeforeStartedFact();
   commitFallbackExhaustionWaitsForExactRetirement();
   endedSeekRestartsAndSeekingRetiresExactTarget();
+  if (failures != 0) {
+    return 1;
+  }
   std::cout << "playback router tests passed\n";
   return 0;
 }

@@ -3,15 +3,8 @@
 #include "media/media_container_probe.hpp"
 #include <array>
 #include <fstream>
-#include <iostream>
+#include "support/expect.hpp"
 #include <unistd.h>
-#define REQUIRE(c)                                                             \
-  do {                                                                         \
-    if (!(c)) {                                                                \
-      std::cerr << "FAIL " << __LINE__ << ": " #c "\n";                        \
-      return 1;                                                                \
-    }                                                                          \
-  } while (false)
 int main() {
   using namespace wam::media;
   using Kind = MediaSourceBackendKind;
@@ -19,35 +12,35 @@ int main() {
     return containerBackendForBytes(
         {reinterpret_cast<const std::byte *>(bytes), size}, hint);
   };
-  REQUIRE(probe("OggS", 4, "wrong.mp4") == Kind::Libavformat);
-  REQUIRE(probe("FLV", 3, "wrong.mkv") == Kind::Libavformat);
-  REQUIRE(probe("\x1a\x45\xdf\xa3", 4, "wrong.avi") == Kind::Matroska);
-  REQUIRE(probe("....ftyp", 8, "wrong.mkv") == Kind::AVFoundation);
-  REQUIRE(probe("RIFF....WAVE", 12, "wrong.avi") == Kind::AVFoundation);
-  REQUIRE(probe("RIFF....AVI ", 12, "wrong.mp4") == Kind::Libavformat);
-  REQUIRE(probe(".RMF", 4, "wrong.mp4") == Kind::Libavformat);
-  REQUIRE(probe("\x00\x00\x01\xba", 4, "wrong.ts") == Kind::Libavformat);
-  REQUIRE(probe("", 0, "hint.WMV") == Kind::Libavformat);
+  EXPECT(probe("OggS", 4, "wrong.mp4") == Kind::Libavformat);
+  EXPECT(probe("FLV", 3, "wrong.mkv") == Kind::Libavformat);
+  EXPECT(probe("\x1a\x45\xdf\xa3", 4, "wrong.avi") == Kind::Matroska);
+  EXPECT(probe("....ftyp", 8, "wrong.mkv") == Kind::AVFoundation);
+  EXPECT(probe("RIFF....WAVE", 12, "wrong.avi") == Kind::AVFoundation);
+  EXPECT(probe("RIFF....AVI ", 12, "wrong.mp4") == Kind::Libavformat);
+  EXPECT(probe(".RMF", 4, "wrong.mp4") == Kind::Libavformat);
+  EXPECT(probe("\x00\x00\x01\xba", 4, "wrong.ts") == Kind::Libavformat);
+  EXPECT(probe("", 0, "hint.WMV") == Kind::Libavformat);
   for (const unsigned stride : {188U, 192U, 204U}) {
     std::array<std::byte, 1024> bytes{};
     const unsigned offset = stride == 192 ? 4 : 0;
     for (unsigned at = offset; at < bytes.size(); at += stride)
       bytes[at] = std::byte{0x47};
-    REQUIRE(containerBackendForBytes(bytes, "wrong.mp4") == Kind::MpegTs);
+    EXPECT(containerBackendForBytes(bytes, "wrong.mp4") == Kind::MpegTs);
   }
   {
     // Three syncs then silence is not the demuxer's framing, so not TS.
     std::array<std::byte, 1024> bytes{};
     bytes[0] = bytes[188] = bytes[376] = std::byte{0x47};
-    REQUIRE(containerBackendForBytes(bytes, "wrong.mp4") == Kind::AVFoundation);
+    EXPECT(containerBackendForBytes(bytes, "wrong.mp4") == Kind::AVFoundation);
   }
-  REQUIRE(avcodecExactTime(9007199254740993LL, 1, 90000) ==
+  EXPECT(avcodecExactTime(9007199254740993LL, 1, 90000) ==
           MediaTime(3002399751580331LL, 30000));
-  REQUIRE(avcodecExactTime(-7, 3, 21) == MediaTime(-1, 1));
-  REQUIRE(!avcodecExactTime(INT64_MIN, 1, 1));
-  REQUIRE(!avcodecExactTime(INT64_MAX, 2, 1));
-  REQUIRE(!avcodecExactTime(1, 0, 1));
-  REQUIRE(!avcodecExactTime(1, 1, 0));
+  EXPECT(avcodecExactTime(-7, 3, 21) == MediaTime(-1, 1));
+  EXPECT(!avcodecExactTime(INT64_MIN, 1, 1));
+  EXPECT(!avcodecExactTime(INT64_MAX, 2, 1));
+  EXPECT(!avcodecExactTime(1, 0, 1));
+  EXPECT(!avcodecExactTime(1, 1, 0));
   const auto path =
       std::filesystem::path("/private/tmp") /
       ("wam-avformat-contract-" + std::to_string(getpid()) + ".mp4");
@@ -61,16 +54,17 @@ int main() {
   std::string error;
   LibavformatCursor cursor;
   MediaRefusalClass refusal = MediaRefusalClass::None;
-  REQUIRE(!cursor.open(path, cancel, error, &refusal));
-  REQUIRE(
+  EXPECT(!cursor.open(path, cancel, error, &refusal));
+  EXPECT(
       error ==
       "this recording is incomplete: its initialization metadata is missing");
-  REQUIRE(refusal == MediaRefusalClass::MissingInitialization);
+  EXPECT(refusal == MediaRefusalClass::MissingInitialization);
   cancel = true;
-  REQUIRE(!cursor.open(path, cancel, error));
-  REQUIRE(error == "LibavformatCancelled");
+  EXPECT(!cursor.open(path, cancel, error));
+  EXPECT(error == "LibavformatCancelled");
   std::filesystem::remove(path);
-  REQUIRE(LibavformatCursor::runtimeFailure().empty());
+  EXPECT(LibavformatCursor::runtimeFailure().empty());
   std::cout << "signature, exact rational, missing initialization, "
                "cancellation, runtime contracts passed\n";
+  return failures == 0 ? 0 : 1;
 }

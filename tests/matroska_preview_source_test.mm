@@ -52,6 +52,7 @@
 #include <vector>
 
 #include "support/expect.hpp"
+#include "support/ebml_builder.hpp"
 
 namespace {
 
@@ -71,7 +72,6 @@ using wam::media::MediaTime;
 using wam::media::MediaTimeOrder;
 using wam::media::matroska::MatroskaPrepareOutcome;
 using wam::media::SeekableByteReader;
-using Bytes = std::vector<std::byte>;
 
 
 // ---------------------------------------------------------------------------
@@ -112,96 +112,6 @@ constexpr std::uint32_t kCueTrackId{0xF7};
 constexpr std::uint32_t kCueClusterPositionId{0xF1};
 constexpr std::uint32_t kCueRelativePositionId{0xF0};
 constexpr std::uint32_t kCueBlockNumberId{0x5378};
-
-void append(Bytes& destination, const Bytes& source) {
-  destination.insert(destination.end(), source.begin(), source.end());
-}
-
-void appendId(Bytes& bytes, std::uint32_t id) {
-  unsigned width = 1;
-  if (id > 0xFFFFFFU) {
-    width = 4;
-  } else if (id > 0xFFFFU) {
-    width = 3;
-  } else if (id > 0xFFU) {
-    width = 2;
-  }
-  for (unsigned index = width; index > 0; --index) {
-    bytes.push_back(
-        static_cast<std::byte>((id >> ((index - 1U) * 8U)) & 0xFFU));
-  }
-}
-
-void appendSize(Bytes& bytes, std::uint64_t size) {
-  unsigned width = 1;
-  while (width < 8) {
-    const auto maximum = (std::uint64_t{1} << (7U * width)) - 2U;
-    if (size <= maximum) {
-      break;
-    }
-    ++width;
-  }
-  const std::uint64_t encoded = (std::uint64_t{1} << (7U * width)) | size;
-  for (unsigned index = width; index > 0; --index) {
-    bytes.push_back(
-        static_cast<std::byte>((encoded >> ((index - 1U) * 8U)) & 0xFFU));
-  }
-}
-
-Bytes element(std::uint32_t id, const Bytes& payload) {
-  Bytes result;
-  appendId(result, id);
-  appendSize(result, payload.size());
-  append(result, payload);
-  return result;
-}
-
-Bytes unsignedBytes(std::uint64_t value) {
-  unsigned width = 1;
-  while (width < 8 && value >= (std::uint64_t{1} << (width * 8U))) {
-    ++width;
-  }
-  Bytes result;
-  for (unsigned index = width; index > 0; --index) {
-    result.push_back(
-        static_cast<std::byte>((value >> ((index - 1U) * 8U)) & 0xFFU));
-  }
-  return result;
-}
-
-Bytes uintElement(std::uint32_t id, std::uint64_t value) {
-  return element(id, unsignedBytes(value));
-}
-
-Bytes asciiElement(std::uint32_t id, std::string_view value) {
-  Bytes payload;
-  for (const char character : value) {
-    payload.push_back(static_cast<std::byte>(character));
-  }
-  return element(id, payload);
-}
-
-Bytes doubleElement(std::uint32_t id, double value) {
-  const auto bits = std::bit_cast<std::uint64_t>(value);
-  Bytes payload;
-  for (unsigned index = 8; index > 0; --index) {
-    payload.push_back(
-        static_cast<std::byte>((bits >> ((index - 1U) * 8U)) & 0xFFU));
-  }
-  return element(id, payload);
-}
-
-Bytes ebmlHeader() {
-  Bytes payload;
-  append(payload, uintElement(0x4286, 1));
-  append(payload, uintElement(0x42F7, 1));
-  append(payload, uintElement(0x42F2, 4));
-  append(payload, uintElement(0x42F3, 8));
-  append(payload, asciiElement(0x4282, "matroska"));
-  append(payload, uintElement(0x4287, 4));
-  append(payload, uintElement(0x4285, 2));
-  return element(kEbmlHeaderId, payload);
-}
 
 // Encoder-produced High-profile avcC for the repository's deterministic
 // 1280x720 H.264 sample, byte-identical to the record admitted by
