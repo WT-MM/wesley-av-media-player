@@ -2478,20 +2478,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               format.formatTag =
                   mediaCodecFacts(MediaCodec::Aac).coreAudioFormatTag;
               format.framesPerPacket = kAacLcSamplesPerAccessUnit;
-              // Mono and stereo keep their canonical tags. A wider AAC layout
-              // states none: this demuxer knows a channel count, not
-              // AudioToolbox's per-codec channel ORDER, and the platform layer
-              // reads the authoritative order back from the decoder before
-              // folding to stereo. Stating the stereo tag on a six-channel
-              // track would be an outright false statement.
-              format.channelLayoutTag =
-                  admission.configuration->channelCount == 1
-                      ? kCoreAudioMonoLayoutTag
-                  : admission.configuration->channelCount == 2
-                      ? kCoreAudioStereoLayoutTag
-                      : 0U;
-              format.channelLayoutPresent =
-                  admission.configuration->channelCount <= 2;
+              applyChannelLayoutTag(&format,
+                                    admission.configuration->channelCount);
               state->audio.sampleRate = admission.configuration->sampleRate;
               state->audio.channels = admission.configuration->channelCount;
               state->audio.samplesPerFrame = kAacLcSamplesPerAccessUnit;
@@ -2533,17 +2521,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           // that restates a different count mid-stream is still refused by the
           // per-frame walk in the media source.
           format.framesPerPacket = frame.samplesPerFrame;
-          // Mono and stereo keep their canonical tags. A wider layout states
-          // none, exactly as the AAC branch above does and for the same
-          // reason: this demuxer knows a channel COUNT, not AudioToolbox's
-          // per-codec channel ORDER, and the platform layer reads the
-          // authoritative order back from the decoder before folding.
-          format.channelLayoutTag =
-              frame.channels == 1 ? kCoreAudioMonoLayoutTag
-              : frame.channels == 2
-                  ? kCoreAudioStereoLayoutTag
-                  : 0U;
-          format.channelLayoutPresent = frame.channels <= 2;
+          applyChannelLayoutTag(&format, frame.channels);
           state->audio.sampleRate = frame.sampleRate;
           state->audio.channels = frame.channels;
           state->audio.samplesPerFrame = frame.samplesPerFrame;
@@ -2569,10 +2547,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
                   ? mediaCodecFacts(MediaCodec::Mp3).coreAudioFormatTag
                   : codec::kMpegLayer2FormatTag;
           format.framesPerPacket = frame.samplesPerFrame;
-          format.channelLayoutTag =
-              frame.channels == 1 ? kCoreAudioMonoLayoutTag
-                                  : kCoreAudioStereoLayoutTag;
-          format.channelLayoutPresent = true;
+          applyChannelLayoutTag(&format, frame.channels);
           state->audio.sampleRate = frame.sampleRate;
           state->audio.channels = frame.channels;
           state->audio.samplesPerFrame = frame.samplesPerFrame;

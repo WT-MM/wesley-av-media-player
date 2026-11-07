@@ -151,8 +151,7 @@ bool audioDescriptor(const LibavformatCursor::Stream& stream, MediaTrackDescript
   }
   MediaAudioFormat format;
   format.sampleRate=stream.rate;format.channels=stream.channels;
-  format.channelLayoutPresent=true;
-  format.channelLayoutTag=stream.channels==1?kAudioChannelLayoutTag_Mono:kAudioChannelLayoutTag_Stereo;
+  applyChannelLayoutTag(&format,stream.channels);
   track.kind=MediaTrackKind::Audio;track.timeBase={1,static_cast<std::int32_t>(stream.rate)};
   track.codecConfigurationKind=MediaCodecConfigurationKind::AudioMagicCookie;
   if(stream.codecId==AV_CODEC_ID_OPUS) {
@@ -184,11 +183,7 @@ bool audioDescriptor(const LibavformatCursor::Stream& stream, MediaTrackDescript
     format.sampleRate=asc.configuration->sampleRate;
     track.timeBase={1,static_cast<std::int32_t>(asc.configuration->sampleRate)};
     format.channels=asc.configuration->channelCount;
-    const AudioChannelLayoutTag layouts[] = {0, kAudioChannelLayoutTag_Mono,
-        kAudioChannelLayoutTag_Stereo, kAudioChannelLayoutTag_MPEG_3_0_A,
-        kAudioChannelLayoutTag_MPEG_4_0_A, kAudioChannelLayoutTag_MPEG_5_0_A,
-        kAudioChannelLayoutTag_MPEG_5_1_A};
-    format.channelLayoutTag=layouts[format.channels];
+    applyChannelLayoutTag(&format,format.channels);
     track.codecConfiguration.assign(cookie->view().begin(),cookie->view().end());
     origin={0,static_cast<std::int32_t>(asc.configuration->sampleRate)};frames=codec::kAacLcSamplesPerAccessUnit;format.framesPerPacket=frames;
   } else {error="LibavformatAudioTimingUnproven";return false;}

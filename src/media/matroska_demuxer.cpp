@@ -1429,34 +1429,6 @@ struct AudioDescriptorFields {
   std::int64_t tailDiscardPaddingNanoseconds{0};
 };
 
-// Mono and stereo keep their exact canonical tags. A WIDER layout states no
-// tag at all, deliberately.
-//
-// This demuxer knows a channel COUNT; it does not know AudioToolbox's
-// per-codec channel-order convention, and its decoders emit three different
-// 5.1 orders (AAC C L R Ls Rs LFE, AC-3 and E-AC-3 L C R Ls Rs LFE, FLAC
-// L R C LFE Ls Rs). Inventing a CoreAudio tag here would be guessing at that
-// convention, and a wrong guess puts dialogue in the surround channel with no
-// other symptom. AudioConverter reports the identical output channel layout
-// whether or not an input layout is supplied, so supplying none costs nothing
-// and the platform layer reads the authoritative order back from the decoder
-// itself.
-void applyChannelLayoutTag(MediaAudioFormat* format,
-                           std::uint32_t channelCount) noexcept {
-  if (channelCount == 1) {
-    format->channelLayoutTag = kCoreAudioMonoLayoutTag;
-    format->channelLayoutPresent = true;
-    return;
-  }
-  if (channelCount == 2) {
-    format->channelLayoutTag = kCoreAudioStereoLayoutTag;
-    format->channelLayoutPresent = true;
-    return;
-  }
-  format->channelLayoutTag = 0;
-  format->channelLayoutPresent = false;
-}
-
 void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
                          const AudioDescriptorFields& fields,
                          MediaTrackDescriptor* result, TrackRuntime* runtime) {
