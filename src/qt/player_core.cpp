@@ -943,7 +943,7 @@ void PlayerCore::queueEventDrain() noexcept {
               {
                 std::scoped_lock owner_lock(keepalive->owner_mutex_);
                 if (keepalive->owner_ != owner ||
-                    owner->core_.get() != keepalive.get())
+                    owner->mpv_.core.get() != keepalive.get())
                   return;
               }
 
@@ -1004,7 +1004,7 @@ void PlayerCore::queueVideoUpdate() noexcept {
               {
                 std::scoped_lock owner_lock(keepalive->owner_mutex_);
                 if (keepalive->owner_ != owner ||
-                    owner->core_.get() != keepalive.get()) {
+                    owner->mpv_.core.get() != keepalive.get()) {
                   keepalive->video_update_queued_.store(
                       false, std::memory_order_release);
                   return;
@@ -1331,7 +1331,7 @@ void PlayerCore::postInitializationError(const QString &error,
           {
             std::scoped_lock owner_lock(keepalive->owner_mutex_);
             if (keepalive->owner_ != owner ||
-                owner->core_.get() != keepalive.get()) {
+                owner->mpv_.core.get() != keepalive.get()) {
               return;
             }
           }

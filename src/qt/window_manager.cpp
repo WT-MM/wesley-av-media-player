@@ -4,10 +4,6 @@
 #include "player_controller.hpp"
 #include "state_store.hpp"
 
-#ifndef Q_OS_MACOS
-#include "playback/mpv/mpv_runtime.hpp"
-#endif
-
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
 #endif
@@ -177,18 +173,6 @@ PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
   context_ = new QQmlContext(engine.rootContext(), this);
 
   controller_ = new PlayerController(this);
-#ifndef Q_OS_MACOS
-  // Off macOS there is no native route at all, so every window's controller
-  // needs its own compatibility engine handle. libmpv explicitly supports many
-  // mpv_create() handles from one loaded library image, and the runtime object
-  // being retained here is the immutable, process-lifetime API table -- not a
-  // handle -- so N controllers sharing it is exactly its intended use.
-  const auto linked_runtime =
-      ::wam::playback::mpv::MpvLinkedRuntimeFactory::create();
-  if (linked_runtime)
-    static_cast<void>(controller_->provisionMpvFallbackRuntime(
-        linked_runtime.runtime));
-#endif
   controller_->bindSettings(manager_.settings());
   controller_->setVolume(manager_.settings().initialVolume());
   context_->setContextProperty(QStringLiteral("player"), controller_);

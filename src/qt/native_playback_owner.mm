@@ -5,19 +5,14 @@
 #include "native_benchmark_telemetry.hpp"
 #include "native_playback_metrics.hpp"
 #include "native_media_session_adapter.hpp"
-#include "playback/mpv/mpv_runtime.hpp"
 #include "player_controller.hpp"
-#include "player_core_p.hpp"
 
 #import <Foundation/Foundation.h>
 
-#include <QCoreApplication>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QThread>
 #include <QTimer>
-
-#include <mpv/client.h>
 
 #include <algorithm>
 #include <cmath>
@@ -147,8 +142,8 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
     sample.hasAudio = sampled.audioValid;
     sample.hasClock = sampled.clockValid;
     sample.paused = controller_.paused();
-  } else if (acceptsFallbackPlaybackEvents() && controller_.core_) {
-    sample = controller_.core_->fallbackMetrics();
+  } else if (acceptsFallbackPlaybackEvents()) {
+    sample = controller_.mpv_.metrics();
   }
   // Unavailable audio/drop counters stay null; no time/fps estimate is used
   // as a substitute for frames actually rendered by the compatibility host.
@@ -343,7 +338,7 @@ NativePlaybackOwner::preparationFor(native_protocol::SourceKey sourceKey) {
     return {};
   return Preparation{record->localPath, *record->initialPosition,
       macos::qtNativePresentationFactory(&surface_->nativeVideoItem()),
-      controller_.captionFeed(), static_cast<float>(controller_.volume_), controller_.muted_,
+      controller_.captionFeed(), static_cast<float>(controller_.volume()), controller_.muted(),
       record->sourceClass == PlaybackSourceClass::BufferedLocal};
 }
 
@@ -359,38 +354,13 @@ NativePlaybackOwner::beginFallbackCreate(
   // Reserve terminal recovery before creating any fallback resource. If this
   // allocation fails, FallbackCreating can honestly fail with no mpv handle
   // admitted; once a handle exists, retirement needs no further allocation.
-  if (!controller_.fallback_reset_core_) {
-    try {
-      controller_.fallback_reset_core_ =
-          std::make_shared<PlayerCore>(&controller_);
-    } catch (...) {
-      controller_.setLastError(QStringLiteral(
-          "Could not start playback. Please try again."));
-      return routeFallbackFailed({action.fallback.stamp});
-    }
+  if (!controller_.mpv_.reserveReplacement()) {
+    controller_.setLastError(QStringLiteral(
+        "Could not start playback. Please try again."));
+    return routeFallbackFailed({action.fallback.stamp});
   }
-
-  if (!controller_.engineReady()) {
-    if (!controller_.fallback_runtime_) {
-      WAM_STARTUP_STAMP(FallbackLoadBegin);
-      const auto loaded = playback::mpv::MpvFallbackFactory::load(
-          QCoreApplication::applicationDirPath());
-      WAM_STARTUP_STAMP(FallbackLoadEnd);
-      if (!loaded || !controller_.provisionMpvFallbackRuntime(loaded.runtime)) {
-        controller_.setLastError(
-            loaded.detail.isEmpty()
-                ? QStringLiteral(
-                      "A playback component is missing. Reinstall WAM to restore it.")
-                : loaded.detail);
-        return routeFallbackFailed({action.fallback.stamp});
-      }
-    }
-    WAM_STARTUP_STAMP(FallbackInitializeBegin);
-    const bool initialized = controller_.initializePlaybackEngine();
-    WAM_STARTUP_STAMP(FallbackInitializeEnd);
-    if (!initialized) {
-      return routeFallbackFailed({action.fallback.stamp});
-    }
+  if (!controller_.initializePlaybackEngine()) {
+    return routeFallbackFailed({action.fallback.stamp});
   }
 
   return routeFallbackCreated({action.fallback.stamp});
@@ -418,21 +388,15 @@ bool NativePlaybackOwner::beginFallbackStop(
     return false;
   }
 
-  fallbackStop_ = FallbackStop{action.fallback, controller_.core_};
-
-  controller_.core_->revokeRenderContext();
-  if (!controller_.core_->renderContextBusy() &&
-      RenderLifecycle::phase(controller_.core_->renderLifecycleSnapshot()) ==
-          RenderPhase::Failed) {
-    static_cast<void>(controller_.core_->retryFailedRenderContext());
-  }
+  fallbackStop_ = FallbackStop{action.fallback, controller_.mpv_.core};
+  controller_.mpv_.revokeRendering();
   controller_.requestVideoUpdate();
   return submitFallbackStop();
 }
 
 bool NativePlaybackOwner::submitFallbackStop() {
   if (!fallbackStop_.has_value() || !controller_.engineReady() ||
-      fallbackStop_->core != controller_.core_ ||
+      fallbackStop_->core != controller_.mpv_.core ||
       fallbackStop_->submissions >= kMaximumFallbackStopSubmissions) {
     exhaustFallbackStop(QStringLiteral(
         "Playback did not stop."));
@@ -449,12 +413,8 @@ bool NativePlaybackOwner::submitFallbackStop() {
   fallbackStop_->commandReplied = false;
   fallbackStop_->idleObserved = false;
 
-  const char *arguments[] = {"stop", nullptr};
-  const std::uint64_t userdata =
-      kFallbackStopReplyNamespace | nextFallbackStopReplyId_;
-  const int result = controller_.core_->api().mpv_command_async(
-      controller_.core_->handle(), userdata, arguments);
-  if (result < 0) {
+  if (!controller_.mpv_.submitStop(kFallbackStopReplyNamespace |
+                                   nextFallbackStopReplyId_)) {
     if (fallbackStop_->submissions < kMaximumFallbackStopSubmissions)
       return submitFallbackStop();
     exhaustFallbackStop(QStringLiteral(
@@ -551,11 +511,7 @@ void NativePlaybackOwner::publishLifecycle(
           controller_.updateEof(false);
         } else if constexpr (std::is_same_v<Event, native_protocol::Ended>) {
           const double position = std::max(0.0, event.finalPositionSeconds);
-          if (std::isfinite(position) &&
-              std::abs(controller_.position_ - position) > 0.0005) {
-            controller_.position_ = position;
-            emit controller_.positionChanged();
-          }
+          controller_.publishSeekTarget(position);
           controller_.updatePause(true);
           controller_.updateIdle(true);
           controller_.updateEof(true);
@@ -588,7 +544,7 @@ void NativePlaybackOwner::publishRunState(
   // native graph. Its pause acknowledgement must not make the QML transport
   // appear paused; play/pause during the gesture updates that retained intent
   // and CommitReady applies it to the promoted generation.
-  if (!controller_.native_scrub_intent_ && !controller_.native_seek_intent_) {
+  if (!controller_.nativeSeekInFlight()) {
     controller_.updatePause(command.paused);
   }
   controller_.updateIdle(false);
@@ -630,12 +586,7 @@ void NativePlaybackOwner::publishCommitReady(
   controller_.nativeCommitReady(ready);
   controller_.updateIdle(false);
   controller_.updateEof(false);
-  const double position = std::max(0.0, ready.targetSeconds);
-  if (std::isfinite(position) &&
-      std::abs(controller_.position_ - position) > 0.0005) {
-    controller_.position_ = position;
-    emit controller_.positionChanged();
-  }
+  controller_.publishSeekTarget(std::max(0.0, ready.targetSeconds));
   if (telemetry_ != nullptr) {
     static_cast<void>(telemetry_->checkpoint());
   }
@@ -676,12 +627,7 @@ void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyUserdata,
   }
   fallbackStop_->commandReplied = true;
   fallbackStop_->idleObserved = false;
-  int idle = 0;
-  if (controller_.engineReady() &&
-      controller_.core_->api().mpv_get_property(controller_.core_->handle(),
-                                                "idle-active", MPV_FORMAT_FLAG,
-                                                &idle) >= 0 &&
-      idle != 0) {
+  if (controller_.mpv_.idle()) {
     fallbackStop_->idleObserved = true;
   }
   maybeCompleteFallbackStop();
@@ -689,18 +635,13 @@ void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyUserdata,
 
 void NativePlaybackOwner::fallbackIdleChanged(bool idle) {
   if (!fallbackStop_.has_value() || !fallbackStop_->commandReplied || !idle ||
-      fallbackStop_->core != controller_.core_) {
+      fallbackStop_->core != controller_.mpv_.core) {
     return;
   }
   // Property observations are coalesced and can have been published before
   // the Stop reply. Re-read only after exact command completion so the value
   // is causally post-Stop.
-  int currentIdle = 0;
-  if (controller_.engineReady() &&
-      controller_.core_->api().mpv_get_property(controller_.core_->handle(),
-                                                "idle-active", MPV_FORMAT_FLAG,
-                                                &currentIdle) >= 0 &&
-      currentIdle != 0) {
+  if (controller_.mpv_.idle()) {
     fallbackStop_->idleObserved = true;
   }
   maybeCompleteFallbackStop();
@@ -723,12 +664,8 @@ void NativePlaybackOwner::maybeCompleteFallbackStop() {
     return;
   }
   if (!fallbackStop_.has_value() || !fallbackStop_->core ||
-      fallbackStop_->core != controller_.core_ ||
-      fallbackStop_->core->renderContextBusy()) {
-    return;
-  }
-  const RenderTicket lifecycle = fallbackStop_->core->renderLifecycleSnapshot();
-  if (RenderLifecycle::phase(lifecycle) != RenderPhase::Empty) {
+      fallbackStop_->core != controller_.mpv_.core ||
+      !controller_.mpv_.renderingReleased()) {
     return;
   }
 
@@ -804,10 +741,7 @@ std::optional<playback_router::Transition> NativePlaybackOwner::applyFallbackRun
     if (!controller_.engineReady()) {
       return routeFallbackFailed({action.fallback.stamp});
     }
-    int paused = action.fallback.paused ? 1 : 0;
-    const int result = controller_.core_->api().mpv_set_property(
-        controller_.core_->handle(), "pause", MPV_FORMAT_FLAG, &paused);
-    if (result < 0) {
+    if (!controller_.mpv_.setPausedNow(action.fallback.paused)) {
       controller_.setLastError(
           QStringLiteral("Could not apply the playback "
                          "change."));

@@ -4,6 +4,7 @@
 #include "media/subtitle_text.hpp"
 #include "media/native_display_geometry.hpp"
 #include "jobs.hpp"
+#include "mpv_engine.hpp"
 #include "media/live_caption_feed.hpp"
 #include "playback_policy.hpp"
 #include "scroll_gesture.hpp"
@@ -431,70 +432,13 @@ private:
   friend class NativePlaybackOwner;
   friend class PlayerControllerTestAccess;
 
-  struct OpenAttempt {
-    std::uint64_t id = 0;
-    std::uint64_t request_serial = 0;
-    std::uint64_t render_stamp = 0;
-    std::int64_t playlist_entry_id = -1;
-    bool reply_ready = false;
-    bool file_loaded = false;
-    bool playback_restarted = false;
-  };
-
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  struct RoutedFallbackOpen {
-    std::uint64_t attempt = 0;
-    std::uint64_t serial = 0;
-    std::uint64_t source_key = 0;
-    PlaybackSourceClass source_class{PlaybackSourceClass::Network};
-  };
-#endif
-
-  enum class RenderRecoveryMode {
-    NoReselection,
-    VideoReselect,
-    FullReload,
-  };
-
-  struct RenderRecovery {
-    std::uint64_t request_serial = 0;
-    double position = 0.0;
-    bool paused = true;
-    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
-    std::int64_t video_track_id = -1;
-    std::int64_t audio_track_id = -1;
-    std::int64_t subtitle_track_id = -1;
-    bool file_has_audio_track = false;
-    bool track_snapshot_proven = false;
-    std::vector<std::filesystem::path> external_subtitles;
-    QUrl reload_source;
-    std::int64_t playlist_position = -1;
-    bool preserve_playlist_context = false;
-    std::uint64_t accepted_render_stamp = 0;
-    bool command_failed = false;
-    bool file_loaded = false;
-    bool playback_restarted = false;
-    bool external_subtitles_restored = false;
-    std::size_t external_subtitles_restored_count = 0;
-    bool per_file_state_restored = false;
-    bool transport_restored = false;
-    bool position_overridden = false;
-    std::uint64_t completion_token = 0;
-    int restore_retry_count = 0;
-    bool restore_retry_queued = false;
-    QString restore_failure;
-  };
-
-  struct RenderRecoveryAttempt {
-    std::uint64_t id = 0;
-    std::uint64_t request_serial = 0;
-    std::uint64_t render_stamp = 0;
-    std::int64_t playlist_entry_id = -1;
-    std::int64_t video_track_id = -1;
-    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
-    std::int64_t started_playlist_entry_id = -1;
-    bool restarted_playlist_entry = false;
-  };
+  using OpenAttempt = MpvEngine::OpenAttempt;
+  using RoutedFallbackOpen = MpvEngine::RoutedFallbackOpen;
+  using RenderRecoveryMode = MpvEngine::RenderRecoveryMode;
+  using RenderRecovery = MpvEngine::RenderRecovery;
+  using RenderRecoveryAttempt = MpvEngine::RenderRecoveryAttempt;
+  using StartupPlaybackSync = MpvEngine::StartupPlaybackSync;
+  using PlaylistEntryRange = MpvEngine::PlaylistEntryRange;
 
   struct LivePlaybackState {
     bool paused = true;
@@ -502,22 +446,6 @@ private:
     std::optional<bool> eof_reached;
     std::optional<double> position;
     std::optional<double> duration;
-  };
-
-  struct StartupPlaybackSync {
-    std::uint64_t request_serial = 0;
-    std::uint64_t render_stamp = 0;
-    std::int64_t playlist_entry_id = -1;
-    bool intended_paused = false;
-    std::optional<double> intended_position;
-    bool position_overridden = false;
-    std::uint64_t completion_token = 0;
-    int retry_count = 0;
-  };
-
-  struct PlaylistEntryRange {
-    std::int64_t first = -1;
-    std::uint64_t count = 0;
   };
 
   struct ScrubSeek {
@@ -751,6 +679,10 @@ private:
   void nativeCommitFailed(std::uint64_t gesture,
                           std::uint64_t request) noexcept;
   void setNativeScrubPauseIntent(bool paused);
+  // A native scrub or seek owns the logical pause intent until it commits.
+  [[nodiscard]] bool nativeSeekInFlight() const noexcept {
+    return native_scrub_intent_ || native_seek_intent_;
+  }
   void invalidateNativeScrubIntent() noexcept;
   void invalidateNativeSeekIntents() noexcept;
   void publishNativeMainPosition(double position);
@@ -887,12 +819,9 @@ private:
   void pollBackgroundWork();
   bool attachSubtitleFile(const std::filesystem::path &subtitle);
 
-  std::shared_ptr<PlayerCore> core_;
-  std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> fallback_runtime_;
+  MpvEngine mpv_;
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  std::shared_ptr<PlayerCore> fallback_reset_core_;
   std::unique_ptr<NativePlaybackOwner> native_playback_;
-  std::optional<RoutedFallbackOpen> routed_fallback_open_;
 #endif
   QPointer<MpvVideoItem> video_item_;
   const AppSettings *settings_ = nullptr;
@@ -939,9 +868,6 @@ private:
   // requested_source_ is the authoritative GUI intent. source_ mirrors mpv's
   // observed path and can briefly clear during asynchronous replacement.
   QUrl requested_source_;
-  QUrl pending_source_;
-  QUrl committed_entry_source_;
-  std::int64_t committed_playlist_position_ = -1;
   QString media_title_;
   QString last_error_;
   QString last_notice_;
@@ -979,7 +905,6 @@ private:
   bool export_cancel_requested_ = false;
   bool export_completion_pending_ = false;
   bool caption_completion_pending_ = false;
-  bool observed_current_path_ = false;
   // See beginTeardown(): silences user-facing errors once this controller's
   // window is on its way out.
   bool tearing_down_ = false;
@@ -991,7 +916,6 @@ private:
   bool macos_activity_held_ = false;
 #endif
   std::uint64_t request_serial_ = 0;
-  std::uint64_t pending_request_serial_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;
   std::uint64_t next_scrub_gesture_id_ = 0;
@@ -1003,25 +927,10 @@ private:
   std::uint64_t scrub_timeout_command_ = 0;
   std::uint64_t next_render_recovery_completion_token_ = 0;
   std::uint64_t next_startup_playback_sync_token_ = 0;
-  std::uint64_t last_reported_render_failure_stamp_ = 0;
-  std::int64_t active_event_playlist_entry_id_ = -1;
-  std::int64_t terminal_playlist_entry_id_ = -1;
-  std::int64_t last_error_playlist_entry_id_ = -1;
-  std::int64_t selected_video_track_id_ = -1;
-  std::int64_t selected_audio_track_id_ = -1;
-  std::int64_t selected_subtitle_track_id_ = -1;
-  std::int64_t selected_tracks_playlist_entry_id_ = -1;
-  std::optional<bool> current_file_has_audio_track_;
-  std::vector<std::filesystem::path> attached_subtitle_files_;
-  // The subset of the above this player GENERATED, so the Subtitles menu can
-  // name them honestly. A file the user loaded is not a generated caption.
+  // The subset of mpv_.lineage.attached_subtitle_files this player GENERATED,
+  // so the Subtitles menu can name them honestly. A file the user loaded is
+  // not a generated caption.
   std::vector<std::filesystem::path> generated_caption_files_;
-  std::vector<PlaylistEntryRange> redirect_ranges_;
-  std::optional<OpenAttempt> open_attempt_;
-  std::optional<OpenAttempt> committed_open_;
-  std::optional<RenderRecovery> render_recovery_;
-  std::optional<RenderRecoveryAttempt> render_recovery_attempt_;
-  std::optional<StartupPlaybackSync> startup_playback_sync_;
   std::optional<ScrubSeek> scrub_seek_;
   std::optional<NativeScrubIntent> native_scrub_intent_;
   std::optional<NativeSeekIntent> native_seek_intent_;

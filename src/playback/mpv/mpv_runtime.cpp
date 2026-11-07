@@ -477,9 +477,4 @@ MpvRuntimeLoadResult MpvRuntime::load(
   return {std::move(runtime), MpvRuntimeLoadError::None, {}};
 }
 
-MpvRuntimeLoadResult MpvFallbackFactory::load(
-    const QString& applicationDirectory) {
-  return MpvRuntime::load(applicationDirectory);
-}
-
 }  // namespace wam::playback::mpv
