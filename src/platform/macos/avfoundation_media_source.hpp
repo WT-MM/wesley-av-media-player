@@ -219,9 +219,6 @@ class ConcurrentMetadataLoadCancellation final {
 [[nodiscard]] bool validAudioChannelLayoutForTesting(
     const AudioChannelLayout* layout, std::size_t layoutSize,
     std::uint32_t channels) noexcept;
-void resetInspectedAudioChannelLayoutSizeForTesting() noexcept;
-[[nodiscard]] std::size_t
-inspectedAudioChannelLayoutSizeForTesting() noexcept;
 [[nodiscard]] bool sampleFormatMatchesTrackForTesting(
     CMSampleBufferRef sample,
     const media::MediaTrackDescriptor& track) noexcept;

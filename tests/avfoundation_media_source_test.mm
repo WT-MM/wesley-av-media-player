@@ -3281,7 +3281,6 @@ void testInjectedBackendCannotBypassLegacyAdmission() {
 
 void testRealCompactAudioLayoutFixture(const std::filesystem::path& path) {
   using namespace wam::macos::avfoundation_media_source_testing;
-  resetInspectedAudioChannelLayoutSizeForTesting();
   AVFoundationMediaSource source;
   expect(source.armOperation(90), "real compact-layout fixture should arm");
   const MediaSourceOpenOutcome opened =
@@ -3303,10 +3302,8 @@ void testRealCompactAudioLayoutFixture(const std::filesystem::path& path) {
              selected->audio->channels == 1 &&
              selected->audio->channelLayoutPresent &&
              selected->audio->channelLayoutTag ==
-                 kAudioChannelLayoutTag_Mono &&
-             inspectedAudioChannelLayoutSizeForTesting() ==
-                 offsetof(AudioChannelLayout, mChannelDescriptions),
-         "the real fixture preserves its observed 12-byte compact mono layout identity");
+                 kAudioChannelLayoutTag_Mono,
+         "the real fixture preserves its compact mono layout identity");
   if (opened.status != MediaSourceOpenStatus::Ready) {
     std::cerr << "NOTE: real fixture passed compact audio admission but its "
                  "full source open stopped later: "

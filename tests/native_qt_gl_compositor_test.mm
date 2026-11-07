@@ -5,6 +5,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>
 #include <IOSurface/IOSurface.h>
+#include <OpenGL/OpenGL.h>
+#include <OpenGL/gl3.h>
 
 #include <QColor>
 #include <QEventLoop>
@@ -209,6 +211,226 @@ bool spinUntil(const std::function<bool()>& predicate, int timeoutMs) {
   });
 }
 
+using Item = wam::macos::QtGlVideoItem;
+
+// VAO names are deleted only in their exact origin CGL context, including
+// same-share-group and different-share-group collisions.
+bool verifyContextLocalVaoPolicy() {
+  const CGLPixelFormatAttribute acceleratedAttributes[] = {
+      kCGLPFAAccelerated,
+      kCGLPFAOpenGLProfile,
+      static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
+      static_cast<CGLPixelFormatAttribute>(0)};
+  const CGLPixelFormatAttribute coreAttributes[] = {
+      kCGLPFAOpenGLProfile,
+      static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
+      static_cast<CGLPixelFormatAttribute>(0)};
+  CGLPixelFormatObj pixelFormat = nullptr;
+  GLint count = 0;
+  if (CGLChoosePixelFormat(acceleratedAttributes, &pixelFormat, &count) !=
+          kCGLNoError ||
+      pixelFormat == nullptr || count <= 0) {
+    if (pixelFormat != nullptr) {
+      CGLDestroyPixelFormat(pixelFormat);
+      pixelFormat = nullptr;
+    }
+    count = 0;
+    if (CGLChoosePixelFormat(coreAttributes, &pixelFormat, &count) !=
+            kCGLNoError ||
+        pixelFormat == nullptr || count <= 0) {
+      return false;
+    }
+  }
+  CGLContextObj origin = nullptr;
+  CGLContextObj sameShareGroup = nullptr;
+  CGLContextObj differentShareGroup = nullptr;
+  const bool created =
+      CGLCreateContext(pixelFormat, nullptr, &origin) == kCGLNoError &&
+      origin != nullptr &&
+      CGLCreateContext(pixelFormat, origin, &sameShareGroup) == kCGLNoError &&
+      sameShareGroup != nullptr &&
+      CGLCreateContext(pixelFormat, nullptr, &differentShareGroup) ==
+          kCGLNoError &&
+      differentShareGroup != nullptr;
+  bool passed = created;
+  GLuint originVao = 0;
+  GLuint sameShareVao = 0;
+  if (passed) {
+    passed = CGLGetShareGroup(origin) == CGLGetShareGroup(sameShareGroup) &&
+             CGLGetShareGroup(origin) !=
+                 CGLGetShareGroup(differentShareGroup);
+  }
+  if (passed) {
+    passed = CGLSetCurrentContext(origin) == kCGLNoError;
+    glGenVertexArrays(1, &originVao);
+    glBindVertexArray(originVao);
+    glBindVertexArray(0);
+    passed = passed && originVao != 0 && glIsVertexArray(originVao);
+  }
+  if (passed) {
+    passed = CGLSetCurrentContext(sameShareGroup) == kCGLNoError;
+    glGenVertexArrays(1, &sameShareVao);
+    glBindVertexArray(sameShareVao);
+    glBindVertexArray(0);
+    passed = passed && sameShareVao != 0 && glIsVertexArray(sameShareVao);
+    GLuint foreignName = originVao;
+    passed = passed &&
+             !Item::deleteVertexArrayInExactOriginForTesting(&foreignName, origin,
+                                             sameShareGroup) &&
+             foreignName == 0;
+  }
+  if (passed) {
+    passed = CGLSetCurrentContext(origin) == kCGLNoError &&
+             glIsVertexArray(originVao);
+  }
+  if (passed) {
+    passed = CGLSetCurrentContext(differentShareGroup) == kCGLNoError;
+    GLuint foreignName = originVao;
+    passed = !Item::deleteVertexArrayInExactOriginForTesting(
+                 &foreignName, origin, differentShareGroup) &&
+             foreignName == 0;
+  }
+  if (origin != nullptr && CGLSetCurrentContext(origin) == kCGLNoError &&
+      originVao != 0) {
+    const bool deleted =
+        Item::deleteVertexArrayInExactOriginForTesting(&originVao, origin, origin);
+    passed = passed && deleted && originVao == 0;
+  }
+  if (sameShareGroup != nullptr &&
+      CGLSetCurrentContext(sameShareGroup) == kCGLNoError &&
+      sameShareVao != 0) {
+    glDeleteVertexArrays(1, &sameShareVao);
+  }
+  CGLSetCurrentContext(nullptr);
+  if (differentShareGroup != nullptr) {
+    CGLDestroyContext(differentShareGroup);
+  }
+  if (sameShareGroup != nullptr) {
+    CGLDestroyContext(sameShareGroup);
+  }
+  if (origin != nullptr) {
+    CGLDestroyContext(origin);
+  }
+  CGLDestroyPixelFormat(pixelFormat);
+  return passed;
+}
+
+// Both sampler-capable state preservation and the true-3.2 path that must not
+// query or bind sampler objects at all.
+bool verifyRawGlSamplerState(bool forceSamplerObjectsUnsupported) {
+  CGLContextObj context = CGLGetCurrentContext();
+  if (context == nullptr) {
+    return false;
+  }
+  if (Item::samplerObjectsSupportedByContractForTesting(3, 2, false) ||
+      !Item::samplerObjectsSupportedByContractForTesting(3, 2, true) ||
+      !Item::samplerObjectsSupportedByContractForTesting(3, 3, false) ||
+      !Item::samplerObjectsSupportedByContractForTesting(4, 1, false) ||
+      !Item::samplerObjectsSupportedByContractForTesting(3, 0, true) ||
+      Item::samplerObjectsSupportedByContractForTesting(3, 1, false)) {
+    return false;
+  }
+  bool samplerObjectsSupported = false;
+  if (!forceSamplerObjectsUnsupported) {
+    // Capability discovery must not consume an error already owned by Qt (or
+    // manufacture a new one from its version/extension queries).
+    while (glGetError() != GL_NO_ERROR) {
+    }
+    glEnable(static_cast<GLenum>(0xFFFFFFFFU));
+    samplerObjectsSupported = Item::currentContextSupportsSamplerObjectsForTesting();
+    if (glGetError() != GL_INVALID_ENUM || glGetError() != GL_NO_ERROR) {
+      return false;
+    }
+  }
+  while (glGetError() != GL_NO_ERROR) {
+    }
+
+  GLint ambientActiveTexture = GL_TEXTURE0;
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &ambientActiveTexture);
+  if (glGetError() != GL_NO_ERROR) {
+    return false;
+  }
+  if (!samplerObjectsSupported) {
+    bool unbound = false;
+    Item::withRawGlStateForTesting(false, [&] {
+      glActiveTexture(ambientActiveTexture == GL_TEXTURE0 ? GL_TEXTURE1
+                                                          : GL_TEXTURE0);
+      // Exercise the exact draw helper branch. It must return without calling
+      // glBindSampler when sampler objects are unavailable.
+      Item::unbindTextureSamplersForTesting(false);
+      unbound = glGetError() == GL_NO_ERROR;
+    });
+    if (!unbound) {
+      return false;
+    }
+    GLint restoredActiveTexture = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &restoredActiveTexture);
+    return glGetError() == GL_NO_ERROR &&
+           restoredActiveTexture == ambientActiveTexture;
+  }
+
+  std::array<GLint, 2> ambientSamplers{};
+  for (std::size_t index = 0; index < ambientSamplers.size(); ++index) {
+    glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + index));
+    glGetIntegerv(GL_SAMPLER_BINDING, &ambientSamplers[index]);
+  }
+  glActiveTexture(static_cast<GLenum>(ambientActiveTexture));
+  if (glGetError() != GL_NO_ERROR) {
+    return false;
+  }
+
+  std::array<GLuint, 2> originalSamplers{};
+  std::array<GLuint, 2> guardSamplers{};
+  glGenSamplers(static_cast<GLsizei>(originalSamplers.size()),
+                originalSamplers.data());
+  glGenSamplers(static_cast<GLsizei>(guardSamplers.size()),
+                guardSamplers.data());
+  bool passed = originalSamplers[0] != 0 && originalSamplers[1] != 0 &&
+                guardSamplers[0] != 0 && guardSamplers[1] != 0 &&
+                glGetError() == GL_NO_ERROR;
+  if (passed) {
+    glBindSampler(0, originalSamplers[0]);
+    glBindSampler(1, originalSamplers[1]);
+    glActiveTexture(GL_TEXTURE1);
+    passed = glGetError() == GL_NO_ERROR;
+  }
+  if (passed) {
+    Item::withRawGlStateForTesting(true, [&] {
+      passed = glGetError() == GL_NO_ERROR;
+      glBindSampler(0, guardSamplers[0]);
+      glBindSampler(1, guardSamplers[1]);
+      Item::unbindTextureSamplersForTesting(true);
+      glBindSampler(0, guardSamplers[0]);
+      glBindSampler(1, guardSamplers[1]);
+      glActiveTexture(GL_TEXTURE0);
+      passed = passed && glGetError() == GL_NO_ERROR;
+    });
+    GLint activeTexture = 0;
+    std::array<GLint, 2> restoredSamplers{};
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+    for (std::size_t index = 0; index < restoredSamplers.size(); ++index) {
+      glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + index));
+      glGetIntegerv(GL_SAMPLER_BINDING, &restoredSamplers[index]);
+    }
+    glActiveTexture(static_cast<GLenum>(activeTexture));
+    passed = passed && glGetError() == GL_NO_ERROR &&
+             activeTexture == GL_TEXTURE1 &&
+             restoredSamplers[0] == static_cast<GLint>(originalSamplers[0]) &&
+             restoredSamplers[1] == static_cast<GLint>(originalSamplers[1]);
+  }
+
+  for (std::size_t index = 0; index < ambientSamplers.size(); ++index) {
+    glBindSampler(static_cast<GLuint>(index),
+                  static_cast<GLuint>(ambientSamplers[index]));
+  }
+  glActiveTexture(static_cast<GLenum>(ambientActiveTexture));
+  glDeleteSamplers(static_cast<GLsizei>(guardSamplers.size()),
+                   guardSamplers.data());
+  glDeleteSamplers(static_cast<GLsizei>(originalSamplers.size()),
+                   originalSamplers.data());
+  return passed && glGetError() == GL_NO_ERROR;
+}
+
 bool verifyRawGlSamplerStateOnRenderThread(QQuickWindow& window) {
   std::atomic<bool> complete{false};
   std::atomic<bool> passed{false};
@@ -217,9 +439,8 @@ bool verifyRawGlSamplerStateOnRenderThread(QQuickWindow& window) {
       [&] {
         if (!complete.load(std::memory_order_relaxed)) {
           passed.store(
-              wam::macos::QtGlVideoItem::verifyRawGlSamplerStateForTesting() &&
-                  wam::macos::QtGlVideoItem::
-                      verifyRawGlSamplerStateForTesting(true),
+              verifyRawGlSamplerState(false) &&
+                  verifyRawGlSamplerState(true),
               std::memory_order_relaxed);
           complete.store(true, std::memory_order_release);
         }
@@ -369,8 +590,7 @@ int main(int argc, char** argv) {
       REQUIRE(child.exitCode() == EXIT_SUCCESS);
     }
   }
-  REQUIRE(
-      wam::macos::QtGlVideoItem::verifyContextLocalVaoPolicyForTesting());
+  REQUIRE(verifyContextLocalVaoPolicy());
 
   QQuickWindow window;
   window.resize(400, 300);

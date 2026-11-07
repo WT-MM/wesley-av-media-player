@@ -133,7 +133,9 @@ class NativeMediaSessionWake final {
   std::unique_ptr<Impl> impl_;
 
   friend class NativeMediaSession;
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeMediaSessionTestAccess;
+#endif
 };
 
 struct NativeMediaSessionSourceBinding {
@@ -451,7 +453,9 @@ class NativeMediaSession final {
   struct Impl;
   explicit NativeMediaSession(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeMediaSessionTestAccess;
+#endif
 };
 
 #if defined(WAM_NATIVE_TEST_SEAMS)

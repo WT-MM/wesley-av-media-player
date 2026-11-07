@@ -241,7 +241,9 @@ private:
   bool failed_{false};
   bool finished_{false};
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeBenchmarkTelemetryTestAccess;
+#endif
 };
 
 } // namespace wam::qt

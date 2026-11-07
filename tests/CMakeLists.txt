@@ -318,7 +318,7 @@ if(TARGET wam_native_core)
 
   add_executable(wam_native_pcm_ring_test
     native_pcm_ring_test.cpp)
-  target_link_libraries(wam_native_pcm_ring_test PRIVATE wam_native_core)
+  target_link_libraries(wam_native_pcm_ring_test PRIVATE wam_native_core_test_seams)
   add_test(NAME native_pcm_ring COMMAND wam_native_pcm_ring_test)
 
   add_executable(wam_native_audio_render_core_test
@@ -445,11 +445,11 @@ target_link_libraries(wam_app_test_seams PUBLIC
   Qt6::Qml
   Qt6::Quick
   Qt6::OpenGL
-  wam_mpv_runtime
-  wam_native_core
+  wam_mpv_runtime_test_seams
+  wam_native_core_test_seams
   wam_caption_runtime
   $<TARGET_NAME_IF_EXISTS:wam_caption_prompt>
-  $<TARGET_NAME_IF_EXISTS:wam_macos_native_qt_tracked>)
+  $<TARGET_NAME_IF_EXISTS:wam_macos_native_qt_tracked_test_seams>)
 
 add_executable(wam_player_controller_lazy_test player_controller_lazy_test.cpp)
 target_link_libraries(wam_player_controller_lazy_test PRIVATE
@@ -830,10 +830,11 @@ if(APPLE)
     target_compile_options(
       wam_native_benchmark_telemetry_test PRIVATE
       -Wall -Wextra -Wpedantic)
-    if(WAM_NATIVE_BENCHMARK_TELEMETRY)
-      target_compile_definitions(wam_native_benchmark_telemetry_test PRIVATE
-        WAM_NATIVE_BENCHMARK_TELEMETRY=1)
-    endif()
+    # The test compiles the telemetry source itself (it is not in a library),
+    # so it arms the seam macro for its own copy.
+    target_compile_definitions(wam_native_benchmark_telemetry_test PRIVATE
+      WAM_NATIVE_TEST_SEAMS=1
+      $<$<BOOL:${WAM_NATIVE_BENCHMARK_TELEMETRY}>:WAM_NATIVE_BENCHMARK_TELEMETRY=1>)
     add_test(NAME macos_native_benchmark_telemetry
       COMMAND wam_native_benchmark_telemetry_test)
     set_tests_properties(macos_native_benchmark_telemetry PROPERTIES
@@ -888,8 +889,10 @@ if(APPLE)
     # OpenGL/CGL hardware gate matching the shipping Qt graphics backend.
     add_executable(wam_native_qt_gl_compositor_test
       native_qt_gl_compositor_test.mm)
+    # The test drives raw GL (gl3.h) next to Qt's QOpenGLContext (gl.h).
     target_compile_definitions(wam_native_qt_gl_compositor_test PRIVATE
-      GL_SILENCE_DEPRECATION=1)
+      GL_SILENCE_DEPRECATION=1
+      GL_DO_NOT_WARN_IF_MULTI_GL_VERSION_HEADERS_INCLUDED=1)
     target_link_libraries(wam_native_qt_gl_compositor_test PRIVATE
       wam_macos_native_qt_tracked_test_seams
       Qt6::Qml
@@ -1112,7 +1115,7 @@ if(APPLE)
     list(APPEND wam_fake_mpv_paths "$<TARGET_FILE:${fake}>")
   endforeach()
   add_executable(wam_mpv_runtime_test mpv_runtime_test.cpp)
-  target_link_libraries(wam_mpv_runtime_test PRIVATE wam_mpv_runtime wam_pins)
+  target_link_libraries(wam_mpv_runtime_test PRIVATE wam_mpv_runtime_test_seams wam_pins)
   add_test(NAME mpv_runtime COMMAND wam_mpv_runtime_test ${wam_fake_mpv_paths})
   set_tests_properties(mpv_runtime PROPERTIES TIMEOUT 60)
   # The macOS runtime resolves libmpv only at run time: neither it nor this
@@ -1129,7 +1132,8 @@ endif()
 
 if(APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
   add_executable(wam_ffmpeg_coexistence_test ffmpeg_coexistence_test.cpp)
-  target_link_libraries(wam_ffmpeg_coexistence_test PRIVATE wam_avcodec_worker wam_mpv_runtime)
+  target_link_libraries(wam_ffmpeg_coexistence_test PRIVATE
+    wam_avcodec_worker_test_seams wam_mpv_runtime_test_seams)
   add_test(NAME ffmpeg_coexistence COMMAND wam_ffmpeg_coexistence_test "$<TARGET_FILE:wam_fake_mpv_valid>")
 endif()
 

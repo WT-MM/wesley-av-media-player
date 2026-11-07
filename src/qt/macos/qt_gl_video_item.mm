@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -3098,217 +3099,32 @@ std::uint64_t QtGlVideoItem::transferredCoveringFencesForTesting()
       std::memory_order_relaxed);
 }
 
-bool QtGlVideoItem::verifyContextLocalVaoPolicyForTesting() {
-  const CGLPixelFormatAttribute acceleratedAttributes[] = {
-      kCGLPFAAccelerated,
-      kCGLPFAOpenGLProfile,
-      static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
-      static_cast<CGLPixelFormatAttribute>(0)};
-  const CGLPixelFormatAttribute coreAttributes[] = {
-      kCGLPFAOpenGLProfile,
-      static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
-      static_cast<CGLPixelFormatAttribute>(0)};
-  CGLPixelFormatObj pixelFormat = nullptr;
-  GLint count = 0;
-  if (CGLChoosePixelFormat(acceleratedAttributes, &pixelFormat, &count) !=
-          kCGLNoError ||
-      pixelFormat == nullptr || count <= 0) {
-    if (pixelFormat != nullptr) {
-      CGLDestroyPixelFormat(pixelFormat);
-      pixelFormat = nullptr;
-    }
-    count = 0;
-    if (CGLChoosePixelFormat(coreAttributes, &pixelFormat, &count) !=
-            kCGLNoError ||
-        pixelFormat == nullptr || count <= 0) {
-      return false;
-    }
-  }
-  CGLContextObj origin = nullptr;
-  CGLContextObj sameShareGroup = nullptr;
-  CGLContextObj differentShareGroup = nullptr;
-  const bool created =
-      CGLCreateContext(pixelFormat, nullptr, &origin) == kCGLNoError &&
-      origin != nullptr &&
-      CGLCreateContext(pixelFormat, origin, &sameShareGroup) == kCGLNoError &&
-      sameShareGroup != nullptr &&
-      CGLCreateContext(pixelFormat, nullptr, &differentShareGroup) ==
-          kCGLNoError &&
-      differentShareGroup != nullptr;
-  bool passed = created;
-  GLuint originVao = 0;
-  GLuint sameShareVao = 0;
-  if (passed) {
-    passed = CGLGetShareGroup(origin) == CGLGetShareGroup(sameShareGroup) &&
-             CGLGetShareGroup(origin) !=
-                 CGLGetShareGroup(differentShareGroup);
-  }
-  if (passed) {
-    passed = CGLSetCurrentContext(origin) == kCGLNoError;
-    glGenVertexArrays(1, &originVao);
-    glBindVertexArray(originVao);
-    glBindVertexArray(0);
-    passed = passed && originVao != 0 && glIsVertexArray(originVao);
-  }
-  if (passed) {
-    passed = CGLSetCurrentContext(sameShareGroup) == kCGLNoError;
-    glGenVertexArrays(1, &sameShareVao);
-    glBindVertexArray(sameShareVao);
-    glBindVertexArray(0);
-    passed = passed && sameShareVao != 0 && glIsVertexArray(sameShareVao);
-    GLuint foreignName = originVao;
-    passed = passed &&
-             !deleteVertexArrayInExactOrigin(&foreignName, origin,
-                                             sameShareGroup) &&
-             foreignName == 0;
-  }
-  if (passed) {
-    passed = CGLSetCurrentContext(origin) == kCGLNoError &&
-             glIsVertexArray(originVao);
-  }
-  if (passed) {
-    passed = CGLSetCurrentContext(differentShareGroup) == kCGLNoError;
-    GLuint foreignName = originVao;
-    passed = !deleteVertexArrayInExactOrigin(
-                 &foreignName, origin, differentShareGroup) &&
-             foreignName == 0;
-  }
-  if (origin != nullptr && CGLSetCurrentContext(origin) == kCGLNoError &&
-      originVao != 0) {
-    const bool deleted =
-        deleteVertexArrayInExactOrigin(&originVao, origin, origin);
-    passed = passed && deleted && originVao == 0;
-  }
-  if (sameShareGroup != nullptr &&
-      CGLSetCurrentContext(sameShareGroup) == kCGLNoError &&
-      sameShareVao != 0) {
-    glDeleteVertexArrays(1, &sameShareVao);
-  }
-  CGLSetCurrentContext(nullptr);
-  if (differentShareGroup != nullptr) {
-    CGLDestroyContext(differentShareGroup);
-  }
-  if (sameShareGroup != nullptr) {
-    CGLDestroyContext(sameShareGroup);
-  }
-  if (origin != nullptr) {
-    CGLDestroyContext(origin);
-  }
-  CGLDestroyPixelFormat(pixelFormat);
-  return passed;
+bool QtGlVideoItem::deleteVertexArrayInExactOriginForTesting(
+    unsigned int* vertexArray, _CGLContextObject* originContext,
+    _CGLContextObject* currentContext) noexcept {
+  return deleteVertexArrayInExactOrigin(vertexArray, originContext,
+                                        currentContext);
 }
 
-bool QtGlVideoItem::verifyRawGlSamplerStateForTesting(
-    bool forceSamplerObjectsUnsupported) {
-  CGLContextObj context = CGLGetCurrentContext();
-  if (context == nullptr) {
-    return false;
-  }
-  if (samplerObjectsSupportedByContract(3, 2, false) ||
-      !samplerObjectsSupportedByContract(3, 2, true) ||
-      !samplerObjectsSupportedByContract(3, 3, false) ||
-      !samplerObjectsSupportedByContract(4, 1, false) ||
-      !samplerObjectsSupportedByContract(3, 0, true) ||
-      samplerObjectsSupportedByContract(3, 1, false)) {
-    return false;
-  }
-  bool samplerObjectsSupported = false;
-  if (!forceSamplerObjectsUnsupported) {
-    // Capability discovery must not consume an error already owned by Qt (or
-    // manufacture a new one from its version/extension queries).
-    drainGlErrors();
-    glEnable(static_cast<GLenum>(0xFFFFFFFFU));
-    samplerObjectsSupported = currentContextSupportsSamplerObjects();
-    if (glGetError() != GL_INVALID_ENUM || glGetError() != GL_NO_ERROR) {
-      return false;
-    }
-  }
-  drainGlErrors();
+bool QtGlVideoItem::samplerObjectsSupportedByContractForTesting(
+    int major, int minor, bool hasArbSamplerObjects) noexcept {
+  return samplerObjectsSupportedByContract(major, minor,
+                                           hasArbSamplerObjects);
+}
 
-  GLint ambientActiveTexture = GL_TEXTURE0;
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &ambientActiveTexture);
-  if (glGetError() != GL_NO_ERROR) {
-    return false;
-  }
-  if (!samplerObjectsSupported) {
-    {
-      RawGlState guard(false);
-      glActiveTexture(ambientActiveTexture == GL_TEXTURE0 ? GL_TEXTURE1
-                                                          : GL_TEXTURE0);
-      // Exercise the exact draw helper branch. It must return without calling
-      // glBindSampler when sampler objects are unavailable.
-      unbindTextureSamplers(false);
-      if (glGetError() != GL_NO_ERROR) {
-        return false;
-      }
-    }
-    GLint restoredActiveTexture = 0;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &restoredActiveTexture);
-    return glGetError() == GL_NO_ERROR &&
-           restoredActiveTexture == ambientActiveTexture;
-  }
+bool QtGlVideoItem::currentContextSupportsSamplerObjectsForTesting() noexcept {
+  return currentContextSupportsSamplerObjects();
+}
 
-  std::array<GLint, 2> ambientSamplers{};
-  for (std::size_t index = 0; index < ambientSamplers.size(); ++index) {
-    glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + index));
-    glGetIntegerv(GL_SAMPLER_BINDING, &ambientSamplers[index]);
-  }
-  glActiveTexture(static_cast<GLenum>(ambientActiveTexture));
-  if (glGetError() != GL_NO_ERROR) {
-    return false;
-  }
+void QtGlVideoItem::unbindTextureSamplersForTesting(
+    bool samplerObjectsSupported) noexcept {
+  unbindTextureSamplers(samplerObjectsSupported);
+}
 
-  std::array<GLuint, 2> originalSamplers{};
-  std::array<GLuint, 2> guardSamplers{};
-  glGenSamplers(static_cast<GLsizei>(originalSamplers.size()),
-                originalSamplers.data());
-  glGenSamplers(static_cast<GLsizei>(guardSamplers.size()),
-                guardSamplers.data());
-  bool passed = originalSamplers[0] != 0 && originalSamplers[1] != 0 &&
-                guardSamplers[0] != 0 && guardSamplers[1] != 0 &&
-                glGetError() == GL_NO_ERROR;
-  if (passed) {
-    glBindSampler(0, originalSamplers[0]);
-    glBindSampler(1, originalSamplers[1]);
-    glActiveTexture(GL_TEXTURE1);
-    passed = glGetError() == GL_NO_ERROR;
-  }
-  if (passed) {
-    {
-      RawGlState guard(true);
-      passed = glGetError() == GL_NO_ERROR;
-      glBindSampler(0, guardSamplers[0]);
-      glBindSampler(1, guardSamplers[1]);
-      unbindTextureSamplers(true);
-      glBindSampler(0, guardSamplers[0]);
-      glBindSampler(1, guardSamplers[1]);
-      glActiveTexture(GL_TEXTURE0);
-      passed = passed && glGetError() == GL_NO_ERROR;
-    }
-    GLint activeTexture = 0;
-    std::array<GLint, 2> restoredSamplers{};
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
-    for (std::size_t index = 0; index < restoredSamplers.size(); ++index) {
-      glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + index));
-      glGetIntegerv(GL_SAMPLER_BINDING, &restoredSamplers[index]);
-    }
-    glActiveTexture(static_cast<GLenum>(activeTexture));
-    passed = passed && glGetError() == GL_NO_ERROR &&
-             activeTexture == GL_TEXTURE1 &&
-             restoredSamplers[0] == static_cast<GLint>(originalSamplers[0]) &&
-             restoredSamplers[1] == static_cast<GLint>(originalSamplers[1]);
-  }
-
-  for (std::size_t index = 0; index < ambientSamplers.size(); ++index) {
-    glBindSampler(static_cast<GLuint>(index),
-                  static_cast<GLuint>(ambientSamplers[index]));
-  }
-  glActiveTexture(static_cast<GLenum>(ambientActiveTexture));
-  glDeleteSamplers(static_cast<GLsizei>(guardSamplers.size()),
-                   guardSamplers.data());
-  glDeleteSamplers(static_cast<GLsizei>(originalSamplers.size()),
-                   originalSamplers.data());
-  return passed && glGetError() == GL_NO_ERROR;
+void QtGlVideoItem::withRawGlStateForTesting(
+    bool samplerObjectsSupported, const std::function<void()>& body) {
+  RawGlState guard(samplerObjectsSupported);
+  body();
 }
 #endif
 
