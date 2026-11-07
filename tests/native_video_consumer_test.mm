@@ -1020,7 +1020,7 @@ void testHalfOpenFloorAndProvenLateDrop() {
 #endif
 }
 
-void testPreviewQuiesceGatesAndRequiresKeyFrameRelease() {
+void testPreviewQuiesceGatesAdmission() {
   Fixture fixture;
   expect(fixture.consumer->armFirstGeneration(7) ==
              NativeVideoConsumerArmProgress::Done,
@@ -1051,28 +1051,6 @@ void testPreviewQuiesceGatesAndRequiresKeyFrameRelease() {
              fixture.consumer->quiesceForPreview(8) ==
                  NativeVideoConsumerPreviewProgress::StaleGeneration,
          "the exact quiesce operation is repeatable and mismatch is inert");
-
-  expect(fixture.consumer->releasePreviewQuiesce(
-             7, NativeVideoConsumerPreviewRelease::UnknownOrDelta) ==
-             NativeVideoConsumerPreviewProgress::KeyFrameRequired,
-         "an unknown or delta resume is rejected without false reopening");
-  expect(fixture.consumer->facts().previewQuiesceStarted &&
-             fixture.consumer->capacity(7) ==
-                 media::NativeMediaConsumeResult::Backpressure,
-         "rejected delta release leaves the admission gate closed");
-  expect(fixture.consumer->releasePreviewQuiesce(
-             7, NativeVideoConsumerPreviewRelease::NextSampleIsKeyFrame) ==
-             NativeVideoConsumerPreviewProgress::Done,
-         "explicit next-keyframe authority reopens the main lane");
-  const auto released = fixture.consumer->facts();
-  expect(!released.previewQuiesceStarted && !released.previewQuiesced &&
-             released.previewReleasedGeneration == 7 &&
-             released.previewResumeNeedsKeyFrame,
-         "release facts retain the fail-closed next-sample obligation");
-  expect(fixture.consumer->releasePreviewQuiesce(
-             7, NativeVideoConsumerPreviewRelease::NextSampleIsKeyFrame) ==
-             NativeVideoConsumerPreviewProgress::Done,
-         "the exact successful release is idempotent");
 }
 
 void testPreviewQuiesceWaitsForRealTrackedDraw() {
@@ -1099,13 +1077,12 @@ void testPreviewQuiesceWaitsForRealTrackedDraw() {
              fixture.output->flushProgressCalls() == outputFlushes,
          "waiting neither fabricates a terminal event nor flushes output");
   fixture.output->draw();
-  expect(fixture.consumer->releasePreviewQuiesce(
-             7, NativeVideoConsumerPreviewRelease::NextSampleIsKeyFrame) ==
+  expect(fixture.consumer->quiesceForPreview(7) ==
              NativeVideoConsumerPreviewProgress::Done,
-         "release consumes the real draw terminal and reopens in one call");
-  expect(!fixture.consumer->facts().previewQuiesceStarted &&
-             fixture.consumer->facts().previewResumeNeedsKeyFrame,
-         "reported release Done never leaves dispatcher admission gated");
+         "quiesce consumes the real draw terminal and completes in one call");
+  expect(fixture.consumer->facts().previewQuiesced &&
+             fixture.output->facts().retainedFrames == 0,
+         "reported quiesce Done leaves the main output holding no frame");
   const auto event = fixture.consumer->takeOutputEvent();
   expect(event && event->kind == NativeTrackedVideoEventKind::FrameDrawn &&
              event->generation == 7 && event->frameSequence.value == 1,
@@ -1131,8 +1108,6 @@ void testPreviewQuiesceIsSupersededByCommitFlush() {
   expect(facts.generation == 8 && !facts.previewQuiesceStarted &&
              !facts.previewQuiesced &&
              facts.previewQuiesceGeneration == 0 &&
-             facts.previewReleasedGeneration == 0 &&
-             !facts.previewResumeNeedsKeyFrame &&
              facts.output.generation == 8,
          "commit flush clears every preview gate fact at its new generation");
 }
@@ -1326,7 +1301,7 @@ int main() {
   testFailedFrameRetiresExactCredit();
   testFailedFrameSupersedesPendingFlushOnClose();
   testHalfOpenFloorAndProvenLateDrop();
-  testPreviewQuiesceGatesAndRequiresKeyFrameRelease();
+  testPreviewQuiesceGatesAdmission();
   testPreviewQuiesceWaitsForRealTrackedDraw();
   testPreviewQuiesceIsSupersededByCommitFlush();
   testQuiescingDestructionRetainsCallbackLifetime();

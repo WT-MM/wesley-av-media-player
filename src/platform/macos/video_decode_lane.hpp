@@ -239,15 +239,6 @@ public:
       }
     });
   }
-  bool resumeAfterPreview() noexcept {
-    return with([](auto &decoder) {
-      if constexpr (requires { decoder.resumeAfterPreview(); }) {
-        return decoder.resumeAfterPreview();
-      } else {
-        return true;
-      }
-    });
-  }
 
   void flush(std::uint64_t nextGeneration) noexcept {
     with([&](auto &decoder) { decoder.flush(nextGeneration); });

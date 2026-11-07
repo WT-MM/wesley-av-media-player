@@ -278,18 +278,14 @@ void SoftwareAvcodecVideoDecoder::suspendForPreview(std::uint64_t next) noexcept
   s.generation=next; s.error.store(nullptr);
   s.sink->flush(next);
 }
-bool SoftwareAvcodecVideoDecoder::resumeAfterPreview() noexcept {
+void SoftwareAvcodecVideoDecoder::flush(std::uint64_t next) noexcept {
   auto& s=*impl_;
-  if(!std::holds_alternative<Impl::Suspended>(s.state)) return !std::holds_alternative<Impl::RestartFailed>(s.state);
+  suspendForPreview(next);
+  if(!std::holds_alternative<Impl::Suspended>(s.state)) return;
   const char* reason=nullptr;
   bool started=false;
   try { started=s.start(&reason); } catch(...) {}
   if(!started) s.state=Impl::RestartFailed{"AvcodecFlushFailed"};
-  return started;
-}
-void SoftwareAvcodecVideoDecoder::flush(std::uint64_t next) noexcept {
-  suspendForPreview(next);
-  static_cast<void>(resumeAfterPreview());
 }
 VideoDecoderRetireProgress SoftwareAvcodecVideoDecoder::retire(std::uint64_t retired,std::uint64_t next) noexcept {
   auto& s=*impl_;

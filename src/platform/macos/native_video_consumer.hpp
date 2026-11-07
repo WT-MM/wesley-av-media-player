@@ -63,21 +63,13 @@ enum class NativeVideoConsumerArmProgress : std::uint8_t {
 };
 
 // Owner-progressive handoff of the process-wide decoded-surface budget to the
-// private preview decoder. KeyFrameRequired is nonfatal: it means the main
-// decoder has been synchronously emptied at the active generation and cannot
-// safely resume on an unknown/delta access unit. The gate remains closed.
+// private preview decoder.
 enum class NativeVideoConsumerPreviewProgress : std::uint8_t {
   Done,
   Progress,
   Quiescing,
   StaleGeneration,
-  KeyFrameRequired,
   Failed,
-};
-
-enum class NativeVideoConsumerPreviewRelease : std::uint8_t {
-  UnknownOrDelta,
-  NextSampleIsKeyFrame,
 };
 
 enum class NativeVideoConsumerFailure : std::uint8_t {
@@ -124,10 +116,8 @@ struct NativeVideoConsumerFacts {
   bool outputBlocked{false};
   bool nextDueKnown{false};
   media::MediaGeneration previewQuiesceGeneration{0};
-  media::MediaGeneration previewReleasedGeneration{0};
   bool previewQuiesceStarted{false};
   bool previewQuiesced{false};
-  bool previewResumeNeedsKeyFrame{false};
   bool closed{false};
   NativeVideoConsumerFailure failure{NativeVideoConsumerFailure::None};
   VideoDecoderStats decoder{};
@@ -336,16 +326,10 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   // The first valid call immediately gates dispatcher-facing admission,
   // synchronously retires decoder/sink/held frames at the same generation,
   // then waits for any already accepted tracked draw to publish its real
-  // terminal event. Done proves the main output retains no frame.
+  // terminal event. Done proves the main output retains no frame. The gate
+  // stays closed until a seek flush or terminal retirement supersedes it.
   [[nodiscard]] NativeVideoConsumerPreviewProgress quiesceForPreview(
       media::MediaGeneration generation) noexcept;
-  // A same-generation VideoToolbox flush necessarily requires a fresh key
-  // frame. UnknownOrDelta therefore leaves the admission gate closed and
-  // returns KeyFrameRequired. Normal seek flush or terminal retirement may
-  // supersede a quiesce without calling this method.
-  [[nodiscard]] NativeVideoConsumerPreviewProgress releasePreviewQuiesce(
-      media::MediaGeneration generation,
-      NativeVideoConsumerPreviewRelease release) noexcept;
 
   [[nodiscard]] media::NativeMediaConsumeResult configure(
       const media::MediaTrackDescriptor& track,

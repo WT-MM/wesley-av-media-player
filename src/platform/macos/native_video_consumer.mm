@@ -798,11 +798,9 @@ struct NativeVideoConsumer::Impl {
 
   void clearPreviewHandoff() noexcept {
     previewQuiesceGeneration = 0;
-    previewReleasedGeneration = 0;
     previewQuiesceStarted = false;
     previewQuiesced = false;
     previewDecoderFlushed = false;
-    previewResumeNeedsKeyFrame = false;
   }
 
   [[nodiscard]] bool previewAdmissionGated() const noexcept {
@@ -1248,11 +1246,9 @@ struct NativeVideoConsumer::Impl {
   bool outputProtocolViolation{false};
   bool nextDueKnown{false};
   MediaGeneration previewQuiesceGeneration{0};
-  MediaGeneration previewReleasedGeneration{0};
   bool previewQuiesceStarted{false};
   bool previewQuiesced{false};
   bool previewDecoderFlushed{false};
-  bool previewResumeNeedsKeyFrame{false};
 #if defined(WAM_NATIVE_TEST_SEAMS)
   // Fixture-free scheduler tests do not create a real codec configuration.
   // This proves only that the public handoff state machine treats their
@@ -1517,10 +1513,8 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
     // This is the admission linearization point. No dispatcher-facing call
     // can accept another compressed sample after the owner begins handoff.
     impl.previewQuiesceGeneration = generation;
-    impl.previewReleasedGeneration = 0;
     impl.previewQuiesceStarted = true;
     impl.previewQuiesced = false;
-    impl.previewResumeNeedsKeyFrame = false;
   }
 
   if (!impl.previewDecoderFlushed) {
@@ -1601,79 +1595,6 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
   }
 
   impl.previewQuiesced = true;
-  return NativeVideoConsumerPreviewProgress::Done;
-}
-
-NativeVideoConsumerPreviewProgress
-NativeVideoConsumer::releasePreviewQuiesce(
-    MediaGeneration generation,
-    NativeVideoConsumerPreviewRelease release) noexcept {
-  if (impl_ == nullptr || generation == 0) {
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-  Impl& impl = *impl_;
-  if (!impl.previewQuiesceStarted) {
-    if (impl.previewReleasedGeneration == generation) {
-      return NativeVideoConsumerPreviewProgress::Done;
-    }
-    if (impl.previewReleasedGeneration != 0 ||
-        generation != impl.generation) {
-      return NativeVideoConsumerPreviewProgress::StaleGeneration;
-    }
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-  if (impl.previewQuiesceGeneration != generation ||
-      generation != impl.generation) {
-    return NativeVideoConsumerPreviewProgress::StaleGeneration;
-  }
-  if (!impl.previewQuiesced) {
-    const NativeVideoConsumerPreviewProgress quiescing =
-        quiesceForPreview(generation);
-    if (quiescing != NativeVideoConsumerPreviewProgress::Done) {
-      return quiescing;
-    }
-  }
-  if (release !=
-      NativeVideoConsumerPreviewRelease::NextSampleIsKeyFrame) {
-    return NativeVideoConsumerPreviewProgress::KeyFrameRequired;
-  }
-  if (impl.failed() || impl.closed || impl.cancelled ||
-      impl.lifecycle != Lifecycle::None || impl.output == nullptr) {
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-  if (!impl.decoder.resumeAfterPreview()) {
-    impl.latch(NativeVideoConsumerFailure::Decoder,
-               "video decoder could not resume after preview handoff");
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-  const VideoDecoderStats decoderFacts = impl.decoder.stats();
-  bool decoderConfigured = decoderFacts.configured;
-#if defined(WAM_NATIVE_TEST_SEAMS)
-  decoderConfigured =
-      decoderConfigured || impl.testSyntheticDecoderConfigured;
-#endif
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
-  if (!decoderConfigured || decoderFacts.generation != generation ||
-      !decoderFacts.awaitingKeyFrame || decoderFacts.inFlightFrames != 0 ||
-      decoderFacts.retainedPresentationFrames != 0 ||
-      decoderFacts.pendingPresentationFrames != 0 ||
-      outputFacts.fatal || outputFacts.closed ||
-      outputFacts.generation != generation ||
-      outputFacts.retainedFrames != 0 ||
-      outputFacts.admittedFrame.valid() || outputFacts.eventPending ||
-      outputFacts.invalidationPending || impl.awaitingDraw.valid() ||
-      impl.heldFrame || impl.sink.size() != 0) {
-    impl.latch(NativeVideoConsumerFailure::Lifecycle,
-               "native video preview release facts are invalid");
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-
-  impl.previewReleasedGeneration = generation;
-  impl.previewQuiesceGeneration = 0;
-  impl.previewQuiesceStarted = false;
-  impl.previewQuiesced = false;
-  impl.previewDecoderFlushed = false;
-  impl.previewResumeNeedsKeyFrame = true;
   return NativeVideoConsumerPreviewProgress::Done;
 }
 
@@ -1864,12 +1785,6 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
   if (impl.previewAdmissionGated()) {
     return media::NativeMediaConsumeResult::Backpressure;
   }
-  if (impl.previewResumeNeedsKeyFrame && !sample.keyFrame) {
-    impl.latch(NativeVideoConsumerFailure::InvalidSample,
-               "preview release requires the next video sample to be a key "
-               "frame", error);
-    return media::NativeMediaConsumeResult::Failed;
-  }
   if (!impl.configured || impl.failed() || impl.endOfStreamBegun ||
       impl.lifecycle != Lifecycle::None || impl.closed || impl.cancelled) {
     assignError(error, "native video consumer is not accepting samples");
@@ -2011,7 +1926,6 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
     if (sample.keyFrame && !impl.generationStartPresentation) {
       impl.generationStartPresentation = sample.presentationTime;
     }
-    impl.previewResumeNeedsKeyFrame = false;
     return media::NativeMediaConsumeResult::Accepted;
   }
   impl.latch(NativeVideoConsumerFailure::Decoder,
@@ -2048,12 +1962,6 @@ media::NativeMediaConsumeResult NativeVideoConsumer::endOfStream(
   }
   if (impl.previewAdmissionGated()) {
     return media::NativeMediaConsumeResult::Backpressure;
-  }
-  if (impl.previewResumeNeedsKeyFrame) {
-    impl.latch(NativeVideoConsumerFailure::Lifecycle,
-               "preview release cannot reach end of stream before a key frame",
-               error);
-    return media::NativeMediaConsumeResult::Failed;
   }
   if (!impl.configured || impl.failed() || end.track != impl.track ||
       impl.lifecycle != Lifecycle::None || impl.closed || impl.cancelled) {
@@ -2565,10 +2473,8 @@ NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
   result.outputBlocked = impl.awaitingDraw.valid() || impl.heldFrame;
   result.nextDueKnown = impl.nextDueKnown;
   result.previewQuiesceGeneration = impl.previewQuiesceGeneration;
-  result.previewReleasedGeneration = impl.previewReleasedGeneration;
   result.previewQuiesceStarted = impl.previewQuiesceStarted;
   result.previewQuiesced = impl.previewQuiesced;
-  result.previewResumeNeedsKeyFrame = impl.previewResumeNeedsKeyFrame;
   result.closed = impl.closed;
   result.failure = impl.failure;
   result.decoder = impl.decoder.stats();
