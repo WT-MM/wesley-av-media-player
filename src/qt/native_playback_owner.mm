@@ -5,6 +5,7 @@
 #include "native_benchmark_telemetry.hpp"
 #include "native_playback_metrics.hpp"
 #include "native_media_session_adapter.hpp"
+#include "platform/macos/native_embedding_support.hpp"
 #include "player_controller.hpp"
 
 #import <Foundation/Foundation.h>
@@ -95,6 +96,54 @@ NativePlaybackOwner::NativePlaybackOwner(PlayerController &controller)
     telemetry_ = &telemetry;
   }
   startPlaybackMetrics();
+  // Playing media is a user-initiated activity even when WAM is not the
+  // frontmost application. Track the transport with the platform assertion so
+  // the display never idle-sleeps into the screen saver over playing video and
+  // so App Nap never throttles an occluded or background playback session. The
+  // signal is the single choke point for every transport source: native route,
+  // compatibility route, end of file and idle. Edge-triggering on this
+  // window's own hold is what makes each window contribute at most one to the
+  // process-wide reference count.
+  activityConnection_ = QObject::connect(
+      &controller_, &PlayerController::playingChanged, &controller_, [this] {
+        const bool holding = controller_.playing();
+        if (holding == activityHeld_)
+          return;
+        activityHeld_ = holding;
+        setMacosPlaybackActivityHeld(holding);
+      });
+}
+
+NativePlaybackOwner::SeekDisposition
+NativePlaybackOwner::commitSeek(double targetSeconds, std::uint64_t gesture,
+                                std::uint64_t request, bool paused) {
+  // The one seconds -> exact conversion on the native seek path. A value with
+  // no exact form reaches the router as an invalid time and is refused there,
+  // after the route-ownership check.
+  return macos::NativePlaybackOwner::commitSeek(
+      ::wam::media::exactNonnegativeMediaTime(targetSeconds)
+          .value_or(::wam::media::MediaTime{}),
+      gesture, request, paused);
+}
+
+bool NativePlaybackOwner::presentsOutsideScene() const noexcept {
+  return ::wam::macos::NativeEmbeddingSupport::layerActive() &&
+         nativeOwnsTransport();
+}
+
+void NativePlaybackOwner::noteFallbackSeek(bool submitted) noexcept {
+  if (telemetry_)
+    telemetry_->fallbackSeek(submitted);
+}
+
+void NativePlaybackOwner::notePreviewDemanded(std::uint64_t gesture,
+                                              std::uint64_t request,
+                                              double target,
+                                              bool fallbackInitialized) noexcept {
+  if (telemetry_)
+    telemetry_->previewDemanded(native_protocol::GestureId{gesture},
+                                native_protocol::RequestId{request}, target,
+                                fallbackInitialized);
 }
 
 // Sampling is driven from the GUI thread on purpose. This owner is the only
@@ -151,9 +200,12 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
 }
 
 NativePlaybackOwner::~NativePlaybackOwner() {
+  QObject::disconnect(activityConnection_);
   openPreflight_.stop();
   latestOpenPreflightRequest_ = 0;
   retireNativeSession();
+  if (activityHeld_)
+    setMacosPlaybackActivityHeld(false);
 }
 
 std::optional<native_protocol::SourceKey>
@@ -282,11 +334,11 @@ void NativePlaybackOwner::completeOpenPreflight(
   execute(transition);
 }
 
-bool NativePlaybackOwner::stop(bool preserveVisibleState) {
+bool NativePlaybackOwner::stop() {
   Q_ASSERT(QThread::currentThread() == controller_.thread());
   openPreflight_.cancel();
   latestOpenPreflightRequest_ = 0;
-  if (deferOwnerCommand([this, preserveVisibleState] { static_cast<void>(stop(preserveVisibleState)); }))
+  if (deferOwnerCommand([this] { static_cast<void>(stop()); }))
     return true;
   drainCurrentObservations();
   const playback_router::Transition transition = routeStop();
@@ -296,9 +348,7 @@ bool NativePlaybackOwner::stop(bool preserveVisibleState) {
     return false;
   }
   execute(transition);
-  if (!preserveVisibleState) {
-    controller_.finishStopUi(false);
-  }
+  controller_.finishStopUi(false);
   return true;
 }
 
@@ -425,9 +475,9 @@ bool NativePlaybackOwner::submitFallbackStop() {
   const std::uint64_t replyId = fallbackStop_->replyId;
   QTimer::singleShot(
       kFallbackStopWatchdogMilliseconds, &controller_, [controller, replyId] {
-        if (controller == nullptr || !controller->native_playback_)
+        if (controller == nullptr || !controller->native_)
           return;
-        NativePlaybackOwner &owner = *controller->native_playback_;
+        auto &owner = static_cast<NativePlaybackOwner &>(*controller->native_);
         if (!owner.fallbackStop_.has_value() ||
             owner.fallbackStop_->replyId != replyId ||
             owner.fallbackStop_->terminalResetRequired) {

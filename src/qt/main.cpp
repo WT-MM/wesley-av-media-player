@@ -79,7 +79,9 @@ struct NativePlaybackOwnerTestAccess {
 class PlayerControllerTestAccess {
 public:
   static void failNative(PlayerController &player) {
-    if (player.native_playback_) NativePlaybackOwnerTestAccess::fail(*player.native_playback_);
+    if (player.native_)
+      NativePlaybackOwnerTestAccess::fail(
+          static_cast<NativePlaybackOwner &>(*player.native_));
   }
 };
 }

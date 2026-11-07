@@ -5,6 +5,7 @@
 #include "media/native_display_geometry.hpp"
 #include "jobs.hpp"
 #include "mpv_engine.hpp"
+#include "native_engine.hpp"
 #include "media/live_caption_feed.hpp"
 #include "playback_policy.hpp"
 #include "scroll_gesture.hpp"
@@ -649,8 +650,7 @@ private:
   [[nodiscard]] NativeSeekDispatch
   dispatchNativeSeekIntent(const NativeSeekIntent &intent, void *context,
                            NativeSeekSubmitter submitter);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  // The production NativePreviewSubmitter: `context` is the NativePlaybackOwner
+  // The production NativePreviewSubmitter: `context` is the NativeEngine
   // and the mapping from its PreviewDisposition to NativePreviewSubmission is
   // stated here once, for the demand, presented and failed entry points alike.
   [[nodiscard]] static NativePreviewSubmission
@@ -665,7 +665,6 @@ private:
   dispatchNativeSeekIntent(const NativeSeekIntent &intent);
   void
   nativeCommitReady(const ::wam::media::native_playback::CommitReady &ready);
-#endif
   [[nodiscard]] bool completeNativePreviewPresented(
       std::uint64_t gesture, std::uint64_t request,
       double actual_presentation_time, void *context,
@@ -766,7 +765,6 @@ private:
   [[nodiscard]] bool engineReady() const;
   [[nodiscard]] bool needsRenderContext() const;
   bool initializePlaybackEngine();
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   void prepareRoutedOpenIntent(const QUrl &source);
   [[nodiscard]] bool nativeRouteAdmissionAllowed() const noexcept;
   [[nodiscard]] bool
@@ -776,7 +774,6 @@ private:
   void notifyRoutedFallbackOpenFailed();
   [[nodiscard]] bool resetRoutedFallbackCoreAfterRelease(
       const std::shared_ptr<PlayerCore> &expected_core);
-#endif
   void finishStopUi(bool stop_compatibility_engine);
   bool flushPendingOpen(std::uint64_t render_stamp);
   bool flushRenderRecovery(std::uint64_t render_stamp);
@@ -820,9 +817,8 @@ private:
   bool attachSubtitleFile(const std::filesystem::path &subtitle);
 
   MpvEngine mpv_;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  std::unique_ptr<NativePlaybackOwner> native_playback_;
-#endif
+  // Null when this build has no native engine.
+  std::unique_ptr<NativeEngine> native_;
   QPointer<MpvVideoItem> video_item_;
   const AppSettings *settings_ = nullptr;
   QTimer *work_timer_ = nullptr;
@@ -908,13 +904,6 @@ private:
   // See beginTeardown(): silences user-facing errors once this controller's
   // window is on its way out.
   bool tearing_down_ = false;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  // Whether THIS controller currently contributes a hold to the process-wide
-  // macOS playback activity assertion. The assertion is reference counted over
-  // every window's hold, so each window has to know whether it is already
-  // holding before it adds or drops one.
-  bool macos_activity_held_ = false;
-#endif
   std::uint64_t request_serial_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;

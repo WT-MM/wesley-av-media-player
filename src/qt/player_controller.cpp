@@ -11,8 +11,9 @@
 #include "subtitle_sources.hpp"
 
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-#include "native_benchmark_telemetry.hpp"
 #include "native_playback_owner.hpp"
+#endif
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "platform/macos/native_embedding_support.hpp"
 #endif
 
@@ -21,13 +22,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-// playbackSourceClass's synchronous mount probe, and only it, needs these.
-#if !(defined(WAM_HAS_MACOS_NATIVE_PLAYBACK))
 #include <QStorageInfo>
-#if defined(Q_OS_MACOS)
-#include <sys/mount.h>
-#endif
-#endif
 #include <QThread>
 #include <QTimer>
 
@@ -87,9 +82,7 @@ constexpr std::uint64_t kOpenCommandReplyIdMask = (1ULL << 61) - 1ULL;
 constexpr std::uint64_t kScrubCommandReplyIdMask = kOpenCommandReplyIdMask;
 constexpr std::uint64_t kScrubCommandReplyMask =
     kCommandReplyNamespaceMask | (1ULL << 61);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 constexpr std::uint64_t kFallbackStopCommandReplyNamespace = 3ULL << 62;
-#endif
 
 static_assert((kOpenCommandReplyNamespace & kScrubCommandReplyMask) !=
               kScrubCommandReplyTag);
@@ -145,34 +138,22 @@ QString fallbackTitle(const QUrl &source) {
   return file_name.isEmpty() ? source.host() : file_name;
 }
 
-// Probing a mount is a blocking filesystem call, and on an unresponsive
-// network share it blocks for as long as the kernel's mount timeout. The
-// native macOS route therefore never asks here: NativeOpenPreflight runs the
-// identical statfs classification off the GUI thread for every routed open,
-// and flushPendingOpen consumes that answer instead of this one
-// (mpv_.lineage.routed_fallback_open->source_class), which on this build is the only way a
-// pending mpv open exists at all. Every other build has no such worker edge
-// and must answer synchronously.
+// The classification of an open no router classified. Probing a mount is a
+// blocking filesystem call, and on an unresponsive network share it blocks
+// for as long as the kernel's mount timeout, so a routed open never asks here:
+// NativeOpenPreflight classifies it off the GUI thread and flushPendingOpen
+// uses that answer (RoutedFallbackOpen::source_class). Only a build with no
+// native engine has no such worker edge and answers synchronously.
 PlaybackSourceClass playbackSourceClass(const QUrl &source) {
   if (!source.isLocalFile())
     return PlaybackSourceClass::Network;
 
-#if !(defined(WAM_HAS_MACOS_NATIVE_PLAYBACK))
   const QString local_path = source.toLocalFile();
   const QStorageInfo storage(local_path);
   if (storage.isValid() &&
       isRemoteFilesystemType(storage.fileSystemType().toStdString())) {
     return PlaybackSourceClass::BufferedLocal;
   }
-
-#if defined(Q_OS_MACOS)
-  struct statfs mount_information{};
-  const QByteArray encoded_path = QFile::encodeName(local_path);
-  if (::statfs(encoded_path.constData(), &mount_information) == 0 &&
-      (mount_information.f_flags & MNT_LOCAL) == 0) {
-    return PlaybackSourceClass::BufferedLocal;
-  }
-#endif
 
 #if defined(Q_OS_WIN)
   // A mapped drive can report the server's ordinary on-disk filesystem type,
@@ -185,7 +166,6 @@ PlaybackSourceClass playbackSourceClass(const QUrl &source) {
       drive_type == DRIVE_CDROM) {
     return PlaybackSourceClass::BufferedLocal;
   }
-#endif
 #endif
 
   return PlaybackSourceClass::FastLocal;
@@ -624,25 +604,7 @@ std::int64_t readTrackSelection(const mpv_event_property *property) {
 PlayerController::PlayerController(QObject *parent)
     : QObject(parent), mpv_(this) {
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  native_playback_ = std::make_unique<NativePlaybackOwner>(*this);
-  // Playing media is a user-initiated activity even when WAM is not the
-  // frontmost application. Track the transport with the platform assertion so
-  // the display never idle-sleeps into the screen saver over playing video and
-  // so App Nap never throttles an occluded or background playback session. The
-  // signal is the single choke point for every transport source: native route,
-  // compatibility route, end of file and idle.
-  connect(this, &PlayerController::playingChanged, this, [this] {
-    // One hold per controller, and the process-wide assertion is a reference
-    // count over those holds (see native_playback_owner.mm). Edge-triggering
-    // here is what makes each window contribute at most one: with N windows
-    // playing, a pause in one must not end the assertion the other N-1 still
-    // need.
-    const bool holding = playing();
-    if (holding == macos_activity_held_)
-      return;
-    macos_activity_held_ = holding;
-    setMacosPlaybackActivityHeld(holding);
-  });
+  native_ = std::make_unique<NativePlaybackOwner>(*this);
 #endif
   work_timer_ = new QTimer(this);
   work_timer_->setInterval(100);
@@ -705,13 +667,7 @@ PlayerController::~PlayerController() {
   caption_service_->cancel();
   // Swift teardown and subprocess joins must not block window destruction.
   std::thread([service = std::move(caption_service_)] { service->wait(); }).detach();
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  native_playback_.reset();
-  if (macos_activity_held_) {
-    macos_activity_held_ = false;
-    setMacosPlaybackActivityHeld(false);
-  }
-#endif
+  native_.reset();
   mpv_.detachOwner();
 }
 
@@ -722,13 +678,11 @@ bool PlayerController::provisionMpvFallbackRuntime(
 }
 
 bool PlayerController::available() const {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // Native playback remains available even when the optional compatibility
   // engine is dormant or a bundle-local fallback failed to initialize.
-  return native_playback_ != nullptr;
-#else
+  if (native_)
+    return true;
   return mpv_.core && !mpv_.core->failed();
-#endif
 }
 
 bool PlayerController::engineReady() const { return mpv_.ready(); }
@@ -826,25 +780,24 @@ void PlayerController::openFileDialog() { emit openFileDialogRequested(); }
 bool PlayerController::open(const QUrl &source) {
   if (source.isEmpty())
     return false;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (!native_playback_)
-    return false;
-  // Burn pointer/preview completion ownership before the owner drains any
-  // observations from the retiring source. A late exact presentation from
-  // that source must not become visible during the replacement transaction.
-  invalidateNativeSeekIntents();
-  // Preparing/retiring a previous file can temporarily pause the engine.
-  // A user open always carries fresh autoplay intent.
-  const bool accepted = native_playback_->open(source, 0.0, false);
-  if (accepted) {
-    setLastError({});
-    setLastNotice({});
-    updateLoading(true);
-    updateSource(source);
-    updateMediaTitle(source.fileName());
+  if (native_) {
+    // Burn pointer/preview completion ownership before the owner drains any
+    // observations from the retiring source. A late exact presentation from
+    // that source must not become visible during the replacement transaction.
+    invalidateNativeSeekIntents();
+    // Preparing/retiring a previous file can temporarily pause the engine.
+    // A user open always carries fresh autoplay intent.
+    const bool accepted = native_->open(source, 0.0, false);
+    if (accepted) {
+      setLastError({});
+      setLastNotice({});
+      updateLoading(true);
+      updateSource(source);
+      updateMediaTitle(source.fileName());
+    }
+    return accepted;
   }
-  return accepted;
-#else
+
   const QString argument = sourceArgument(source);
   if (argument.isEmpty() || !initializePlaybackEngine())
     return false;
@@ -888,10 +841,8 @@ bool PlayerController::open(const QUrl &source) {
 
   requestVideoUpdate();
   return true;
-#endif
 }
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
   invalidateNativeSeekIntents();
   if (captioning_) {
@@ -916,8 +867,8 @@ void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
 bool PlayerController::nativeRouteAdmissionAllowed() const noexcept {
   // The native engine serves the advertised pitch-preserved window. A rate
   // outside it routes to the compatibility engine, which has no such bound.
-  return native_protocol::routeForRate(rate_) ==
-             native_protocol::RateRoute::NativeVersion1 &&
+  return ::wam::media::native_playback::routeForRate(rate_) ==
+             ::wam::media::native_playback::RateRoute::NativeVersion1 &&
          video_item_;
 }
 
@@ -962,11 +913,11 @@ bool PlayerController::beginRoutedFallbackOpen(
 }
 
 void PlayerController::notifyRoutedFallbackOpenFailed() {
-  if (!native_playback_ || !mpv_.lineage.routed_fallback_open)
+  if (!native_ || !mpv_.lineage.routed_fallback_open)
     return;
   const RoutedFallbackOpen lineage = *mpv_.lineage.routed_fallback_open;
   mpv_.lineage.routed_fallback_open.reset();
-  native_playback_->fallbackOpenFailed(lineage.attempt, lineage.serial,
+  native_->fallbackOpenFailed(lineage.attempt, lineage.serial,
                                        lineage.source_key);
 }
 
@@ -977,11 +928,9 @@ bool PlayerController::resetRoutedFallbackCoreAfterRelease(
   requestVideoUpdate();
   return true;
 }
-#endif
 
 void PlayerController::play() {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (native_playback_) {
+  if (native_) {
     if (nativeRouteActive() && native_scrub_intent_) {
       // A native seek converges while physically paused. Keep play/pause as
       // logical post-seek intent; the owner applies the latest value only after
@@ -994,10 +943,10 @@ void PlayerController::play() {
       setNativeScrubPauseIntent(false);
       updatePause(false);
     }
-    const auto disposition = native_playback_->setPaused(false);
-    if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled ||
-        disposition == NativePlaybackOwner::PauseDisposition::NotOwned) {
-      if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled &&
+    const auto disposition = native_->setPaused(false);
+    if (disposition == NativeEngine::PauseDisposition::NativeHandled ||
+        disposition == NativeEngine::PauseDisposition::NotOwned) {
+      if (disposition == NativeEngine::PauseDisposition::NativeHandled &&
           (eof_reached_ || (duration_ > 0.0 && position_ >= duration_ -
               std::max(0.05, native_frame_duration_))) && !native_seek_intent_) {
         // Native Ended retains its graph. Replay is one ordinary exact seek
@@ -1008,7 +957,6 @@ void PlayerController::play() {
       return;
     }
   }
-#endif
   if (!engineReady())
     return;
   if (scrub_seek_) {
@@ -1044,8 +992,7 @@ void PlayerController::play() {
 }
 
 void PlayerController::pause() {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (native_playback_) {
+  if (native_) {
     if (nativeRouteActive() && native_scrub_intent_) {
       setNativeScrubPauseIntent(true);
       updatePause(true);
@@ -1055,13 +1002,12 @@ void PlayerController::pause() {
       setNativeScrubPauseIntent(true);
       updatePause(true);
     }
-    const auto disposition = native_playback_->setPaused(true);
-    if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled ||
-        disposition == NativePlaybackOwner::PauseDisposition::NotOwned) {
+    const auto disposition = native_->setPaused(true);
+    if (disposition == NativeEngine::PauseDisposition::NativeHandled ||
+        disposition == NativeEngine::PauseDisposition::NotOwned) {
       return;
     }
   }
-#endif
   if (!engineReady())
     return;
   if (scrub_seek_) {
@@ -1107,12 +1053,10 @@ void PlayerController::stop() {
   }
   invalidateScrubGesture();
   invalidateNativeSeekIntents();
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (native_playback_) {
-    static_cast<void>(native_playback_->stop());
+  if (native_) {
+    static_cast<void>(native_->stop());
     return;
   }
-#endif
   finishStopUi(true);
 }
 
@@ -1454,20 +1398,19 @@ PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent,
   return NativeSeekDispatch::Consumed;
 }
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 PlayerController::NativePreviewSubmission
 PlayerController::submitNativePreviewFrame(
     void *context, const NativePreviewIntent &intent) noexcept {
-  auto &owner = *static_cast<NativePlaybackOwner *>(context);
+  auto &owner = *static_cast<NativeEngine *>(context);
   switch (owner.previewFrame(intent.target, intent.gesture, intent.request)) {
-  case NativePlaybackOwner::PreviewDisposition::Accepted:
+  case NativeEngine::PreviewDisposition::Accepted:
     return NativePreviewSubmission::Accepted;
-  case NativePlaybackOwner::PreviewDisposition::Replaced:
+  case NativeEngine::PreviewDisposition::Replaced:
     return NativePreviewSubmission::Replaced;
-  case NativePlaybackOwner::PreviewDisposition::Stale:
+  case NativeEngine::PreviewDisposition::Stale:
     return NativePreviewSubmission::Stale;
-  case NativePlaybackOwner::PreviewDisposition::NotOwned:
-  case NativePlaybackOwner::PreviewDisposition::Rejected:
+  case NativeEngine::PreviewDisposition::NotOwned:
+  case NativeEngine::PreviewDisposition::Rejected:
     return NativePreviewSubmission::Rejected;
   }
   return NativePreviewSubmission::Rejected;
@@ -1475,7 +1418,7 @@ PlayerController::submitNativePreviewFrame(
 
 void PlayerController::dispatchNativePreviewIntent(
     const NativePreviewIntent &intent) {
-  dispatchNativePreviewIntent(intent, native_playback_.get(),
+  dispatchNativePreviewIntent(intent, native_.get(),
                               &submitNativePreviewFrame);
 }
 
@@ -1483,14 +1426,14 @@ void PlayerController::nativePreviewPresented(
     const ::wam::media::native_playback::PreviewPresented &presented) {
   static_cast<void>(completeNativePreviewPresented(
       presented.gesture.value, presented.request.value,
-      presented.actualPresentationTimeSeconds, native_playback_.get(),
+      presented.actualPresentationTimeSeconds, native_.get(),
       &submitNativePreviewFrame));
 }
 
 void PlayerController::nativePreviewFailed(
     const ::wam::media::native_playback::PreviewFailed &failed) {
   static_cast<void>(completeNativePreviewFailed(
-      failed.gesture.value, failed.request.value, native_playback_.get(),
+      failed.gesture.value, failed.request.value, native_.get(),
       &submitNativePreviewFrame));
 }
 
@@ -1498,25 +1441,20 @@ PlayerController::NativeSeekDispatch
 PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent) {
   const auto submit = [](void *context,
                          const NativeSeekIntent &request) noexcept {
-    auto &owner = *static_cast<NativePlaybackOwner *>(context);
-    // The one seconds -> exact conversion on the native seek path. A value
-    // with no exact form reaches the owner as an invalid time and is refused
-    // there, after the route-ownership check.
-    const auto target = ::wam::media::exactNonnegativeMediaTime(request.target)
-                            .value_or(::wam::media::MediaTime{});
-    switch (owner.commitSeek(target, request.gesture, request.request,
+    auto &owner = *static_cast<NativeEngine *>(context);
+    switch (owner.commitSeek(request.target, request.gesture, request.request,
                              request.intended_paused)) {
-    case NativePlaybackOwner::SeekDisposition::NativeHandled:
+    case NativeEngine::SeekDisposition::NativeHandled:
       return NativeSeekSubmission::Accepted;
-    case NativePlaybackOwner::SeekDisposition::NativeRejected:
+    case NativeEngine::SeekDisposition::NativeRejected:
       return NativeSeekSubmission::Rejected;
-    case NativePlaybackOwner::SeekDisposition::NotOwned:
-    case NativePlaybackOwner::SeekDisposition::FallbackHandled:
+    case NativeEngine::SeekDisposition::NotOwned:
+    case NativeEngine::SeekDisposition::FallbackHandled:
       return NativeSeekSubmission::Compatibility;
     }
     return NativeSeekSubmission::Rejected;
   };
-  return dispatchNativeSeekIntent(intent, native_playback_.get(), submit);
+  return dispatchNativeSeekIntent(intent, native_.get(), submit);
 }
 
 void PlayerController::nativeCommitReady(
@@ -1537,7 +1475,6 @@ void PlayerController::nativeCommitReady(
   updateEof(false);
   updateIdle(false);
 }
-#endif
 
 bool PlayerController::completeNativePreviewPresented(
     std::uint64_t gesture, std::uint64_t request,
@@ -1684,32 +1621,30 @@ void PlayerController::publishSeekTarget(double target) {
 }
 
 void PlayerController::beginScrub() {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     if (!beginNativeScrubIntent())
       return;
-    const auto disposition = native_playback_->setPaused(true);
-    if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled) {
+    const auto disposition = native_->setPaused(true);
+    if (disposition == NativeEngine::PauseDisposition::NativeHandled) {
       // Pointer-down starts the surface-budget handoff before the MouseArea's
       // first immediate motion preview. Refusal stays silent; release still
       // commits one exact seek and restores the captured logical pause intent.
       // A refusal that means "this source has no frame to preview" (audio
       // only) is remembered for the whole gesture, so motion samples publish
       // the time readout without demanding a thumbnail that cannot exist.
-      const auto handoff = native_playback_->preparePreviewHandoff();
+      const auto handoff = native_->preparePreviewHandoff();
       if (native_scrub_intent_) {
         native_scrub_intent_->preview_available =
             handoff !=
-            NativePlaybackOwner::PreviewHandoffDisposition::Unsupported;
+            NativeEngine::PreviewHandoffDisposition::Unsupported;
       }
       return;
     }
     invalidateNativeScrubIntent();
-    if (disposition != NativePlaybackOwner::PauseDisposition::FallbackHandled) {
+    if (disposition != NativeEngine::PauseDisposition::FallbackHandled) {
       return;
     }
   }
-#endif
   if (!engineReady() || scrub_seek_ || mpv_.lineage.render_recovery ||
       mpv_.lineage.startup_playback_sync || !acceptsPlaybackObservation()) {
     return;
@@ -1742,7 +1677,6 @@ void PlayerController::beginScrub() {
 }
 
 void PlayerController::seekTo(double seconds) {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     // Native accurate seek requires an exactly representable rational target;
     // exactNativeSeekTarget owns that rule for every native entry point, and
@@ -1762,7 +1696,6 @@ void PlayerController::seekTo(double seconds) {
       return;
     }
   }
-#endif
   if (!engineReady() || !std::isfinite(seconds))
     return;
   if (scrub_seek_) {
@@ -1802,7 +1735,6 @@ void PlayerController::previewSeekTo(double seconds) {
     return;
   }
 #endif
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     // Audio-only binding: the session refused the preview handoff for this
     // whole gesture at pointer-down. Track the drag in the time readout --
@@ -1821,13 +1753,9 @@ void PlayerController::previewSeekTo(double seconds) {
     const auto observeDemand = [](void *context,
                                   const NativePreviewIntent &intent) noexcept {
       auto &controller = *static_cast<PlayerController *>(context);
-      auto &telemetry = NativeBenchmarkTelemetry::instance();
-      if (telemetry.enabled()) {
-        telemetry.previewDemanded(
-            ::wam::media::native_playback::GestureId{intent.gesture},
-            ::wam::media::native_playback::RequestId{intent.request},
-            intent.target, controller.engineReady());
-      }
+      controller.native_->notePreviewDemanded(intent.gesture, intent.request,
+                                              intent.target,
+                                              controller.engineReady());
     };
     if (auto intent =
             makeObservedNativePreviewIntent(seconds, this, observeDemand)) {
@@ -1835,7 +1763,6 @@ void PlayerController::previewSeekTo(double seconds) {
     }
     return;
   }
-#endif
   if (!engineReady() || !std::isfinite(seconds))
     return;
   const double maximum = duration_ > 0.0 ? duration_ : seconds;
@@ -1873,7 +1800,6 @@ void PlayerController::previewSeekTo(double seconds) {
 }
 
 void PlayerController::endScrub(double seconds) {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     std::optional<NativeSeekIntent> intent;
     if (native_scrub_intent_) {
@@ -1890,7 +1816,6 @@ void PlayerController::endScrub(double seconds) {
       return;
     }
   }
-#endif
   if (!scrub_seek_) {
     seekTo(seconds);
     return;
@@ -2133,13 +2058,11 @@ void PlayerController::finishScrubGesture(bool restore_transport) {
 void PlayerController::invalidateScrubGesture() { finishScrubGesture(false); }
 
 void PlayerController::seekRelative(double seconds) {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     if (std::isfinite(seconds))
       seekTo(position_ + seconds);
     return;
   }
-#endif
   if (!engineReady() || !std::isfinite(seconds))
     return;
   if (scrub_seek_ || mpv_.lineage.render_recovery || position_ + seconds < 0.0 ||
@@ -2148,9 +2071,8 @@ void PlayerController::seekRelative(double seconds) {
         std::max(0.0, duration_ - 0.001)) : position_ + seconds);
     return;
   }
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  NativeBenchmarkTelemetry::instance().fallbackSeek(true);
-#endif
+  if (native_)
+    native_->noteFallbackSeek(true);
   sendCommand(mpv_.core.get(),
               {QByteArrayLiteral("seek"), QByteArray::number(seconds, 'g', 12),
                QByteArrayLiteral("relative+exact")});
@@ -2181,7 +2103,6 @@ void PlayerController::stepFrame(int direction) {
     return;
   }
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     // An audio-only generation proves no frame geometry and has nothing to
     // step; say so rather than seeking by a made-up interval.
@@ -2233,7 +2154,6 @@ void PlayerController::stepFrame(int direction) {
       static_cast<void>(dispatchNativeSeekIntent(*intent));
     return;
   }
-#endif
 
   if (!engineReady())
     return;
@@ -2270,12 +2190,7 @@ void PlayerController::publishNativeFrameGeometry(double start_seconds,
 void PlayerController::toggleMute() { setMuted(!muted_); }
 
 void PlayerController::setMuted(bool muted) {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  const bool native_owned =
-      native_playback_ && native_playback_->setMuted(muted);
-#else
-  constexpr bool native_owned = false;
-#endif
+  const bool native_owned = native_ && native_->setMuted(muted);
   if (!native_owned && engineReady()) {
     int value = muted ? 1 : 0;
     mpv_.core->api().mpv_set_property_async(mpv_.core->handle(), 0, "mute",
@@ -2296,13 +2211,8 @@ void PlayerController::setVolume(double volume) {
   // has decided it should not.
   const double normalized =
       std::clamp(volume, kMinimumVolume, maximum_volume_);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const bool native_owned =
-      native_playback_ &&
-      native_playback_->setGain(static_cast<float>(normalized));
-#else
-  constexpr bool native_owned = false;
-#endif
+      native_ && native_->setGain(static_cast<float>(normalized));
   if (!native_owned && engineReady()) {
     double mpv_volume = normalized * 100.0;
     mpv_.core->api().mpv_set_property_async(mpv_.core->handle(), 0, "volume",
@@ -2437,9 +2347,8 @@ void PlayerController::setRate(double rate) {
   if (!std::isfinite(rate))
     return;
   const double bounded = std::round(std::clamp(rate, kMinimumRate, kMaximumRate) * 64.0) / 64.0;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
-    if (!native_playback_->setRate(bounded)) {
+    if (!native_->setRate(bounded)) {
       setLastNotice(
           QStringLiteral("Could not change playback speed."));
       return;
@@ -2450,7 +2359,6 @@ void PlayerController::setRate(double rate) {
     emit rateChanged();
     return;
   }
-#endif
   if (engineReady()) {
     double value = bounded;
     mpv_.core->api().mpv_set_property_async(mpv_.core->handle(), 0, "speed",
@@ -2513,11 +2421,7 @@ int PlayerController::activeSubtitleTrack() const {
 }
 
 bool PlayerController::nativeRouteActive() const {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  return native_playback_ != nullptr && native_playback_->nativeOwnsTransport();
-#else
-  return false;
-#endif
+  return native_ && native_->nativeOwnsTransport();
 }
 
 void PlayerController::publishSubtitleText(const QString &text) {
@@ -2896,17 +2800,15 @@ bool PlayerController::attachSubtitleSource(const std::filesystem::path &path,
 void PlayerController::toggleFullscreen() { emit fullscreenToggleRequested(); }
 
 void PlayerController::setPreservePitch(bool preserve) {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     // The native stretch stage serves both modes: pitch preserved is a zero
     // pitch offset on the time-stretch unit, varispeed is an offset of
     // 1200 * log2(rate) cents on the same unit. Nothing to refuse, and it
     // applies live -- the render callback latches it at its next boundary.
-    static_cast<void>(native_playback_->setPreservePitch(preserve));
+    static_cast<void>(native_->setPreservePitch(preserve));
     preserve_pitch_ = preserve;
     return;
   }
-#endif
   if (engineReady()) {
     int value = preserve ? 1 : 0;
     mpv_.core->api().mpv_set_property_async(
@@ -3471,10 +3373,9 @@ void PlayerController::drainMpvEvents() {
   if (!engineReady())
     return;
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   struct NativeDrainScope final {
-    NativePlaybackOwner *owner{nullptr};
-    explicit NativeDrainScope(NativePlaybackOwner *value) : owner(value) {
+    NativeEngine *owner{nullptr};
+    explicit NativeDrainScope(NativeEngine *value) : owner(value) {
       if (owner)
         owner->beginFallbackEventDrain();
     }
@@ -3482,8 +3383,7 @@ void PlayerController::drainMpvEvents() {
       if (owner)
         owner->endFallbackEventDrain();
     }
-  } native_drain_scope{native_playback_.get()};
-#endif
+  } native_drain_scope{native_.get()};
 
   while (true) {
     mpv_event *event = mpv_.core->api().mpv_wait_event(mpv_.core->handle(), 0.0);
@@ -3493,14 +3393,12 @@ void PlayerController::drainMpvEvents() {
     if (event->event_id == MPV_EVENT_COMMAND_REPLY) {
       const std::uint64_t reply_namespace =
           event->reply_userdata & kCommandReplyNamespaceMask;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-      if (native_playback_ &&
+      if (native_ &&
           reply_namespace == kFallbackStopCommandReplyNamespace) {
-        native_playback_->fallbackStopCommandReply(event->reply_userdata,
+        native_->fallbackStopCommandReply(event->reply_userdata,
                                                    event->error);
         continue;
       }
-#endif
       if ((event->reply_userdata & kScrubCommandReplyMask) ==
           kScrubCommandReplyTag) {
         handleScrubCommandReply(event->reply_userdata, event->error);
@@ -3516,16 +3414,14 @@ void PlayerController::drainMpvEvents() {
       }
     }
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // A retained compatibility handle is dormant during native playback.
     // Ignore its stale file/property stream, while the exact Stop command
     // reply above and idle observation below remain admitted during fallback
     // retirement.
-    if (native_playback_ &&
-        !native_playback_->acceptsFallbackPlaybackEvents()) {
+    if (native_ &&
+        !native_->acceptsFallbackPlaybackEvents()) {
       continue;
     }
-#endif
 
     if (event->event_id == MPV_EVENT_START_FILE) {
       mpv_.core->beginFallbackMetricsEpoch();
@@ -3540,9 +3436,8 @@ void PlayerController::drainMpvEvents() {
     }
 
     if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) {
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-      NativeBenchmarkTelemetry::instance().fallbackSeek(false);
-#endif
+      if (native_)
+        native_->noteFallbackSeek(false);
       handleScrubPlaybackRestart();
       handlePlaybackReady(false);
       continue;
@@ -3576,10 +3471,8 @@ void PlayerController::drainMpvEvents() {
       case ObservedProperty::Idle: {
         const bool idle = readFlag(property, true);
         applyObservedIdle(idle);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-        if (native_playback_)
-          native_playback_->fallbackIdleChanged(idle);
-#endif
+        if (native_)
+          native_->fallbackIdleChanged(idle);
         break;
       }
       case ObservedProperty::Position: {
@@ -3720,7 +3613,6 @@ void PlayerController::drainMpvEvents() {
 }
 
 void PlayerController::requestVideoUpdate() {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // On the CALayer presentation route the frame is already on screen: the
   // AVSampleBufferDisplayLayer sitting below Qt's view was handed the decoded
   // IOSurface and WindowServer composites it directly. The Qt video item has
@@ -3735,22 +3627,16 @@ void PlayerController::requestVideoUpdate() {
   // painting through the scene graph -- and suppressing that window's updates
   // because some OTHER window is on the layer route would freeze its video on
   // its first frame. Both halves of the test are therefore required.
-  if (wam::macos::NativeEmbeddingSupport::layerActive() && native_playback_ &&
-      native_playback_->nativeOwnsTransport())
+  if (native_ && native_->presentsOutsideScene())
     return;
-#endif
   if (video_item_)
     video_item_->update();
 }
 
 bool PlayerController::needsRenderContext() const {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  return engineReady() && native_playback_ &&
-         native_playback_->needsFallbackRenderContext() &&
+  return engineReady() &&
+         (!native_ || native_->needsFallbackRenderContext()) &&
          !requested_source_.isEmpty();
-#else
-  return engineReady() && !requested_source_.isEmpty();
-#endif
 }
 
 void PlayerController::continuePendingOpen() {
@@ -3793,19 +3679,14 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
   if (argument.isEmpty()) {
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open an empty media location."));
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     notifyRoutedFallbackOpenFailed();
-#endif
     return false;
   }
 
-  const QUrl display_source = displayUrlForSource(source);
-  PlaybackSourceClass source_class = playbackSourceClass(display_source);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (mpv_.lineage.routed_fallback_open) {
-    source_class = mpv_.lineage.routed_fallback_open->source_class;
-  }
-#endif
+  const PlaybackSourceClass source_class =
+      mpv_.lineage.routed_fallback_open
+          ? mpv_.lineage.routed_fallback_open->source_class
+          : playbackSourceClass(displayUrlForSource(source));
   applyPlaybackBufferPolicy(mpv_.core.get(), source_class);
   if (!mpv_.core->validateRenderTicket(ticket)) {
     continuePendingOpen();
@@ -3829,9 +3710,7 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open media: %1")
                      .arg(mpvErrorDetail(mpv_.core.get(), result)));
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     notifyRoutedFallbackOpenFailed();
-#endif
     return false;
   }
 
@@ -4009,9 +3888,7 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open media: %1")
                      .arg(mpvErrorDetail(mpv_.core.get(), error)));
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     notifyRoutedFallbackOpenFailed();
-#endif
     return;
   }
 
@@ -4057,14 +3934,12 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
   mpv_.lineage.pending_source.clear();
   mpv_.lineage.pending_request_serial = 0;
   mpv_.lineage.open_attempt.reset();
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (native_playback_ && mpv_.lineage.routed_fallback_open) {
+  if (native_ && mpv_.lineage.routed_fallback_open) {
     const RoutedFallbackOpen lineage = *mpv_.lineage.routed_fallback_open;
     mpv_.lineage.routed_fallback_open.reset();
-    native_playback_->fallbackOpenSucceeded(lineage.attempt, lineage.serial,
+    native_->fallbackOpenSucceeded(lineage.attempt, lineage.serial,
                                             lineage.source_key);
   }
-#endif
 }
 
 std::int64_t PlayerController::authoritativePlaylistEntry(
@@ -4400,15 +4275,11 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
     mpv_.lineage.last_error_playlist_entry_id = end.playlist_entry_id;
     QString failure = QStringLiteral("Could not open this file: %1")
                           .arg(mpvErrorDetail(mpv_.core.get(), end.error));
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-    if (native_playback_)
-      failure = native_playback_->playbackFailureText(failure);
-#endif
+    if (native_)
+      failure = native_->playbackFailureText(failure);
     setLastError(failure);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-    if (native_playback_)
-      native_playback_->fallbackPlaybackFailed();
-#endif
+    if (native_)
+      native_->fallbackPlaybackFailed();
   }
 }
 
@@ -5235,13 +5106,11 @@ void PlayerController::abandonPendingOpen() {
 
 void PlayerController::handleRenderInvalidated(
     std::uint64_t retired_render_stamp) {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const std::shared_ptr<PlayerCore> notifying_core = mpv_.core;
-  if (native_playback_)
-    native_playback_->fallbackRenderStateChanged();
+  if (native_)
+    native_->fallbackRenderStateChanged();
   if (mpv_.core != notifying_core)
     return;
-#endif
   if (requested_source_.isEmpty())
     return;
 
@@ -5397,34 +5266,26 @@ void PlayerController::handleRenderInitializationFailure(
     return;
   }
   mpv_.lineage.last_reported_render_failure_stamp = render_stamp;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const bool routed_fallback_failure = mpv_.lineage.routed_fallback_open.has_value();
   if (routed_fallback_failure)
     abandonPendingOpen();
-#endif
   setLastError(error);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (routed_fallback_failure)
     notifyRoutedFallbackOpenFailed();
-#endif
 }
 
 void PlayerController::attachVideoItem(MpvVideoItem *item) {
   video_item_ = item;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (native_playback_)
-    native_playback_->attachSurface(item);
-#endif
+  if (native_)
+    native_->attachSurface(item);
   if (needsRenderContext())
     requestVideoUpdate();
 }
 
 void PlayerController::detachVideoItem(MpvVideoItem *item) {
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   invalidateNativeSeekIntents();
-  if (native_playback_)
-    native_playback_->detachSurface(item);
-#endif
+  if (native_)
+    native_->detachSurface(item);
   if (video_item_ == item)
     video_item_.clear();
 }

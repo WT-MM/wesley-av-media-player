@@ -485,7 +485,7 @@ ApplicationWindow {
     // controller.volume. Two reasons, both real:
     //
     //   * A binding would fire for the seed value WindowManager pushes into
-    //     every new controller (seedController), flashing a volume card onto
+    //     every new controller (AppSettings::initialVolume), flashing a volume card onto
     //     a window the instant it opens.
     //   * A binding would keep re-laying-out the card's Text on every level
     //     change even while it is invisible, which is exactly the cost the
