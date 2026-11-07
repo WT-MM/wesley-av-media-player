@@ -19,31 +19,6 @@ inline constexpr std::size_t kMaximumCompressedVideoAccessUnitBytes =
 inline constexpr std::size_t kMaximumVideoCodecConfigurationBytes =
     256ULL * 1024ULL;
 
-// Conservatively charge three logical representations while CoreMedia builds
-// its format description: the pipeline vector, temporary CFData, and the
-// format description's retained representation. The pipeline vector is
-// destroyed and the decoder's temporary owning CFData reference is released
-// as soon as configure() returns; one format-description representation stays.
-inline constexpr std::size_t kMaximumTransientVideoCodecConfigurationBytes =
-    3 * kMaximumVideoCodecConfigurationBytes;
-inline constexpr std::size_t kMaximumRetainedVideoCodecConfigurationBytes =
-    kMaximumVideoCodecConfigurationBytes;
-// Direct samples must carry a bounded, byte-identical atom. The decoder reuses
-// its configured session and does not cache their format description as a
-// second logically distinct configuration.
-
-// A logical retained-source envelope: two decoder submissions plus one sample
-// held while waiting for decoder capacity, not three application payload
-// copies. Only the static_assert below references it; it is NOT the live
-// decoder in-flight bound (NativeVideoConsumer::kMaximumDecoderInFlightFrames,
-// and VideoToolboxDecoder's own default).
-inline constexpr std::size_t kMaximumPipelineInFlightAccessUnits = 2;
-inline constexpr std::size_t kMaximumPipelineRetainedAccessUnits =
-    kMaximumPipelineInFlightAccessUnits + 1;
-inline constexpr std::size_t kMaximumPipelineLogicalCompressedVideoBytes =
-    kMaximumPipelineRetainedAccessUnits *
-    kMaximumCompressedVideoAccessUnitBytes;
-
 [[nodiscard]] constexpr bool
 acceptsCompressedVideoAccessUnitSize(std::size_t bytes) noexcept {
   return bytes != 0 && bytes <= kMaximumCompressedVideoAccessUnitBytes;
@@ -53,11 +28,6 @@ acceptsCompressedVideoAccessUnitSize(std::size_t bytes) noexcept {
 acceptsVideoCodecConfigurationSize(std::size_t bytes) noexcept {
   return bytes != 0 && bytes <= kMaximumVideoCodecConfigurationBytes;
 }
-
-static_assert(kMaximumPipelineLogicalCompressedVideoBytes ==
-              24ULL * 1024ULL * 1024ULL);
-static_assert(kMaximumTransientVideoCodecConfigurationBytes ==
-              768ULL * 1024ULL);
 
 // ---------------------------------------------------------------------------
 // Selected A/V duration relation.

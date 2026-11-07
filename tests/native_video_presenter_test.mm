@@ -3,6 +3,8 @@
 // Compile the accounting implementation into this focused test translation
 // unit so its test-only seams exist nowhere in a production archive; the
 // link/symbol check in local validation guards against duplicate definitions.
+#include "metal_frame_mapper.hpp"
+#include "bounded_frame_queue.hpp"
 #include "platform/macos/native_surface_budget.mm"
 #include "platform/macos/native_video_presenter.hpp"
 
@@ -274,7 +276,7 @@ int main(int argc, char **argv) {
 
   // The decode-to-display handoff has a hard frame bound and rejects stale
   // generations, so seeks and a slow display cannot grow memory indefinitely.
-  wam::macos::BoundedFrameQueue queue(2, 4);
+  wam::test::BoundedFrameQueue queue(2, 4);
   WAM_CHECK(queue.capacity() == 2);
   WAM_CHECK(queue.enqueue(copied, &error) ==
             wam::macos::FrameEnqueueResult::Accepted);

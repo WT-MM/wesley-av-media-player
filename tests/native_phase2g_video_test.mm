@@ -43,8 +43,8 @@ int main(int argc, char** argv) {
     config.ycbcrMatrix = (CFStringRef)CMFormatDescriptionGetExtension(format, kCMFormatDescriptionExtension_YCbCrMatrix);
     config.highDynamicRangeTransfer = config.transferFunction && CFEqual(config.transferFunction, kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG);
     if (std::to_integer<unsigned>(bytes[1]) == 244) {
-      const auto hardware = nativeVideoDecodePlan(config, true, true, true);
-      const auto unavailable = nativeVideoDecodePlan(config, true, true, false);
+      const auto hardware = nativeVideoDecodePlan(config, true, true);
+      const auto unavailable = nativeVideoDecodePlan(config, true, false);
       if (hardware.implementation != wam::media::DecodeImplementation::VideoToolboxHardware ||
           unavailable.admitted()) {
         std::fprintf(stderr,"444 must use qualified Apple hardware and refuse an unavailable hardware route\n");
@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
       }
     }
     Sink sink;
-    VideoToolboxDecoder decoder({3, 8, VideoToolboxOutputInterop::DisplayLayer});
+    VideoToolboxDecoder decoder({3, 8, VideoDecoderOutputInterop::DisplayLayer});
     std::string error;
     if (!decoder.configure(config, sink, &error)) { std::fprintf(stderr,"configure: %s\n",error.c_str()); return 5; }
     AVAssetReader* reader = [AVAssetReader assetReaderWithAsset:asset error:nil];

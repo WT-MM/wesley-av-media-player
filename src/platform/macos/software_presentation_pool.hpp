@@ -10,7 +10,10 @@ public:
   static constexpr std::size_t kDepth=6;
   ~SoftwarePresentationPool();
   bool configure(std::int32_t width,std::int32_t height,OSType format);
+  // Null both for a failure and for the bounded-depth refusal; callers treat
+  // both as backpressure.
   CVPixelBufferRef acquire() noexcept;
+  bool configured() const noexcept { return pool_ != nullptr; }
   void close() noexcept;
 private:
   CVPixelBufferPoolRef pool_{};

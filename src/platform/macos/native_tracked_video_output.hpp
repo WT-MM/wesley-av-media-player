@@ -5,8 +5,10 @@
 #include "native_video_presenter.hpp"
 #include "native_late_display_trace.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -36,6 +38,51 @@ struct NativeTrackedVideoOutputWakeSeam {
   void* context{nullptr};
 };
 
+// The wake gate every tracked output guards its seam with: a closed bit and a
+// count of signals in flight. Close sets the bit; the output reports
+// closeProgress Done only once the count has drained, which is what makes "the
+// seam outlives closeProgress Done" safe. A saturated count refuses a pin
+// rather than wrapping into the closed bit.
+class NativeTrackedWakeGate final {
+public:
+  [[nodiscard]] bool tryPin() noexcept {
+    std::uint64_t gate = state_.load(std::memory_order_acquire);
+    for (;;) {
+      if ((gate & kClosedBit) != 0 || (gate & kEntryMask) == kEntryMask) {
+        return false;
+      }
+      if (state_.compare_exchange_weak(gate, gate + 1,
+                                       std::memory_order_acq_rel,
+                                       std::memory_order_acquire)) {
+        return true;
+      }
+    }
+  }
+  void unpin() noexcept { state_.fetch_sub(1, std::memory_order_release); }
+  // Pins, signals the seam, unpins. A closed or saturated gate signals
+  // nothing.
+  void signal(const NativeTrackedVideoOutputWakeSeam& seam) noexcept {
+    if (!tryPin()) {
+      return;
+    }
+    if (seam.signal != nullptr) {
+      seam.signal(seam.context);
+    }
+    unpin();
+  }
+  void close() noexcept {
+    state_.fetch_or(kClosedBit, std::memory_order_acq_rel);
+  }
+  [[nodiscard]] bool drained() const noexcept {
+    return (state_.load(std::memory_order_acquire) & kEntryMask) == 0;
+  }
+
+private:
+  static constexpr std::uint64_t kClosedBit = std::uint64_t{1} << 63U;
+  static constexpr std::uint64_t kEntryMask = kClosedBit - 1U;
+  std::atomic<std::uint64_t> state_{0};
+};
+
 enum class NativeTrackedVideoSubmitStatus : std::uint8_t {
   Accepted,
   Backpressure,
@@ -48,6 +95,29 @@ enum class NativeTrackedVideoCapacity : std::uint8_t {
   Backpressure,
   StaleGeneration,
   Failed,
+};
+
+// What a tracked output can present. A presenter that samples the surface in
+// process (Qt's GL scene graph) answers false to everything a sampled
+// 4:2:0 NV12/P010 path cannot do; the display-layer route, which hands the
+// surface to CoreAnimation untouched, answers true.
+struct NativePresentationCapabilities {
+  // The decoded surface goes straight to a CoreAnimation display layer and
+  // nothing in this process samples it. Only then may the decoder leave its
+  // output pixel format unpinned and take the AGX lossless-compressed surface
+  // the hardware produces natively, which is worth roughly half of the decoder
+  // service's CPU (a pinned format costs a VTPixelTransferSession per frame).
+  bool presentsDecodedSurfacesDirectly{false};
+  // 4:2:2 and 4:4:4 surfaces, and ProRes 4444's packed opaque RGB.
+  bool samplesBeyondYuv420{false};
+  // PQ/HLG and non-BT.709 transfers and primaries are converted for display.
+  bool convertsTransferAndGamut{false};
+  // Exact rational (anamorphic) display sizes, not only integral ones.
+  bool rationalDisplaySize{false};
+  // Quarter-turn rotation. An output that cannot rotate produces a clean
+  // Unsupported, so the file opens on the compatibility renderer correctly
+  // oriented instead of drawing sideways in a native window.
+  bool quarterTurns{false};
 };
 
 enum class NativeTrackedVideoOutputProgress : std::uint8_t {
@@ -83,6 +153,149 @@ struct NativeTrackedVideoEvent {
   FrameTiming timing{};
 };
 
+// The tracked-output protocol state every presenter shares: the capacity-one
+// frame mailbox, its event sequence, and the flush/close lifecycle. A
+// presenter holds it under its own lock and supplies only the renderer side
+// (starting a renderer flush and observing that it took effect), so the
+// contract's transitions are stated once.
+struct NativeTrackedOutputProtocol {
+  // The admitted frame awaiting its terminal event, and that event once
+  // published. The consumer takes the event; the frame identity clears with it.
+  NativeTrackedFrameSequence frame{};
+  std::uint64_t frameGeneration{0};
+  FrameTiming frameTiming{};
+  std::optional<NativeTrackedVideoEvent> event;
+  std::uint64_t lastEventSequence{0};
+  std::uint64_t drawnFrames{0};
+  std::uint64_t supersededFrames{0};
+
+  bool flushPending{false};
+  bool flushDone{false};
+  std::uint64_t flushRetired{0};
+  std::uint64_t flushNext{0};
+  // The generation the next flush must name as retired.
+  std::uint64_t retiredGeneration{0};
+  bool closePending{false};
+  bool closeDone{false};
+  std::uint64_t closeGeneration{0};
+
+  [[nodiscard]] bool frameOutstanding() const noexcept {
+    return frame.valid() || event.has_value();
+  }
+
+  void admit(NativeTrackedFrameSequence sequence,
+             const FrameTiming& timing) noexcept {
+    frame = sequence;
+    frameTiming = timing;
+    frameGeneration = timing.generation;
+  }
+
+  void clearFrame() noexcept {
+    frame = {};
+    frameTiming = {};
+    frameGeneration = 0;
+  }
+
+  // Publishes the admitted frame's one terminal event. False when there is no
+  // frame, an event is already waiting, or (sequenceExhausted set) the event
+  // sequence space is spent, which the presenter treats as fatal.
+  [[nodiscard]] bool publish(NativeTrackedVideoEventKind kind,
+                             bool* sequenceExhausted = nullptr) noexcept {
+    if (!frame.valid() || event) {
+      return false;
+    }
+    if (lastEventSequence == std::numeric_limits<std::uint64_t>::max()) {
+      if (sequenceExhausted != nullptr) {
+        *sequenceExhausted = true;
+      }
+      return false;
+    }
+    event.emplace(NativeTrackedVideoEvent{kind, ++lastEventSequence, frame,
+                                          frameGeneration, frameTiming});
+    if (kind == NativeTrackedVideoEventKind::FrameDrawn) {
+      ++drawnFrames;
+    } else if (kind == NativeTrackedVideoEventKind::FrameSuperseded) {
+      ++supersededFrames;
+    }
+    return true;
+  }
+
+  [[nodiscard]] std::optional<NativeTrackedVideoEvent> take() noexcept {
+    std::optional<NativeTrackedVideoEvent> result = std::move(event);
+    event.reset();
+    if (result && result->frameSequence.valid()) {
+      clearFrame();
+    }
+    return result;
+  }
+
+  enum class Step : std::uint8_t {
+    Done,        // the exact operation already completed
+    Stale,       // a different operation is pending or completed
+    Failed,      // the request itself is invalid
+    Started,     // first entry: the presenter must start its renderer side
+    Continuing,  // already started: the presenter re-checks completion
+  };
+
+  [[nodiscard]] Step beginFlush(std::uint64_t retired,
+                                std::uint64_t next) noexcept {
+    if (next == 0 || next <= retired) {
+      return Step::Failed;
+    }
+    if (flushDone && flushRetired == retired && flushNext == next) {
+      return Step::Done;
+    }
+    if (flushPending) {
+      return flushRetired == retired && flushNext == next ? Step::Continuing
+                                                          : Step::Stale;
+    }
+    if (retired != retiredGeneration) {
+      return Step::Stale;
+    }
+    flushPending = true;
+    flushDone = false;
+    flushRetired = retired;
+    flushNext = next;
+    return Step::Started;
+  }
+
+  // The renderer proved the flush: the target is the next retirement point.
+  void completeFlush() noexcept {
+    flushPending = false;
+    flushDone = true;
+    retiredGeneration = flushNext;
+  }
+
+  // `accepted` is the presenter's current generation; a first close must
+  // move past it.
+  [[nodiscard]] Step beginClose(std::uint64_t final,
+                                std::uint64_t accepted) noexcept {
+    if (closeDone) {
+      return closeGeneration == final ? Step::Done : Step::Stale;
+    }
+    if (final == 0 || (!closePending && final <= accepted)) {
+      return Step::Failed;
+    }
+    if (closePending) {
+      return closeGeneration == final ? Step::Continuing : Step::Stale;
+    }
+    closePending = true;
+    closeDone = false;
+    closeGeneration = final;
+    return Step::Started;
+  }
+
+  // A terminal invalidation supersedes any flush: no lifecycle work remains.
+  void completeClose() noexcept {
+    flushPending = false;
+    flushDone = false;
+    flushRetired = 0;
+    flushNext = 0;
+    closePending = false;
+    closeDone = true;
+  }
+};
+
 struct NativeTrackedVideoOutputFacts {
   std::uint64_t generation{0};
   NativeTrackedFrameSequence admittedFrame{};
@@ -93,6 +306,10 @@ struct NativeTrackedVideoOutputFacts {
   // still pending in the output mailbox. This makes Start baseline sampling
   // linearizable with a concurrent render publication.
   std::uint64_t lastEventSequence{0};
+  // The capacity-one credit: 1 while a frame is admitted and its terminal
+  // event has not been taken, else 0. Surface leases a presenter keeps past
+  // that (a renderer still displaying the predecessor) are not counted here;
+  // NativeSurfaceBudget accounts for them.
   std::size_t retainedFrames{0};
   bool eventPending{false};
   bool invalidationPending{false};
@@ -142,44 +359,19 @@ class NativeTrackedVideoOutput {
   [[nodiscard]] virtual NativeTrackedVideoOutputFacts facts()
       const noexcept = 0;
 
-  // True when this output hands the decoded surface straight to a
-  // CoreAnimation display layer and nothing in this process ever samples it.
-  // That is the only condition under which the decoder may leave its output
-  // pixel format unpinned and take the AGX lossless-compressed surface the
-  // hardware produces natively -- which is worth roughly half of the decoder
-  // service's CPU, because the pinned format costs a VTPixelTransferSession per
-  // frame. Defaults to false: an output that samples the surface (Qt's GL
-  // scene graph) must keep the pinned uncompressed contract, and a new
-  // output that forgets to answer gets the safe answer.
-  [[nodiscard]] virtual bool presentsDecodedSurfacesDirectly() const noexcept {
-    return false;
-  }
+  // What this output can present, answered whole so a wrapper forwards one
+  // value and a new capability cannot be silently answered by a default.
+  // Admission (native_presentation_admission.hpp) reads only this.
+  [[nodiscard]] virtual NativePresentationCapabilities
+  presentationCapabilities() const noexcept = 0;
 
-  // Capability question like the rotation below: the default admits only an
-  // integral display size; the layer route overrides it.
-  virtual bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept {
-    return size.width.denominator == 1 && size.height.denominator == 1;
-  }
-
-  // Ask this output to present its frames turned by `degrees` clockwise. The
-  // argument is always one of 0, 90, 180, 270 -- the source refuses every
-  // other transform long before a frame exists -- and it is stated at
-  // admission and configure time. Repeating the same rotation is idempotent.
-  //
-  // Returns whether the output can actually do it. This is a CAPABILITY
-  // question, not a request that may fail later: the consumer asks before it
-  // admits the track, so an output that cannot rotate produces a clean
-  // Unsupported and the file opens on the compatibility renderer, correctly
-  // oriented, instead of drawing sideways in a native window.
-  //
-  // Defaults to "only the identity", which is both the truth for an output
-  // that has no rotation code and the safe answer for a new output that
-  // forgets to override this -- the same rule the flag above follows. The
-  // layer route overrides it; Qt's GL scene-graph item does not, which is a
-  // documented refusal rather than a wrong picture.
-  [[nodiscard]] virtual bool setPresentationRotation(int degrees) noexcept {
-    return degrees == 0;
-  }
+  // Applies an admitted track's presentation geometry: its exact display size
+  // and a quarter turn clockwise (0, 90, 180 or 270). Called only after
+  // admission accepted the track against presentationCapabilities(), so a
+  // false return is an output failure, not a refusal. Repeating the same
+  // geometry is idempotent.
+  [[nodiscard]] virtual bool applyPresentationGeometry(
+      media::MediaDisplaySize displaySize, int quarterTurnDegrees) noexcept = 0;
 };
 
 }  // namespace wam::macos

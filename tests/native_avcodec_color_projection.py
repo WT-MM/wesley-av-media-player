@@ -29,7 +29,7 @@ for run in sorted(root.iterdir()):
  profile=ImageCms.ImageCmsProfile(io.BytesIO(image.info['icc_profile']))
  converted=ImageCms.profileToProfile(image,profile,ImageCms.createProfile('sRGB'),outputMode='RGB')
  facts=json.loads(subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_streams','-of','json',str(run/'bars.mkv')]))['streams'][0]
- if facts.get('color_primaries', 'smpte170m' if facts['width']<=704 else '')!='smpte170m' or facts.get('color_transfer','bt709')!='bt709':
+ if facts.get('color_primaries', 'smpte170m' if facts['width']<=1024 and facts['height']<=576 else '')!='smpte170m' or facts.get('color_transfer','bt709')!='bt709':
   raise SystemExit('DisplayReferenceColorContractUnqualified: '+name)
  input_range='pc' if facts.get('color_range')=='pc' else 'tv'
  wrong_range='tv' if input_range=='pc' else 'pc'

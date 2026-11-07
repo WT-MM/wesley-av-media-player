@@ -5,15 +5,13 @@
 // libvpx's own encoder rather than embedding a binary fixture: the test then
 // proves the round trip end to end and stays readable.
 
+#include "platform/macos/software_presentation_pool.hpp"
 #include "platform/macos/software_vp8_decoder.hpp"
 #include "platform/macos/video_decode_lane.hpp"
+#include "vp8_test_fixture.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
-
-#include <vpx/vp8cx.h>
-#include <vpx/vpx_encoder.h>
-#include <vpx/vpx_image.h>
 
 #include <array>
 #include <cstdint>
@@ -30,16 +28,21 @@ using wam::macos::DecodedFrameSink;
 using wam::macos::FrameEnqueueResult;
 using wam::macos::FrameLease;
 using wam::macos::kSoftwareVp8DecoderOwnedSurfaces;
-using wam::macos::kSoftwareVp8PoolDepth;
 using wam::macos::kSoftwareVp8RendererRetainedSurfaces;
 using wam::macos::kWamVideoCodecTypeVp8;
 using wam::macos::SoftwareVp8Decoder;
-using wam::macos::SoftwareVp8DecoderTestAccess;
+using wam::macos::SoftwarePresentationPool;
 using wam::macos::VideoDecodeDrainProgress;
 using wam::macos::VideoDecodeLane;
 using wam::macos::VideoDecodeSubmitResult;
 using wam::macos::VideoDecoderRetireProgress;
 using wam::macos::VideoStreamConfiguration;
+using wam::test::EncodedStream;
+using wam::test::encodeVp8;
+using wam::test::makeVp8FormatDescription;
+using wam::test::makeVp8Sample;
+
+constexpr std::size_t kPoolDepth = SoftwarePresentationPool::kDepth;
 
 int failures = 0;
 
@@ -62,7 +65,7 @@ static_assert(kSoftwareVp8DecoderOwnedSurfaces == 1U,
 static_assert(kSoftwareVp8RendererRetainedSurfaces >= 1U,
               "the renderer keeps a CoreVideo reference past WAM's last lease "
               "and the pool must provision for it");
-static_assert(kSoftwareVp8PoolDepth <=
+static_assert(kPoolDepth <=
                   static_cast<std::size_t>(
                       wam::macos::kNativeSurfaceBudgetMaximumSurfaces),
               "the pool depth must fit the process-wide surface budget");
@@ -73,7 +76,7 @@ static_assert(kSoftwareVp8PoolDepth <=
 // hard-coded 1920x1080 and would have kept passing, while proving nothing,
 // the moment the ceiling moved.
 static_assert(
-    kSoftwareVp8PoolDepth *
+    kPoolDepth *
             (wam::media::MediaSourceLimits::kHardMaximumCodedPixels * 3ULL /
                  2ULL +
              wam::macos::kNativeSurfaceBudgetSurfaceAlignmentSlackBytes) <
@@ -83,13 +86,13 @@ static_assert(
 // 6 * (9,502,720 * 1.5) = 85,524,480 B of payload at the ceiling; the two
 // resolutions that actually matter are restated so a depth change or a ceiling
 // change has to restate them too.
-static_assert(kSoftwareVp8PoolDepth *
+static_assert(kPoolDepth *
                       (wam::media::MediaSourceLimits::kHardMaximumCodedPixels *
                        3ULL / 2ULL) ==
                   85'524'480ULL,
               "state the pool's ceiling footprint in bytes so a depth or "
               "ceiling change has to restate it");
-static_assert(kSoftwareVp8PoolDepth * (1920ULL * 1080ULL * 3ULL / 2ULL) ==
+static_assert(kPoolDepth * (1920ULL * 1080ULL * 3ULL / 2ULL) ==
                   18'662'400ULL,
               "and its 1080p footprint, which is what most content costs");
 static_assert(kWamVideoCodecTypeVp8 == static_cast<CMVideoCodecType>('vp08'),
@@ -138,49 +141,30 @@ public:
 // Pool.
 // ---------------------------------------------------------------------------
 
-CVPixelBufferRef vendWithThreshold(CVPixelBufferPoolRef pool,
-                                   std::size_t threshold) {
-  const std::int32_t value = static_cast<std::int32_t>(threshold);
-  CFNumberRef number =
-      CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &value);
-  const void *keys[] = {kCVPixelBufferPoolAllocationThresholdKey};
-  const void *values[] = {number};
-  CFDictionaryRef auxiliary = CFDictionaryCreate(
-      kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
-      &kCFTypeDictionaryValueCallBacks);
-  CFRelease(number);
-  CVPixelBufferRef buffer = nullptr;
-  const CVReturn status = CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
-      kCFAllocatorDefault, pool, auxiliary, &buffer);
-  CFRelease(auxiliary);
-  return status == kCVReturnSuccess ? buffer : nullptr;
-}
-
 void testPool() {
-  std::string error;
-  CVPixelBufferPoolRef pool =
-      SoftwareVp8DecoderTestAccess::createPool(640, 360, kSoftwareVp8PoolDepth,
-                                               &error);
-  expect(pool != nullptr, "the bounded NV12 pool is created");
-  if (pool == nullptr) {
+  SoftwarePresentationPool pool;
+  expect(pool.configure(640, 360,
+                        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+         "the bounded NV12 pool is created");
+  if (!pool.configured()) {
     return;
   }
 
   std::vector<CVPixelBufferRef> held;
-  for (std::size_t index = 0; index < kSoftwareVp8PoolDepth; ++index) {
-    CVPixelBufferRef buffer = vendWithThreshold(pool, kSoftwareVp8PoolDepth);
+  for (std::size_t index = 0; index < kPoolDepth; ++index) {
+    CVPixelBufferRef buffer = pool.acquire();
     expect(buffer != nullptr, "the pool vends up to its full depth");
     if (buffer == nullptr) {
       break;
     }
     held.push_back(buffer);
   }
-  expect(held.size() == kSoftwareVp8PoolDepth,
+  expect(held.size() == kPoolDepth,
          "the pool vends exactly its depth before refusing");
 
   // The bound is hard, not advisory: the depth+1 request is refused rather
   // than served by growing the pool behind NativeSurfaceBudget's back.
-  CVPixelBufferRef overflow = vendWithThreshold(pool, kSoftwareVp8PoolDepth);
+  CVPixelBufferRef overflow = pool.acquire();
   expect(overflow == nullptr, "the pool refuses beyond its bounded depth");
   if (overflow != nullptr) {
     CVPixelBufferRelease(overflow);
@@ -212,22 +196,18 @@ void testPool() {
   for (CVPixelBufferRef buffer : held) {
     CVPixelBufferRelease(buffer);
   }
-  CVPixelBufferRef recycled = vendWithThreshold(pool, kSoftwareVp8PoolDepth);
+  CVPixelBufferRef recycled = pool.acquire();
   expect(recycled != nullptr, "released buffers are recycled by the pool");
   if (recycled != nullptr) {
     CVPixelBufferRelease(recycled);
   }
 
-  expect(SoftwareVp8DecoderTestAccess::createPool(0, 360,
-                                                  kSoftwareVp8PoolDepth,
-                                                  &error) == nullptr &&
-             SoftwareVp8DecoderTestAccess::createPool(
-                 640, 0, kSoftwareVp8PoolDepth, &error) == nullptr &&
-             SoftwareVp8DecoderTestAccess::createPool(640, 360, 0, &error) ==
-                 nullptr,
-         "the pool refuses degenerate geometry and a zero depth");
-
-  CVPixelBufferPoolRelease(pool);
+  SoftwarePresentationPool degenerate;
+  expect(!degenerate.configure(0, 360,
+                               kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) &&
+             !degenerate.configure(
+                 640, 0, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+         "the pool refuses degenerate geometry");
 }
 
 // ---------------------------------------------------------------------------
@@ -290,19 +270,27 @@ PlanarImage makeGradient(std::size_t width, std::size_t height,
   return image;
 }
 
+bool convert(CVPixelBufferRef destination, const PlanarImage &image,
+             std::size_t yStride, unsigned width, unsigned height,
+             const std::uint8_t *y = nullptr) {
+  const std::uint8_t *const planes[3] = {y != nullptr ? y : image.y.data(),
+                                         image.u.data(), image.v.data()};
+  const int strides[3] = {static_cast<int>(yStride),
+                          static_cast<int>(image.cStride),
+                          static_cast<int>(image.cStride)};
+  return wam::macos::copySoftwarePlanes(destination, planes, strides, width,
+                                        height, 8, false);
+}
+
 void checkConversion(const PlanarImage &image, const char *what) {
-  std::string error;
-  CVPixelBufferPoolRef pool = SoftwareVp8DecoderTestAccess::createPool(
-      static_cast<std::int32_t>(image.width),
-      static_cast<std::int32_t>(image.height), 2, &error);
-  expect(pool != nullptr, "conversion fixture pool is created");
-  if (pool == nullptr) {
-    return;
-  }
-  CVPixelBufferRef buffer = vendWithThreshold(pool, 2);
+  SoftwarePresentationPool pool;
+  expect(pool.configure(static_cast<std::int32_t>(image.width),
+                        static_cast<std::int32_t>(image.height),
+                        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+         "conversion fixture pool is created");
+  CVPixelBufferRef buffer = pool.acquire();
   expect(buffer != nullptr, "conversion fixture buffer is vended");
   if (buffer == nullptr) {
-    CVPixelBufferPoolRelease(pool);
     return;
   }
   // Poison the destination so an incompletely written plane cannot pass by
@@ -315,9 +303,9 @@ void checkConversion(const PlanarImage &image, const char *what) {
   }
   CVPixelBufferUnlockBaseAddress(buffer, 0);
 
-  const bool converted = SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-      buffer, image.y.data(), image.yStride, image.u.data(), image.cStride,
-      image.v.data(), image.cStride, image.width, image.height);
+  const bool converted =
+      convert(buffer, image, image.yStride, static_cast<unsigned>(image.width),
+              static_cast<unsigned>(image.height));
   expect(converted, what);
 
   if (converted) {
@@ -360,7 +348,6 @@ void checkConversion(const PlanarImage &image, const char *what) {
   }
 
   CVPixelBufferRelease(buffer);
-  CVPixelBufferPoolRelease(pool);
 }
 
 void testConversion() {
@@ -387,166 +374,33 @@ void testConversion() {
                   "converts exactly");
 
   // Contract refusals.
-  std::string error;
-  CVPixelBufferPoolRef pool =
-      SoftwareVp8DecoderTestAccess::createPool(64, 64, 2, &error);
-  if (pool != nullptr) {
-    CVPixelBufferRef buffer = vendWithThreshold(pool, 2);
+  SoftwarePresentationPool pool;
+  if (pool.configure(64, 64, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)) {
+    CVPixelBufferRef buffer = pool.acquire();
     const PlanarImage image = makeCheckerboard(64, 64, 0);
-    expect(!SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-               buffer, image.y.data(), image.yStride, image.u.data(),
-               image.cStride, image.v.data(), image.cStride, 128, 64),
+    expect(!convert(buffer, image, image.yStride, 128, 64),
            "a geometry mismatch is refused rather than written past the plane");
-    expect(!SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-               nullptr, image.y.data(), image.yStride, image.u.data(),
-               image.cStride, image.v.data(), image.cStride, 64, 64),
+    expect(!convert(nullptr, image, image.yStride, 64, 64),
            "a null destination is refused");
-    expect(!SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-               buffer, nullptr, image.yStride, image.u.data(), image.cStride,
-               image.v.data(), image.cStride, 64, 64),
+    const std::uint8_t *const missing[3] = {nullptr, image.u.data(),
+                                            image.v.data()};
+    const int strides[3] = {static_cast<int>(image.yStride),
+                            static_cast<int>(image.cStride),
+                            static_cast<int>(image.cStride)};
+    expect(!wam::macos::copySoftwarePlanes(buffer, missing, strides, 64, 64, 8,
+                                           false),
            "a null source plane is refused");
-    expect(!SoftwareVp8DecoderTestAccess::convertI420ToNv12(
-               buffer, image.y.data(), 16, image.u.data(), image.cStride,
-               image.v.data(), image.cStride, 64, 64),
+    expect(!convert(buffer, image, 16, 64, 64),
            "a source stride narrower than the width is refused");
     if (buffer != nullptr) {
       CVPixelBufferRelease(buffer);
     }
-    CVPixelBufferPoolRelease(pool);
   }
 }
 
 // ---------------------------------------------------------------------------
 // Stage contract, against a real libvpx-encoded VP8 stream.
 // ---------------------------------------------------------------------------
-
-struct EncodedStream {
-  std::vector<std::vector<std::uint8_t>> frames;
-  std::vector<bool> keyFrames;
-  int width{0};
-  int height{0};
-};
-
-// Encodes `count` frames of a moving pattern. The first is a key frame.
-EncodedStream encodeVp8(int width, int height, int count) {
-  EncodedStream stream;
-  stream.width = width;
-  stream.height = height;
-
-  vpx_codec_enc_cfg_t config{};
-  if (vpx_codec_enc_config_default(vpx_codec_vp8_cx(), &config, 0) !=
-      VPX_CODEC_OK) {
-    return stream;
-  }
-  config.g_w = static_cast<unsigned int>(width);
-  config.g_h = static_cast<unsigned int>(height);
-  config.g_timebase.num = 1;
-  config.g_timebase.den = 30;
-  config.rc_target_bitrate = 500;
-  config.g_lag_in_frames = 0;
-  config.kf_max_dist = 30;
-  config.g_threads = 1;
-
-  vpx_codec_ctx_t encoder{};
-  if (vpx_codec_enc_init(&encoder, vpx_codec_vp8_cx(), &config, 0) !=
-      VPX_CODEC_OK) {
-    return stream;
-  }
-  vpx_image_t image{};
-  if (vpx_img_alloc(&image, VPX_IMG_FMT_I420,
-                    static_cast<unsigned int>(width),
-                    static_cast<unsigned int>(height), 32) == nullptr) {
-    vpx_codec_destroy(&encoder);
-    return stream;
-  }
-
-  for (int index = 0; index <= count; ++index) {
-    const bool flush = index == count;
-    if (!flush) {
-      for (int row = 0; row < height; ++row) {
-        for (int column = 0; column < width; ++column) {
-          image.planes[VPX_PLANE_Y][row * image.stride[VPX_PLANE_Y] + column] =
-              static_cast<unsigned char>(((row + column + index * 16) / 16) % 2
-                                             ? 200
-                                             : 40);
-        }
-      }
-      for (int row = 0; row < height / 2; ++row) {
-        for (int column = 0; column < width / 2; ++column) {
-          image.planes[VPX_PLANE_U][row * image.stride[VPX_PLANE_U] + column] =
-              static_cast<unsigned char>(90 + index);
-          image.planes[VPX_PLANE_V][row * image.stride[VPX_PLANE_V] + column] =
-              static_cast<unsigned char>(160 - index);
-        }
-      }
-    }
-    if (vpx_codec_encode(&encoder, flush ? nullptr : &image, index, 1, 0,
-                         VPX_DL_GOOD_QUALITY) != VPX_CODEC_OK) {
-      break;
-    }
-    vpx_codec_iter_t iterator = nullptr;
-    const vpx_codec_cx_pkt_t *packet = nullptr;
-    while ((packet = vpx_codec_get_cx_data(&encoder, &iterator)) != nullptr) {
-      if (packet->kind != VPX_CODEC_CX_FRAME_PKT) {
-        continue;
-      }
-      const auto *bytes =
-          static_cast<const std::uint8_t *>(packet->data.frame.buf);
-      stream.frames.emplace_back(bytes, bytes + packet->data.frame.sz);
-      stream.keyFrames.push_back(
-          (packet->data.frame.flags & VPX_FRAME_IS_KEY) != 0);
-    }
-  }
-  vpx_img_free(&image);
-  vpx_codec_destroy(&encoder);
-  return stream;
-}
-
-CMVideoFormatDescriptionRef makeVp8FormatDescription(int width, int height) {
-  CMVideoFormatDescriptionRef description = nullptr;
-  if (CMVideoFormatDescriptionCreate(kCFAllocatorDefault,
-                                     kWamVideoCodecTypeVp8, width, height,
-                                     nullptr, &description) != noErr) {
-    return nullptr;
-  }
-  return description;
-}
-
-CMSampleBufferRef makeSample(const std::vector<std::uint8_t> &bytes,
-                             CMVideoFormatDescriptionRef description,
-                             std::int64_t frameIndex, bool keyFrame) {
-  CMBlockBufferRef block = nullptr;
-  if (CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, nullptr,
-                                         bytes.size(), kCFAllocatorDefault,
-                                         nullptr, 0, bytes.size(), 0,
-                                         &block) != kCMBlockBufferNoErr) {
-    return nullptr;
-  }
-  if (CMBlockBufferReplaceDataBytes(bytes.data(), block, 0, bytes.size()) !=
-      kCMBlockBufferNoErr) {
-    CFRelease(block);
-    return nullptr;
-  }
-  CMSampleTimingInfo timing{CMTimeMake(1, 30), CMTimeMake(frameIndex, 30),
-                            kCMTimeInvalid};
-  const std::size_t size = bytes.size();
-  CMSampleBufferRef sample = nullptr;
-  const OSStatus status = CMSampleBufferCreateReady(
-      kCFAllocatorDefault, block, description, 1, 1, &timing, 1, &size,
-      &sample);
-  CFRelease(block);
-  if (status != noErr) {
-    return nullptr;
-  }
-  CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sample, true);
-  if (attachments != nullptr && CFArrayGetCount(attachments) > 0) {
-    auto entry = static_cast<CFMutableDictionaryRef>(
-        const_cast<void *>(CFArrayGetValueAtIndex(attachments, 0)));
-    CFDictionarySetValue(entry, kCMSampleAttachmentKey_NotSync,
-                         keyFrame ? kCFBooleanFalse : kCFBooleanTrue);
-  }
-  return sample;
-}
 
 VideoStreamConfiguration vp8Configuration(int width, int height,
                                           std::uint64_t generation,
@@ -637,24 +491,18 @@ void testStage() {
   expect(sink.flushes == 1 && sink.generation == 7,
          "configure flushes the sink to the configured generation");
 
-  {
-    wam::macos::CompressedVideoPacket packet;
-    expect(decoder.submit(packet, &error) == VideoDecodeSubmitResult::Rejected,
-           "the generic span ingress is inert; only CoreMedia samples decode");
-    expect(decoder.takeLastError().has_value(),
-           "a rejected submission records a diagnostic");
-  }
-
-  // A delta frame before any key frame is accepted and discarded rather than
-  // decoded against a retired reference set.
+  // A delta frame before any key frame is refused rather than decoded against
+  // a retired reference set, exactly as every decode backend refuses it.
   {
     CMSampleBufferRef sample =
-        makeSample(stream.frames[1], description, 1, false);
+        makeVp8Sample(stream.frames[1], description, 1, false);
     expect(decoder.submitCMSampleBuffer(sample, 7, &error) ==
-               VideoDecodeSubmitResult::Accepted,
-           "a delta frame before the first key frame is accepted");
-    expect(decoder.stats().droppedFrames == 1,
-           "and is counted as dropped rather than decoded");
+               VideoDecodeSubmitResult::Rejected &&
+               !error.empty(),
+           "a delta frame before the first key frame is rejected");
+    expect(decoder.takeLastError().has_value() &&
+               !decoder.takeLastError().has_value(),
+           "the refusal is latched once for takeLastError");
     expect(decoder.drainPresentation(7, &error) ==
                VideoDecodeDrainProgress::Quiescing,
            "no frame becomes presentable from a discarded delta frame");
@@ -664,7 +512,7 @@ void testStage() {
   // The key frame decodes, converts and reaches the sink.
   {
     CMSampleBufferRef sample =
-        makeSample(stream.frames[0], description, 0, true);
+        makeVp8Sample(stream.frames[0], description, 0, true);
     expect(decoder.submitCMSampleBuffer(sample, 7, &error) ==
                VideoDecodeSubmitResult::Accepted,
            "the key frame is accepted");
@@ -676,7 +524,7 @@ void testStage() {
 
     // Submitting again before the drain is backpressure, not loss.
     CMSampleBufferRef second =
-        makeSample(stream.frames[1], description, 1, false);
+        makeVp8Sample(stream.frames[1], description, 1, false);
     expect(decoder.submitCMSampleBuffer(second, 7, &error) ==
                VideoDecodeSubmitResult::Backpressure,
            "a second submission before the drain is typed backpressure");
@@ -729,7 +577,7 @@ void testStage() {
     for (std::size_t index = 1; index < stream.frames.size(); ++index) {
       sink.held.reset();
       CMSampleBufferRef sample =
-          makeSample(stream.frames[index], description,
+          makeVp8Sample(stream.frames[index], description,
                      static_cast<std::int64_t>(index), stream.keyFrames[index]);
       expect(decoder.submitCMSampleBuffer(sample, 7, &error) ==
                  VideoDecodeSubmitResult::Accepted,
@@ -754,7 +602,7 @@ void testStage() {
   // Stale generations are inert.
   {
     CMSampleBufferRef sample =
-        makeSample(stream.frames[0], description, 0, true);
+        makeVp8Sample(stream.frames[0], description, 0, true);
     expect(decoder.submitCMSampleBuffer(sample, 9, &error) ==
                VideoDecodeSubmitResult::Rejected,
            "a stale-generation submission is rejected");
@@ -768,7 +616,7 @@ void testStage() {
   {
     sink.held.reset();
     CMSampleBufferRef sample =
-        makeSample(stream.frames[1], description, 1, false);
+        makeVp8Sample(stream.frames[1], description, 1, false);
     expect(decoder.submitCMSampleBuffer(sample, 7, &error) ==
                VideoDecodeSubmitResult::Accepted,
            "a frame is staged before the flush");
@@ -788,7 +636,7 @@ void testStage() {
   // completes immediately and the sink is told exactly once.
   {
     CMSampleBufferRef sample =
-        makeSample(stream.frames[0], description, 0, true);
+        makeVp8Sample(stream.frames[0], description, 0, true);
     expect(decoder.submitCMSampleBuffer(sample, 11, &error) ==
                VideoDecodeSubmitResult::Accepted,
            "a key frame is accepted at the new generation");
@@ -845,9 +693,6 @@ void testLane() {
          "the lane reports software VP8 as available in this build");
 
   VideoDecodeLane lane;
-  expect(!lane.usesSoftwareDecode(),
-         "a lane that has never configured holds no software backend, so a "
-         "session that never plays VP8 pays nothing for it");
 
   const EncodedStream stream = encodeVp8(320, 176, 1);
   if (stream.frames.empty()) {
@@ -862,13 +707,11 @@ void testLane() {
   std::string error;
   expect(lane.configure(vp8Configuration(320, 176, 3, record), sink, &error),
          "the lane configures a VP8 stream");
-  expect(lane.usesSoftwareDecode(),
-         "and selects the software backend, once, at configure");
   expect(lane.stats().configured && lane.stats().generation == 3 &&
              !lane.stats().usingHardwareAcceleratedDecoder,
          "the lane forwards the software backend's stats verbatim");
 
-  CMSampleBufferRef sample = makeSample(stream.frames[0], description, 0, true);
+  CMSampleBufferRef sample = makeVp8Sample(stream.frames[0], description, 0, true);
   expect(lane.submitCMSampleBuffer(sample, 3, &error) ==
              VideoDecodeSubmitResult::Accepted,
          "the lane forwards a submission to the software backend");
