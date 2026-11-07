@@ -32,9 +32,11 @@ namespace wam::qt {
 // to shipping code.
 class PlayerControllerTestAccess final {
  public:
-  static void setExactDisplay(PlayerController& controller, media::MediaDisplaySize size) {
-    controller.updateVideoDisplaySize(size.width, size.height);
+  static void setVideoFacts(PlayerController& controller, media::MediaDisplaySize size,
+                            bool hdr = false) {
+    controller.updateVideoFacts(size.width, size.height, hdr);
   }
+  static void resetTimeline(PlayerController& controller) { controller.resetTimeline(); }
 
   static std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime() {
     static const auto injected =
@@ -1232,7 +1234,7 @@ int main(int argc, char **argv) {
     using namespace wam::media;
     wam::qt::PlayerController controller;
     const MediaDisplaySize exact{{615240,307},{1080,1}};
-    wam::qt::PlayerControllerTestAccess::setExactDisplay(controller, exact);
+    wam::qt::PlayerControllerTestAccess::setVideoFacts(controller, exact);
     expect(controller.exactVideoDisplaySize() == exact,
            "Qt retains the exact prepared rational size independently of QSizeF");
     expect(displayAspect(controller.exactVideoDisplaySize()) == MediaRational{1709,921},
@@ -1245,6 +1247,14 @@ int main(int argc, char **argv) {
     expect(controller.videoDisplaySize().width() > 2004.0 &&
                controller.videoDisplaySize().width() < 2004.04,
            "QML projection retains the fractional size rather than truncating it");
+    expect(!controller.videoHdr(), "an SDR open states SDR");
+    wam::qt::PlayerControllerTestAccess::setVideoFacts(controller, exact, true);
+    expect(controller.videoHdr(), "the backend's HDR answer is the controller's");
+    wam::qt::PlayerControllerTestAccess::setVideoFacts(controller, {}, false);
+    expect(controller.videoHdr(), "a backend with no picture cannot clear HDR");
+    wam::qt::PlayerControllerTestAccess::resetTimeline(controller);
+    expect(!controller.videoHdr() && controller.videoDisplaySize().isEmpty(),
+           "a media transition forgets the previous file's video facts");
   }
   {
     wam::qt::PlayerController controller;

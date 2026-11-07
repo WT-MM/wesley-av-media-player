@@ -757,12 +757,9 @@ bool PlayerController::initializePlaybackEngine() {
   observe(ObservedProperty::SubtitleText, "sub-text", MPV_FORMAT_STRING);
   observe(ObservedProperty::TrackListCount, "track-list/count",
           MPV_FORMAT_INT64);
-  // Display, not coded: mpv's dwidth/dheight are the picture's on-screen
-  // rectangle with the container's aspect ratio and rotation already applied,
-  // which is exactly what window geometry needs and exactly what
-  // MacWindowChrome's AVURLAsset probe cannot supply for Matroska/WebM/MPEG-TS.
   observe(ObservedProperty::DisplayWidth, "dwidth", MPV_FORMAT_INT64);
   observe(ObservedProperty::DisplayHeight, "dheight", MPV_FORMAT_INT64);
+  observe(ObservedProperty::VideoGamma, "video-params/gamma", MPV_FORMAT_STRING);
   return true;
 }
 
@@ -3511,12 +3508,6 @@ void PlayerController::drainMpvEvents() {
         }
         break;
       }
-      case ObservedProperty::CaptionsVisible:
-        // Retained so the enumerator stays exhaustively handled. mpv's
-        // sub-visibility is pinned off (WAM draws subtitles itself) and is
-        // not observed, so this can only be reached by an mpv-side change WAM
-        // did not ask for, which must not move the user's selection.
-        break;
       case ObservedProperty::Path: {
         const QUrl observed_source = urlFromMpvPath(readString(property));
         // requested_source_ is authoritative across asynchronous replacement.
@@ -3583,11 +3574,10 @@ void PlayerController::drainMpvEvents() {
         break;
       case ObservedProperty::DisplayWidth:
       case ObservedProperty::DisplayHeight:
-        // Either event means "the picture rectangle may have changed"; both
-        // read the whole pair back. See the enum comment: publishing one half
-        // of a new size against the surviving half of the old one would hand
-        // window geometry an aspect ratio no video ever had.
-        applyObservedDisplaySize();
+      case ObservedProperty::VideoGamma:
+        // Any of them means "the picture may have changed"; each reads all
+        // three back (see the enum comment).
+        applyObservedVideoFacts();
         break;
       }
       continue;
@@ -4341,10 +4331,10 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
     // is the one hook that fires on a first open and on every fallback the
     // router takes. The dwidth/dheight observations usually land just before
     // this, but they land inside the open and can be dropped by the path
-    // check in applyObservedDisplaySize while mpv still has the outgoing file;
-    // this is the reliable second look, and updateVideoDisplaySize dedupes so
+    // check in applyObservedVideoFacts while mpv still has the outgoing file;
+    // this is the reliable second look, and updateVideoFacts dedupes so
     // the common case where both agree costs one comparison.
-    applyObservedDisplaySize();
+    applyObservedVideoFacts();
   }
   restoreRenderRecovery();
 }
@@ -4401,7 +4391,7 @@ void PlayerController::updateDuration(double duration) {
     setTrimOut(value);
 }
 
-void PlayerController::applyObservedDisplaySize() {
+void PlayerController::applyObservedVideoFacts() {
   if (!mpv_.core || !engineReady() || mpv_.lineage.open_attempt)
     return;
   // Deliberately NOT gated on acceptsPlaybackObservation(), which every other
@@ -4420,6 +4410,12 @@ void PlayerController::applyObservedDisplaySize() {
   const QSize size = currentVideoDisplaySize(mpv_.core.get());
   if (size.isEmpty())
     return;
+  char *gamma = mpv_.core->api().mpv_get_property_string(mpv_.core->handle(),
+                                                         "video-params/gamma");
+  const bool hdr = gamma != nullptr && (std::string_view(gamma) == "pq" ||
+                                        std::string_view(gamma) == "hlg");
+  if (gamma != nullptr)
+    mpv_.core->api().mpv_free(gamma);
   char *path = mpv_.core->api().mpv_get_property_string(mpv_.core->handle(), "path");
   if (!path)
     return;
@@ -4427,14 +4423,11 @@ void PlayerController::applyObservedDisplaySize() {
   mpv_.core->api().mpv_free(path);
   if (playing.isEmpty() || playing != source_)
     return;
-  updateVideoDisplaySize(size.width(), size.height());
+  updateVideoFacts({size.width(), 1}, {size.height(), 1}, hdr);
 }
 
-void PlayerController::updateVideoDisplaySize(int width, int height) {
-  updateVideoDisplaySize(media::MediaRational{width, 1}, media::MediaRational{height, 1});
-}
-
-void PlayerController::updateVideoDisplaySize(media::MediaRational width, media::MediaRational height) {
+void PlayerController::updateVideoFacts(media::MediaRational width,
+                                        media::MediaRational height, bool hdr) {
   // A backend that cannot state a size must not erase one another backend
   // already stated. The single place a size is deliberately forgotten is
   // resetTimeline(), which assigns the member directly for exactly that
@@ -4446,9 +4439,10 @@ void PlayerController::updateVideoDisplaySize(media::MediaRational width, media:
     return;
   exact_video_display_size_ = {width, height};
   const QSizeF value(media::displayScalar(width), media::displayScalar(height));
-  if (video_display_size_ == value)
+  if (video_display_size_ == value && video_hdr_ == hdr)
     return;
   video_display_size_ = value;
+  video_hdr_ = hdr;
   emit videoDisplaySizeChanged();
 }
 
@@ -5362,12 +5356,13 @@ void PlayerController::resetTimeline() {
   }
   native_seek_ceiling_ = 0.0;
   // The one place a display size is deliberately forgotten (see
-  // updateVideoDisplaySize, which refuses to publish an empty one). Every
+  // updateVideoFacts, which refuses to publish an empty one). Every
   // media transition routes through here, so the previous file's aspect
   // cannot outlive it into the next open's window geometry.
-  if (!video_display_size_.isEmpty()) {
+  if (!video_display_size_.isEmpty() || video_hdr_) {
     video_display_size_ = QSizeF();
     exact_video_display_size_ = {};
+    video_hdr_ = false;
     emit videoDisplaySizeChanged();
   }
   if (!nearlyEqual(trim_in_, 0.0)) {

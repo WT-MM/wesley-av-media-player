@@ -87,19 +87,19 @@ class PlayerController final : public QObject {
   Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
   Q_PROPERTY(double position READ position WRITE seekTo NOTIFY positionChanged)
   Q_PROPERTY(double duration READ duration NOTIFY durationChanged)
-  // The current video's on-screen rectangle in square pixels, as stated by
-  // whichever engine actually demuxed the container: the native route's
-  // Prepared event (AVFoundation, Matroska/WebM, MPEG-TS) or mpv's
-  // dwidth/dheight on the compatibility route. Both already carry pixel aspect
-  // ratio, clean aperture and rotation, so this is a display size and not a
-  // coded size.
+  // The current video's facts, as stated by whichever engine actually
+  // demuxed the container: the native route's Prepared event or mpv's
+  // dwidth/dheight and video-params/gamma on the compatibility route. They are
+  // the only source of video size and HDR in the app; AVFoundation cannot
+  // demux Matroska, WebM or MPEG-TS, so no AVURLAsset probe can stand in.
   //
-  // An empty QSize means "not known" -- audio-only media, no media, or an open
-  // that has not reached Prepared yet. It exists because MacWindowChrome's
-  // AVURLAsset probe, which qml/Main.qml asks first, cannot demux Matroska/WebM/MPEG-TS and answers (0, 0) for every one
-  // of them; Main.qml falls back to this when it does.
+  // videoDisplaySize is the on-screen rectangle in square pixels (pixel
+  // aspect, clean aperture and rotation applied), not the coded size. An
+  // empty QSize means "not known": audio-only media, no media, or an open
+  // that has not stated it yet. videoHdr is true for a PQ or HLG transfer.
   Q_PROPERTY(QSizeF videoDisplaySize READ videoDisplaySize NOTIFY
                  videoDisplaySizeChanged)
+  Q_PROPERTY(bool videoHdr READ videoHdr NOTIFY videoDisplaySizeChanged)
   // Normalized level where 1.0 is 100%. The range runs to maximumVolume
   // below: above unity this is VLC-style amplification, which can clip by
   // design (the native gain stage saturates each sample to [-1, 1]; mpv is
@@ -224,6 +224,7 @@ public:
   [[nodiscard]] double position() const { return position_; }
   [[nodiscard]] double duration() const { return duration_; }
   [[nodiscard]] QSizeF videoDisplaySize() const { return video_display_size_; }
+  [[nodiscard]] bool videoHdr() const { return video_hdr_; }
   [[nodiscard]] media::MediaDisplaySize exactVideoDisplaySize() const { return exact_video_display_size_; }
   // Normalized UI volume. mpv's 0..400 range maps to 0..4 here; 1.0 is 100%.
   [[nodiscard]] double volume() const { return volume_; }
@@ -554,7 +555,6 @@ private:
     Volume,
     Mute,
     Rate,
-    CaptionsVisible,
     Path,
     MediaTitle,
     PreservePitch,
@@ -571,19 +571,17 @@ private:
     // `track-list` itself would mean MPV_FORMAT_NODE and a matching
     // mpv_free_node_contents, which is not in the resolved symbol table.
     TrackListCount,
-    // The video's display width and height, which is what the compatibility
-    // route has to state for window geometry -- MacWindowChrome's AVURLAsset
-    // probe cannot demux the very containers (Matroska/WebM/MPEG-TS) that end
-    // up on this route. mpv's dwidth/dheight already apply the container's
-    // aspect ratio and rotation, so they are display sizes, not coded sizes.
+    // The video facts (see videoDisplaySize). mpv's dwidth/dheight already
+    // apply the container's aspect ratio and rotation.
     //
-    // Two observations, one fact: the pair arrives as two independent events
-    // and either one alone would publish half a new aspect over half an old
-    // one. Both handlers therefore read BOTH properties back synchronously
-    // (mpv_get_property, an in-process struct read) and publish the pair
-    // atomically; the observation only decides WHEN to look.
+    // Three observations, one fact: they arrive as independent events and
+    // either size half alone would publish half a new aspect over half an old
+    // one. Every handler therefore reads all three back synchronously
+    // (mpv_get_property, an in-process struct read) and publishes them
+    // together; the observation only decides WHEN to look.
     DisplayWidth,
     DisplayHeight,
+    VideoGamma,
   };
 
   void drainMpvEvents();
@@ -751,10 +749,10 @@ private:
   bool attachSubtitleSource(const std::filesystem::path &path, int origin,
                             const QString &label);
   void applyObservedDuration(double duration);
-  // Reads mpv's dwidth/dheight pair back and publishes it. Takes no argument
-  // on purpose: the observation that triggered it carries only one half, and
-  // half a size is not a fact this controller is willing to publish.
-  void applyObservedDisplaySize();
+  // Reads mpv's dwidth/dheight pair and gamma back and publishes them. Takes
+  // no argument on purpose: the observation that triggered it carries only
+  // one of them, and half a size is not a fact to publish.
+  void applyObservedVideoFacts();
   void applyObservedIdle(bool idle);
   void applyObservedEof(bool eof_reached);
   void applyObservedVideoTrack(std::int64_t video_track_id);
@@ -799,13 +797,14 @@ private:
   // seekCeilingSeconds); 0 while no native session is prepared. Read only by
   // the native target snap, never shown: the timeline keeps the real duration.
   void updateNativeSeekCeiling(double seconds);
-  // Publishes a display size from whichever engine demuxed the container. Both
-  // callers -- NativePlaybackOwner's Prepared arm and the mpv dwidth/dheight
+  // Publishes the video facts from whichever engine demuxed the container.
+  // Both callers -- NativePlaybackOwner's Prepared arm and the mpv
   // observation -- go through here so the dedupe and the "an empty size never
-  // overwrites a known one" rule are stated once. Pass (0, 0) only through
-  // resetTimeline(), which is the one place a size is deliberately forgotten.
-  void updateVideoDisplaySize(int width, int height);
-  void updateVideoDisplaySize(media::MediaRational width, media::MediaRational height);
+  // overwrites a known one" rule are stated once. A backend with no picture
+  // states nothing, HDR included. resetTimeline() is the one place the facts
+  // are deliberately forgotten.
+  void updateVideoFacts(media::MediaRational width, media::MediaRational height,
+                        bool hdr);
   void updateSource(const QUrl &source);
   void updateMediaTitle(const QString &title);
   void resetTimeline();
@@ -891,6 +890,7 @@ private:
   double native_seek_ceiling_ = 0.0;
   QSizeF video_display_size_;
   media::MediaDisplaySize exact_video_display_size_;
+  bool video_hdr_ = false;
   double volume_ = 1.0;
   double maximum_volume_ = 2.0;
   double rate_ = 1.0;

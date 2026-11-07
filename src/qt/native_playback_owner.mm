@@ -535,17 +535,12 @@ void NativePlaybackOwner::publishLifecycle(
           controller_.updateNativeSeekCeiling(
               nativeSeekCeilingSeconds());
           controller_.updateDuration(event.descriptor.durationSeconds);
-          // The container's own display geometry, from the backend that
-          // actually demuxed it. This is the only path by which a Matroska,
-          // WebM or MPEG-TS natural size can reach window geometry:
-          // MacWindowChrome answers that question with an AVURLAsset, and
-          // AVFoundation cannot demux any of the three, so it returns (0, 0)
-          // for every one of them. Published before the QML-facing signals
-          // below so that a handler reacting to the open already sees it.
-          // Zero means "not stated" and updateVideoDisplaySize drops it.
-          controller_.updateVideoDisplaySize(
-              event.descriptor.displayWidth,
-              event.descriptor.displayHeight);
+          // Published before the QML-facing signals below so that a handler
+          // reacting to the open already sees it. Zero means "not stated"
+          // and updateVideoFacts drops it.
+          controller_.updateVideoFacts(event.descriptor.displayWidth,
+                                       event.descriptor.displayHeight,
+                                       event.descriptor.highDynamicRange);
           controller_.updatePause(true);
           controller_.updateIdle(false);
           controller_.updateEof(false);
