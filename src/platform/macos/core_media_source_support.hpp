@@ -3,6 +3,7 @@
 #include "media/audio_codec_timing.hpp"
 #include "media/native_media_source.hpp"
 #include "media/media_codec_facts.hpp"
+#include "platform/macos/core_media_time.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -49,6 +50,58 @@ inline void assignError(std::string* error, const char* message) {
   }
   const auto order = media::compareMediaTime(target, duration);
   return order && *order != media::MediaTimeOrder::Greater;
+}
+
+[[nodiscard]] inline media::MediaTime optionalMediaTime(CMTime time) noexcept {
+  return exactMediaTime(time).value_or(media::MediaTime{});
+}
+
+// The neutral timeline window `0 <= actualDecodeStart <= target`, stated by
+// native_media_dispatcher.cpp deriveTimeline and re-proved by the video
+// consumer and the audio session. `located` is the random-access point a route
+// found for `target` (no target: a cold open from the origin). Returns the
+// decode start to report, or empty when the located start skipped content.
+//
+//   * Before 0: a head-trimmed edit list (elst media_time > 0) hides media
+//     before the movie origin, so the RAP that decodes the picture at 0
+//     restates to a negative movie time. Reported as 0; pictures before the
+//     generation start are retired as compressed preroll by the consumer.
+//   * After the target: legitimate only when the located start IS the first
+//     video access unit -- a leading empty edit, a stream-copied Matroska whose
+//     video starts a few milliseconds in, a transport stream whose audio leads
+//     its video. Reported as the target (0 without one): audio decodes from
+//     there and the first picture simply arrives later. Any other late start
+//     has skipped content and is refused.
+[[nodiscard]] inline std::optional<media::MediaTime> timelineWindowDecodeStart(
+    media::MediaTime located, const std::optional<media::MediaTime>& target,
+    const std::optional<media::MediaTime>& videoOrigin) noexcept {
+  if (!located.valid()) {
+    return std::nullopt;
+  }
+  if (located.value < 0) {
+    return media::MediaTime{0, 1};
+  }
+  const media::MediaTime ceiling = target.value_or(media::MediaTime{0, 1});
+  const auto againstCeiling = media::compareMediaTime(located, ceiling);
+  if (!againstCeiling) {
+    return std::nullopt;
+  }
+  if (*againstCeiling != media::MediaTimeOrder::Greater) {
+    return located;
+  }
+  const bool atVideoOrigin =
+      videoOrigin.has_value() &&
+      media::compareMediaTime(located, *videoOrigin) ==
+          std::optional<media::MediaTimeOrder>{media::MediaTimeOrder::Equal};
+  if (atVideoOrigin) {
+    return ceiling;
+  }
+  // Without a target the origin itself is the request, so a later first RAP
+  // is the start there is.
+  if (!target) {
+    return located;
+  }
+  return std::nullopt;
 }
 
 // True when the sample's whole presentation interval closes at or before the

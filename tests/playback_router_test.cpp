@@ -35,8 +35,13 @@ native::Prepared preparedFor(const native::Prepare &prepare) {
           prepare.reservedGeneration};
 }
 
+wam::media::MediaTime at(double seconds) {
+  return *wam::media::exactNonnegativeMediaTime(seconds);
+}
+
 native::CommitReady readyFor(const native::CommitSeek &commit,
                              std::uint64_t drawSequence) {
+  const wam::media::MediaTime target = at(commit.targetSeconds);
   return {commit.stamp,
           commit.targetGeneration,
           commit.gesture,
@@ -45,7 +50,12 @@ native::CommitReady readyFor(const native::CommitSeek &commit,
           {commit.stamp, commit.targetGeneration,
            native::AudioClockAnchorId{1}, commit.targetSeconds, true, 1.0},
           {commit.stamp, commit.targetGeneration, drawSequence,
-           commit.targetSeconds, 1.0 / 30.0}};
+           commit.targetSeconds, 1.0 / 30.0},
+          target,
+          target,
+          {0, 1},
+          target,
+          {1, 30}};
 }
 
 void nativeSuccessHasZeroFallback() {
@@ -345,7 +355,7 @@ void commitSeekPromotesOnlyExactReady() {
           .runState;
   const auto beforeInvalidBaseline = router.snapshot();
   expect(router.commitSeek(
-                   {native::GestureId{9}, native::RequestId{11}, 42.0,
+                   {native::GestureId{9}, native::RequestId{11}, at(42.0),
                     std::numeric_limits<std::uint64_t>::max()},
                    {4})
                  .status == router::Status::Invalid &&
@@ -357,7 +367,7 @@ void commitSeekPromotesOnlyExactReady() {
          "reservation");
   auto commit =
       action(router.commitSeek({native::GestureId{9}, native::RequestId{12},
-                                42.5, 20},
+                                at(42.5), 20},
                                {4}),
              router::ActionKind::NativeCommitSeek,
              "active route issues exact CommitSeek")
@@ -374,7 +384,7 @@ void commitSeekPromotesOnlyExactReady() {
          "source generation remains active");
   const auto oldCommit = commit;
   const auto replacement = router.commitSeek(
-      {native::GestureId{9}, native::RequestId{13}, 43.0, 20}, {5});
+      {native::GestureId{9}, native::RequestId{13}, at(43.0), 20}, {5});
   expect(replacement.status == router::Status::Applied && replacement.action &&
              router.snapshot().generationHighWater.value > seeking.generationHighWater.value,
          "a newer commit supersedes an in-flight seek with fresh lineage");
@@ -467,7 +477,7 @@ void previewFramesReserveLatestGestureAndCommit() {
 
   const auto beforeWrongCommit = router.snapshot();
   expect(router.commitSeek({native::GestureId{8}, native::RequestId{9},
-                            22.5, 40},
+                            at(22.5), 40},
                            {8})
                  .status == router::Status::Invalid &&
              router.snapshot().serial == beforeWrongCommit.serial &&
@@ -476,7 +486,7 @@ void previewFramesReserveLatestGestureAndCommit() {
          "a commit from another gesture is rejected before reservation");
   const auto commit =
       action(router.commitSeek({native::GestureId{7}, native::RequestId{9},
-                                22.5, 40},
+                                at(22.5), 40},
                                {9}),
              router::ActionKind::NativeCommitSeek,
              "final seek follows the exact retained preview gesture")
@@ -634,7 +644,7 @@ void previewFramesAreLiveWhileStartingAndEnded() {
   expect(!run.paused && run.stamp.serial.value > preview.stamp.serial.value,
          "Started applies the intent after all prior preview serials");
   action(starting.commitSeek({native::GestureId{3}, native::RequestId{2},
-                              12.5, 1},
+                              at(12.5), 1},
                              {6}),
          router::ActionKind::NativeCommitSeek,
          "commit still follows a preview retained across Started");
@@ -668,7 +678,7 @@ void previewFramesAreLiveWhileStartingAndEnded() {
              endedPreview.generation == endedRun.generation,
          "ended preview retains EOS state and active generation");
   action(ended.commitSeek({native::GestureId{4}, native::RequestId{2},
-                           60.0, 2},
+                           at(60.0), 2},
                           {6}),
          router::ActionKind::NativeCommitSeek,
          "ended preview can become an exact replay commit");
@@ -783,7 +793,7 @@ void resumeCommitMayStartBeforeStartedFact() {
           .start;
   const auto commit =
       action(router.commitSeek({native::GestureId{1}, native::RequestId{1},
-                                73.0, 4},
+                                at(73.0), 4},
                                {3}),
              router::ActionKind::NativeCommitSeek,
              "resume position commits while native Start is outstanding")
@@ -826,7 +836,7 @@ void commitFallbackExhaustionWaitsForExactRetirement() {
 
   const auto stop =
       action(router.commitSeek({native::GestureId{1}, native::RequestId{1},
-                                44.0, 1},
+                                at(44.0), 1},
                                {4}),
              router::ActionKind::NativeStop,
              "seek generation exhaustion still retires native exactly")
@@ -867,7 +877,7 @@ void endedSeekRestartsAndSeekingRetiresExactTarget() {
          "ended seek retains replay intent");
   const auto commit =
       action(router.commitSeek({native::GestureId{2}, native::RequestId{1},
-                                0.0, 10},
+                                at(0.0), 10},
                                {6}),
              router::ActionKind::NativeCommitSeek,
              "ended route can commit back to the beginning")
@@ -910,6 +920,36 @@ void timeoutStopsButNeverManufacturesQuiescence() {
       router.onNativeStopped({stop.stamp, stop.invalidationGeneration}, {1001}),
       router::ActionKind::CreateFallback,
       "only exact proof releases timed-out native ownership");
+}
+
+// A host's wall-clock deadline expires the bounded phase without a tick
+// budget: preparation stops, and a parked stop is released only through
+// retireStoppingAfterSynchronousTeardown().
+void hostDeadlineExpiresBoundedPhases() {
+  router::PlaybackRouter router;
+  action(router.open(nativeOpen(301), {1}), router::ActionKind::NativePrepare,
+         "untimed native prepare");
+  expect(router.advance({1000}).status == router::Status::Ignored,
+         "without a tick policy no tick expires the phase");
+  const auto stop = action(router.expirePhase({1001}),
+                           router::ActionKind::NativeStop,
+                           "host deadline stops preparation")
+                        .stop;
+  expect(router.retireStoppingAfterSynchronousTeardown({1002}).status ==
+             router::Status::Ignored,
+         "an unexpired stop keeps the exact proof authoritative");
+  expect(router.expirePhase({1003}).status == router::Status::Applied &&
+             !router.expirePhase({1003}).action.has_value() &&
+             router.snapshot().state == router::State::NativeStopping,
+         "host deadline on a stop only records the expiry");
+  expect(router.retireStoppingAfterSynchronousTeardown({1004}).status ==
+             router::Status::Applied,
+         "recorded expiry releases the stop after synchronous teardown");
+  expect(router.onNativeStopped({stop.stamp, stop.invalidationGeneration},
+                                {1005}).status == router::Status::Ignored,
+         "a late Stopped proof is inert after forced retirement");
+  expect(router.expirePhase({1006}).status == router::Status::Ignored,
+         "outside a bounded phase the host deadline is inert");
 }
 
 // NativeStopping is the phase whose completion needs the video output's
@@ -1040,32 +1080,31 @@ void naturalEndRetainsNativeUntilExactStop() {
          "exact Stop releases ended ownership to queued source");
 }
 
-void rationalCommitRequiresCompanionProof() {
+void commitRequiresExactProof() {
   router::PlaybackRouter owner;
   const auto prepare = owner.open(nativeOpen(1), {1}).action->prepare;
   const auto start = owner.onNativePrepared(preparedFor(prepare), {2}).action->start;
   static_cast<void>(owner.onNativeStarted({start.stamp,start.preparedGeneration,0}, {3}));
   const wam::media::MediaTime target{1001,30000};
-  const auto command = action(owner.commitSeekExact({{1},{1},*wam::media::mediaTimeSeconds(target),0},target,{4}),
+  const auto command = action(owner.commitSeek({{1},{1},target,0},{4}),
       router::ActionKind::NativeCommitSeek,"rational seek reserved").commitSeek;
-  expect(owner.onNativeCommitReady(readyFor(command,1),{5}).status == router::Status::Ignored,
-      "binary64 proof cannot promote a rational request");
-  native::ExactCommitReady ready;
-  ready.stamp = command.stamp; ready.generation = command.targetGeneration;
-  ready.gesture = command.gesture; ready.request = command.request;
-  ready.requestedTarget = target; ready.audioPresentationStart = {267,8000};
-  ready.actualDecodeStart = {0,1}; ready.videoStart = {0,25}; ready.videoDuration = {1,25};
-  ready.clockPublication = 1; ready.drawSequence = 1;
-  auto wrong = ready; wrong.requestedTarget = {1002,30000};
-  expect(owner.onNativeExactCommitReady(wrong,{6}).status == router::Status::Ignored,"wrong rational target is rejected");
-  expect(owner.onNativeExactCommitReady(ready,{7}).status == router::Status::Applied,"exact companion promotes generation");
-  expect(owner.onNativeExactCommitReady(ready,{8}).status == router::Status::Ignored,"completion is consumed once");
+  expect(command.targetSeconds == *wam::media::mediaTimeSeconds(target),
+      "the command carries the exact target's display seconds");
+  auto ready = readyFor(command, 1);
+  ready.target = target; ready.audioPresentationStart = {267,8000};
+  ready.videoStart = {0,25}; ready.videoDuration = {1,25};
+  auto wrong = ready; wrong.target = {1002,30000};
+  expect(owner.onNativeCommitReady(wrong,{5}).status == router::Status::Ignored,"wrong rational target is rejected");
+  wrong = ready; wrong.videoStart = {1,25};
+  expect(owner.onNativeCommitReady(wrong,{6}).status == router::Status::Ignored,"a frame that does not cover the exact target is rejected");
+  expect(owner.onNativeCommitReady(ready,{7}).status == router::Status::Applied,"exact proof promotes generation");
+  expect(owner.onNativeCommitReady(ready,{8}).status == router::Status::Ignored,"completion is consumed once");
 }
 
 } // namespace
 
 int main() {
-  rationalCommitRequiresCompanionProof();
+  commitRequiresExactProof();
   nativeSuccessHasZeroFallback();
   runStateCarriesRateAndPitchTogether();
   unsupportedIsTheOnlyImmediateFallback();
@@ -1076,6 +1115,7 @@ int main() {
   exhaustionFailsWithoutWrapping();
   wrongLineageAndLatestIntent();
   timeoutStopsButNeverManufacturesQuiescence();
+  hostDeadlineExpiresBoundedPhases();
   stoppingPhaseIsWatchdogBoundedAndForceRetires();
   unboundedStopBudgetStillRequiresTheExactProof();
   naturalEndRetainsNativeUntilExactStop();

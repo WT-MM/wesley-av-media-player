@@ -1,3 +1,4 @@
+#include "media/native_exact_playback.hpp"
 #include "media/native_playback_contract.hpp"
 
 #include <cstdlib>
@@ -9,6 +10,8 @@
 namespace {
 
 using namespace wam::media::native_playback;
+using wam::media::MediaTime;
+using wam::media::exactNonnegativeMediaTime;
 
 int failures = 0;
 
@@ -559,6 +562,8 @@ void testLatestPreviewProof() {
          "preview proof rejects an infinite actual PTS");
 }
 
+MediaTime at(double seconds) { return *exactNonnegativeMediaTime(seconds); }
+
 CommitReady readyFor(const CommitSeek &command, std::uint64_t drawSequence) {
   const AudioClockProof audio{command.stamp,
                               command.targetGeneration,
@@ -568,13 +573,19 @@ CommitReady readyFor(const CommitSeek &command, std::uint64_t drawSequence) {
                               1.0};
   const VideoDrawProof video{command.stamp, command.targetGeneration,
                              drawSequence, command.targetSeconds, 1.0 / 30.0};
+  const MediaTime target = at(command.targetSeconds);
   return {command.stamp,
           command.targetGeneration,
           command.gesture,
           command.request,
           command.targetSeconds,
           audio,
-          video};
+          video,
+          target,
+          target,
+          {0, 1},
+          target,
+          {1, 30}};
 }
 
 void testCommitNeedsExactClockAndDrawProof() {
@@ -609,35 +620,40 @@ void testCommitNeedsExactClockAndDrawProof() {
          "41 became active");
 
   const CommitReady ready = readyFor(commit, 101);
-  expect(commitReadyMatches(commit, 100, ready),
+  expect(commitReadyMatches(commit, at(8.25), 100, ready),
          "commit converges on its exact audio anchor and a newer video draw");
-  expect(!commitReadyMatches(commit, 101, ready),
+  expect(!commitReadyMatches(commit, at(8.25), 101, ready),
          "a retained baseline draw is not a post-commit draw proof");
 
   CommitReady wrong = ready;
   wrong.stamp.attempt = AttemptId{8};
   wrong.audioClock.stamp = wrong.stamp;
   wrong.videoDraw.stamp = wrong.stamp;
-  expect(!commitReadyMatches(commit, 100, wrong),
+  expect(!commitReadyMatches(commit, at(8.25), 100, wrong),
          "commit proof rejects a wrong attempt");
   wrong = ready;
   wrong.generation = Generation{42};
   wrong.audioClock.generation = Generation{42};
   wrong.videoDraw.generation = Generation{42};
-  expect(!commitReadyMatches(commit, 100, wrong),
+  expect(!commitReadyMatches(commit, at(8.25), 100, wrong),
          "commit proof rejects a wrong generation");
   wrong = ready;
   wrong.request = RequestId{103};
-  expect(!commitReadyMatches(commit, 100, wrong),
+  expect(!commitReadyMatches(commit, at(8.25), 100, wrong),
          "commit proof rejects a wrong request");
   wrong = ready;
   wrong.targetSeconds = 8.5;
   wrong.audioClock.positionSeconds = 8.5;
-  expect(!commitReadyMatches(commit, 100, wrong),
+  expect(!commitReadyMatches(commit, at(8.25), 100, wrong),
          "commit proof must echo the exact requested target");
   wrong = ready;
-  wrong.audioClock.positionSeconds = 8.0;
-  expect(!valid(wrong), "commit proof requires its exact audio clock target");
+  wrong.target = at(8.5);
+  expect(!commitReadyMatches(commit, at(8.25), 100, wrong),
+         "commit proof must carry the exact requested target");
+  wrong = ready;
+  wrong.audioPresentationStart = at(8.0);
+  expect(!commitReadyMatches(commit, at(8.25), 100, wrong),
+         "commit proof requires audio presented at or after the target");
   wrong = ready;
   wrong.audioClock.paused = false;
   expect(!valid(wrong), "commit clock proof must be paused");
@@ -658,13 +674,13 @@ void testCommitNeedsExactClockAndDrawProof() {
   wrong.videoDraw.frameDurationSeconds = 0.0;
   expect(!valid(wrong), "commit video proof requires a positive frame span");
   wrong = ready;
-  wrong.videoDraw.frameStartSeconds = commit.targetSeconds + 0.01;
-  expect(!valid(wrong),
+  wrong.videoStart = at(commit.targetSeconds + 0.0078125);
+  expect(!commitReadyMatches(commit, at(8.25), 100, wrong),
          "a frame entirely after the target is not exact commit proof");
   wrong = ready;
-  wrong.videoDraw.frameStartSeconds = commit.targetSeconds - 1.0;
-  wrong.videoDraw.frameDurationSeconds = 0.5;
-  expect(!valid(wrong),
+  wrong.videoStart = at(commit.targetSeconds - 1.0);
+  wrong.videoDuration = {1, 2};
+  expect(!commitReadyMatches(commit, at(8.25), 100, wrong),
          "a frame ending before the target is not exact commit proof");
 
   const PreviewPresented preview{latest.stamp, latest.generation,
@@ -858,7 +874,7 @@ void testValidSequence() {
              commitFollowsLatestPreview(preview.stamp, preview.generation,
                                         preview, GenerationHighWater{40},
                                         commit) &&
-             commitReadyMatches(commit, started.drawBaseline, committed) &&
+             commitReadyMatches(commit, at(10.0), started.drawBaseline, committed) &&
              runStateFollows(commit.stamp, commit.targetGeneration, resumed) &&
              stopFollows(resumed.stamp, GenerationHighWater{41}, stop) &&
              stoppedMatches(stop, stopped),

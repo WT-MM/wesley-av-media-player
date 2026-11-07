@@ -664,6 +664,9 @@ struct MediaSourceOpenOptions {
   MediaTrackSelection selection;
   MediaSourceLimits limits;
   std::optional<MediaSourceInitialPosition> initialPosition;
+  // The open preflight found the file on a non-local mount; such a file is
+  // read through the buffered libavformat route.
+  bool bufferedStorage{false};
 };
 
 // Immutable identity of the backend state admitted by one Ready open. Main

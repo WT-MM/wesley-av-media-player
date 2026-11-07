@@ -1,7 +1,5 @@
 #include "native_silent_timebase.hpp"
 
-#include <cmath>
-
 namespace wam::macos {
 
 NativeSilentTimebase::NativeSilentTimebase(
@@ -26,37 +24,15 @@ std::unique_ptr<NativeSilentTimebase> NativeSilentTimebase::create(
 }
 
 bool NativeSilentTimebase::activate(media::MediaGeneration generation,
-                                    double positionSeconds) noexcept {
-  if (retired_ || generation == 0 || generation <= generation_ ||
-      !std::isfinite(positionSeconds) || positionSeconds < 0.0) {
-    return false;
-  }
-  if (generation_ == 0) {
-    if (!clock_.anchor(generation, positionSeconds, rate_.toDouble(),
-                       false)) {
-      return false;
-    }
-  } else {
-    // seek() carries the retired generation's running fact forward, so the
-    // transition is pinned paused first. The session's CommitSeek chain has
-    // already published its own physical pause of the retired generation;
-    // this repeat is idempotent and keeps the invariant local.
-    if (!clock_.pause(generation_) ||
-        !clock_.seek(generation_, generation, positionSeconds)) {
-      return false;
-    }
-  }
-  generation_ = generation;
-  running_ = false;
-  return true;
-}
-
-bool NativeSilentTimebase::activateExact(media::MediaGeneration generation,
-                                          media::MediaTime target) noexcept {
+                                    media::MediaTime target) noexcept {
   if (retired_ || generation == 0 || generation <= generation_) return false;
+  // seek() carries the retired generation's running fact forward, so the
+  // transition is pinned paused first. The session's CommitSeek chain has
+  // already published its own physical pause of the retired generation; this
+  // repeat is idempotent and keeps the invariant local.
   const bool applied = generation_ == 0
-      ? clock_.anchorExact(generation, target, rate_.toDouble(), false)
-      : clock_.pause(generation_) && clock_.seekExact(generation_, generation, target);
+      ? clock_.anchor(generation, target, rate_, false)
+      : clock_.pause(generation_) && clock_.seek(generation_, generation, target);
   if (!applied) return false;
   generation_ = generation;
   running_ = false;
@@ -77,7 +53,7 @@ NativeAudioSessionProgress NativeSilentTimebase::setPaused(
   }
   const bool applied =
       paused ? clock_.pause(generation_)
-             : clock_.run(generation_, rate_.toDouble());
+             : clock_.run(generation_, rate_);
   if (!applied) {
     return NativeAudioSessionProgress::Failed;
   }
@@ -86,7 +62,7 @@ NativeAudioSessionProgress NativeSilentTimebase::setPaused(
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::setRate(
-    NativePlaybackRate rate) noexcept {
+    NativePlaybackRate rate, bool) noexcept {
   if (retired_ || !rate.valid()) {
     return NativeAudioSessionProgress::Invalid;
   }
@@ -101,7 +77,7 @@ NativeAudioSessionProgress NativeSilentTimebase::setRate(
   // Re-running an already running generation re-anchors it at the position it
   // has reached and continues from there at the new slope. That is exactly a
   // rate change: no media time is created or destroyed at the boundary.
-  return clock_.run(generation_, rate_.toDouble())
+  return clock_.run(generation_, rate_)
              ? NativeAudioSessionProgress::Done
              : NativeAudioSessionProgress::Failed;
 }

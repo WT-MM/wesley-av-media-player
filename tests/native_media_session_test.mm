@@ -1,5 +1,6 @@
 #define WAM_NATIVE_MEDIA_SESSION_TESTING 1
 
+#include "platform/macos/avfoundation_asset_context.hpp"
 #include "platform/macos/native_media_session.hpp"
 #include "platform/macos/native_presentation_admission.hpp"
 #include "media/playback_router.hpp"
@@ -19,6 +20,12 @@
 #include <vector>
 
 namespace {
+
+// The owner's seconds -> exact edge: no exact form becomes an invalid time.
+wam::media::MediaTime secondsTime(double seconds) {
+  return wam::media::exactNonnegativeMediaTime(seconds).value_or(
+      wam::media::MediaTime{});
+}
 
 using namespace wam;
 using namespace wam::macos;
@@ -150,7 +157,9 @@ struct GraphState {
   std::atomic<std::uint64_t> firstPreviewPauseOrder{0};
   std::atomic<std::uint64_t> firstPreviewQuiesceOrder{0};
   std::atomic<std::uint64_t> firstPreviewRequestOrder{0};
-  std::shared_ptr<const AVFoundationAssetContext> assetContext;
+  // The prepared context the fake source handed to the session at Ready.
+  std::shared_ptr<const media::MediaSourcePreparedContext> assetContext;
+  bool observePreviewBinding{false};
   std::atomic<std::uint64_t> previewBindingObservations{0};
   std::atomic<bool> previewBindingExact{false};
   std::atomic<bool> trackCommitLifecycle{false};
@@ -253,14 +262,7 @@ std::shared_ptr<const media::MediaSourceDescriptor> descriptor(
 }
 
 void installExactAssetContext(GraphState& state) {
-  media::MediaSourceOpenOptions options;
-  options.selection.requireVideo = true;
-  options.selection.requireAudio = true;
-  state.assetContext = makeAVFoundationAssetContextForTesting(
-      "/tmp/native-session-test.mov", options, state.descriptor,
-      std::make_shared<int>(1));
-  expect(state.assetContext != nullptr,
-         "test creates exact main-source asset context");
+  state.observePreviewBinding = true;
 }
 
 class FakeSource final : public media::MediaSource {
@@ -284,7 +286,7 @@ class FakeSource final : public media::MediaSource {
   }
 
   media::MediaSourceOpenOutcome openLocalFile(
-      const std::filesystem::path&,
+      const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,
       media::MediaGeneration generation) override {
     state_->sourceOpens.fetch_add(1, std::memory_order_relaxed);
@@ -310,8 +312,13 @@ class FakeSource final : public media::MediaSource {
                     .value_or(media::MediaTime{});
       audioWindow.startsAtStreamOrigin = true;
     }
+    if (state_->openStatus == media::MediaSourceOpenStatus::Ready) {
+      context_ = makeAVFoundationAssetContextForTesting(
+          path, options, state_->descriptor, std::make_shared<int>(1));
+      state_->assetContext = context_;
+    }
     return {state_->openStatus, generation, {0, 1}, state_->descriptor, {},
-            {}, audioWindow};
+            context_, audioWindow};
   }
 
   media::MediaSourceSeekOutcome seek(
@@ -345,7 +352,7 @@ class FakeSource final : public media::MediaSource {
             audioWindow.decodeStart == media::MediaTime{0, 1};
       }
     }
-    return {true, request.generation, state_->singleGop ? media::MediaTime{0, 1} : request.target, {}, {}, audioWindow};
+    return {true, request.generation, state_->singleGop ? media::MediaTime{0, 1} : request.target, {}, context_, audioWindow};
   }
 
   media::MediaSourceReadResult readNext(
@@ -397,6 +404,7 @@ class FakeSource final : public media::MediaSource {
 
  private:
   std::shared_ptr<GraphState> state_;
+  std::shared_ptr<const media::MediaSourcePreparedContext> context_;
   std::atomic<media::MediaGeneration> operation_{0};
   media::MediaGeneration generation_{0};
   std::uint64_t read_{0};
@@ -907,7 +915,98 @@ NativeAudioSessionProgress audioSuspend(void* context) noexcept {
   return NativeAudioSessionProgress::Done;
 }
 
-NativeMediaSessionTestGraph makeGraph(void* context) {
+class FakeVideoPort final : public SessionVideoPort {
+ public:
+  explicit FakeVideoPort(GraphState* state) noexcept : state_(state) {}
+  NativeVideoConsumerArmProgress armFirstGeneration(
+      media::MediaGeneration generation) noexcept override {
+    return armVideo(state_, generation);
+  }
+  media::MediaGeneration highestExposedGeneration() noexcept override {
+    return videoHigh(state_);
+  }
+  std::uint64_t lastOutputEventSequence() noexcept override {
+    return ::lastOutputEventSequence(state_);
+  }
+  std::uint64_t nextDueHostTicks() noexcept override {
+    return nextVideoDueHostTicks(state_);
+  }
+  std::optional<NativeTrackedVideoEvent> takeOutputEvent() noexcept override {
+    return ::takeOutputEvent(state_);
+  }
+  NativeVideoConsumerPreviewProgress quiesceForPreview(
+      media::MediaGeneration generation) noexcept override {
+    return ::quiesceForPreview(state_, generation);
+  }
+
+ private:
+  GraphState* state_;
+};
+
+class FakeClockAuthority final : public SessionClockAuthority {
+ public:
+  explicit FakeClockAuthority(GraphState* state) noexcept : state_(state) {}
+  NativeAudioSessionProgress start() noexcept override {
+    return audioStart(state_);
+  }
+  NativeAudioSessionProgress setPaused(bool paused) noexcept override {
+    return audioPaused(state_, paused);
+  }
+  NativeAudioSessionProgress setGain(float gain) noexcept override {
+    return audioGain(state_, gain);
+  }
+  NativeAudioSessionProgress setMuted(bool muted) noexcept override {
+    return audioMuted(state_, muted);
+  }
+  NativeAudioSessionProgress setRate(NativePlaybackRate,
+                                     bool) noexcept override {
+    return NativeAudioSessionProgress::Done;
+  }
+  NativeAudioSessionProgress stop() noexcept override {
+    return audioStop(state_);
+  }
+  NativeMediaClockSnapshot visibleClock() const noexcept override {
+    return testClock(state_);
+  }
+  media::MediaGeneration highestExposedGeneration() const noexcept override {
+    return audioHigh(state_);
+  }
+  bool suspendsForPause() const noexcept override {
+    return state_->observePauseSuspend;
+  }
+  NativeAudioSessionProgress suspendForPause() noexcept override {
+    return audioSuspend(state_);
+  }
+
+ private:
+  GraphState* state_;
+};
+
+class FakePreviewPort final : public SessionPreviewPort {
+ public:
+  explicit FakePreviewPort(GraphState* state) noexcept : state_(state) {}
+  NativePreviewFrameRequestStatus request(
+      protocol::PreviewFrame command,
+      NativePreviewFrameTarget target) noexcept override {
+    return previewRequest(state_, command, std::move(target));
+  }
+  NativePreviewFramePumpProgress pump() noexcept override {
+    return previewPump(state_);
+  }
+  std::optional<protocol::PreviewPresented> takePresented() noexcept override {
+    return takePreviewPresented(state_);
+  }
+  NativePreviewFrameCancelProgress stop(
+      protocol::Generation generation) noexcept override {
+    return stopPreview(state_, generation);
+  }
+
+ private:
+  GraphState* state_;
+};
+
+NativeMediaSessionGraph makeGraph(void* context,
+                                  NativeMediaSessionGraphRequest) noexcept {
   auto* holder = static_cast<std::shared_ptr<GraphState>*>(context);
   const auto state = *holder;
   state->factoryCalls.fetch_add(1, std::memory_order_relaxed);
@@ -916,27 +1015,15 @@ NativeMediaSessionTestGraph makeGraph(void* context) {
          !state->releaseFactory.load(std::memory_order_acquire)) {
     std::this_thread::yield();
   }
-  NativeMediaSessionTestGraph graph;
+  NativeMediaSessionGraph graph;
   if (state->transportPath.empty()) graph.source = std::make_unique<FakeSource>(state);
   else graph.source = std::make_unique<MpegTsMediaSource>();
   graph.video =
       std::make_unique<FakeConsumer<media::NativeVideoConsumer>>(state, true);
   graph.audio =
       std::make_unique<FakeConsumer<media::NativeAudioConsumer>>(state, false);
-  graph.videoControl = {state.get(), &armVideo, &videoHigh,
-                        &lastOutputEventSequence, &nextVideoDueHostTicks,
-                        &takeOutputEvent,
-                        &quiesceForPreview};
-  graph.audioControl = {state.get(), &audioStart, &audioPaused, &audioGain,
-                        &audioMuted, &audioStop, &testClock, &audioHigh};
-  if (state->observePauseSuspend) graph.audioControl.suspendForPause = &audioSuspend;
-  graph.previewControl = {state.get(), &previewRequest, &previewPump,
-                          &takePreviewPresented, &stopPreview};
-  graph.assetContext = state->assetContext;
-  if (state->assetContext != nullptr) {
-    graph.observePreviewBinding = &observePreviewBinding;
-    graph.previewBindingObserverContext = state.get();
-  }
+  graph.videoPort = std::make_unique<FakeVideoPort>(state.get());
+  graph.audioPort = std::make_unique<FakeClockAuthority>(state.get());
   return graph;
 }
 
@@ -948,6 +1035,8 @@ std::unique_ptr<NativeMediaSession> sessionFor(
     bool bindObservations = true, bool realtimeDeadline = false) {
   auto wake = NativeMediaSessionWake::create();
   NativeMediaSessionDependencies dependencies;
+  dependencies.graphFactory = &makeGraph;
+  dependencies.graphFactoryContext = state;
   dependencies.externalLifetime = *state;
   dependencies.wake = wake;
   dependencies.videoOutput = std::make_shared<NullOutput>((*state)->directPresentation);
@@ -964,8 +1053,13 @@ std::unique_ptr<NativeMediaSession> sessionFor(
                 : (*state)->transportPath},
       std::move(dependencies));
   expect(result != nullptr, "test session creates");
-  NativeMediaSessionTestAccess::installGraphFactory(
-      *result, &makeGraph, state);
+  NativeMediaSessionTestPreview preview;
+  preview.port = std::make_unique<FakePreviewPort>(state->get());
+  if ((*state)->observePreviewBinding) {
+    preview.observeBinding = &observePreviewBinding;
+    preview.observerContext = state->get();
+  }
+  NativeMediaSessionTestAccess::installPreview(*result, std::move(preview));
   if (bindObservations) {
     expect(result->bindObservationEdge(
                {std::make_shared<int>(1), &queueObservations,
@@ -984,7 +1078,7 @@ Fact waitFact(NativeMediaSession& session, const char* message,
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline) {
-    const NativeMediaSessionFacts facts = session.facts();
+    const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(session);
     bool ready = false;
     if constexpr (std::is_same_v<Fact,
                                  NativeMediaSessionRunStateApplied>) {
@@ -1029,7 +1123,7 @@ NativeMediaSessionObservations waitObservations(
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline) {
-    if (!session.facts().observationPending) {
+    if (!NativeMediaSessionTestAccess::facts(session).observationPending) {
       std::this_thread::sleep_for(std::chrono::microseconds(50));
       continue;
     }
@@ -1062,8 +1156,8 @@ protocol::Prepare prepareCommand(double seconds = 0.5) {
 
 NativeMediaSessionCommandStatus prepare(
     NativeMediaSession& session, protocol::Prepare command) {
-  const auto preflight = NativeMediaSession::preflightInitialPosition(
-      command.initialPositionSeconds);
+  const auto preflight = NativeMediaSession::preflightInitialPosition(secondsTime(
+      command.initialPositionSeconds));
   if (!preflight.has_value()) {
     return NativeMediaSessionCommandStatus::Invalid;
   }
@@ -1193,7 +1287,7 @@ void runStopAfterPreviewChildReturn(
     expect(session->preparePreviewHandoff() ==
                NativeMediaSessionCommandStatus::Accepted,
            "preview child race prewarm accepted");
-    waitUntil([&] { return session->facts().previewHandoffReady; },
+    waitUntil([&] { return NativeMediaSessionTestAccess::facts(*session).previewHandoffReady; },
               "preview child race prewarm becomes ready");
   }
 
@@ -1223,7 +1317,7 @@ void runStopAfterPreviewChildReturn(
   completionRelease.store(true, std::memory_order_release);
   static_cast<void>(waitFact<protocol::Stopped>(
       *session, "preview child completion cannot defeat Stop"));
-  const NativeMediaSessionFacts facts = session->facts();
+  const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
   const NativeMediaSessionObservations observations =
       session->takeObservations();
   expect(!facts.previewHandoffPending && !facts.previewHandoffReady &&
@@ -1255,12 +1349,12 @@ void testCommitWinsAfterPresentedChildReturn() {
   installExactAssetContext(*state);
   auto session = sessionFor(&state);
   prepareStartedPausedForPreview(*session);
-  const auto commitTarget = session->preflightCommitTarget(3.0);
+  const auto commitTarget = session->preflightCommitTarget(secondsTime(3.0));
   expect(commitTarget.has_value() &&
              session->preparePreviewHandoff() ==
                  NativeMediaSessionCommandStatus::Accepted,
          "preview/commit completion target and prewarm accepted");
-  waitUntil([&] { return session->facts().previewHandoffReady; },
+  waitUntil([&] { return NativeMediaSessionTestAccess::facts(*session).previewHandoffReady; },
             "preview/commit completion prewarm ready");
   std::atomic<bool> completionEntered{false};
   std::atomic<bool> completionRelease{false};
@@ -1286,7 +1380,7 @@ void testCommitWinsAfterPresentedChildReturn() {
   waitUntil([&] {
     return state->sourceSeeks.load(std::memory_order_acquire) == 1;
   }, "Commit progresses without a resurrected preview");
-  expect(!session->facts().previewPresentedPending &&
+  expect(!NativeMediaSessionTestAccess::facts(*session).previewPresentedPending &&
              !session->takeObservations().previewPresented.has_value(),
          "late presented completion cannot escape accepted Commit");
   expect(session->stop({{{1}, {6}}, {9}}) ==
@@ -1319,14 +1413,14 @@ void testPreviewHandoffPrewarmsBeforeFirstMotion() {
          "begin-scrub physical pause is published before preview prewarm");
   const NativeMediaSessionCommandStatus handoffStatus =
       session->preparePreviewHandoff();
-  const NativeMediaSessionFacts handoffFacts = session->facts();
+  const NativeMediaSessionFacts handoffFacts = NativeMediaSessionTestAccess::facts(*session);
   expect(handoffStatus == NativeMediaSessionCommandStatus::Accepted &&
              (handoffFacts.previewHandoffPending ||
               handoffFacts.previewHandoffReady),
          "begin-scrub preview handoff publishes one worker command");
   waitUntil(
       [&] {
-        const NativeMediaSessionFacts facts = session->facts();
+        const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
         return facts.previewHandoffReady &&
                state->previewQuiesces.load(std::memory_order_acquire) == 1;
       },
@@ -1342,7 +1436,7 @@ void testPreviewHandoffPrewarmsBeforeFirstMotion() {
                  std::memory_order_acquire) <
                  state->firstPreviewQuiesceOrder.load(
                      std::memory_order_acquire) &&
-             session->facts().generation == 7 &&
+             NativeMediaSessionTestAccess::facts(*session).generation == 7 &&
              session->takeObservations().previewPresented == std::nullopt,
          "handoff carries the exact retained main asset context, adds no "
          "audio mutation beyond pause, and changes neither generation nor "
@@ -1460,7 +1554,7 @@ void testStopWinsSuccessfulPreviewConstructionWindow() {
   constructionRelease.store(true, std::memory_order_release);
   static_cast<void>(waitFact<protocol::Stopped>(
       *session, "post-construction recheck gives Stop precedence"));
-  const NativeMediaSessionFacts facts = session->facts();
+  const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
   expect(!facts.previewHandoffPending && !facts.previewHandoffReady &&
              !facts.previewPending && !facts.previewPresentedPending &&
              state->previewRequests.load(std::memory_order_acquire) == 0,
@@ -1484,7 +1578,7 @@ void testCommitWinsSuccessfulPreviewConstructionWindow() {
   expect(session->setRunState({{{1}, {3}}, {7}, true, 1.0}) ==
              NativeMediaSessionCommandStatus::Accepted,
          "construction/commit physical pause accepted");
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   auto previewTarget = session->preflightPreviewTarget(1.5);
   expect(target.has_value() && previewTarget.has_value(),
          "construction/commit targets preflight");
@@ -1514,7 +1608,7 @@ void testCommitWinsSuccessfulPreviewConstructionWindow() {
         return state->sourceSeeks.load(std::memory_order_acquire) == 1;
       },
       "post-construction recheck stops preview before exact seek");
-  const NativeMediaSessionFacts facts = session->facts();
+  const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
   expect(facts.commitPending && !facts.previewHandoffPending &&
              !facts.previewHandoffReady && !facts.previewPending &&
              !facts.previewPresentedPending &&
@@ -1579,7 +1673,7 @@ void testPreviewLatestWinsAndStopQuiescesLane() {
   expect(state->previewQuiesces.load(std::memory_order_acquire) != 0,
          "main video is quiesced before preview pumping");
   expect(state->previewRequests.load(std::memory_order_acquire) == 2 &&
-             !session->facts().liveFailed,
+             !NativeMediaSessionTestAccess::facts(*session).liveFailed,
          "pull-A/accept-B issues both without a false self-stale failure");
 
   expect(session->stop(stopCommand(5)) ==
@@ -1618,7 +1712,7 @@ void testAcceptedPreviewFailuresPublishExactTerminal() {
       expect(session->preparePreviewHandoff() ==
                  NativeMediaSessionCommandStatus::Accepted,
              "preview-failure prewarm accepted");
-      waitUntil([&] { return session->facts().previewHandoffReady; },
+      waitUntil([&] { return NativeMediaSessionTestAccess::facts(*session).previewHandoffReady; },
                 "preview-failure prewarm reaches Ready");
     }
 
@@ -1658,8 +1752,8 @@ void testAcceptedPreviewFailuresPublishExactTerminal() {
                protocol::previewFailedMatches(preview,
                                               *observations.previewFailed) &&
                !observations.previewPresented.has_value() &&
-               !session->facts().previewPending &&
-               !session->facts().liveFailed,
+               !NativeMediaSessionTestAccess::facts(*session).previewPending &&
+               !NativeMediaSessionTestAccess::facts(*session).liveFailed,
            "preview failure echoes exact identity without failing playback");
     expect(session->previewFrame(
                {{{1}, {5}}, {7}, {91}, {2}, 3.0},
@@ -1683,7 +1777,7 @@ void testPreviewFailureNamesLatestPublicReplacement() {
   expect(session->preparePreviewHandoff() ==
              NativeMediaSessionCommandStatus::Accepted,
          "replacement-failure prewarm accepted");
-  waitUntil([&] { return session->facts().previewHandoffReady; },
+  waitUntil([&] { return NativeMediaSessionTestAccess::facts(*session).previewHandoffReady; },
             "replacement-failure prewarm reaches Ready");
 
   state->failPreviewPump.store(true, std::memory_order_release);
@@ -1740,11 +1834,11 @@ void testCommitBurnsQueuedPreviewFailure() {
   expect(session->preparePreviewHandoff() ==
              NativeMediaSessionCommandStatus::Accepted,
          "queued-failure Commit prewarm accepted");
-  waitUntil([&] { return session->facts().previewHandoffReady; },
+  waitUntil([&] { return NativeMediaSessionTestAccess::facts(*session).previewHandoffReady; },
             "queued-failure Commit prewarm reaches Ready");
 
   auto previewTarget = session->preflightPreviewTarget(2.0);
-  auto commitTarget = session->preflightCommitTarget(3.0);
+  auto commitTarget = session->preflightCommitTarget(secondsTime(3.0));
   const protocol::PreviewFrame preview = {
       {{1}, {4}}, {7}, {111}, {1}, 2.0};
   state->failPreviewPump.store(true, std::memory_order_release);
@@ -1752,7 +1846,7 @@ void testCommitBurnsQueuedPreviewFailure() {
              session->previewFrame(preview, std::move(*previewTarget)) ==
                  NativePreviewFrameRequestStatus::Accepted,
          "queued-failure Commit preview accepted");
-  waitUntil([&] { return session->facts().previewFailedPending; },
+  waitUntil([&] { return NativeMediaSessionTestAccess::facts(*session).previewFailedPending; },
             "preview failure remains queued before Commit");
 
   const protocol::CommitSeek commit = {
@@ -1762,7 +1856,7 @@ void testCommitBurnsQueuedPreviewFailure() {
          "Commit follows and burns the queued preview failure");
   const NativeMediaSessionObservations observations =
       session->takeObservations();
-  expect(!session->facts().previewFailedPending &&
+  expect(!NativeMediaSessionTestAccess::facts(*session).previewFailedPending &&
              !observations.previewFailed.has_value() &&
              !observations.previewPresented.has_value(),
          "no preview terminal escapes after exact Commit admission");
@@ -1904,7 +1998,7 @@ void testCommitPhaseRefusedStepIsANamedFailure() {
                  CommitPhase::Idle,
          "no commit phase is entered before a commit is accepted");
 
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(), "refused-step commit target preflights");
   const protocol::CommitSeek commit = commitCommand();
   fault.store(true, std::memory_order_release);
@@ -1918,7 +2012,7 @@ void testCommitPhaseRefusedStepIsANamedFailure() {
          "the refused step names CommitSeek and the commit's own stamp");
   expect(!fault.load(std::memory_order_acquire),
          "the fault was consumed by exactly the step it replaced");
-  expect(session->facts().liveFailed && !session->facts().commitPending,
+  expect(NativeMediaSessionTestAccess::facts(*session).liveFailed && !NativeMediaSessionTestAccess::facts(*session).commitPending,
          "a refused step latches the live failure and clears the commit");
   expectCommitPhaseTrace(*session, {CommitPhase::PausingSource},
                          "a refused step is never applied");
@@ -1961,7 +2055,7 @@ void testStopDuringCommitResetsPhaseToIdle() {
       state->pauseCalls.load(std::memory_order_acquire);
   state->pauseEntered.store(false, std::memory_order_release);
   state->blockPause.store(true, std::memory_order_release);
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(), "mid-commit Stop target preflights");
   expect(session->commitSeek(commitCommand(), *target) ==
              NativeMediaSessionCommandStatus::Accepted,
@@ -2012,7 +2106,7 @@ void testQuiescingCommitPauseIsRetriedNotFailed() {
   const std::uint64_t pausesBefore =
       state->pauseCalls.load(std::memory_order_acquire);
   state->quiescePauseCall.store(pausesBefore + 1, std::memory_order_release);
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(), "quiescing-pause target preflights");
   const protocol::CommitSeek commit = commitCommand();
   expect(session->commitSeek(commit, *target) ==
@@ -2026,7 +2120,7 @@ void testQuiescingCommitPauseIsRetriedNotFailed() {
       "the commit's source pause is asked once and answers Quiescing");
   expect(NativeMediaSessionTestAccess::commitPhase(*session) ==
                  CommitPhase::PausingSource &&
-             state->sourceSeeks.load() == 0 && !session->facts().liveFailed,
+             state->sourceSeeks.load() == 0 && !NativeMediaSessionTestAccess::facts(*session).liveFailed,
          "a Quiescing pause parks the walk in PausingSource without failing");
   wake->audio().signal(wake->audio().context);
   waitUntil([&] { return state->sourceSeeks.load() == 1; },
@@ -2036,7 +2130,7 @@ void testQuiescingCommitPauseIsRetriedNotFailed() {
   wake->video().signal(wake->video().context);
   const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
       *session, "a commit whose pause quiesced once reaches readiness");
-  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready),
+  expect(protocol::commitReadyMatches(commit, target->exact(), target->drawBaseline(), ready),
          "quiescing-pause CommitReady is exact");
   expect(state->pauseCalls.load(std::memory_order_acquire) ==
              pausesBefore + 3,
@@ -2066,13 +2160,13 @@ void testPendingSeekIsSuperseded() {
   expect(session->start({{{1}, {2}}, {7}, true}) == NativeMediaSessionCommandStatus::Accepted,
          "supersession starts");
   static_cast<void>(waitFact<protocol::Started>(*session, "supersession Started"));
-  const auto firstTarget = session->preflightCommitTarget(30.0);
+  const auto firstTarget = session->preflightCommitTarget(secondsTime(30.0));
   expect(firstTarget.has_value(), "first target is valid");
   expect(session->commitSeek(commitCommand(3, 8, 30.0), *firstTarget) == NativeMediaSessionCommandStatus::Accepted,
          "first seek starts");
   waitUntil([&] { return NativeMediaSessionTestAccess::commitPhase(*session) == CommitPhase::AwaitingProofs; },
             "first seek is pending video proof");
-  const auto newer = session->preflightCommitTarget(3.0);
+  const auto newer = session->preflightCommitTarget(secondsTime(3.0));
   expect(newer.has_value(), "pending slow seek accepts a newer exact target");
   if (newer) {
     const auto command = commitCommand(4, 9, 3.0);
@@ -2084,7 +2178,7 @@ void testPendingSeekIsSuperseded() {
     publishCommitDraw(*state, 9, 2, 3.0);
     wake->video().signal(wake->video().context);
     const auto ready = waitFact<protocol::CommitReady>(*session, "new seek reaches exact ready");
-    expect(protocol::commitReadyMatches(command, newer->drawBaseline(), ready),
+    expect(protocol::commitReadyMatches(command, newer->exact(), newer->drawBaseline(), ready),
            "only newest target can publish commit readiness");
   }
   expect(session->stop({{{1}, {5}}, {10}}) == NativeMediaSessionCommandStatus::Accepted,
@@ -2110,7 +2204,7 @@ void testCommitSeekPendingReadyAndStopHighWater() {
          "commit Start accepted");
   static_cast<void>(waitFact<protocol::Started>(*session, "commit Started"));
 
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value() && target->drawBaseline() == 0,
          "session reserves exact pre-commit physical draw baseline");
   const protocol::CommitSeek commit = commitCommand();
@@ -2120,16 +2214,16 @@ void testCommitSeekPendingReadyAndStopHighWater() {
          "exact CommitSeek accepted");
   waitUntil([&] { return state->sourceSeeks.load() == 1; },
             "CommitSeek calls source exactly once while flush is pending");
-  expect(session->facts().generationHighWater == 8 &&
-             session->facts().commitPending,
+  expect(NativeMediaSessionTestAccess::facts(*session).generationHighWater == 8 &&
+             NativeMediaSessionTestAccess::facts(*session).commitPending,
          "accepted commit immediately burns target high-water");
   wake->video().signal(wake->video().context);
   publishCommitDraw(*state, 8, 1, 2.0);
   wake->video().signal(wake->video().context);
   const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
       *session, "commit publishes exact clock/draw readiness");
-  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready) &&
-             session->facts().generation == 8 &&
+  expect(protocol::commitReadyMatches(commit, target->exact(), target->drawBaseline(), ready) &&
+             NativeMediaSessionTestAccess::facts(*session).generation == 8 &&
              state->sourceSeeks.load() == 1 &&
              state->audioPhysicallyStarted.load(std::memory_order_acquire) &&
              state->audioStartedGeneration.load(std::memory_order_acquire) ==
@@ -2197,7 +2291,7 @@ void testCommitSeekProceedsPastFailedPreviewLane() {
   static_cast<void>(waitFact<protocol::Started>(
       *session, "failed-lane commit Started"));
 
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(), "failed-lane commit target preflights");
   const protocol::CommitSeek commit = commitCommand();
   state->beginCommitLifecycle(commit.targetGeneration.value);
@@ -2213,8 +2307,8 @@ void testCommitSeekProceedsPastFailedPreviewLane() {
   wake->video().signal(wake->video().context);
   const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
       *session, "commit reaches readiness past a failed preview lane");
-  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready) &&
-             session->facts().generation == 8,
+  expect(protocol::commitReadyMatches(commit, target->exact(), target->drawBaseline(), ready) &&
+             NativeMediaSessionTestAccess::facts(*session).generation == 8,
          "readiness advances the generation past a failed preview lane");
   expect(session->stop({{{1}, {5}}, {9}}) ==
              NativeMediaSessionCommandStatus::Accepted,
@@ -2234,7 +2328,7 @@ void testCommitSeekAdmittedDuringStarting() {
          "Starting commit Prepare accepted");
   static_cast<void>(waitFact<protocol::Prepared>(*session,
                                                   "Starting commit Prepared"));
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(),
          "prepared session reserves commit target before Started");
   expect(session->commitSeek(commitCommand(3, 8, 2.0), *target) ==
@@ -2261,12 +2355,12 @@ void testCommitSeekAdmittedDuringStarting() {
 
 void testExactTimeAndSequencing() {
   const auto halfSecond =
-      NativeMediaSession::preflightInitialPosition(0.5);
+      NativeMediaSession::preflightInitialPosition(secondsTime(0.5));
   expect(halfSecond.has_value() &&
              halfSecond->exact() == media::MediaTime{1, 2} &&
-             !NativeMediaSession::preflightInitialPosition(0.1) &&
-             !NativeMediaSession::preflightInitialPosition(
-                 std::numeric_limits<double>::quiet_NaN()),
+             !NativeMediaSession::preflightInitialPosition(secondsTime(0.1)) &&
+             !NativeMediaSession::preflightInitialPosition(secondsTime(
+                 std::numeric_limits<double>::quiet_NaN())),
          "public initial-position preflight is the exact shared conversion");
 
   auto unboundState = std::make_shared<GraphState>();
@@ -2325,7 +2419,7 @@ void testExactTimeAndSequencing() {
          "following run state is accepted");
   waitUntil(
       [&] {
-        return session->facts().appliedRunStateStamp ==
+        return NativeMediaSessionTestAccess::facts(*session).appliedRunStateStamp ==
                protocol::Stamp{{1}, {3}};
       },
       "run-state application becomes observable");
@@ -2498,7 +2592,7 @@ void testUnobservedDirectRetireBarrier() {
              state->sourceCloseOrder.load() >
                  state->audioRetireOrder.load(),
          "dispatcher emergency close follows both direct retire proofs");
-  const NativeMediaSessionFacts facts = session->facts();
+  const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
   expect(!facts.dispatcherObservedVideo && facts.directVideoRetired &&
              facts.directAudioRetired,
          "unobserved phase is explicit in public facts");
@@ -2532,7 +2626,7 @@ void testObservedUsesDispatcherRetireOnly() {
              state->sourceCloseOrder.load() <
                  state->audioRetireOrder.load(),
          "dispatcher closes source before observed consumer retirement");
-  const NativeMediaSessionFacts facts = session->facts();
+  const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
   expect(facts.dispatcherObservedVideo && !facts.directVideoRetired &&
              !facts.directAudioRetired,
          "observed phase never records direct retirement");
@@ -2577,7 +2671,7 @@ void testTerminalFailuresLatchAllLiveControls() {
   static_cast<void>(waitFact<protocol::Failed>(
       *prepareSession, "prepare failure publishes", &admissionRouteChoice));
   expect(!admissionRouteChoice, "genuine source failure keeps the diagnostic notice");
-  expect(prepareSession->facts().liveFailed &&
+  expect(NativeMediaSessionTestAccess::facts(*prepareSession).liveFailed &&
              prepareSession->start({{{1}, {2}}, {7}, true}) ==
                  NativeMediaSessionCommandStatus::Ignored &&
              prepareSession->setGain(0.2F) ==
@@ -2605,7 +2699,7 @@ void testTerminalFailuresLatchAllLiveControls() {
          "failing Start accepted");
   static_cast<void>(waitFact<protocol::Failed>(
       *startSession, "Start failure publishes"));
-  expect(startSession->facts().liveFailed &&
+  expect(NativeMediaSessionTestAccess::facts(*startSession).liveFailed &&
              startSession->setRunState(
                  {{{1}, {3}}, {7}, false, 1.0}) ==
                  NativeMediaSessionCommandStatus::Ignored,
@@ -2689,7 +2783,7 @@ void testCancelBeforeSourceArmAndMailboxPrecedence() {
   expect(prepare(*mailboxSession, prepareCommand()) ==
              NativeMediaSessionCommandStatus::Accepted,
          "mailbox fixture accepts Prepare");
-  waitUntil([&] { return mailboxSession->facts().factPending; },
+  waitUntil([&] { return NativeMediaSessionTestAccess::facts(*mailboxSession).factPending; },
             "Prepared occupies capacity-one mailbox");
   expect(mailboxSession->stop(stopCommand()) ==
              NativeMediaSessionCommandStatus::Accepted,
@@ -2729,7 +2823,7 @@ void testLateFailureCannotHideStop() {
       *session, "late live Failed must not replace Stopped");
   expect(stopped.stamp == protocol::Stamp{{1}, {4}},
          "late-failure race retains exact Stop stamp");
-  expect(session->facts().stoppedProofPublished,
+  expect(NativeMediaSessionTestAccess::facts(*session).stoppedProofPublished,
          "public terminal snapshot precedes consumable Stopped fact");
 }
 
@@ -2760,7 +2854,7 @@ void testRunIntentCoalescesAcrossQuiescing() {
   state->releasePause.store(true, std::memory_order_release);
   waitUntil(
       [&] {
-        const NativeMediaSessionFacts facts = session->facts();
+        const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
         return facts.appliedRunStateStamp == protocol::Stamp{{1}, {4}} &&
                facts.appliedPaused;
       },
@@ -2771,7 +2865,7 @@ void testRunIntentCoalescesAcrossQuiescing() {
   expect(applied.command.stamp == protocol::Stamp{{1}, {4}} &&
              applied.command.paused && state->pauseCalls.load() == 2,
          "superseded A is never retried or acknowledged before B");
-  const NativeMediaSessionFacts runFacts = session->facts();
+  const NativeMediaSessionFacts runFacts = NativeMediaSessionTestAccess::facts(*session);
   expect(runFacts.requestedRunStateStamp == protocol::Stamp{{1}, {4}} &&
              runFacts.issuedRunStateStamp == protocol::Stamp{{1}, {4}} &&
              runFacts.appliedRunStateStamp == protocol::Stamp{{1}, {4}},
@@ -3104,7 +3198,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
   expect(session->setRunState({{{1}, {4}}, {7}, true, 1.0}) ==
              NativeMediaSessionCommandStatus::Accepted,
          "latest live stamp coalesces atomically while ending quiesces");
-  const NativeMediaSessionFacts endingFacts = session->facts();
+  const NativeMediaSessionFacts endingFacts = NativeMediaSessionTestAccess::facts(*session);
   expect(endingFacts.ending &&
              endingFacts.requestedRunStateStamp ==
                  protocol::Stamp{{1}, {4}} &&
@@ -3137,7 +3231,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
              ended.finalPositionSeconds == 9.75 &&
              state->audioStopCalls.load(std::memory_order_acquire) == 2,
          "Ended echoes latest accepted live stamp after audio Stop Done");
-  const NativeMediaSessionFacts endedFacts = session->facts();
+  const NativeMediaSessionFacts endedFacts = NativeMediaSessionTestAccess::facts(*session);
   expect(endedFacts.ending && endedFacts.endedProofPublished &&
              endedFacts.ownership ==
                  NativeMediaSessionOwnershipPhase::DispatcherObserved &&
@@ -3155,7 +3249,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
              NativeMediaSessionCommandStatus::Accepted,
          "fully published Ended admits preview prewarm");
   waitUntil(
-      [&] { return session->facts().previewHandoffReady; },
+      [&] { return NativeMediaSessionTestAccess::facts(*session).previewHandoffReady; },
       "Ended preview lane prewarms from retained source ownership");
   expect(state->previewQuiesces.load(std::memory_order_acquire) == 0,
          "Ended preview skips the already-drained main consumer quiesce");
@@ -3176,12 +3270,12 @@ void testExhaustionStopsAudioBeforeOneEnded() {
              protocol::previewPresentedMatches(
                  endedPreview,
                  *endedPreviewObservations.previewPresented) &&
-             session->facts().ending &&
-             session->facts().endedProofPublished &&
+             NativeMediaSessionTestAccess::facts(*session).ending &&
+             NativeMediaSessionTestAccess::facts(*session).endedProofPublished &&
              state->previewQuiesces.load(std::memory_order_acquire) == 0,
          "Ended preview preserves EOS ownership while presenting the target");
   state->blockCapacity.store(true, std::memory_order_release);
-  const auto replayTarget = session->preflightCommitTarget(2.0);
+  const auto replayTarget = session->preflightCommitTarget(secondsTime(2.0));
   expect(replayTarget.has_value(),
          "Ended session retains a fresh exact seek target");
   const protocol::CommitSeek replay = {
@@ -3198,9 +3292,10 @@ void testExhaustionStopsAudioBeforeOneEnded() {
   const protocol::CommitReady replayReady = waitFact<protocol::CommitReady>(
       *session, "Ended CommitSeek reaches exact target readiness");
   expect(protocol::commitReadyMatches(
-             replay, replayTarget->drawBaseline(), replayReady) &&
-             session->facts().generation == 8 && !session->facts().ending &&
-             !session->facts().endedProofPublished &&
+             replay, replayTarget->exact(), replayTarget->drawBaseline(),
+             replayReady) &&
+             NativeMediaSessionTestAccess::facts(*session).generation == 8 && !NativeMediaSessionTestAccess::facts(*session).ending &&
+             !NativeMediaSessionTestAccess::facts(*session).endedProofPublished &&
              state->audioPhysicallyStarted.load(std::memory_order_acquire) &&
              state->audioStartedGeneration.load(std::memory_order_acquire) ==
                  8,
@@ -3260,7 +3355,7 @@ void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
   // command the commit protocol promises, and any near-end commit can lose
   // that race. The end-to-end matrix covers the exact 39.984375 case.
   constexpr double kNearTimelineEnd = 9.75;
-  const auto target = session->preflightCommitTarget(kNearTimelineEnd);
+  const auto target = session->preflightCommitTarget(secondsTime(kNearTimelineEnd));
   expect(target.has_value(),
          "a near-end commit target is exactly representable");
   if (!target.has_value()) {
@@ -3275,8 +3370,8 @@ void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
   wake->video().signal(wake->video().context);
   const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
       *session, "near-EOF commit publishes exact readiness");
-  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready) &&
-             session->facts().generation == 8,
+  expect(protocol::commitReadyMatches(commit, target->exact(), target->drawBaseline(), ready) &&
+             NativeMediaSessionTestAccess::facts(*session).generation == 8,
          "near-EOF CommitReady installs the target generation");
   expectExactCommitLifecycle(
       state->finishCommitLifecycle(),
@@ -3294,7 +3389,7 @@ void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
   while (std::chrono::steady_clock::now() < holdUntil) {
     wake->video().signal(wake->video().context);
     wake->audio().signal(wake->audio().context);
-    const NativeMediaSessionFacts facts = session->facts();
+    const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
     if (facts.ending || facts.endedProofPublished || facts.liveFailed) {
       heldThroughout = false;
       break;
@@ -3321,7 +3416,7 @@ void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
              ended.generation == protocol::Generation{8} &&
              ended.finalPositionSeconds == kNearTimelineEnd,
          "Ended echoes the post-commit run stamp on the committed generation");
-  const NativeMediaSessionFacts endedFacts = session->facts();
+  const NativeMediaSessionFacts endedFacts = NativeMediaSessionTestAccess::facts(*session);
   expect(endedFacts.ending && endedFacts.endedProofPublished &&
              !endedFacts.liveFailed,
          "the near-EOF commit ends the session without a live failure");
@@ -3352,7 +3447,7 @@ void testStopWinsEndedPreviewPresentationCompletion() {
              NativeMediaSessionCommandStatus::Accepted,
          "ended-preview Stop fixture prewarms");
   waitUntil(
-      [&] { return session->facts().previewHandoffReady; },
+      [&] { return NativeMediaSessionTestAccess::facts(*session).previewHandoffReady; },
       "ended-preview Stop fixture lane becomes ready");
   expect(state->previewQuiesces.load(std::memory_order_acquire) == 0,
          "ended-preview Stop fixture never re-quiesces EOS video");
@@ -3379,7 +3474,7 @@ void testStopWinsEndedPreviewPresentationCompletion() {
   completionRelease.store(true, std::memory_order_release);
   static_cast<void>(waitFact<protocol::Stopped>(
       *session, "Stop retires ended preview ownership"));
-  const NativeMediaSessionFacts stoppedFacts = session->facts();
+  const NativeMediaSessionFacts stoppedFacts = NativeMediaSessionTestAccess::facts(*session);
   const NativeMediaSessionObservations stoppedObservations =
       session->takeObservations();
   expect(!stoppedFacts.previewHandoffPending &&
@@ -3427,7 +3522,7 @@ void testStopPrecedesQuiescingNaturalEnd() {
   const protocol::Stopped stopped = waitFact<protocol::Stopped>(
       *session, "Stop suppresses Ended and retires exactly");
   expect(stopped.stamp == protocol::Stamp{{1}, {4}} &&
-             !session->facts().endedProofPublished,
+             !NativeMediaSessionTestAccess::facts(*session).endedProofPublished,
          "Stop precedence permits only the exact Stopped terminal fact");
 }
 
@@ -3564,7 +3659,7 @@ void testDispatcherFailureIsPublished() {
   expect(failed.stamp == protocol::Stamp{{1}, {1}} &&
              failed.reason == protocol::FailureReason::Decode,
          "dispatcher failure echoes latest live command stamp");
-  expect(session->facts().liveFailed,
+  expect(NativeMediaSessionTestAccess::facts(*session).liveFailed,
          "dispatcher failure latches false-live suppression");
   expect(session->start({{{1}, {2}}, {7}, true}) ==
              NativeMediaSessionCommandStatus::Ignored,
@@ -3719,11 +3814,11 @@ void testSeekAdmissionStopsAtThePresentableCeiling() {
   prepareStartedPausedForPreview(*session);
   expect(session->seekCeilingSeconds() == 10.0,
          "the ceiling is the selected video track's end, not the duration");
-  expect(!session->preflightCommitTarget(10.015625).has_value(),
+  expect(!session->preflightCommitTarget(secondsTime(10.015625)).has_value(),
          "a commit target inside the video-less audio tail is refused");
   expect(!session->preflightPreviewTarget(10.015625).has_value(),
          "a preview target inside the video-less audio tail is refused");
-  expect(session->preflightCommitTarget(9.984375).has_value(),
+  expect(session->preflightCommitTarget(secondsTime(9.984375)).has_value(),
          "the last grid point below the video's end is admitted");
   expect(session->preflightPreviewTarget(9.984375).has_value(),
          "the last grid point below the video's end previews");
@@ -3755,12 +3850,12 @@ void testRationalEmbeddingCommit() {
     state->videoEvent->timing.duration = CMTimeMake(1,25);
   }
   wake->video().signal(wake->video().context);
-  const auto observations = waitObservations(*session, [](const auto& facts){return facts.exactCommitReady.has_value();},
-                                             "rational commit produces companion proof");
-  const auto& ready = *observations.exactCommitReady;
-  expect(!observations.commitReady && protocol::exactCommitReadyMatches(command, requested, target->drawBaseline(), ready),
-         "exact request emits only an exact validated completion");
-  expect(ready.requestedTarget == requested &&
+  const auto observations = waitObservations(*session, [](const auto& facts){return facts.commitReady.has_value();},
+                                             "rational commit produces its proof");
+  const auto& ready = *observations.commitReady;
+  expect(protocol::commitReadyMatches(command, requested, target->drawBaseline(), ready),
+         "exact request emits an exact validated completion");
+  expect(ready.target == requested &&
          media::compareMediaTime(ready.audioPresentationStart, {267,8000}) == media::MediaTimeOrder::Equal &&
          ready.videoStart == media::MediaTime{0,25} && ready.videoDuration == media::MediaTime{1,25},
          "seek completion preserves source T, A and covering CMTime interval");

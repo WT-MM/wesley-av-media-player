@@ -1,6 +1,7 @@
 #include "platform/macos/native_preview_frame_lane.hpp"
 
 #include "platform/macos/avfoundation_preview_source.hpp"
+#include "platform/macos/avfoundation_media_support.hpp"
 #include "platform/macos/core_media_source_support.hpp"
 #include "platform/macos/native_surface_budget.hpp"
 #if defined(WAM_ENABLE_SOFTWARE_VP8)
@@ -92,6 +93,39 @@ CMSampleBufferRef makeCompressedSample(std::size_t byteCount) {
   return sample;
 }
 
+// The video facts the shared AVFoundation inspection states for the fixture's
+// 16x16 H.264 format description.
+MediaVideoFormat admittedFixtureVideo() {
+  CFDataRef atom = CFDataCreate(kCFAllocatorDefault, std::data(kAvcC),
+                                static_cast<CFIndex>(std::size(kAvcC)));
+  CFMutableDictionaryRef atoms = CFDictionaryCreateMutable(
+      kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks,
+      &kCFTypeDictionaryValueCallBacks);
+  CFDictionarySetValue(atoms, CFSTR("avcC"), atom);
+  CFMutableDictionaryRef extensions = CFDictionaryCreateMutable(
+      kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks,
+      &kCFTypeDictionaryValueCallBacks);
+  CFDictionarySetValue(
+      extensions,
+      kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms, atoms);
+  CMVideoFormatDescriptionRef format = nullptr;
+  CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_H264,
+                                 16, 16, extensions, &format);
+  CFRelease(extensions);
+  CFRelease(atoms);
+  CFRelease(atom);
+  const auto video = inspectVideoFormatFacts(
+      format, MediaCodec::H264,
+      std::as_bytes(std::span(std::data(kAvcC), std::size(kAvcC))),
+      clampMediaSourceLimits({}));
+  if (format != nullptr) {
+    CFRelease(format);
+  }
+  expect(video.has_value(),
+         "the shared AVFoundation inspection should admit the fixture format");
+  return video.value_or(MediaVideoFormat{});
+}
+
 std::shared_ptr<const MediaSourceDescriptor> descriptor() {
   auto result = std::make_shared<MediaSourceDescriptor>();
   result->duration = {60, 1};
@@ -105,14 +139,9 @@ std::shared_ptr<const MediaSourceDescriptor> descriptor() {
   track.codecConfigurationKind = MediaCodecConfigurationKind::AvcC;
   track.codecConfiguration.resize(std::size(kAvcC));
   std::memcpy(track.codecConfiguration.data(), kAvcC, std::size(kAvcC));
-  MediaVideoFormat video;
-  video.codedWidth = 16;
-  video.codedHeight = 16;
-  video.displayWidth = 16;
-  video.displayHeight = 16;
-  video.bitsPerComponent = 8;
-  video.sampleFormat = MediaVideoSampleFormat::Yuv420EightBit;
-  track.video = video;
+  // Exactly what main admission would record for the fixture's format, so the
+  // preview's live-format check compares like with like.
+  track.video = admittedFixtureVideo();
   result->tracks.push_back(std::move(track));
   result->selectedVideo = 1;
   return result;

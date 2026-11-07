@@ -24,6 +24,19 @@ namespace {
 using namespace wam::macos;
 using namespace wam::media;
 
+// prepare() then commitPrepared(), the pair every production owner calls.
+NativeAudioSubmitResult submit(NativeAudioConverter &converter,
+                               MediaSample &&sample, std::string *error) {
+  NativeAudioPrepareOutcome outcome = converter.prepare(sample, error);
+  if (outcome.result != NativeAudioSubmitResult::Accepted) {
+    return outcome.result;
+  }
+  return converter.commitPrepared(std::move(outcome.prepared),
+                                  std::move(sample))
+             ? NativeAudioSubmitResult::Accepted
+             : NativeAudioSubmitResult::Failed;
+}
+
 std::atomic<std::uint64_t> allocations{0};
 int failures = 0;
 
@@ -290,9 +303,9 @@ public:
     configuredChannels = configuration.outputChannels;
     configuredLayoutPresent = configuration.input.channelLayoutPresent;
     configuredLayoutTag = configuration.input.channelLayoutTag;
-    cookieSize = configuration.magicCookie.size();
-    std::copy(configuration.magicCookie.begin(),
-              configuration.magicCookie.end(), cookie.begin());
+    cookieSize = configuration.codecConfiguration.size();
+    std::copy(configuration.codecConfiguration.begin(),
+              configuration.codecConfiguration.end(), cookie.begin());
     return configureSucceeds;
   }
 
@@ -447,7 +460,7 @@ void setImmediatePlayoutAttachment(MediaSample &sample,
 
 void testConfigurationPacketMetadataAndAdmission() {
   Fixture fixture;
-  expect(fixture.ready && fixture.converter->outputSampleRate() == 48'000 &&
+  expect(fixture.ready && fixture.converter->stats().sampleRate == 48'000 &&
              fixture.backend->cookieSize == 2 &&
              fixture.backend->cookie[0] == std::byte{0x12} &&
              fixture.backend->configuredChannels == 2,
@@ -455,7 +468,7 @@ void testConfigurationPacketMetadataAndAdmission() {
   fixture.backend->setScripts({{1, 1024}});
   const std::array<std::uint32_t, 2> sizes{3, 5};
   auto sample = makeSample(fixture.track, 1, sizes);
-  expect(fixture.converter->submit(std::move(sample), &fixture.error) ==
+  expect(submit(*fixture.converter, std::move(sample), &fixture.error) ==
                  NativeAudioSubmitResult::Accepted &&
              fixture.converter->pump(&fixture.error) ==
                  NativeAudioPumpResult::Published &&
@@ -477,7 +490,7 @@ void testConfigurationPacketMetadataAndAdmission() {
   const std::array<std::uint32_t, 2> cbrSizes{4, 4};
   auto cbrSample = makeSample(cbr.track, 16, cbrSizes, false, false);
   expect(cbr.ready &&
-             cbr.converter->submit(std::move(cbrSample), nullptr) ==
+             submit(*cbr.converter, std::move(cbrSample), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              cbr.converter->pump(nullptr) == NativeAudioPumpResult::Published &&
              cbr.backend->firstPacket.byteSize == 4 &&
@@ -491,13 +504,13 @@ void testConfigurationPacketMetadataAndAdmission() {
   expect(!rateFixture.converter->configure(nonIntegral, 2, nullptr) &&
              !rateFixture.converter->configure(unusualIntegral, 2, nullptr) &&
              rateFixture.converter->stats().configured &&
-             rateFixture.converter->outputSampleRate() == 48'000,
+             rateFixture.converter->stats().sampleRate == 48'000,
          "invalid reconfiguration is rejected without mutating the live "
          "configuration");
   rateFixture.backend->configureSucceeds = false;
   expect(!rateFixture.converter->configure(makeTrack(), 2, nullptr) &&
              !rateFixture.converter->stats().configured &&
-             rateFixture.converter->outputSampleRate() == 0,
+             rateFixture.converter->stats().sampleRate == 0,
          "partial backend configuration failure leaves a fail-closed state");
 
   Fixture attachments(3);
@@ -509,7 +522,7 @@ void testConfigurationPacketMetadataAndAdmission() {
   setTrimAttachment(acceptedDefaults,
                     kCMSampleBufferAttachmentKey_TrimDurationAtStart,
                     CMTimeMake(0, 48'000));
-  expect(attachments.converter->submit(std::move(acceptedDefaults), nullptr) ==
+  expect(submit(*attachments.converter, std::move(acceptedDefaults), nullptr) ==
              NativeAudioSubmitResult::Accepted,
          "documented no-op attachment values are accepted");
   attachments.converter->cancel(3);
@@ -540,17 +553,17 @@ void testConfigurationPacketMetadataAndAdmission() {
                       kCMSampleBufferAttachmentKey_GradualDecoderRefresh,
                       gradualCount);
   CFRelease(gradualCount);
-  expect(rejected.converter->submit(std::move(reverse), nullptr) ==
+  expect(submit(*rejected.converter, std::move(reverse), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             rejected.converter->submit(std::move(speed), nullptr) ==
+             submit(*rejected.converter, std::move(speed), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             rejected.converter->submit(std::move(trim), nullptr) ==
+             submit(*rejected.converter, std::move(trim), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             rejected.converter->submit(std::move(roundedZero), nullptr) ==
+             submit(*rejected.converter, std::move(roundedZero), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             rejected.converter->submit(std::move(decoderReset), nullptr) ==
+             submit(*rejected.converter, std::move(decoderReset), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             rejected.converter->submit(std::move(gradual), nullptr) ==
+             submit(*rejected.converter, std::move(gradual), nullptr) ==
                  NativeAudioSubmitResult::Invalid,
          "unmodeled audio transform, trim, and decoder controls fail closed");
 
@@ -584,7 +597,7 @@ void testConfigurationPacketMetadataAndAdmission() {
              canonicalLayout.backend->configuredLayoutPresent &&
              canonicalLayout.backend->configuredLayoutTag ==
                  kAudioChannelLayoutTag_Stereo &&
-             canonicalLayout.converter->submit(std::move(canonicalSample),
+             submit(*canonicalLayout.converter, std::move(canonicalSample),
                                                 nullptr) ==
                  NativeAudioSubmitResult::Accepted,
          "an explicit canonical stereo layout matches at configure and "
@@ -747,11 +760,11 @@ void testExactAccurateSeekPcmTrimming() {
       makeSample(fixture.track, 44, size, false, true, nullptr, 1024);
   expect(
       fixture.ready &&
-          fixture.converter->submit(std::move(wholePreroll), nullptr) ==
+          submit(*fixture.converter, std::move(wholePreroll), nullptr) ==
               NativeAudioSubmitResult::Accepted &&
           fixture.converter->pump(nullptr) == NativeAudioPumpResult::Progress &&
           fixture.ring.queuedSlabs() == 0 &&
-          fixture.converter->submit(std::move(straddling), nullptr) ==
+          submit(*fixture.converter, std::move(straddling), nullptr) ==
               NativeAudioSubmitResult::Accepted &&
           fixture.converter->pump(nullptr) == NativeAudioPumpResult::Published,
       "accurate seek decodes whole and straddling compressed preroll");
@@ -780,7 +793,7 @@ void testExactAccurateSeekPcmTrimming() {
       makeSample(fullRing.track, 45, size, false, true, nullptr, 0);
   setImmediatePlayoutAttachment(discarded, 0);
   expect(
-      fullRing.converter->submit(std::move(discarded), nullptr) ==
+      submit(*fullRing.converter, std::move(discarded), nullptr) ==
               NativeAudioSubmitResult::Accepted &&
           fullRing.converter->pump(nullptr) ==
               NativeAudioPumpResult::Progress &&
@@ -793,7 +806,7 @@ void testExactAccurateSeekPcmTrimming() {
       51, makeTrack(), NativeAudioGenerationTimeline{{4, 48'000}, true, false});
   auto decodeOnlyAudio =
       makeSample(decodeOnlyRejected.track, 51, size, true, true, nullptr, 0);
-  expect(decodeOnlyRejected.converter->submit(std::move(decodeOnlyAudio),
+  expect(submit(*decodeOnlyRejected.converter, std::move(decodeOnlyAudio),
                                               nullptr) ==
              NativeAudioSubmitResult::Invalid,
          "audio decodeOnly is never reinterpreted as accurate-seek trimming");
@@ -814,11 +827,11 @@ void testExactAccurateSeekPcmTrimming() {
   CFDictionarySetValue(
       first, kCMSampleAttachmentKey_AudioIndependentSampleDecoderRefreshCount,
       kCFBooleanFalse);
-  expect(refreshGate.converter->submit(std::move(missing), nullptr) ==
+  expect(submit(*refreshGate.converter, std::move(missing), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             refreshGate.converter->submit(std::move(independent), nullptr) ==
+             submit(*refreshGate.converter, std::move(independent), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             refreshGate.converter->submit(std::move(malformed), nullptr) ==
+             submit(*refreshGate.converter, std::move(malformed), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
              refreshGate.backend->convertCalls == 0 &&
              refreshGate.ring.queuedSlabs() == 0,
@@ -842,12 +855,12 @@ void testExactAccurateSeekPcmTrimming() {
       floorFirst,
       kCMSampleAttachmentKey_AudioIndependentSampleDecoderRefreshCount,
       kCFBooleanFalse);
-  expect(exactFloorGate.converter->submit(std::move(floorMissing), nullptr) ==
+  expect(submit(*exactFloorGate.converter, std::move(floorMissing), nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             exactFloorGate.converter->submit(std::move(floorIndependent),
+             submit(*exactFloorGate.converter, std::move(floorIndependent),
                                               nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
-             exactFloorGate.converter->submit(std::move(floorMalformed),
+             submit(*exactFloorGate.converter, std::move(floorMalformed),
                                               nullptr) ==
                  NativeAudioSubmitResult::Invalid &&
              exactFloorGate.backend->convertCalls == 0 &&
@@ -861,7 +874,7 @@ void testExactAccurateSeekPcmTrimming() {
   auto floorIpf = makeSample(exactFloorAccepted.track, 56, size, false, true,
                              nullptr, 4);
   setImmediatePlayoutAttachment(floorIpf, 0);
-  expect(exactFloorAccepted.converter->submit(std::move(floorIpf), nullptr) ==
+  expect(submit(*exactFloorAccepted.converter, std::move(floorIpf), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              exactFloorAccepted.converter->pump(nullptr) ==
                  NativeAudioPumpResult::Published &&
@@ -888,7 +901,7 @@ void testTimelineEditsAndDecoderOverrunFailClosed() {
       makeSample(continuity.track, 47, size, false, true, nullptr, 0);
   auto gap =
       makeSample(continuity.track, 47, size, false, true, nullptr, 1025);
-  expect(continuity.converter->submit(std::move(first), nullptr) ==
+  expect(submit(*continuity.converter, std::move(first), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              continuity.converter->pump(nullptr) ==
                  NativeAudioPumpResult::Published &&
@@ -902,7 +915,7 @@ void testTimelineEditsAndDecoderOverrunFailClosed() {
   auto tooMuch =
       makeSample(overrun.track, 48, size, false, true, nullptr, 0);
   expect(
-      overrun.converter->submit(std::move(tooMuch), nullptr) ==
+      submit(*overrun.converter, std::move(tooMuch), nullptr) ==
               NativeAudioSubmitResult::Accepted &&
           overrun.converter->pump(nullptr) == NativeAudioPumpResult::Failed &&
           overrun.converter->pump(nullptr) == NativeAudioPumpResult::Failed &&
@@ -920,9 +933,9 @@ void testPartialOutputAndCapacityOne() {
   auto blocked = makeSample(fixture.track, 5, sizes);
   expect(
       fixture.ready &&
-          fixture.converter->submit(std::move(first), nullptr) ==
+          submit(*fixture.converter, std::move(first), nullptr) ==
               NativeAudioSubmitResult::Accepted &&
-          fixture.converter->submit(std::move(blocked), nullptr) ==
+          submit(*fixture.converter, std::move(blocked), nullptr) ==
               NativeAudioSubmitResult::Backpressure &&
           fixture.converter->pump(nullptr) ==
               NativeAudioPumpResult::Progress &&
@@ -958,7 +971,7 @@ void testRingBackpressurePrecedesConversion() {
   fixture.backend->setScripts({{1, 1024}});
   const std::array<std::uint32_t, 1> size{4};
   auto sample = makeSample(fixture.track, 6, size);
-  expect(fixture.converter->submit(std::move(sample), nullptr) ==
+  expect(submit(*fixture.converter, std::move(sample), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              fixture.converter->pump(nullptr) ==
                  NativeAudioPumpResult::Backpressure &&
@@ -982,9 +995,9 @@ void testGenerationFlushCancellationAndDecodeOnlyRejection() {
   fixture.backend->lifecycleReleaseCounter = &releases;
   auto retained = makeSample(fixture.track, 10, size, false, true, &releases);
   expect(
-      fixture.converter->submit(std::move(decodeOnly), nullptr) ==
+      submit(*fixture.converter, std::move(decodeOnly), nullptr) ==
               NativeAudioSubmitResult::Invalid &&
-          fixture.converter->submit(std::move(retained), nullptr) ==
+          submit(*fixture.converter, std::move(retained), nullptr) ==
               NativeAudioSubmitResult::Accepted,
       "decode-only input fails closed and an ordinary sample may be retained");
   expect(fixture.ring.flush(11) && fixture.converter->flush(11) &&
@@ -995,9 +1008,9 @@ void testGenerationFlushCancellationAndDecodeOnlyRejection() {
          "flush resets the converter before retiring retained input");
   auto stale = makeSample(fixture.track, 10, size);
   auto current = makeSample(fixture.track, 11, size);
-  expect(fixture.converter->submit(std::move(stale), nullptr) ==
+  expect(submit(*fixture.converter, std::move(stale), nullptr) ==
                  NativeAudioSubmitResult::StaleGeneration &&
-             fixture.converter->submit(std::move(current), nullptr) ==
+             submit(*fixture.converter, std::move(current), nullptr) ==
                  NativeAudioSubmitResult::Accepted,
          "stale generation is inert after flush and current input is accepted");
   fixture.converter->cancel(10);
@@ -1020,12 +1033,12 @@ void testExactInputStorageLifetimeHandshake() {
   std::atomic<int> firstRelease{0};
   auto first = makeSample(fixture.track, 20, size, false, true, &firstRelease);
   auto blocked = makeSample(fixture.track, 20, size);
-  expect(fixture.converter->submit(std::move(first), nullptr) ==
+  expect(submit(*fixture.converter, std::move(first), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              fixture.converter->pump(nullptr) ==
                  NativeAudioPumpResult::Progress &&
              fixture.converter->stats().sampleRetained && firstRelease == 0 &&
-             fixture.converter->submit(std::move(blocked), nullptr) ==
+             submit(*fixture.converter, std::move(blocked), nullptr) ==
                  NativeAudioSubmitResult::Backpressure,
          "final handoff without a later callback retains its lease and "
          "backpressures");
@@ -1039,7 +1052,7 @@ void testExactInputStorageLifetimeHandshake() {
   std::atomic<int> sameFillRelease{0};
   auto sameFill =
       makeSample(fixture.track, 20, size, false, true, &sameFillRelease, 1024);
-  expect(fixture.converter->submit(std::move(sameFill), nullptr) ==
+  expect(submit(*fixture.converter, std::move(sameFill), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              fixture.converter->pump(nullptr) ==
                  NativeAudioPumpResult::Published &&
@@ -1056,7 +1069,7 @@ void testLifecycleRetiresBackendBeforeInputStorage() {
   cancelled.backend->lifecycleReleaseCounter = &cancelRelease;
   auto cancelSample =
       makeSample(cancelled.track, 30, size, false, true, &cancelRelease);
-  expect(cancelled.converter->submit(std::move(cancelSample), nullptr) ==
+  expect(submit(*cancelled.converter, std::move(cancelSample), nullptr) ==
              NativeAudioSubmitResult::Accepted,
          "cancel lifetime fixture retains input");
   cancelled.converter->cancel(30);
@@ -1072,7 +1085,7 @@ void testLifecycleRetiresBackendBeforeInputStorage() {
   auto failedResetSample =
       makeSample(resetFailure.track, 31, size, false, true, &failureRelease);
   expect(
-      resetFailure.converter->submit(std::move(failedResetSample), nullptr) ==
+      submit(*resetFailure.converter, std::move(failedResetSample), nullptr) ==
           NativeAudioSubmitResult::Accepted,
       "reset-failure lifetime fixture retains input");
   resetFailure.converter->cancel(31);
@@ -1088,7 +1101,7 @@ void testLifecycleRetiresBackendBeforeInputStorage() {
   closed.backend->lifecycleReleaseCounter = &closeRelease;
   auto closeSample =
       makeSample(closed.track, 32, size, false, true, &closeRelease);
-  expect(closed.converter->submit(std::move(closeSample), nullptr) ==
+  expect(submit(*closed.converter, std::move(closeSample), nullptr) ==
              NativeAudioSubmitResult::Accepted,
          "close lifetime fixture retains input");
   closed.converter->close();
@@ -1104,7 +1117,7 @@ void testBoundedEofDrainAndFailures() {
   const std::array<std::uint32_t, 1> size{4};
   auto exactEofSample =
       makeSample(eof.track, 12, size, false, true, nullptr, 0);
-  expect(eof.converter->submit(std::move(exactEofSample), nullptr) ==
+  expect(submit(*eof.converter, std::move(exactEofSample), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              eof.converter->endOfStream(12, nullptr) ==
                  NativeAudioPumpResult::Published &&
@@ -1119,7 +1132,7 @@ void testBoundedEofDrainAndFailures() {
   std::atomic<int> eofRelease{0};
   auto eofSample =
       makeSample(eofWithInput.track, 18, size, false, true, &eofRelease, 0);
-  expect(eofWithInput.converter->submit(std::move(eofSample), nullptr) ==
+  expect(submit(*eofWithInput.converter, std::move(eofSample), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              eofWithInput.converter->endOfStream(18, nullptr) ==
                  NativeAudioPumpResult::Published &&
@@ -1139,7 +1152,7 @@ void testBoundedEofDrainAndFailures() {
   auto sample =
       makeSample(throwing.track, 13, size, false, true, &throwRelease);
   expect(
-      throwing.converter->submit(std::move(sample), nullptr) ==
+      submit(*throwing.converter, std::move(sample), nullptr) ==
               NativeAudioSubmitResult::Accepted &&
           throwing.converter->pump(nullptr) == NativeAudioPumpResult::Failed &&
           throwing.converter->stats().failures == 1 &&
@@ -1153,7 +1166,7 @@ void testBoundedEofDrainAndFailures() {
   Fixture failed(17);
   failed.backend->setScripts({{0, 0, false, false, false, true}});
   auto failedSample = makeSample(failed.track, 17, size);
-  expect(failed.converter->submit(std::move(failedSample), nullptr) ==
+  expect(submit(*failed.converter, std::move(failedSample), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              failed.converter->pump(nullptr) == NativeAudioPumpResult::Failed &&
              failed.converter->stats().failures == 1,
@@ -1163,7 +1176,7 @@ void testBoundedEofDrainAndFailures() {
   malformed.backend->setScripts(
       {{1, NativeAudioConverter::kFramesPerPump + 1}});
   auto bad = makeSample(malformed.track, 14, size);
-  expect(malformed.converter->submit(std::move(bad), nullptr) ==
+  expect(submit(*malformed.converter, std::move(bad), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              malformed.converter->pump(nullptr) ==
                  NativeAudioPumpResult::Failed,
@@ -1186,7 +1199,7 @@ void testContiguousBorrowAndFragmentedFallback() {
   const std::byte *const originalData = originalSpan.data();
   expect(originalSpan.size() == 12 && originalData != nullptr,
          "contiguous fixture exposes its exact stable native span");
-  expect(contiguous.converter->submit(std::move(leaseBacked), nullptr) ==
+  expect(submit(*contiguous.converter, std::move(leaseBacked), nullptr) ==
              NativeAudioSubmitResult::Accepted,
          "stable contiguous audio is admitted without an encoded copy");
   const auto borrowedAtIngress = contiguous.converter->stats();
@@ -1230,7 +1243,7 @@ void testContiguousBorrowAndFragmentedFallback() {
   auto fragmentedPayload = makeSample(
       fragmented.track, 58, sizes, false, true, &fragmentedRelease, 0, false,
       &fragmentedCopiedBytes, offsets);
-  expect(fragmented.converter->submit(std::move(fragmentedPayload), nullptr) ==
+  expect(submit(*fragmented.converter, std::move(fragmentedPayload), nullptr) ==
              NativeAudioSubmitResult::Accepted,
          "fragmented audio is admitted through bounded copy fallback");
   const auto copiedAtIngress = fragmented.converter->stats();
@@ -1261,7 +1274,7 @@ void testRetainedPayloadHighWaterReset() {
   Fixture fixture(59);
   const std::array<std::uint32_t, 2> sizes{3, 5};
   auto sample = makeSample(fixture.track, 59, sizes);
-  expect(fixture.converter->submit(std::move(sample), nullptr) ==
+  expect(submit(*fixture.converter, std::move(sample), nullptr) ==
              NativeAudioSubmitResult::Accepted,
          "HWM fixture retains its exact eight-byte payload");
   expect(!fixture.converter->resetRetainedPayloadByteHighWater(0) &&
@@ -1283,7 +1296,7 @@ void testRetainedPayloadHighWaterReset() {
   Fixture descending(60);
   descending.backend->setScripts({{2, 0, true, true}});
   auto eightBytes = makeSample(descending.track, 60, sizes);
-  expect(descending.converter->submit(std::move(eightBytes), nullptr) ==
+  expect(submit(*descending.converter, std::move(eightBytes), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              descending.converter->pump(nullptr) ==
                  NativeAudioPumpResult::Progress,
@@ -1291,7 +1304,7 @@ void testRetainedPayloadHighWaterReset() {
   const std::array<std::uint32_t, 1> four{4};
   auto fourBytes = makeSample(descending.track, 60, four, false, true,
                               nullptr, 2048);
-  expect(descending.converter->submit(std::move(fourBytes), nullptr) ==
+  expect(submit(*descending.converter, std::move(fourBytes), nullptr) ==
              NativeAudioSubmitResult::Accepted,
          "descending-HWM fixture retains a later four-byte payload");
   stats = descending.converter->stats();
@@ -1351,7 +1364,7 @@ void testShortBlocksCoalesceToTheSlabFloor() {
     auto sample = makeSample(fixture.track, 60, size, false, true, nullptr,
                              static_cast<std::int64_t>(index * kPacketFrames));
     accepted = accepted &&
-               fixture.converter->submit(std::move(sample), nullptr) ==
+               submit(*fixture.converter, std::move(sample), nullptr) ==
                    NativeAudioSubmitResult::Accepted &&
                record(fixture.converter->pump(nullptr)) !=
                    NativeAudioPumpResult::Failed;
@@ -1382,7 +1395,7 @@ void testFlatAllocationAfterStart() {
   const std::array<std::uint32_t, 1> size{4};
   auto sample = makeSample(fixture.track, 15, size);
   const std::uint64_t before = allocations.load(std::memory_order_relaxed);
-  const auto submitted = fixture.converter->submit(std::move(sample), nullptr);
+  const auto submitted = submit(*fixture.converter, std::move(sample), nullptr);
   const auto pumped = fixture.converter->pump(nullptr);
   const auto snapshot = fixture.converter->stats();
   const std::uint64_t after = allocations.load(std::memory_order_relaxed);

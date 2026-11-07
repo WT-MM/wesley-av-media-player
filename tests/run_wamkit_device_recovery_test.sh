@@ -7,7 +7,7 @@ trap 'rm -rf "$build_dir"' EXIT HUP INT TERM
 
 common_flags='-std=c++20 -Wall -Wextra -Wpedantic -Werror -Wconversion -Wsign-conversion -Wshadow -Wundef -Wcast-align -Wformat=2 -Wimplicit-fallthrough'
 include_flags="-I$repo_dir/src"
-test_define='-DWAM_NATIVE_AUDIO_SESSION_TESTING=1'
+test_define='-DWAM_NATIVE_TEST_SEAMS=1'
 
 clang++ $common_flags $include_flags -c \
   "$repo_dir/src/media/native_media_source.cpp" \
@@ -27,16 +27,20 @@ clang++ $common_flags $include_flags -c \
 clang++ $common_flags $include_flags -c \
   "$repo_dir/src/platform/macos/native_media_clock.cpp" \
   -o "$build_dir/native_media_clock.o"
-clang++ $common_flags $include_flags -c \
+clang++ $common_flags $include_flags $test_define -c \
   "$repo_dir/src/platform/macos/native_audio_render_core.cpp" \
   -o "$build_dir/native_audio_render_core.o"
 clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
   "$repo_dir/src/platform/macos/native_audio_converter.mm" \
   -o "$build_dir/native_audio_converter.o"
 clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
+  "$repo_dir/src/platform/macos/native_audio_converter_backends.mm" \
+  -o "$build_dir/native_audio_converter_backends.o"
+clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
   "$repo_dir/src/platform/macos/native_audio_stretch_stage.mm" \
   -o "$build_dir/native_audio_stretch_stage.o"
-clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
+clang++ $common_flags $include_flags $test_define \
+  -x objective-c++ -fobjc-arc -c \
   "$repo_dir/src/platform/macos/native_audio_output.mm" \
   -o "$build_dir/native_audio_output.o"
 clang++ $common_flags $include_flags $test_define \

@@ -22,35 +22,21 @@ inline bool exactFrameCovers(MediaTime start, MediaTime duration, MediaTime targ
 
 std::optional<double> mediaTimeSecondsAtHostTicks(MediaTime origin,
     std::uint64_t ticks, std::uint64_t ticksPerSecond,
-    std::uint32_t rateUnits64) noexcept;
+    native_playback::PlaybackRateRatio rate) noexcept;
 
 namespace native_playback {
-struct ExactCommitReady {
-  Stamp stamp{};
-  Generation generation{};
-  GestureId gesture{};
-  RequestId request{};
-  MediaTime requestedTarget{};
-  MediaTime audioPresentationStart{};
-  MediaTime actualDecodeStart{};
-  MediaTime videoStart{};
-  MediaTime videoDuration{};
-  std::uint64_t clockPublication{0};
-  std::uint64_t drawSequence{0};
-  bool videoLaneAbsent{false};
-  bool audioLaneAbsent{false};
-};
-
-inline bool exactCommitReadyMatches(const CommitSeek& command,
-    MediaTime target, std::uint64_t baseline, const ExactCommitReady& ready) noexcept {
-  return valid(command) && ready.stamp == command.stamp &&
-      ready.generation == command.targetGeneration && ready.gesture == command.gesture &&
-      ready.request == command.request &&
-      compareMediaTime(ready.requestedTarget, target) == MediaTimeOrder::Equal &&
-      ready.clockPublication != 0 && ready.actualDecodeStart.valid() &&
+inline bool commitReadyMatches(const CommitSeek& command, MediaTime target,
+    std::uint64_t drawBaseline, const CommitReady& ready) noexcept {
+  return valid(command) && valid(ready) &&
+      sameCommand(command.stamp, ready.stamp) &&
+      ready.generation == command.targetGeneration &&
+      ready.gesture == command.gesture && ready.request == command.request &&
+      ready.targetSeconds == command.targetSeconds &&
+      compareMediaTime(ready.target, target) == MediaTimeOrder::Equal &&
+      ready.actualDecodeStart.valid() &&
       (ready.audioLaneAbsent || (ready.audioPresentationStart.valid() &&
        compareMediaTime(ready.audioPresentationStart, target) != MediaTimeOrder::Less)) &&
-      (ready.videoLaneAbsent || (ready.drawSequence > baseline &&
+      (ready.videoDraw.videoLaneAbsent || (ready.videoDraw.drawSequence > drawBaseline &&
        exactFrameCovers(ready.videoStart, ready.videoDuration, target)));
 }
 }

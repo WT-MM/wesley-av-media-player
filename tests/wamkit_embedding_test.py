@@ -32,7 +32,7 @@ if a.api:
  if 'API checks passed: 33 terminal results' not in (a.output/'log.txt').read_text():errors.append('API command checks failed')
 elif a.refusal:
  if not any(r['refusal']==a.refusal and r['kind']==3 for r in rows):errors.append('missing named refusal '+a.refusal)
- if a.refusal=='HeAacSbrDecoderDelayUnproven' and not any('LibavformatAudioTimingUnproven' in r.get('related_refusals',[]) for r in rows):errors.append('missing structured secondary refusal')
+ if a.refusal=='HeAacSbrDecoderDelayUnproven' and not any('libavformat: HeAacSbrDecoderDelayUnproven' in r.get('detail','') for r in rows):errors.append('missing libavformat route refusal')
 else:
  if max((r['drawn_frames'] for r in rows),default=0)<=0:errors.append('no drawn frames')
  if not any(r['kind']==5 and r['first_pts_timescale']>0 and r['first_pts_value']==0 for r in rows):errors.append('no exact first PTS zero')

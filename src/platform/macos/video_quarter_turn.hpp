@@ -1,6 +1,6 @@
 #pragma once
 
-#include "media/native_media_source.hpp"
+#include "media/native_video_admission.hpp"
 
 #include <CoreGraphics/CoreGraphics.h>
 
@@ -48,26 +48,7 @@ namespace wam::macos {
   return std::nullopt;
 }
 
-// `degrees` normalised into [0, 360), or nullopt unless it is a quarter turn.
-[[nodiscard]] inline std::optional<int> normalizedQuarterTurn(
-    int degrees) noexcept {
-  const int normalized = ((degrees % 360) + 360) % 360;
-  if (normalized == 0 || normalized == 90 || normalized == 180 ||
-      normalized == 270) {
-    return normalized;
-  }
-  return std::nullopt;
-}
-
-// A descriptor states its rotation twice -- as an angle and as the
-// identityTransform flag -- and the two must agree. A quarter turn is
-// presentable; a descriptor whose two statements disagree is a corrupted fact
-// rather than a rotated file, and is refused as one.
-[[nodiscard]] inline bool quarterTurnRotationAdmitted(
-    const media::MediaVideoFormat& video) noexcept {
-  const std::optional<int> rotation =
-      normalizedQuarterTurn(video.rotationDegrees);
-  return rotation && video.identityTransform == (*rotation == 0);
-}
+using media::normalizedQuarterTurn;
+using media::quarterTurnRotationAdmitted;
 
 }  // namespace wam::macos

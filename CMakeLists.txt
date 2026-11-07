@@ -549,6 +549,8 @@ if(APPLE)
     set(WAM_QUICKLOOK_FRAME_SOURCES
       packaging/quicklook/wam_thumbnail_frame.hpp
       packaging/quicklook/wam_thumbnail_frame.mm
+      src/platform/macos/core_media_carriage.hpp
+      src/platform/macos/core_media_carriage.mm
       src/platform/macos/matroska_sample_builder.hpp
       src/platform/macos/matroska_sample_builder.mm
       src/platform/macos/mpegts_sample_builder.hpp
@@ -888,8 +890,15 @@ if(BUILD_TESTING)
     target_link_libraries(wam_native_pcm_ring_test PRIVATE wam_native_core)
     add_test(NAME native_pcm_ring COMMAND wam_native_pcm_ring_test)
 
+    # The render core's test hooks are compiled in only with
+    # WAM_NATIVE_TEST_SEAMS; compile a private render core with them, as the
+    # clock test does for its token domain.
     add_executable(wam_native_audio_render_core_test
-      tests/native_audio_render_core_test.cpp)
+      tests/native_audio_render_core_test.cpp
+      src/platform/macos/native_audio_render_core.cpp)
+    target_include_directories(wam_native_audio_render_core_test PRIVATE src)
+    target_compile_definitions(wam_native_audio_render_core_test PRIVATE
+      WAM_NATIVE_TEST_SEAMS=1)
     target_link_libraries(
       wam_native_audio_render_core_test PRIVATE wam_native_core)
     add_test(NAME native_audio_render_core
@@ -1180,6 +1189,8 @@ if(BUILD_TESTING)
       # gates may link the production archive directly.
       add_executable(wam_avfoundation_media_source_test
         tests/avfoundation_media_source_test.mm
+        src/platform/macos/avfoundation_media_support.hpp
+        src/platform/macos/avfoundation_media_support.mm
         src/platform/macos/avfoundation_asset_context.hpp
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_media_source.hpp
@@ -1211,6 +1222,10 @@ if(BUILD_TESTING)
 
       add_executable(wam_avfoundation_preview_source_test
         tests/avfoundation_preview_source_test.mm
+        src/platform/macos/avfoundation_media_support.hpp
+        src/platform/macos/avfoundation_media_support.mm
+        src/platform/macos/native_video_codec_capability.hpp
+        src/platform/macos/native_video_codec_capability.mm
         src/platform/macos/avfoundation_asset_context.hpp
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_preview_source.hpp
@@ -1227,7 +1242,8 @@ if(BUILD_TESTING)
         "${WAM_COREMEDIA_FRAMEWORK}"
         "${WAM_COREVIDEO_FRAMEWORK}"
         "${WAM_FOUNDATION_FRAMEWORK}"
-        "${WAM_AVFOUNDATION_FRAMEWORK}")
+        "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
       add_test(NAME macos_avfoundation_preview_source
         COMMAND wam_avfoundation_preview_source_test)
       set_tests_properties(macos_avfoundation_preview_source PROPERTIES
@@ -1281,7 +1297,9 @@ if(BUILD_TESTING)
       add_executable(wam_native_audio_converter_test
         tests/native_audio_converter_test.mm
         src/platform/macos/native_audio_converter.hpp
-        src/platform/macos/native_audio_converter.mm)
+        src/platform/macos/native_audio_converter.mm
+        src/platform/macos/native_audio_converter_backends.hpp
+        src/platform/macos/native_audio_converter_backends.mm)
       target_include_directories(wam_native_audio_converter_test PRIVATE src)
       target_link_libraries(wam_native_audio_converter_test PRIVATE
         wam_native_core
@@ -1309,7 +1327,9 @@ if(BUILD_TESTING)
       add_executable(wam_native_audio_converter_opus_test
         tests/native_audio_converter_opus_test.mm
         src/platform/macos/native_audio_converter.hpp
-        src/platform/macos/native_audio_converter.mm)
+        src/platform/macos/native_audio_converter.mm
+        src/platform/macos/native_audio_converter_backends.hpp
+        src/platform/macos/native_audio_converter_backends.mm)
       target_include_directories(wam_native_audio_converter_opus_test
         PRIVATE src)
       target_link_libraries(wam_native_audio_converter_opus_test PRIVATE
@@ -1375,9 +1395,12 @@ if(BUILD_TESTING)
         tests/native_audio_output_test.mm
         src/platform/macos/native_audio_output.hpp
         src/platform/macos/native_audio_output.mm
+        src/platform/macos/native_audio_render_core.cpp
         src/platform/macos/native_audio_stretch_stage.hpp
         src/platform/macos/native_audio_stretch_stage.mm)
       target_include_directories(wam_native_audio_output_test PRIVATE src)
+      target_compile_definitions(wam_native_audio_output_test PRIVATE
+        WAM_NATIVE_TEST_SEAMS=1)
       target_link_libraries(wam_native_audio_output_test PRIVATE
         wam_native_core
         "${WAM_COREMEDIA_FRAMEWORK}"
@@ -1561,6 +1584,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_media_source.mm
         src/platform/macos/matroska_preview_source.hpp
         src/platform/macos/matroska_preview_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
         # native_preview_source.mm switches exhaustively on backendKind, so
@@ -1568,10 +1593,16 @@ if(BUILD_TESTING)
         # closure whether or not the test exercises it.
         src/platform/macos/mpegts_asset_context.hpp
         src/platform/macos/mpegts_asset_context.cpp
+        src/platform/macos/mpegts_media_source.hpp
+        src/platform/macos/mpegts_media_source.mm
         src/platform/macos/mpegts_preview_source.hpp
         src/platform/macos/mpegts_preview_source.mm
         src/platform/macos/mpegts_sample_builder.hpp
         src/platform/macos/mpegts_sample_builder.mm
+        src/platform/macos/avfoundation_media_support.hpp
+        src/platform/macos/avfoundation_media_support.mm
+        src/platform/macos/native_video_codec_capability.hpp
+        src/platform/macos/native_video_codec_capability.mm
         src/platform/macos/avfoundation_asset_context.hpp
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_preview_source.hpp
@@ -1588,7 +1619,8 @@ if(BUILD_TESTING)
         "${WAM_COREGRAPHICS_FRAMEWORK}"
         "${WAM_FOUNDATION_FRAMEWORK}"
         "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-        "${WAM_AVFOUNDATION_FRAMEWORK}")
+        "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
       add_test(NAME macos_matroska_preview_source
         COMMAND wam_matroska_preview_source_test)
       set_tests_properties(macos_matroska_preview_source PROPERTIES
@@ -1610,6 +1642,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_asset_context.cpp
         src/platform/macos/matroska_media_source.hpp
         src/platform/macos/matroska_media_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm)
       target_include_directories(
@@ -1635,6 +1669,8 @@ if(BUILD_TESTING)
         src/platform/macos/mpegts_asset_context.cpp
         src/platform/macos/mpegts_media_source.hpp
         src/platform/macos/mpegts_media_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/mpegts_sample_builder.hpp
         src/platform/macos/mpegts_sample_builder.mm)
       target_include_directories(
@@ -1669,10 +1705,18 @@ if(BUILD_TESTING)
         # closure whether or not the test exercises it.
         src/platform/macos/matroska_asset_context.hpp
         src/platform/macos/matroska_asset_context.cpp
+        src/platform/macos/matroska_media_source.hpp
+        src/platform/macos/matroska_media_source.mm
         src/platform/macos/matroska_preview_source.hpp
         src/platform/macos/matroska_preview_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
+        src/platform/macos/avfoundation_media_support.hpp
+        src/platform/macos/avfoundation_media_support.mm
+        src/platform/macos/native_video_codec_capability.hpp
+        src/platform/macos/native_video_codec_capability.mm
         src/platform/macos/avfoundation_asset_context.hpp
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_preview_source.hpp
@@ -1689,7 +1733,8 @@ if(BUILD_TESTING)
         "${WAM_COREGRAPHICS_FRAMEWORK}"
         "${WAM_FOUNDATION_FRAMEWORK}"
         "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-        "${WAM_AVFOUNDATION_FRAMEWORK}")
+        "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
       add_test(NAME macos_mpegts_preview_source
         COMMAND wam_mpegts_preview_source_test "${WAM_CONTAINER_FIXTURE_MUXER}")
       set_tests_properties(macos_mpegts_preview_source PROPERTIES
@@ -1705,6 +1750,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_asset_context.cpp
         src/platform/macos/matroska_media_source.hpp
         src/platform/macos/matroska_media_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
         src/platform/macos/mpegts_asset_context.hpp
@@ -1734,6 +1781,10 @@ if(BUILD_TESTING)
       # under one macro, while reusing the production decoder/video core.
       add_executable(wam_native_preview_frame_lane_test
         tests/native_preview_frame_lane_test.mm
+        src/platform/macos/avfoundation_media_support.hpp
+        src/platform/macos/avfoundation_media_support.mm
+        src/platform/macos/native_video_codec_capability.hpp
+        src/platform/macos/native_video_codec_capability.mm
         src/platform/macos/avfoundation_asset_context.hpp
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_preview_source.hpp
@@ -1749,7 +1800,8 @@ if(BUILD_TESTING)
         wam_native_core
         wam_macos_native_video_core
         "${WAM_COREGRAPHICS_FRAMEWORK}"
-        "${WAM_AVFOUNDATION_FRAMEWORK}")
+        "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
       add_test(NAME macos_native_preview_frame_lane
         COMMAND wam_native_preview_frame_lane_test)
       set_tests_properties(macos_native_preview_frame_lane PROPERTIES
@@ -1761,10 +1813,15 @@ if(BUILD_TESTING)
       add_executable(wam_native_media_session_test
         tests/native_media_session_test.mm
         src/platform/macos/mpegts_media_source.mm
+        src/platform/macos/matroska_media_source.mm
         src/media/native_media_source.hpp
         src/media/native_media_source.cpp
         src/media/native_media_dispatcher.hpp
         src/media/native_media_dispatcher.cpp
+        src/platform/macos/avfoundation_media_support.hpp
+        src/platform/macos/avfoundation_media_support.mm
+        src/platform/macos/native_video_codec_capability.hpp
+        src/platform/macos/native_video_codec_capability.mm
         src/platform/macos/avfoundation_asset_context.hpp
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_preview_source.hpp
@@ -1773,6 +1830,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_asset_context.cpp
         src/platform/macos/matroska_preview_source.hpp
         src/platform/macos/matroska_preview_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
         src/platform/macos/mpegts_asset_context.hpp
@@ -1803,7 +1862,8 @@ if(BUILD_TESTING)
         "${WAM_COREAUDIO_FRAMEWORK}"
         "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
         "${WAM_COREGRAPHICS_FRAMEWORK}"
-        "${WAM_AVFOUNDATION_FRAMEWORK}")
+        "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
       add_test(NAME macos_native_media_session
         COMMAND wam_native_media_session_test)
       add_test(NAME macos_mpegts_session_fallback

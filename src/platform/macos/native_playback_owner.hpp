@@ -15,6 +15,28 @@ namespace native_protocol = ::wam::media::native_playback;
 
 // Commands and delivery are main-thread-owned; native facts cross a retained,
 // capacity-one edge and never invoke the owner on the session worker.
+enum class NativeOwnerError : std::uint8_t {
+  InternalProtocolViolation,
+  SessionBudgetExceeded,
+  RetirementCapacityUnavailable,
+  PresentationUnavailable,
+};
+
+[[nodiscard]] constexpr const char* nativeOwnerErrorName(
+    NativeOwnerError error) noexcept {
+  switch (error) {
+  case NativeOwnerError::InternalProtocolViolation:
+    return "InternalProtocolViolation";
+  case NativeOwnerError::SessionBudgetExceeded:
+    return "SessionBudgetExceeded";
+  case NativeOwnerError::RetirementCapacityUnavailable:
+    return "RetirementCapacityUnavailable";
+  case NativeOwnerError::PresentationUnavailable:
+    return "PresentationUnavailable";
+  }
+  return "InternalProtocolViolation";
+}
+
 class NativePlaybackOwner {
 public:
   enum class PauseDisposition : std::uint8_t {
@@ -61,7 +83,6 @@ public:
   // one for the whole gesture instead of collecting a failure per sample.
   [[nodiscard]] PreviewHandoffDisposition preparePreviewHandoff();
   [[nodiscard]] PreviewDisposition previewFrame(double, std::uint64_t, std::uint64_t);
-  [[nodiscard]] SeekDisposition commitSeek(double, std::uint64_t, std::uint64_t, bool);
   [[nodiscard]] SeekDisposition commitSeek(media::MediaTime, std::uint64_t, std::uint64_t, bool);
   [[nodiscard]] bool setGain(float);
   [[nodiscard]] bool setMuted(bool);
@@ -105,6 +126,7 @@ protected:
     std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed;
     float gain{1};
     bool muted{false};
+    bool bufferedStorage{false};
   };
   std::optional<playback_router::Transition> beginNativePrepare(const playback_router::Action&);
   virtual std::optional<Preparation> preparationFor(native_protocol::SourceKey) = 0;
@@ -121,7 +143,9 @@ protected:
   virtual void sessionCleared() noexcept = 0;
   virtual void publishExactDraw(const NativeMediaSessionExactDraw&) {}
   virtual void publishDiagnostic(const NativeMediaSessionDiagnostic&) {}
-  virtual void surfaceNativeError(const char*) = 0;
+  // A recoverable native refusal: a typed code for embedding hosts plus
+  // human-readable detail.
+  virtual void surfaceNativeError(NativeOwnerError, const char* detail) = 0;
   virtual void ownerError(const char*) = 0;
   virtual void ownerNotice(const char*) = 0;
   virtual void seekProgress(std::uint64_t) = 0;
@@ -144,41 +168,84 @@ protected:
   void consumePreviewFailed(const native_protocol::PreviewFailed&);
   virtual void publishPreviewFailed(const native_protocol::PreviewFailed&) = 0;
   void consumeCommitReady(const native_protocol::CommitReady&);
-  void consumeExactCommitReady(const native_protocol::ExactCommitReady&);
-  virtual void publishExactCommitReady(const native_protocol::ExactCommitReady&) {}
   virtual void commitProved(const native_protocol::CommitReady&, bool) {}
   virtual void publishCommitReady(const native_protocol::CommitReady&) = 0;
 
-  static constexpr std::uint64_t kNativePhaseTickBudget = 1'000'000;
-  playback_router::PlaybackRouter router_{
-      playback_router::TimeoutPolicy{kNativePhaseTickBudget, kNativePhaseTickBudget,
-                                     kNativePhaseTickBudget, kNativePhaseTickBudget}};
   std::optional<NativePreviewFrameTarget> nativePreviewTarget_;
   std::optional<native_protocol::PreviewFrame> nativePreview_;
   std::optional<NativeMediaSessionCommitTarget> nativeCommitTarget_;
-  std::optional<media::MediaTime> nativeExactCommitTarget_;
   std::optional<native_protocol::CommitSeek> nativeCommit_;
   std::optional<native_protocol::Stop> nativeStop_;
   std::uint64_t nextObservationEpoch_{0};
-  std::uint64_t tick_{0};
   std::uint64_t lastAudioProofSerial_{0};
   std::uint64_t lastVideoDrawSequence_{0};
   std::uint64_t nativePreviewGesture_{0};
   std::uint64_t nativePreviewSubmissionEpoch_{0};
   std::uint64_t nativeCommitDrawBaseline_{0};
+  media::MediaTime nativeCommitTime_{};
   std::uint64_t nativePhaseWatchdogEpoch_{0};
   bool nativePhaseWatchdogArmed_{false};
   media::SeekProgressDeadline nativeSeekProgress_{};
   bool firstNativeDrawReported_{false};
   PreviewDisposition nativePreviewDisposition_{PreviewDisposition::Rejected};
   bool nativeCommitDispatchAccepted_{false};
+  // Router commands for hosts. Each is stamped with the owner's next tick;
+  // the host executes the returned transition.
+  [[nodiscard]] playback_router::Snapshot routeSnapshot() const noexcept {
+    return router_.snapshot();
+  }
+  [[nodiscard]] playback_router::Transition routeOpen(
+      const playback_router::OpenRequest& request) noexcept {
+    return router_.open(request, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeStop() noexcept {
+    return router_.stop(nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeSetPaused(bool paused) noexcept {
+    return router_.setPaused(paused, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeSetRate(double rate) noexcept {
+    return router_.setRate(rate, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeSetPreservePitch(
+      bool preserve) noexcept {
+    return router_.setPreservePitch(preserve, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeFallbackCreated(
+      playback_router::FallbackCreated event) noexcept {
+    return router_.onFallbackCreated(event, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeFallbackOpened(
+      playback_router::FallbackOpened event) noexcept {
+    return router_.onFallbackOpened(event, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeFallbackStopped(
+      playback_router::FallbackStopped event) noexcept {
+    return router_.onFallbackStopped(event, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeFallbackFailed(
+      playback_router::FallbackFailed event) noexcept {
+    return router_.onFallbackFailed(event, nextTick());
+  }
+  // A fallback stop completes only outside router execution and outside a
+  // fallback event drain. True when that completion was deferred; the owner
+  // re-runs maybeCompleteFallbackStop() once both unwind.
+  [[nodiscard]] bool deferFallbackCompletionWhileRouting() noexcept;
+
+public:
+  // Brackets a synchronous drain of fallback-player events.
+  void beginFallbackEventDrain() noexcept;
+  void endFallbackEventDrain();
+
+private:
+  friend struct NativePlaybackOwnerRouterTestAccess;
+  playback_router::PlaybackRouter router_;
+  std::uint64_t tick_{0};
   unsigned executeDepth_{0};
   unsigned fallbackEventDrainDepth_{0};
   bool fallbackCompletionDeferred_{false};
-private:
   std::shared_ptr<NativeMediaSession> nativeSession_;
   std::shared_ptr<ObservationBridge> observationBridge_;
-  SeekDisposition commitSeekImpl(double, std::optional<media::MediaTime>, std::uint64_t, std::uint64_t, bool);
   std::shared_ptr<ObservationBridge> ownerLifetime_;
   std::shared_ptr<NativeRetirement> retirement_;
   std::function<void()> retirementContinuation_;

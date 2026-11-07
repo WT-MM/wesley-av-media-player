@@ -3226,8 +3226,8 @@ int main(int argc, char **argv) {
     // The claim the feature rests on is precisely this: given the frame
     // covering the playhead, the target computed for a step lands inside the
     // NEIGHBOURING frame's half-open presentation interval -- the same
-    // interval rule native accurate seek uses (frameCoversPosition in
-    // native_playback_contract.hpp). Proving that over real PTS tables proves
+    // interval rule native accurate seek uses (exactFrameCovers in
+    // native_exact_playback.hpp). Proving that over real PTS tables proves
     // the step, without needing a live transport.
     //
     // The rounding direction is the load-bearing part. Forward must round UP

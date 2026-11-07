@@ -1,4 +1,4 @@
-#define WAM_NATIVE_AUDIO_SESSION_TESTING 1
+#define WAM_NATIVE_TEST_SEAMS 1
 
 #include "media/native_media_dispatcher.hpp"
 #include "platform/macos/native_audio_session.hpp"
@@ -744,11 +744,8 @@ MediaSourceOpenOptions audioOptions(std::int64_t targetFrame) {
                                     const NativeAudioSessionFacts& rhs)
     noexcept {
   return lhs.requestedGain == rhs.requestedGain &&
-         lhs.appliedGain == rhs.appliedGain &&
          lhs.requestedMuted == rhs.requestedMuted &&
-         lhs.appliedMuted == rhs.appliedMuted &&
-         lhs.controlRevision == rhs.controlRevision &&
-         lhs.appliedControlRevision == rhs.appliedControlRevision;
+         lhs.controlRevision == rhs.controlRevision;
 }
 
 void expectTerminalControlsInert(NativeAudioSession& session,
@@ -784,10 +781,8 @@ void testCachedGainMuteControls() {
              session->setMuted(true) == NativeAudioSessionProgress::Done,
          "Fresh audio controls accept a cached gain and independent mute");
   const NativeAudioSessionFacts cached = session->facts();
-  expect(cached.requestedGain == 0.25F && cached.appliedGain == 0.25F &&
-             cached.requestedMuted && cached.appliedMuted &&
-             cached.controlRevision == 2 &&
-             cached.appliedControlRevision == 2,
+  expect(cached.requestedGain == 0.25F && cached.requestedMuted &&
+             cached.controlRevision == 2,
          "Fresh controls publish one exact normalized pair per request");
 
   NativeAudioSession* audio = session.get();
@@ -823,10 +818,8 @@ void testCachedGainMuteControls() {
   expect(std::fabs(unmutedSamples[254] - expectedLastLeft) < 0.000001F,
          "unmute ramps to the preconfigure quarter-gain target");
   const NativeAudioSessionFacts unmuted = audio->facts();
-  expect(unmuted.requestedGain == 0.25F &&
-             unmuted.appliedGain == 0.25F && !unmuted.requestedMuted &&
-             !unmuted.appliedMuted && unmuted.controlRevision == 3 &&
-             unmuted.appliedControlRevision == 3,
+  expect(unmuted.requestedGain == 0.25F && !unmuted.requestedMuted &&
+             unmuted.controlRevision == 3,
          "mute changes never overwrite gain or lose callback publication");
 
   allocations.store(0, std::memory_order_relaxed);
@@ -860,10 +853,8 @@ void testCachedGainMuteControls() {
   expect(rapidAccepted && allocations.load(std::memory_order_relaxed) == 0 &&
              clampedLow == 0.0F && boosted == 4.0F && clampedHigh == 4.0F &&
              failSafeNonFinite == 0.0F &&
-             rapid.requestedGain == 0.75F &&
-             rapid.appliedGain == 0.75F && !rapid.requestedMuted &&
-             !rapid.appliedMuted && rapid.controlRevision == 11 &&
-             rapid.appliedControlRevision == 11,
+             rapid.requestedGain == 0.75F && !rapid.requestedMuted &&
+             rapid.controlRevision == 11,
          "rapid normalized controls are allocation-free and last-write wins");
 
   expect(dispatcher.close(1).status ==
@@ -1322,11 +1313,6 @@ void testFirstAudioSampleBindsSourceDecodeStart() {
 
 void testCloseSupersedesStagedFlush() {
   const NativeMediaGenerationTimeline next = timeline(2, 4096, 0);
-  NativeAudioGenerationTimeline converterNext;
-  converterNext.presentationFloor = {4096,
-                                     static_cast<std::int32_t>(kRate)};
-  converterNext.trimBeforeFloor = true;
-  converterNext.startsAtStreamOrigin = true;
   const auto makeStaged = [&]() {
     auto platform = std::make_shared<FakePlatform>();
     auto backendState = std::make_shared<BackendState>();
@@ -1337,9 +1323,9 @@ void testCloseSupersedesStagedFlush() {
                session->configure(audioTrack(), 1, timeline(1, 0), nullptr) ==
                    NativeMediaConsumeResult::Accepted,
            "lifecycle precedence fixture configures");
-    NativeAudioSessionTestAccess::stageFlushAfterStop(
-        *session, 1, 2, next, converterNext,
-        {4096, static_cast<std::int32_t>(kRate)}, 4096);
+    expect(NativeAudioSessionTestAccess::stageFlushAfterStop(
+               *session, 1, 2, next),
+           "staged flush plan is admitted");
     return session;
   };
 
@@ -1549,11 +1535,6 @@ void testExactTerminalRetirement() {
 
   {
     const NativeMediaGenerationTimeline next = timeline(2, 4096, 0);
-    NativeAudioGenerationTimeline converterNext;
-    converterNext.presentationFloor = {
-        4096, static_cast<std::int32_t>(kRate)};
-    converterNext.trimBeforeFloor = true;
-    converterNext.startsAtStreamOrigin = true;
     auto platform = std::make_shared<FakePlatform>();
     auto backendState = std::make_shared<BackendState>();
     auto session = NativeAudioSession::create(
@@ -1562,9 +1543,9 @@ void testExactTerminalRetirement() {
     expect(session->configure(audioTrack(), 1, timeline(1, 0), nullptr) ==
                NativeMediaConsumeResult::Accepted,
            "staged-flush retirement fixture configures");
-    NativeAudioSessionTestAccess::stageFlushAfterStop(
-        *session, 1, 2, next, converterNext,
-        {4096, static_cast<std::int32_t>(kRate)}, 4096);
+    expect(NativeAudioSessionTestAccess::stageFlushAfterStop(
+               *session, 1, 2, next),
+           "staged flush plan is admitted");
     expect(session->retire(1, 9) ==
                    NativeMediaConsumerProgress::StaleGeneration &&
                session->facts().state == NativeAudioSessionState::Flushing,
@@ -1706,11 +1687,16 @@ void testQuiescingDestructorQuarantineRecovery() {
   }
   platform->hostCondition.notify_all();
   callback.join();
-  auto recovered = NativeAudioSession::recoverQuarantined();
-  expect(recovered != nullptr,
-         "quarantined graph has a discoverable recovery owner");
-  expect(recovered->close() == NativeMediaConsumerProgress::Done,
-         "recovered owner completes exact close after callback exit");
+  // The next create() drains quarantine: with the callback gone, the
+  // quarantined graph now closes Done and gives its slot back.
+  auto next = NativeAudioSession::create(
+      8, dependencies(neighbourPlatform,
+                      std::make_unique<FakeBackend>(neighbourBackend)));
+  expect(next != nullptr && !NativeAudioSession::quarantineFacts().quarantined,
+         "create() finishes the close of a graph whose callback has exited");
+  expect(next->close() == NativeMediaConsumerProgress::Done,
+         "the session that drained quarantine closes cleanly");
+  next.reset();
   const NativeAudioSessionQuarantineFacts quarantine =
       NativeAudioSession::quarantineFacts();
   expect(!quarantine.claimed && !quarantine.quarantined &&
@@ -1762,7 +1748,7 @@ void testBoundedSessionEnvelope() {
                                  std::make_shared<BackendState>()))) == nullptr,
          "a quarantined session keeps consuming its slot in the envelope");
 
-  auto recovered = NativeAudioSession::recoverQuarantined();
+  auto recovered = NativeAudioSessionTestAccess::recoverQuarantined();
   expect(recovered != nullptr,
          "the bounded registry hands the quarantined graph back");
   NativeAudioSessionTestAccess::forceCloseQuiescing(*recovered, false);

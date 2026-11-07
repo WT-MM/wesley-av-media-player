@@ -366,15 +366,15 @@ std::optional<double> mediaTimeSeconds(MediaTime time) noexcept {
 }
 
 std::optional<double> mediaTimeSecondsAtHostTicks(MediaTime origin,
-    std::uint64_t ticks, std::uint64_t frequency, std::uint32_t units) noexcept {
-  if (!origin.valid() || origin.value < 0 || frequency == 0 || units < 16 || units > 256)
+    std::uint64_t ticks, std::uint64_t frequency,
+    native_playback::PlaybackRateRatio rate) noexcept {
+  if (!origin.valid() || origin.value < 0 || frequency == 0 || !rate.valid())
     return {};
-  const auto rateDivisor = std::gcd(units, std::uint32_t{64});
   const auto tickDivisor = std::gcd(ticks, frequency);
-  const __uint128_t hostDenominator = __uint128_t(frequency / tickDivisor) * (64 / rateDivisor);
+  const __uint128_t hostDenominator = __uint128_t(frequency / tickDivisor) * rate.denominator;
   __uint128_t numerator = 0;
   if (__builtin_mul_overflow(__uint128_t(origin.value), hostDenominator, &numerator)) return {};
-  const __uint128_t elapsed = __uint128_t(ticks / tickDivisor) * (units / rateDivisor) * static_cast<std::uint32_t>(origin.timescale);
+  const __uint128_t elapsed = __uint128_t(ticks / tickDivisor) * rate.numerator * static_cast<std::uint32_t>(origin.timescale);
   if (__builtin_add_overflow(numerator, elapsed, &numerator)) return {};
   __uint128_t denominator = hostDenominator * static_cast<std::uint32_t>(origin.timescale);
   auto left = numerator;

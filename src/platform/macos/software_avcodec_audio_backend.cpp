@@ -39,6 +39,7 @@ float sample(const std::uint8_t* address,AVSampleFormat format) noexcept {
 }
 struct SoftwareAvcodecAudioBackend::Impl {
   Codec codec;
+  NativeAudioBackendWake wake;
   NativeAudioBackendConfiguration configuration;
   std::vector<std::byte> extra;
   std::unique_ptr<DecodeWorker> worker;
@@ -74,7 +75,11 @@ struct SoftwareAvcodecAudioBackend::Impl {
     }
     const auto bytes=static_cast<std::size_t>(wam::media::avcodec::api().av_get_bytes_per_sample(format));
     const bool planar=wam::media::avcodec::api().av_sample_fmt_is_planar(format);
-    const auto count=std::min<std::size_t>(4096,static_cast<std::size_t>(frame.nb_samples)-s.offset);
+    // Bounded by the converter's pump slab and by the worker's scratch, so a
+    // smaller reservation shortens the fill instead of overrunning it.
+    const auto count=std::min({NativeAudioConverter::kFramesPerPump,s.slab.size()/channels,
+        static_cast<std::size_t>(frame.nb_samples)-s.offset});
+    if(count==0) {s.error.store("AvcodecAudioConversionStorageUnavailable");return FrameResult::Failed;}
     for(std::size_t f=0;f<count;++f)for(unsigned c=0;c<channels;++c) {
       const auto* source=frame.extended_data[planar?c:0]+((s.offset+f)*(planar?1:channels)+(planar?0:c))*bytes;
       s.slab[f*channels+c]=sample(source,packed);
@@ -87,7 +92,7 @@ struct SoftwareAvcodecAudioBackend::Impl {
   }
   bool start() {
     worker=std::make_unique<DecodeWorker>(FrameHandler{receive,this},
-        WakeHandler{configuration.wake.signal, configuration.wake.context});
+        WakeHandler{wake.signal, wake.context});
     Configuration config;config.codec=codec;config.generation=generation;config.epoch=generation;
     config.extradata=extra;config.rate=configuration.outputSampleRate;config.channels=configuration.outputChannels;
     configured=worker->configure(config);
@@ -96,14 +101,19 @@ struct SoftwareAvcodecAudioBackend::Impl {
     return configured;
   }
 };
-SoftwareAvcodecAudioBackend::SoftwareAvcodecAudioBackend(Codec codec):impl_(std::make_unique<Impl>()) {impl_->codec=codec;}
+SoftwareAvcodecAudioBackend::SoftwareAvcodecAudioBackend(Codec codec,NativeAudioBackendWake wake):impl_(std::make_unique<Impl>()) {
+  impl_->codec=codec;
+  impl_->wake=wake;
+}
+NativeAudioBackendCapabilities SoftwareAvcodecAudioBackend::capabilities() const noexcept {
+  // The worker decodes asynchronously and states its channel layout with its
+  // first frame; a cancelled generation's worker is discarded, not reset.
+  return {.channelRolesAtConfigure=false,.idleConvertRetries=true,.cancelCloses=true};
+}
 SoftwareAvcodecAudioBackend::~SoftwareAvcodecAudioBackend(){close();}
 bool SoftwareAvcodecAudioBackend::configure(const NativeAudioBackendConfiguration& config,std::string* error) {
   close();auto& s=*impl_;
-  if (config.decodePlan.implementation != media::DecodeImplementation::Libavcodec ||
-      config.decodePlan.configurationRepresentation != media::DecodeConfigurationRepresentation::RawExtradata ||
-      !config.magicCookie.empty() ||
-      config.rawExtradata.size()>media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes) {
+  if (config.codecConfiguration.size()>media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes) {
     if (error) *error="AvcodecAudioConfigurationRepresentationUnsupported";return false;
   }
   if(!config.outputSampleRate || config.outputSampleRate!=config.input.sampleRate ||
@@ -111,7 +121,7 @@ bool SoftwareAvcodecAudioBackend::configure(const NativeAudioBackendConfiguratio
      config.outputChannels!=config.input.channels || !config.input.framesPerPacket) {
     if(error)*error="AvcodecAudioResamplingUnsupported";return false;
   }
-  s.configuration=config;s.extra.assign(config.rawExtradata.begin(),config.rawExtradata.end());s.configuration.rawExtradata=s.extra;
+  s.configuration=config;s.extra.assign(config.codecConfiguration.begin(),config.codecConfiguration.end());s.configuration.codecConfiguration=s.extra;
   s.nextFrame=0;s.eos=false;s.offset=0;s.error.store(nullptr);s.layoutKnown.store(false);
   if(!s.start()) {if(error)*error=s.worker->failure()?s.worker->failure():"AvcodecAudioConfigureFailed";return false;}
   return true;

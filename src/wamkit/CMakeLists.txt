@@ -43,6 +43,9 @@ endif()
 option(WAMKIT_ENABLE_TEST_SUPPORT "Enable private identity-gated quiet proof seams" OFF)
 if(WAMKIT_ENABLE_TEST_SUPPORT)
   target_compile_definitions(WAMKit PRIVATE WAMKIT_ENABLE_TEST_SUPPORT=1)
+  # The native seams WAMKit's test support drives (native_test_seams.hpp).
+  # PUBLIC, so every target sharing these objects sees one class layout.
+  target_compile_definitions(wam_macos_native_backend PUBLIC WAM_NATIVE_TEST_SEAMS=1)
 endif()
 option(WAMKIT_BUILD_HOST "Build the non-Qt AppKit embedding example" ${APPLE})
 if(WAMKIT_BUILD_HOST)

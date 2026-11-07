@@ -38,7 +38,7 @@ struct PreviewFrameRequest {
 struct CommitSeekRequest {
   native::GestureId gesture;
   native::RequestId request;
-  double targetSeconds{0.0};
+  MediaTime target{};
   // Exact output sequence sampled before physical CommitSeek issue. A ready
   // fact must contain a strictly newer draw in the target generation.
   std::uint64_t drawBaseline{0};
@@ -95,6 +95,33 @@ enum class State : std::uint8_t {
   FallbackActive,
   FallbackStopping,
 };
+
+// The router's state classification, stated once for every host.
+[[nodiscard]] constexpr bool ownsNativeTransport(State state) noexcept {
+  return state >= State::NativePreparing && state <= State::NativeStopFailed;
+}
+[[nodiscard]] constexpr bool ownsFallbackTransport(State state) noexcept {
+  return state >= State::FallbackCreating && state <= State::FallbackStopping;
+}
+// The two ranges above depend on the declaration order of State.
+static_assert(!ownsNativeTransport(State::Idle) &&
+              ownsNativeTransport(State::NativeStopFailed) &&
+              !ownsNativeTransport(State::FallbackCreating) &&
+              ownsFallbackTransport(State::FallbackStopping));
+// The native phases that own no timer of their own and need a host deadline.
+[[nodiscard]] constexpr bool isBoundedNativePhase(State state) noexcept {
+  return state == State::NativePreparing || state == State::NativeStarting ||
+         state == State::NativeSeeking || state == State::NativeStopping;
+}
+// A native generation is live and can take preview and seek commands.
+[[nodiscard]] constexpr bool nativeGenerationLive(State state) noexcept {
+  return state == State::NativeStarting || state == State::NativeActive ||
+         state == State::NativeEnded;
+}
+// The fallback player is open and drives the visible picture.
+[[nodiscard]] constexpr bool fallbackPlaying(State state) noexcept {
+  return state == State::FallbackOpening || state == State::FallbackActive;
+}
 
 enum class Status : std::uint8_t {
   Applied,
@@ -217,9 +244,13 @@ public:
                                         Tick now) noexcept;
   [[nodiscard]] Transition commitSeek(const CommitSeekRequest &request,
                                       Tick now) noexcept;
-  [[nodiscard]] Transition commitSeekExact(const CommitSeekRequest&, MediaTime, Tick) noexcept;
-  [[nodiscard]] Transition onNativeExactCommitReady(const native::ExactCommitReady&, Tick) noexcept;
   [[nodiscard]] Transition advance(Tick now) noexcept;
+  // A host-owned wall-clock deadline for the current bounded native phase
+  // fired. Preparing, Starting and Seeking stop exactly as an expired tick
+  // deadline would; Stopping only records the expiry, which
+  // retireStoppingAfterSynchronousTeardown() then consumes once the host has
+  // destroyed the native graph.
+  [[nodiscard]] Transition expirePhase(Tick now) noexcept;
 
   [[nodiscard]] Transition onNativePrepared(const native::Prepared &event,
                                             Tick now) noexcept;
@@ -301,7 +332,7 @@ private:
   native::Start start_{};
   native::PreviewFrame latestPreview_{};
   native::CommitSeek commitSeek_{};
-  std::optional<MediaTime> exactCommitTarget_;
+  MediaTime commitTarget_{};
   std::uint64_t commitDrawBaseline_{0};
   native::Stop stop_{};
   std::optional<PendingOpen> pending_;
