@@ -679,6 +679,10 @@ private:
                           std::uint64_t request) noexcept;
   void setNativeScrubPauseIntent(bool paused);
   // A native scrub or seek owns the logical pause intent until it commits.
+  // Play at the end, or within one frame of it (never less than 50 ms),
+  // replays from the start. `frame_duration` is the playing engine's own
+  // frame duration, 0 when it knows none.
+  [[nodiscard]] bool atEndForReplay(double frame_duration) const noexcept;
   [[nodiscard]] bool nativeSeekInFlight() const noexcept {
     return native_scrub_intent_ || native_seek_intent_;
   }

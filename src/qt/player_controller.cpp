@@ -947,8 +947,7 @@ void PlayerController::play() {
     if (disposition == NativeEngine::PauseDisposition::NativeHandled ||
         disposition == NativeEngine::PauseDisposition::NotOwned) {
       if (disposition == NativeEngine::PauseDisposition::NativeHandled &&
-          (eof_reached_ || (duration_ > 0.0 && position_ >= duration_ -
-              std::max(0.05, native_frame_duration_))) && !native_seek_intent_) {
+          atEndForReplay(native_frame_duration_) && !native_seek_intent_) {
         // Native Ended retains its graph. Replay is one ordinary exact seek
         // to zero; CommitReady then restores the retained playing intent.
         updatePause(false);
@@ -972,9 +971,7 @@ void PlayerController::play() {
   double fps = 0.0;
   static_cast<void>(mpv_.core->api().mpv_get_property(
       mpv_.core->handle(), "estimated-vf-fps", MPV_FORMAT_DOUBLE, &fps));
-  const double end_tolerance = std::isfinite(fps) && fps > 0.0
-      ? std::max(0.05, 1.0 / fps) : 0.05;
-  if (eof_reached_ || (duration_ > 0.0 && position_ >= duration_ - end_tolerance))
+  if (atEndForReplay(std::isfinite(fps) && fps > 0.0 ? 1.0 / fps : 0.0))
     seekTo(0.0);
   updateEof(false);
   if (mpv_.lineage.render_recovery && mpv_.lineage.render_recovery->request_serial == request_serial_) {
@@ -1036,6 +1033,12 @@ void PlayerController::pause() {
   mpv_.core->api().mpv_set_property_async(mpv_.core->handle(), 0, "pause",
                                       MPV_FORMAT_FLAG, &paused);
   updatePause(true);
+}
+
+bool PlayerController::atEndForReplay(double frame_duration) const noexcept {
+  return eof_reached_ ||
+         (duration_ > 0.0 &&
+          position_ >= duration_ - std::max(0.05, frame_duration));
 }
 
 void PlayerController::togglePlayPause() { playing() ? pause() : play(); }
