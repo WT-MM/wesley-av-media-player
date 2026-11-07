@@ -25,6 +25,10 @@ inline constexpr std::uint32_t kOpusOutputSampleRate{48'000};
 // values, packet durations, channel counts and encoder applications.
 inline constexpr std::uint32_t kOpusDecoderDelayFrames{120};
 
+// RFC 7845 section 4.6: a decoder must decode at least 80 ms before a seek
+// target for its output to converge.
+inline constexpr std::uint32_t kOpusSeekPrerollFrames{3'840};
+
 // RFC 6716 caps one packet at 120 ms, i.e. 5760 frames at 48 kHz.
 inline constexpr std::uint32_t kMaximumOpusPacketFrames{5'760};
 

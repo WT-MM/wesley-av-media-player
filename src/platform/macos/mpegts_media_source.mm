@@ -432,7 +432,7 @@ struct MpegTsMediaSource::Impl final
         return false;
       }
       const std::int64_t ceilingFrame = media::audioPrimingCeilingFrame(
-          *presentationFrame, audioFramesPerPacket);
+          *presentationFrame, audioCodec, audioFramesPerPacket);
       audioProofCeiling = audioFrameTime(
           ceilingFrame, static_cast<std::uint32_t>(audioSampleRate));
       if (!audioProofCeiling) {

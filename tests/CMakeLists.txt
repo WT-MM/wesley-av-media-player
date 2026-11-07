@@ -1987,6 +1987,12 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
     --scratch "${PROJECT_BINARY_DIR}"
     --output "${PROJECT_BINARY_DIR}/libavformat-aac-timing.json")
   set_tests_properties(libavformat_aac_timing PROPERTIES TIMEOUT 180)
+  add_test(NAME libavformat_seek_preroll COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/tests/libavformat_seek_preroll_proof.py"
+    --routed-probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
+    --direct-probe "$<TARGET_FILE:wam_libavformat_mixed_audio_probe>"
+    --ffmpeg "${WAM_TEST_FFMPEG}" --scratch "${PROJECT_BINARY_DIR}")
+  set_tests_properties(libavformat_seek_preroll PROPERTIES TIMEOUT 180)
 endif()
 
 # Labels name what a test needs from its environment, so each runner can
