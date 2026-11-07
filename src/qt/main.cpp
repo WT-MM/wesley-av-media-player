@@ -1,4 +1,5 @@
 #include "media/media_container_routing.hpp"
+#include "media/native_playback_contract.hpp"
 #include "media/startup_benchmark.hpp"
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
 #include "media/libavformat_cursor.hpp"
@@ -40,6 +41,7 @@
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantMap>
 #include <QStringList>
 
 #include <algorithm>
@@ -451,6 +453,13 @@ static int runApplication(int argc, char *argv[]) {
           QStringLiteral("mediaFileNameFilter"),
           QStringLiteral("Media files (%1)").arg(patterns.join(QLatin1Char(' '))));
     }
+
+    // The rate window and grid every rate control snaps to (qml/RateSlider.qml).
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("playbackRates"),
+        QVariantMap{{QStringLiteral("minimum"), wam::media::native_playback::kMinimumNativeRate},
+                    {QStringLiteral("maximum"), wam::media::native_playback::kMaximumNativeRate},
+                    {QStringLiteral("grid"), wam::media::native_playback::kNativeRateGrid}});
 
     // The window factory. Everything app-level -- the state store and its
     // persistence checkpoint, the single desktop menu bar, the single

@@ -236,7 +236,8 @@ qt_add_qml_module(wam
     qml/AppMenuBar.qml
     qml/AppMenu.qml
     qml/PlayerActions.qml
-    qml/ActionMenuItem.qml)
+    qml/ActionMenuItem.qml
+    qml/RateSlider.qml)
 
 target_include_directories(wam PRIVATE src src/qt)
 target_compile_definitions(wam PRIVATE WAM_VERSION="${PROJECT_VERSION}")

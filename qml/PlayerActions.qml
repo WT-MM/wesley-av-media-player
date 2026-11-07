@@ -51,11 +51,16 @@ QtObject {
         }
     }
 
+    // "5" for a whole step, "2.5" otherwise.
+    function formatSeconds(seconds) {
+        return Number(seconds).toFixed(seconds % 1 === 0 ? 0 : 1);
+    }
+
     function stepLabel(action) {
         if (!hasWindow)
             return action;
         const step = Number(controller.seekStepSeconds);
-        return action + " " + step.toFixed(step % 1 === 0 ? 0 : 1) + (step === 1 ? " Second" : " Seconds");
+        return action + " " + formatSeconds(step) + (step === 1 ? " Second" : " Seconds");
     }
 
     readonly property Command playPause: Command {

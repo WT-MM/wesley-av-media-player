@@ -4,6 +4,7 @@
 #endif
 
 #include "mpv_video_item.hpp"
+#include "media/native_playback_contract.hpp"
 #include "playback_policy.hpp"
 #include "test_seams.hpp"
 #include "player_core_p.hpp"
@@ -55,8 +56,9 @@ namespace {
 
 using ::wam::playback::mpv::MpvApi;
 
-constexpr double kMinimumRate = 0.25;
-constexpr double kMaximumRate = 4.0;
+using media::native_playback::kMaximumNativeRate;
+using media::native_playback::kMinimumNativeRate;
+using media::native_playback::kNativeRateGrid;
 constexpr double kScrubConvergenceToleranceSeconds = 0.050;
 constexpr int kScrubSeekTimeoutMs = 750;
 
@@ -2517,7 +2519,7 @@ void PlayerController::settleScrollGesture() {
 void PlayerController::setRate(double rate) {
   if (!std::isfinite(rate))
     return;
-  const double bounded = std::round(std::clamp(rate, kMinimumRate, kMaximumRate) * 64.0) / 64.0;
+  const double bounded = std::round(std::clamp(rate, kMinimumNativeRate, kMaximumNativeRate) * kNativeRateGrid) / kNativeRateGrid;
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
     if (!native_playback_->setRate(bounded)) {
