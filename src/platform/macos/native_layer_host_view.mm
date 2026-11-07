@@ -1,4 +1,5 @@
 #include "native_late_display_trace.hpp"
+#include "platform/macos/native_primitives.hpp"
 #include "native_layer_host_view.hpp"
 #include "video_quarter_turn.hpp"
 
@@ -25,16 +26,6 @@
 
 namespace wam::macos {
 namespace {
-
-void assignError(std::string* error, const char* message) noexcept {
-  if (error == nullptr || message == nullptr) {
-    return;
-  }
-  try {
-    *error = message;
-  } catch (...) {
-  }
-}
 
 // ------------------------------------------------------------- vivid boost
 

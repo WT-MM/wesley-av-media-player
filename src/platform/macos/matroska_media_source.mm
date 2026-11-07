@@ -159,8 +159,7 @@ struct MatroskaMediaSource::Impl final
     }
 
     const std::size_t sampleCount = video ? 1 : static_cast<std::size_t>(CMSampleBufferGetNumSamples(owned.get()));
-    auto storage =
-        std::make_shared<CoreMediaSampleStorage>(owned.release(), bytes);
+    auto storage = leaseSampleBuffer(std::move(owned), bytes);
     MediaSample sample;
     sample.generation = generation;
     sample.track = *selected;

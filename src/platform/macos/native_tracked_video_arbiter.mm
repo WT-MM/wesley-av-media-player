@@ -1,4 +1,5 @@
 #include "native_tracked_video_arbiter.hpp"
+#include "platform/macos/native_primitives.hpp"
 
 #include <limits>
 #include <new>
@@ -23,16 +24,6 @@ void clearError(std::string* error) noexcept {
   }
 }
 
-void assignError(std::string* error, const char* message) noexcept {
-  if (error == nullptr) {
-    return;
-  }
-  try {
-    error->assign(message);
-  } catch (...) {
-  }
-}
-
 [[nodiscard]] NativeTrackedVideoPreviewEventKind previewKind(
     NativeTrackedVideoEventKind kind) noexcept {
   switch (kind) {
@@ -41,8 +32,6 @@ void assignError(std::string* error, const char* message) noexcept {
   case NativeTrackedVideoEventKind::FrameSuperseded:
     return NativeTrackedVideoPreviewEventKind::FrameSuperseded;
   case NativeTrackedVideoEventKind::Failed:
-  case NativeTrackedVideoEventKind::GenerationInvalidated:
-  case NativeTrackedVideoEventKind::Closed:
     return NativeTrackedVideoPreviewEventKind::Failed;
   }
   return NativeTrackedVideoPreviewEventKind::Failed;
@@ -121,10 +110,7 @@ struct NativeTrackedVideoArbiter::State final {
     return admission.active() && event.frameSequence.valid() &&
            event.frameSequence == admission.internalSequence &&
            event.generation == admission.generation &&
-           sameFrameTiming(event.timing, admission.timing) &&
-           (event.kind == NativeTrackedVideoEventKind::FrameDrawn ||
-            event.kind == NativeTrackedVideoEventKind::FrameSuperseded ||
-            event.kind == NativeTrackedVideoEventKind::Failed);
+           sameFrameTiming(event.timing, admission.timing);
   }
 
   // Moves at most one raw event into exactly one typed owner mailbox. Calls
@@ -144,57 +130,39 @@ struct NativeTrackedVideoArbiter::State final {
     }
     lastUnderlyingEventSequence = event->eventSequence;
 
-    if (event->frameSequence.valid()) {
-      if (!validFrameEvent(*event)) {
-        fatal = true;
-        return;
-      }
-      std::uint64_t publicEventSequence = 0;
-      if (!allocateEvent(admission.owner, &publicEventSequence)) {
-        return;
-      }
-      if (admission.owner == AdmissionOwner::Main) {
-        mainEvent.emplace(NativeTrackedVideoEvent{
-            event->kind, publicEventSequence, admission.mainSequence,
-            event->generation, event->timing});
-        if (event->kind == NativeTrackedVideoEventKind::FrameDrawn) {
-          ++mainDrawnFrames;
-        } else if (event->kind ==
-                   NativeTrackedVideoEventKind::FrameSuperseded) {
-          ++mainSupersededFrames;
-        }
-        return;
-      }
-      if (admission.owner == AdmissionOwner::Preview) {
-        previewEvent.emplace(NativeTrackedVideoPreviewEvent{
-            previewKind(event->kind), publicEventSequence,
-            admission.previewSequence, event->generation, event->timing});
-        // The arbiter has consumed the real output terminal fact and the
-        // underlying lease is released. Keep the typed preview event pending
-        // (and therefore keep global admission backpressured), but do not make
-        // main lifecycle progress depend on the preview client polling it.
-        admission = {};
-        previewCancelPending = false;
-        return;
-      }
-      fatal = true;
-      return;
-    }
-
-    if (event->kind == NativeTrackedVideoEventKind::FrameDrawn ||
-        event->kind == NativeTrackedVideoEventKind::FrameSuperseded ||
-        event->kind == NativeTrackedVideoEventKind::Failed ||
-        admission.active()) {
+    if (!validFrameEvent(*event)) {
       fatal = true;
       return;
     }
     std::uint64_t publicEventSequence = 0;
-    if (!allocateEvent(AdmissionOwner::Main, &publicEventSequence)) {
+    if (!allocateEvent(admission.owner, &publicEventSequence)) {
       return;
     }
-    mainEvent.emplace(NativeTrackedVideoEvent{
-        event->kind, publicEventSequence, {}, event->generation,
-        event->timing});
+    if (admission.owner == AdmissionOwner::Main) {
+      mainEvent.emplace(NativeTrackedVideoEvent{
+          event->kind, publicEventSequence, admission.mainSequence,
+          event->generation, event->timing});
+      if (event->kind == NativeTrackedVideoEventKind::FrameDrawn) {
+        ++mainDrawnFrames;
+      } else if (event->kind ==
+                 NativeTrackedVideoEventKind::FrameSuperseded) {
+        ++mainSupersededFrames;
+      }
+      return;
+    }
+    if (admission.owner == AdmissionOwner::Preview) {
+      previewEvent.emplace(NativeTrackedVideoPreviewEvent{
+          previewKind(event->kind), publicEventSequence,
+          admission.previewSequence, event->generation, event->timing});
+      // The arbiter has consumed the real output terminal fact and the
+      // underlying lease is released. Keep the typed preview event pending
+      // (and therefore keep global admission backpressured), but do not make
+      // main lifecycle progress depend on the preview client polling it.
+      admission = {};
+      previewCancelPending = false;
+      return;
+    }
+    fatal = true;
   }
 
   [[nodiscard]] NativeTrackedVideoCapacity capacity(

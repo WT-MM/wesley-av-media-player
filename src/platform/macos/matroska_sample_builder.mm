@@ -42,19 +42,7 @@ std::optional<media::MediaTime> matroskaTickTime(
                         std::numeric_limits<std::int64_t>::min())) {
     return std::nullopt;
   }
-  auto numerator = static_cast<std::int64_t>(nanoseconds);
-  auto denominator = kNanosecondsPerSecond;
-  const std::int64_t divisor =
-      std::gcd(numerator == 0 ? denominator : numerator, denominator);
-  if (divisor > 0) {
-    numerator /= divisor;
-    denominator /= divisor;
-  }
-  if (denominator <= 0 ||
-      denominator > std::numeric_limits<std::int32_t>::max()) {
-    return std::nullopt;
-  }
-  return media::MediaTime{numerator, static_cast<std::int32_t>(denominator)};
+  return media::mediaTimeFromTicks(nanoseconds, kNanosecondsPerSecond);
 }
 
 MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(

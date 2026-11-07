@@ -24,18 +24,13 @@ namespace wam::macos {
 struct NativeVideoConsumerTestAccess;
 #endif
 
-using NativeVideoConsumerWake = void (*)(void* context) noexcept;
-
-// Shared edge notification for decoder callbacks and tracked-output progress.
-// signal may run on an Apple, GUI, or render callback. It must be wait-free,
-// allocation-free, noexcept, and non-reentrant. The seam and its context must
-// outlive retire()/close() Done and every signal already in progress; the
-// owner normally points both audio and video at one coalescing dispatcher
-// wake.
-struct NativeVideoConsumerWakeSeam {
-  NativeVideoConsumerWake signal{nullptr};
-  void* context{nullptr};
-};
+// Shared edge notification for decoder callbacks and tracked-output progress:
+// the same seam shape the tracked output takes. signal may run on an Apple,
+// GUI, or render callback. It must be wait-free, allocation-free, noexcept,
+// and non-reentrant. The seam and its context must outlive retire()/close()
+// Done and every signal already in progress; the owner normally points both
+// audio and video at one coalescing dispatcher wake.
+using NativeVideoConsumerWakeSeam = NativeTrackedVideoOutputWakeSeam;
 
 using NativeVideoClockSample =
     media::NativeMediaClockSnapshot (*)(void* context) noexcept;

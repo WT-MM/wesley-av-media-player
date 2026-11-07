@@ -126,6 +126,86 @@ class NativeSourceCore {
     }
   }
 
+  // The accurate-seek decodeOnly verdict and the neutral validation, applied to
+  // a sample whose timing fields are final.
+  [[nodiscard]] bool sealSample(media::MediaSample& sample, bool video,
+                                std::string* error) const {
+    if (video && requestedTarget &&
+        seekMode == media::MediaSeekMode::Accurate) {
+      const auto decodeOnly = accurateVideoDecodeOnly(
+          sample.presentationTime, sample.duration, *requestedTarget, error);
+      if (!decodeOnly) {
+        return false;
+      }
+      sample.decodeOnly = *decodeOnly;
+    }
+    return media::validateMediaSample(sample, *descriptor, limits, error);
+  }
+
+  // ---- generation admission shared by every begin() ----------------------
+
+  [[nodiscard]] static bool selectsRequiredTracks(
+      const media::MediaSourceDescriptor& admitted,
+      const media::MediaSourceOpenOptions& requested, std::string* error) {
+    if ((requested.selection.requireVideo && !admitted.selectedVideo) ||
+        (requested.selection.requireAudio && !admitted.selectedAudio)) {
+      if (error != nullptr) {
+        *error = named("", " did not select every required track");
+      }
+      return false;
+    }
+    return true;
+  }
+
+  void installGeneration(
+      std::shared_ptr<const media::MediaSourceDescriptor> admitted,
+      std::shared_ptr<const AssetContext> context) noexcept {
+    descriptor = std::move(admitted);
+    assetContext = std::move(context);
+    videoTerminal = !descriptor->selectedVideo;
+    audioTerminal = !descriptor->selectedAudio;
+  }
+
+  // Admission proof: one real head retained from every selected output. The
+  // contract forbids probing and reopening, so these exact heads are what the
+  // first readNext() calls deliver. False on refusal or cancellation.
+  [[nodiscard]] bool stageAdmissionHeads(std::string* error) {
+    return (videoTerminal || derived().stage(true, true, error)) &&
+           (audioTerminal || derived().stage(false, true, error)) &&
+           !isCancelled();
+  }
+
+  void publishOpen() noexcept {
+    open = true;
+    openSnapshot.store(true, std::memory_order_release);
+  }
+
+  // A generation must begin on a real, positive-duration sync picture: the
+  // plan always starts video at a random access point, and restating it keeps
+  // a malformed index from admitting a generation that can never decode. A
+  // positive duration is required because every downstream video consumer
+  // compares the sample's exact interval against the timeline.
+  //
+  // allowPreroll admits a negative presentation time. On a movie timeline the
+  // random-access point a head-trimmed edit list makes the reader walk back to
+  // legitimately precedes the origin: it decodes the picture AT the origin and
+  // is preroll, marked decodeOnly and retired against the presentation floor.
+  [[nodiscard]] static bool admitsFirstVideoSample(
+      const media::MediaSample& sample, bool allowPreroll,
+      std::string* error) {
+    if (!sample.keyFrame || !sample.presentationTime.valid() ||
+        (!allowPreroll && sample.presentationTime.value < 0) ||
+        !sample.duration.valid() || sample.duration.value <= 0) {
+      assignError(error, allowPreroll
+                             ? "first video sample is not a positive-duration "
+                               "sync access unit"
+                             : "first video sample is not a nonnegative "
+                               "positive-duration sync access unit");
+      return false;
+    }
+    return true;
+  }
+
   // ---- derived hooks with defaults ---------------------------------------
 
   void cancellationPublished(media::MediaGeneration) noexcept {}
@@ -414,7 +494,7 @@ class NativeSourceCore {
       outcome.preparedContext = assetContext;
       outcome.audioWindow = started.audioWindow;
       seeksAccepted.store(
-          saturatingIncrement(seeksAccepted.load(std::memory_order_relaxed)),
+          saturatingSum(seeksAccepted.load(std::memory_order_relaxed), 1),
           std::memory_order_relaxed);
     } catch (const std::exception& exception) {
       withdrawFailedOperation();
@@ -487,8 +567,8 @@ class NativeSourceCore {
         clearHead(*chosen);
         (chosenVideo ? videoRefillPending : audioRefillPending) = true;
         if (auto* sample = std::get_if<media::MediaSample>(&emitted.value)) {
-          samplesEmitted.store(saturatingIncrement(samplesEmitted.load(
-                                   std::memory_order_relaxed)),
+          samplesEmitted.store(saturatingSum(samplesEmitted.load(
+                                   std::memory_order_relaxed), 1),
                                std::memory_order_relaxed);
           return std::move(*sample);
         }
@@ -735,22 +815,6 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
     }
   }
 
-  // The accurate-seek decodeOnly verdict and the neutral validation, applied to
-  // a sample whose timing fields are final.
-  [[nodiscard]] bool sealSample(media::MediaSample& sample, bool video,
-                                std::string* error) const {
-    if (video && requestedTarget &&
-        seekMode == media::MediaSeekMode::Accurate) {
-      const auto decodeOnly = accurateVideoDecodeOnly(
-          sample.presentationTime, sample.duration, *requestedTarget, error);
-      if (!decodeOnly) {
-        return false;
-      }
-      sample.decodeOnly = *decodeOnly;
-    }
-    return media::validateMediaSample(sample, *descriptor, limits, error);
-  }
-
   // ---- staging ------------------------------------------------------------
 
   [[nodiscard]] bool stage(bool video, bool admission, std::string* error) {
@@ -795,18 +859,9 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
     }
     const media::MediaSample& sample = std::get<media::MediaSample>(head->value);
     head->orderTime = Traits::mergeOrderKey(sample);
-    if (admission && video) {
-      // The plan always starts video at a random access point; restating it
-      // here keeps a malformed index from admitting a generation that can never
-      // decode. A positive duration is required because every downstream video
-      // consumer compares the sample's exact interval against the timeline.
-      if (!sample.keyFrame || sample.presentationTime.value < 0 ||
-          !sample.duration.valid() || sample.duration.value <= 0) {
-        assignError(error,
-                    "first video sample is not a nonnegative positive-duration "
-                    "sync access unit");
-        return false;
-      }
+    if (admission && video &&
+        !Base::admitsFirstVideoSample(sample, false, error)) {
+      return false;
     }
     (video ? videoHead : audioHead) = std::move(head);
     publishHeadFacts();
@@ -886,12 +941,9 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
       withdrawFailedOperation();
       return started;
     }
-    if ((requestedOptions.selection.requireVideo &&
-         !started.descriptor->selectedVideo) ||
-        (requestedOptions.selection.requireAudio &&
-         !started.descriptor->selectedAudio)) {
+    if (!Base::selectsRequiredTracks(*started.descriptor, requestedOptions,
+                                     &started.error)) {
       started.status = media::MediaSourceOpenStatus::Unsupported;
-      started.error = named("", " did not select every required track");
       withdrawFailedOperation();
       return started;
     }
@@ -934,10 +986,7 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
       return started;
     }
 
-    descriptor = started.descriptor;
-    assetContext = context;
-    videoTerminal = !descriptor->selectedVideo;
-    audioTerminal = !descriptor->selectedAudio;
+    this->installGeneration(started.descriptor, context);
 
     // One format description per generation, retained for every sample of it.
     // Rebuilding per sample would hand VideoToolbox a second, distinct
@@ -1001,12 +1050,7 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
       Traits::noteCursorStarted(*context);
     }
 
-    // Admission proof: one real head retained from every selected output. The
-    // contract forbids probing and reopening, so these exact heads are what the
-    // first readNext() calls deliver.
-    if ((!videoTerminal && !stage(true, true, &started.error)) ||
-        (!audioTerminal && !stage(false, true, &started.error)) ||
-        isCancelled()) {
+    if (!this->stageAdmissionHeads(&started.error)) {
       started.status = isCancelled() ? media::MediaSourceOpenStatus::Cancelled
                                      : media::MediaSourceOpenStatus::Unsupported;
       withdrawFailedOperation();
@@ -1022,8 +1066,7 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
     started.status = media::MediaSourceOpenStatus::Ready;
     started.actualDecodeStart = *windowStart;
     started.error.clear();
-    open = true;
-    openSnapshot.store(true, std::memory_order_release);
+    this->publishOpen();
     return started;
   }
 

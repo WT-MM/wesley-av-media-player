@@ -1,10 +1,12 @@
 #include "native_audio_converter.hpp"
+#include "platform/macos/native_primitives.hpp"
 #include "native_audio_admission.hpp"
 #include "native_audio_converter_backends.hpp"
 
 #include "media/audio_downmix.hpp"
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
+#include "core_media_time.hpp"
 #include "native_audio_channel_map.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
@@ -24,17 +26,6 @@
 namespace wam::macos {
 namespace {
 
-
-void assignError(std::string *error, const char *message) {
-  if (error != nullptr) {
-    *error = message;
-  }
-}
-
-void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
-  const auto maximum = std::numeric_limits<std::uint64_t>::max();
-  value = amount > maximum - value ? maximum : value + amount;
-}
 
 [[nodiscard]] bool checkedAdd(std::uint64_t value, std::uint64_t amount,
                               std::uint64_t *result) noexcept {
@@ -62,10 +53,8 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
 
 [[nodiscard]] bool exactFrame(CMTime time, std::uint32_t sampleRate,
                               std::int64_t *result) noexcept {
-  return CMTIME_IS_NUMERIC(time) && time.epoch == 0 &&
-         (time.flags & kCMTimeFlags_HasBeenRounded) == 0 &&
-         exactFrame(media::MediaTime{time.value, time.timescale}, sampleRate,
-                    result);
+  const auto exact = exactMediaTime(time);
+  return exact && exactFrame(*exact, sampleRate, result);
 }
 
 [[nodiscard]] bool optionalFrame(CMTime time, std::uint32_t sampleRate,
@@ -119,12 +108,7 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
 // generation decodes this many fewer frames than its packets declare. It is a
 // property of the decoder, not of the container, which is why it is stated in
 // the codec facts table and not carried in the timeline.
-[[nodiscard]] std::uint32_t decoderLeadInFrames(
-    media::MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
-  const media::MediaCodecFacts &facts = media::mediaCodecFacts(codec);
-  return facts.decoderLeadInIsOnePacket ? framesPerPacket
-                                        : facts.decoderLeadInFrames;
-}
+using media::decoderLeadInFrames;
 
 // The frames a decoder never emits at all: its lead-in, unless it flushes the
 // same number at the end.
@@ -220,8 +204,8 @@ struct ChannelLayoutIdentity {
   }
   const CMTime trim =
       CMTimeMakeFromDictionary(static_cast<CFDictionaryRef>(value));
-  if (!CMTIME_IS_NUMERIC(trim) || trim.epoch != 0 || trim.timescale <= 0 ||
-      trim.value != 0 || (trim.flags & kCMTimeFlags_HasBeenRounded) != 0) {
+  const auto exactTrim = exactMediaTime(trim);
+  if (!exactTrim || exactTrim->value != 0) {
     assignError(error, "nonzero audio trim is outside native v1");
     return false;
   }
@@ -1922,6 +1906,7 @@ NativeAudioConverterStats NativeAudioConverter::stats() const noexcept {
   return result;
 }
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
 bool NativeAudioConverter::resetRetainedPayloadByteHighWater(
     media::MediaGeneration expectedGeneration) noexcept {
   if (expectedGeneration == 0 ||
@@ -1931,5 +1916,6 @@ bool NativeAudioConverter::resetRetainedPayloadByteHighWater(
   impl_->peak_retained_payload_bytes = impl_->retained_payload_bytes;
   return true;
 }
+#endif
 
 } // namespace wam::macos

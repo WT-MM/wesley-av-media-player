@@ -2,6 +2,7 @@
 
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
 #include "media/native_late_frame_trace.hpp"
+#include "native_layer_presentation_state.hpp"
 #include <CoreVideo/CVDisplayLink.h>
 #include <array>
 #include <atomic>
@@ -20,10 +21,11 @@ struct Binding {
   std::atomic<std::uintptr_t> layer{0};
   std::atomic<Display*> display{nullptr};
 };
-// GUI-only registration is bounded by sixteen displays and thirty-two hosts.
-// Display links retain process-lifetime callback storage; no retired host is a callback context.
+// GUI-only registration is bounded by sixteen displays and one binding per
+// concurrent layer presentation. Display links retain process-lifetime
+// callback storage; no retired host is a callback context.
 inline std::array<Display, 16> displays;
-inline std::array<Binding, 32> bindings;
+inline std::array<Binding, kMaxConcurrentLayerPresentations> bindings;
 static_assert(std::atomic<Display*>::is_always_lock_free);
 
 inline CVReturn refresh(CVDisplayLinkRef, const CVTimeStamp*, const CVTimeStamp* target,

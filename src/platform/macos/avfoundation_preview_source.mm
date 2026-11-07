@@ -106,12 +106,7 @@ using media::MediaTrackKind;
   if (!decodeOnly) {
     return std::nullopt;
   }
-  // Keep the +1 CoreMedia reference in the scope guard until make_shared has
-  // allocated and completed its noexcept storage construction. Releasing it
-  // as a function argument would leak if allocation threw first.
-  auto storage =
-      std::make_shared<CoreMediaSampleStorage>(owned.get(), bytes);
-  static_cast<void>(owned.release());
+  auto storage = leaseSampleBuffer(std::move(owned), bytes);
   MediaSample result;
   result.generation = epoch;
   result.track = track.id;
@@ -197,10 +192,8 @@ class ProductionAssetContext final {
   }
 
   [[nodiscard]] NativePreviewBackendFacts facts() const noexcept {
-    // The asset load belongs to the main source, so the three assetLoad*
-    // facts stay zero.
     return NativePreviewBackendFacts{
-        0, 0, 0, readersCreated_.load(std::memory_order_relaxed),
+        readersCreated_.load(std::memory_order_relaxed),
         readersStarted_.load(std::memory_order_relaxed)};
   }
 
@@ -924,13 +917,11 @@ AVFoundationPreviewSourceTestAccess::probeSharedContext(
       return probe;
     }
     ProductionAssetContext context(std::move(binding));
-    probe.backendBefore = context.facts();
     probe.contextBefore = shared->facts();
 
     const std::atomic<bool> cancelled{false};
     std::string error;
     probe.sharedLoadReady = context.ensureLoaded(cancelled, &error);
-    probe.backendAfterSharedLoad = context.facts();
     probe.contextAfterSharedLoad = shared->facts();
     if (!probe.sharedLoadReady) {
       return probe;

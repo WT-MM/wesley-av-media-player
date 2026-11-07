@@ -21,14 +21,12 @@ void setNativeVideoHardwareDisabledForTesting(bool disabled) noexcept;
 [[nodiscard]] bool nativeVideoHardwareDisabledForTesting() noexcept;
 
 // Stream predicates and the decode plan still validate profiles and surfaces.
-[[nodiscard]] constexpr bool nativeVp9StageAdmitted(bool hardware, bool softwareBuilt) noexcept {
-  return hardware || softwareBuilt;
-}
+// With the libavcodec stage built, VP9 always has a software decoder.
 [[nodiscard]] inline bool nativeVp9StageAdmitted() noexcept {
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
-  return nativeVp9StageAdmitted(nativeVideoToolboxSupportsVp9(), true);
+  return true;
 #else
-  return nativeVp9StageAdmitted(nativeVideoToolboxSupportsVp9(), false);
+  return nativeVideoToolboxSupportsVp9();
 #endif
 }
 

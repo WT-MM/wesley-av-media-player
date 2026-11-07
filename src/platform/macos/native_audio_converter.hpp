@@ -343,11 +343,13 @@ public:
   void close() noexcept;
 
   [[nodiscard]] NativeAudioConverterStats stats() const noexcept;
+#if defined(WAM_NATIVE_TEST_SEAMS)
   // Serialized owner phase boundary. The converter/ring/output graph must be
   // stopped and the expected generation must still be current. Success seeds
   // the diagnostic HWM from current retained ownership rather than zero.
   [[nodiscard]] bool resetRetainedPayloadByteHighWater(
       media::MediaGeneration expectedGeneration) noexcept;
+#endif
 
 private:
   struct Impl;
