@@ -25,22 +25,23 @@ std::unique_ptr<NativeSilentTimebase> NativeSilentTimebase::create(
 
 bool NativeSilentTimebase::activate(media::MediaGeneration generation,
                                     media::MediaTime target) noexcept {
-  if (retired_ || generation == 0 || generation <= generation_) return false;
+  if (phase_ == Phase::Retired || generation == 0 || generation <= generation_)
+    return false;
   // seek() carries the retired generation's running fact forward, so the
   // transition is pinned paused first. The session's CommitSeek chain has
   // already published its own physical pause of the retired generation; this
   // repeat is idempotent and keeps the invariant local.
-  const bool applied = generation_ == 0
+  const bool applied = phase_ == Phase::Unarmed
       ? clock_.anchor(generation, target, rate_, false)
       : clock_.pause(generation_) && clock_.seek(generation_, generation, target);
   if (!applied) return false;
   generation_ = generation;
-  running_ = false;
+  phase_ = Phase::Paused;
   return true;
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::start() noexcept {
-  if (retired_ || generation_ == 0) {
+  if (!armed()) {
     return NativeAudioSessionProgress::Invalid;
   }
   return NativeAudioSessionProgress::Done;
@@ -48,7 +49,7 @@ NativeAudioSessionProgress NativeSilentTimebase::start() noexcept {
 
 NativeAudioSessionProgress NativeSilentTimebase::setPaused(
     bool paused) noexcept {
-  if (retired_ || generation_ == 0) {
+  if (!armed()) {
     return NativeAudioSessionProgress::Invalid;
   }
   const bool applied =
@@ -57,20 +58,20 @@ NativeAudioSessionProgress NativeSilentTimebase::setPaused(
   if (!applied) {
     return NativeAudioSessionProgress::Failed;
   }
-  running_ = !paused;
+  phase_ = paused ? Phase::Paused : Phase::Running;
   return NativeAudioSessionProgress::Done;
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::setRate(
     media::NativePlaybackRate rate, bool) noexcept {
-  if (retired_ || !rate.valid()) {
+  if (phase_ == Phase::Retired || !rate.valid()) {
     return NativeAudioSessionProgress::Invalid;
   }
   if (rate == rate_) {
     return NativeAudioSessionProgress::Done;
   }
   rate_ = rate;
-  if (generation_ == 0 || !running_) {
+  if (phase_ != Phase::Running) {
     // Nothing is advancing yet; the new slope is picked up by the resume.
     return NativeAudioSessionProgress::Done;
   }
@@ -83,23 +84,23 @@ NativeAudioSessionProgress NativeSilentTimebase::setRate(
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::setGain(float) noexcept {
-  return retired_ ? NativeAudioSessionProgress::Invalid
-                  : NativeAudioSessionProgress::Done;
+  return phase_ == Phase::Retired ? NativeAudioSessionProgress::Invalid
+                                  : NativeAudioSessionProgress::Done;
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::setMuted(bool) noexcept {
-  return retired_ ? NativeAudioSessionProgress::Invalid
-                  : NativeAudioSessionProgress::Done;
+  return phase_ == Phase::Retired ? NativeAudioSessionProgress::Invalid
+                                  : NativeAudioSessionProgress::Done;
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::stop() noexcept {
-  if (retired_ || generation_ == 0) {
+  if (!armed()) {
     return NativeAudioSessionProgress::Invalid;
   }
   if (!clock_.pause(generation_)) {
     return NativeAudioSessionProgress::Failed;
   }
-  running_ = false;
+  phase_ = Phase::Paused;
   return NativeAudioSessionProgress::Done;
 }
 
@@ -114,17 +115,19 @@ NativeSilentTimebase::highestExposedGeneration() const noexcept {
 
 bool NativeSilentTimebase::retire(
     media::MediaGeneration invalidationGeneration) noexcept {
-  if (retired_) {
+  switch (phase_) {
+  case Phase::Retired:
     return true;
+  case Phase::Unarmed:
+    break;
+  case Phase::Paused:
+  case Phase::Running:
+    if (!clock_.stop(generation_, invalidationGeneration)) {
+      return false;
+    }
+    break;
   }
-  if (generation_ == 0) {
-    retired_ = true;
-    return true;
-  }
-  if (!clock_.stop(generation_, invalidationGeneration)) {
-    return false;
-  }
-  retired_ = true;
+  phase_ = Phase::Retired;
   return true;
 }
 

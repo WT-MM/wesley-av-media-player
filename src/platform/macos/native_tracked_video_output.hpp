@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <variant>
 #include <string>
 
 namespace wam::macos {
@@ -199,15 +200,44 @@ struct NativeTrackedOutputProtocol {
   NativeTrackedVideoOutputWakeSeam wake{};
   NativeTrackedWakeGate wakeGate;
 
-  bool flushPending{false};
-  bool flushDone{false};
-  std::uint64_t flushRetired{0};
-  std::uint64_t flushNext{0};
-  // The generation the next flush must name as retired.
-  std::uint64_t retiredGeneration{0};
-  bool closePending{false};
-  bool closeDone{false};
-  std::uint64_t closeGeneration{0};
+  // The flush/close lifecycle. A flush names the generation it retires, which
+  // is the previous flush's target (0 before the first); a close supersedes
+  // any flush and is terminal.
+  struct Open {};
+  struct Flushing {
+    std::uint64_t retired;
+    std::uint64_t next;
+  };
+  // An exact replay answers Done; the next flush must retire `next`.
+  struct Flushed {
+    std::uint64_t retired;
+    std::uint64_t next;
+  };
+  struct Closing {
+    std::uint64_t final;
+  };
+  struct Closed {
+    std::uint64_t final;
+  };
+  std::variant<Open, Flushing, Flushed, Closing, Closed> lifecycle;
+
+  [[nodiscard]] bool closing() const noexcept {
+    return std::holds_alternative<Closing>(lifecycle);
+  }
+  [[nodiscard]] bool closed() const noexcept {
+    return std::holds_alternative<Closed>(lifecycle);
+  }
+  // The generation a pending flush or close invalidates to, if one is pending.
+  [[nodiscard]] std::optional<std::uint64_t> pendingInvalidation() const
+      noexcept {
+    if (const auto* flushing = std::get_if<Flushing>(&lifecycle)) {
+      return flushing->next;
+    }
+    if (const auto* closing = std::get_if<Closing>(&lifecycle)) {
+      return closing->final;
+    }
+    return std::nullopt;
+  }
 
   [[nodiscard]] bool frameOutstanding() const noexcept {
     return frame.valid() || event.has_value();
@@ -217,13 +247,13 @@ struct NativeTrackedOutputProtocol {
   // with the same verdict before it checks the frame itself.
   [[nodiscard]] NativeTrackedVideoCapacity capacity(
       std::uint64_t generation, bool current, bool usable) const noexcept {
-    if (!usable || closePending) {
+    if (!usable || closing() || closed()) {
       return NativeTrackedVideoCapacity::Failed;
     }
     if (generation == 0 || !current) {
       return NativeTrackedVideoCapacity::StaleGeneration;
     }
-    return frameOutstanding() || flushPending
+    return frameOutstanding() || std::holds_alternative<Flushing>(lifecycle)
                ? NativeTrackedVideoCapacity::Backpressure
                : NativeTrackedVideoCapacity::Available;
   }
@@ -293,60 +323,61 @@ struct NativeTrackedOutputProtocol {
 
   [[nodiscard]] Step beginFlush(std::uint64_t retired, std::uint64_t next,
                                 bool usable) noexcept {
-    if (!usable || closePending || next == 0 || next <= retired) {
+    if (!usable || next == 0 || next <= retired) {
       return Step::Failed;
     }
-    if (flushDone && flushRetired == retired && flushNext == next) {
-      return Step::Done;
+    std::uint64_t retirable = 0;
+    if (const auto* flushing = std::get_if<Flushing>(&lifecycle)) {
+      return flushing->retired == retired && flushing->next == next
+                 ? Step::Continuing
+                 : Step::Stale;
+    } else if (const auto* flushed = std::get_if<Flushed>(&lifecycle)) {
+      if (flushed->retired == retired && flushed->next == next) {
+        return Step::Done;
+      }
+      retirable = flushed->next;
+    } else if (!std::holds_alternative<Open>(lifecycle)) {
+      return Step::Failed;  // Closing or Closed
     }
-    if (flushPending) {
-      return flushRetired == retired && flushNext == next ? Step::Continuing
-                                                          : Step::Stale;
-    }
-    if (retired != retiredGeneration) {
+    if (retired != retirable) {
       return Step::Stale;
     }
-    flushPending = true;
-    flushDone = false;
-    flushRetired = retired;
-    flushNext = next;
+    lifecycle = Flushing{retired, next};
     return Step::Started;
   }
 
-  // The renderer proved the flush: the target is the next retirement point.
+  // The renderer proved the flush.
   void completeFlush() noexcept {
-    flushPending = false;
-    flushDone = true;
-    retiredGeneration = flushNext;
+    if (const auto* flushing = std::get_if<Flushing>(&lifecycle)) {
+      lifecycle = Flushed{flushing->retired, flushing->next};
+    }
   }
 
   // `accepted` is the presenter's current generation; a first close must
   // move past it.
   [[nodiscard]] Step beginClose(std::uint64_t final,
                                 std::uint64_t accepted) noexcept {
-    if (closeDone) {
-      return closeGeneration == final ? Step::Done : Step::Stale;
+    if (const auto* closed = std::get_if<Closed>(&lifecycle)) {
+      return closed->final == final ? Step::Done : Step::Stale;
     }
-    if (final == 0 || (!closePending && final <= accepted)) {
+    if (final == 0) {
       return Step::Failed;
     }
-    if (closePending) {
-      return closeGeneration == final ? Step::Continuing : Step::Stale;
+    if (const auto* closing = std::get_if<Closing>(&lifecycle)) {
+      return closing->final == final ? Step::Continuing : Step::Stale;
     }
-    closePending = true;
-    closeDone = false;
-    closeGeneration = final;
+    if (final <= accepted) {
+      return Step::Failed;
+    }
+    // A terminal invalidation supersedes any pending flush.
+    lifecycle = Closing{final};
     return Step::Started;
   }
 
-  // A terminal invalidation supersedes any flush: no lifecycle work remains.
   void completeClose() noexcept {
-    flushPending = false;
-    flushDone = false;
-    flushRetired = 0;
-    flushNext = 0;
-    closePending = false;
-    closeDone = true;
+    if (const auto* closing = std::get_if<Closing>(&lifecycle)) {
+      lifecycle = Closed{closing->final};
+    }
   }
 
   // The outcome of a flush/close Step that needs no renderer work, or nullopt
@@ -389,7 +420,7 @@ struct NativeTrackedOutputProtocol {
     result.lastEventSequence = lastEventSequence;
     result.retainedFrames = frame.valid() ? 1U : 0U;
     result.eventPending = event.has_value();
-    result.invalidationPending = flushPending || closePending;
+    result.invalidationPending = pendingInvalidation().has_value();
     result.closed = closed;
     result.fatal = fatal;
     return result;

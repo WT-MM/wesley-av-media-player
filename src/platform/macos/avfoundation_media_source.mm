@@ -1820,7 +1820,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
       const MediaSourceLimits limits =
           media::clampMediaSourceLimits(request_.options.limits);
       audio_limits_ = limits;
-      releaseAudioBatch();
+      audio_recut_.reset();
       std::shared_ptr<const AVFoundationAssetContext> assetContext =
           request_.assetContext;
       std::shared_ptr<const MediaSourceDescriptor> descriptor;
@@ -2939,7 +2939,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // that is long in media time (a non-interleaved track) enter the re-cut
   // path.
   [[nodiscard]] AVFoundationCopiedSample nextAudioAccessUnits() {
-    if (audio_batch_.get() != nullptr) {
+    if (audio_recut_) {
       return takeAudioBatchChunk();
     }
     AVFoundationCopiedSample copied = copyNext(audio_output_);
@@ -2963,9 +2963,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
         (timeBound <= 0 || units <= timeBound)) {
       return copied;
     }
-    audio_batch_.reset(copied.sample);
-    audio_batch_units_ = units;
-    audio_batch_cursor_ = 0;
+    audio_recut_.emplace(copied.sample, units);
     copied.sample = nullptr;
     return takeAudioBatchChunk();
   }
@@ -2973,40 +2971,34 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // The next chunk of the retained batch, releasing the batch on its last one.
   [[nodiscard]] AVFoundationCopiedSample takeAudioBatchChunk() {
     AVFoundationCopiedSample result;
-    const CMItemCount length =
-        audioBatchChunkLength(audio_batch_.get(), audio_batch_cursor_,
-                              audio_batch_units_, audio_limits_);
+    AudioRecut& recut = *audio_recut_;
+    const CMItemCount length = audioBatchChunkLength(
+        recut.batch.get(), recut.cursor, recut.units, audio_limits_);
     CMSampleBufferRef chunk = nullptr;
     if (length <= 0 ||
         CMSampleBufferCopySampleBufferForRange(
-            kCFAllocatorDefault, audio_batch_.get(),
-            CFRangeMake(static_cast<CFIndex>(audio_batch_cursor_),
+            kCFAllocatorDefault, recut.batch.get(),
+            CFRangeMake(static_cast<CFIndex>(recut.cursor),
                         static_cast<CFIndex>(length)),
             &chunk) != noErr ||
         chunk == nullptr) {
       if (chunk != nullptr) {
         CFRelease(chunk);
       }
-      releaseAudioBatch();
+      audio_recut_.reset();
       result.status = AVFoundationSampleReadStatus::Failed;
       result.error =
           "AVFoundation audio batch is not exactly re-cuttable to the native "
           "access unit bound";
       return result;
     }
-    audio_batch_cursor_ += length;
-    if (audio_batch_cursor_ >= audio_batch_units_) {
-      releaseAudioBatch();
+    recut.cursor += length;
+    if (recut.cursor >= recut.units) {
+      audio_recut_.reset();
     }
     result.sample = chunk;
     result.status = AVFoundationSampleReadStatus::Sample;
     return result;
-  }
-
-  void releaseAudioBatch() noexcept {
-    audio_batch_.reset();
-    audio_batch_units_ = 0;
-    audio_batch_cursor_ = 0;
   }
 
   [[nodiscard]] AVFoundationCopiedSample copyNext(
@@ -3091,11 +3083,16 @@ class ProductionGeneration final : public AVFoundationGeneration {
   CMTime audio_media_end_{kCMTimeInvalid};
   bool audio_first_unit_restated_{false};
   // This generation's clamped staging bounds, and the reader batch currently
-  // being re-cut against them. The batch is null in the steady state.
+  // being re-cut against them; empty in the pass-through steady state.
   MediaSourceLimits audio_limits_{};
-  ScopedSampleBuffer audio_batch_;
-  CMItemCount audio_batch_units_{0};
-  CMItemCount audio_batch_cursor_{0};
+  struct AudioRecut {
+    AudioRecut(CMSampleBufferRef sample, CMItemCount count) noexcept
+        : batch(sample), units(count) {}
+    ScopedSampleBuffer batch;
+    CMItemCount units;
+    CMItemCount cursor{0};
+  };
+  std::optional<AudioRecut> audio_recut_;
   std::atomic<bool> cancelled_{false};
   const std::shared_ptr<AsyncLoadSignal> metadata_load_signal_{
       std::make_shared<AsyncLoadSignal>()};
@@ -3371,7 +3368,7 @@ struct AVFoundationMediaSource::Impl final
     const std::optional<MediaTrackId> selected =
         video ? descriptor->selectedVideo : descriptor->selectedAudio;
     if (!selected) {
-      (video ? videoTerminal : audioTerminal) = true;
+      lane(video).end();
       return true;
     }
     for (std::size_t skipped = 0;;) {
@@ -3397,7 +3394,7 @@ struct AVFoundationMediaSource::Impl final
         return false;
       }
       if (copied.status == AVFoundationSampleReadStatus::EndOfStream) {
-        (video ? videoTerminal : audioTerminal) = true;
+        lane(video).end();
         if (admission) {
           assignError(error,
                       "selected AVFoundation output has no admission sample");
@@ -3462,8 +3459,7 @@ struct AVFoundationMediaSource::Impl final
           }
         }
       }
-      (video ? videoHead : audioHead) = std::move(head);
-      publishHeadFacts();
+      stageHead(video, std::move(*head));
       return true;
     }
   }
@@ -3479,6 +3475,7 @@ struct AVFoundationMediaSource::Impl final
                         MediaTime declaredMediaStart,
                         MediaTime declaredPresentationEnd,
                         MediaTime declaredAudioEnd) const noexcept {
+    const StagedSample* audioHead = audioLane.head();
     if (descriptor == nullptr || !descriptor->selectedAudio || !audioHead) {
       return std::nullopt;
     }

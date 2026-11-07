@@ -7,7 +7,6 @@
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "software_avcodec_video_decoder.hpp"
 #include "native_video_decode_plan.hpp"
-#include "media/software_color_qualification.hpp"
 #endif
 
 #include <cstdint>
@@ -16,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace wam::macos {
 
@@ -83,28 +83,23 @@ namespace wam::macos {
 // candidate overwrites requireHardwareDecode/preferHardwareDecode with its own
 // hardware/software choice; otherwise it keys on the CoreMedia codec type
 // (VP8 to libvpx, everything else to VideoToolbox). After that the only
-// per-call cost is one or two predictable tests of member pointers that never
-// change for the life of a generation -- not a lookup, not a virtual call, and nothing that
-// runs per pixel or per sample beyond that test. See
+// per-call cost is one predictable variant dispatch that never changes for
+// the life of a generation -- not a lookup, not a virtual call, and nothing
+// that runs per pixel or per sample. See
 // docs/AGENT_PERFORMANCE_PRINCIPLES.md, "Dispatch at the top, not in the
 // loop".
 //
-// Software backends are constructed lazily, so a session that never selects
-// one pays only null pointers for them.
+// A software backend is constructed only when selected, and becomes the
+// active backend only once it has configured.
 class VideoDecodeLane final {
 private:
-  // The one backend dispatch: the selected software backend, else
-  // VideoToolbox. Selection is fixed for a generation, so this is a pair of
-  // predictable pointer tests, not a lookup or a virtual call.
   template <typename Self, typename Function>
   static decltype(auto) withBackend(Self &self, Function &&function) {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (self.avcodec_) {
-      return function(*self.avcodec_);
-    }
-#endif
-    return self.software_ != nullptr ? function(*self.software_)
-                                     : function(self.videoToolbox_);
+    return std::visit(
+        [&](const auto &backend) -> decltype(auto) {
+          return function(*backend);
+        },
+        self.active_);
   }
   template <typename Function> decltype(auto) with(Function &&function) {
     return withBackend(*this, std::forward<Function>(function));
@@ -124,13 +119,11 @@ public:
   VideoDecodeLane &operator=(VideoDecodeLane &&) = delete;
 
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
-                               DecodedFrameSink &sink, std::string *error,
-                               std::optional<bool> hardwareCapability = {}) {
+                               DecodedFrameSink &sink, std::string *error) {
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
     close();
-    software_.reset();
-    avcodec_.reset();
-    const auto plan = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), hardwareCapability);
+    active_ = &videoToolbox_;
+    const auto plan = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available());
     for (const auto& candidate : plan.candidates) {
       if (candidate.refusal != media::DecodeRefusal::None) continue;
       auto configured = configuration;
@@ -148,40 +141,27 @@ public:
         videoToolbox_.close();
         break;
       case media::DecodeImplementation::Libavcodec: {
-        const auto codec = media::mediaCodecForCoreMediaType(configuration.codec);
-        const auto& facts = media::mediaCodecFacts(codec);
-        media::VideoCodecConfigurationLimits limits;
-        limits.admitSoftwareProfiles = true;
-        limits.admitHighDynamicRangeColor = true;
-        const auto inspected = media::inspectVideoCodecConfiguration(
-            codec, facts.configurationKind, configuration.codecConfiguration, limits);
-        auto colorFacts = inspected.facts.value_or(media::VideoCodecConfigurationFacts{});
-        if (configuration.fullRangeVideo)
-          colorFacts.color.fullRange = *configuration.fullRangeVideo;
-        if (!inspected.admitted() || !media::softwareColorQualified(
-                colorFacts, configuration.highDynamicRangeTransfer)) {
-          if (error) *error = "SoftwareColorUnqualified";
-          return false;
-        }
-        avcodec_ = std::make_unique<SoftwareAvcodecVideoDecoder>(options_);
-        if (!avcodec_->configure(configured, sink, error)) return false;
+        auto avcodec = std::make_unique<SoftwareAvcodecVideoDecoder>(options_);
+        if (!avcodec->configure(configured, sink, error)) return false;
+        active_ = std::move(avcodec);
         std::fprintf(stderr, "WAM: native decoder stage=Libavcodec codec=%08x\n", configuration.codec);
         if (error) error->clear();
         return true;
       }
-      case media::DecodeImplementation::Libvpx:
-        software_ = std::make_unique<SoftwareVp8Decoder>(options_);
-        if (!software_->configure(configured, sink, error)) return false;
+      case media::DecodeImplementation::Libvpx: {
+        auto vp8 = std::make_unique<SoftwareVp8Decoder>(options_);
+        if (!vp8->configure(configured, sink, error)) return false;
+        active_ = std::move(vp8);
         std::fprintf(stderr, "WAM: native decoder stage=Libvpx codec=%08x\n", configuration.codec);
         if (error) error->clear();
         return true;
+      }
       default: break;
       }
     }
     if (error) *error = "NativeDecodePlanExhausted";
     return false;
 #else
-    static_cast<void>(hardwareCapability);
     if (configuration.codec == kWamVideoCodecTypeVp8) {
       if (!SoftwareVp8Decoder::available()) {
         if (error != nullptr) {
@@ -189,11 +169,20 @@ public:
         }
         return false;
       }
-      if (software_ == nullptr) {
-        software_ = std::make_unique<SoftwareVp8Decoder>(options_);
+      // A closed VP8 decoder is reused (the preview lane reconfigures one
+      // per scrub epoch).
+      auto *current = std::get_if<std::unique_ptr<SoftwareVp8Decoder>>(&active_);
+      std::unique_ptr<SoftwareVp8Decoder> vp8 =
+          current != nullptr ? std::move(*current)
+                             : std::make_unique<SoftwareVp8Decoder>(options_);
+      active_ = &videoToolbox_;
+      if (!vp8->configure(configuration, sink, error)) {
+        return false;
       }
-      return software_->configure(configuration, sink, error);
+      active_ = std::move(vp8);
+      return true;
     }
+    active_ = &videoToolbox_;
     return videoToolbox_.configure(configuration, sink, error);
 #endif
   }
@@ -239,15 +228,6 @@ public:
       }
     });
   }
-  bool resumeAfterPreview() noexcept {
-    return with([](auto &decoder) {
-      if constexpr (requires { decoder.resumeAfterPreview(); }) {
-        return decoder.resumeAfterPreview();
-      } else {
-        return true;
-      }
-    });
-  }
 
   void flush(std::uint64_t nextGeneration) noexcept {
     with([&](auto &decoder) { decoder.flush(nextGeneration); });
@@ -280,10 +260,14 @@ public:
 private:
   const VideoDecoderOptions options_;
   VideoToolboxDecoder videoToolbox_;
-  std::unique_ptr<SoftwareVp8Decoder> software_;
+  // The configured backend; VideoToolbox until a software backend configures.
+  std::variant<VideoToolboxDecoder *, std::unique_ptr<SoftwareVp8Decoder>
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
-  std::unique_ptr<SoftwareAvcodecVideoDecoder> avcodec_;
+               ,
+               std::unique_ptr<SoftwareAvcodecVideoDecoder>
 #endif
+               >
+      active_{&videoToolbox_};
 };
 
 } // namespace wam::macos

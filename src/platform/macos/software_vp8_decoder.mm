@@ -69,12 +69,10 @@ struct SoftwareVp8Decoder::Impl {
   bool configured{false};
   bool codecOpen{false};
   bool awaitingKeyFrame{true};
-  bool endOfStreamBegun{false};
-  bool endOfStreamSinkNotified{false};
-  bool retirementStarted{false};
-  bool retirementDone{false};
-  std::uint64_t retirementRetired{0};
-  std::uint64_t retirementInvalidation{0};
+  enum class EndOfStream : std::uint8_t { Streaming, Begun, SinkNotified };
+  EndOfStream endOfStream{EndOfStream::Streaming};
+  // A retired decoder is never configured again.
+  std::optional<VideoDecoderRetirement> retirement;
 
   std::uint64_t submittedFrames{0};
   std::uint64_t deliveredFrames{0};
@@ -151,7 +149,7 @@ bool SoftwareVp8Decoder::configure(const VideoStreamConfiguration &configuration
   return false;
 #else
   Impl &impl = *impl_;
-  if (impl.retirementStarted || impl.configured) {
+  if (impl.retirement || impl.configured) {
     impl.latch("software VP8 decoder is already configured", error);
     return false;
   }
@@ -216,8 +214,7 @@ bool SoftwareVp8Decoder::configure(const VideoStreamConfiguration &configuration
   impl.generation = configuration.generation;
   impl.configured = true;
   impl.awaitingKeyFrame = true;
-  impl.endOfStreamBegun = false;
-  impl.endOfStreamSinkNotified = false;
+  impl.endOfStream = Impl::EndOfStream::Streaming;
   impl.lastError.reset();
   sink.flush(configuration.generation);
   return true;
@@ -235,7 +232,7 @@ SoftwareVp8Decoder::submitCMSampleBuffer(CMSampleBufferRef sample,
   return VideoDecodeSubmitResult::Rejected;
 #else
   Impl &impl = *impl_;
-  if (!impl.configured || impl.retirementStarted || sample == nullptr) {
+  if (!impl.configured || sample == nullptr) {
     impl.latch("software VP8 decoder cannot accept a sample", error);
     return VideoDecodeSubmitResult::Rejected;
   }
@@ -243,7 +240,7 @@ SoftwareVp8Decoder::submitCMSampleBuffer(CMSampleBufferRef sample,
     assignError(error, "software VP8 submission is stale");
     return VideoDecodeSubmitResult::Rejected;
   }
-  if (impl.endOfStreamBegun) {
+  if (impl.endOfStream != Impl::EndOfStream::Streaming) {
     impl.latch("software VP8 decoder already began end of stream", error);
     return VideoDecodeSubmitResult::Rejected;
   }
@@ -384,15 +381,17 @@ VideoDecodeDrainProgress
 SoftwareVp8Decoder::beginEndOfStream(std::uint64_t generation,
                                      std::string *error) {
   Impl &impl = *impl_;
-  if (!impl.configured || impl.retirementStarted) {
+  if (!impl.configured) {
     impl.latch("software VP8 decoder cannot begin end of stream", error);
     return VideoDecodeDrainProgress::Failed;
   }
   if (generation != impl.generation) {
     return VideoDecodeDrainProgress::StaleGeneration;
   }
-  const bool first = !impl.endOfStreamBegun;
-  impl.endOfStreamBegun = true;
+  const bool first = impl.endOfStream == Impl::EndOfStream::Streaming;
+  if (first) {
+    impl.endOfStream = Impl::EndOfStream::Begun;
+  }
   // libvpx holds nothing back: every displayable frame was produced by the
   // decode call that consumed its access unit, so an EOS with no pending
   // frame is already finished.
@@ -407,7 +406,7 @@ VideoDecodeDrainProgress
 SoftwareVp8Decoder::drainPresentation(std::uint64_t generation,
                                       std::string *error) {
   Impl &impl = *impl_;
-  if (!impl.configured || impl.retirementStarted) {
+  if (!impl.configured) {
     impl.latch("software VP8 decoder cannot drain", error);
     return VideoDecodeDrainProgress::Failed;
   }
@@ -440,14 +439,14 @@ VideoDecodeDrainProgress
 SoftwareVp8Decoder::drainEndOfStream(std::uint64_t generation,
                                      std::string *error) {
   Impl &impl = *impl_;
-  if (!impl.configured || impl.retirementStarted) {
+  if (!impl.configured) {
     impl.latch("software VP8 decoder cannot drain end of stream", error);
     return VideoDecodeDrainProgress::Failed;
   }
   if (generation != impl.generation) {
     return VideoDecodeDrainProgress::StaleGeneration;
   }
-  if (!impl.endOfStreamBegun) {
+  if (impl.endOfStream == Impl::EndOfStream::Streaming) {
     impl.latch("software VP8 end-of-stream drain before it began", error);
     return VideoDecodeDrainProgress::Failed;
   }
@@ -463,23 +462,22 @@ SoftwareVp8Decoder::drainEndOfStream(std::uint64_t generation,
     impl.latch("software VP8 decoder has no sink", error);
     return VideoDecodeDrainProgress::Failed;
   }
-  if (!impl.endOfStreamSinkNotified) {
+  if (impl.endOfStream != Impl::EndOfStream::SinkNotified) {
     impl.sink->endOfStream(generation);
-    impl.endOfStreamSinkNotified = true;
+    impl.endOfStream = Impl::EndOfStream::SinkNotified;
   }
   return VideoDecodeDrainProgress::Done;
 }
 
 void SoftwareVp8Decoder::flush(std::uint64_t nextGeneration) noexcept {
   Impl &impl = *impl_;
-  if (impl.retirementStarted) {
+  if (impl.retirement) {
     return;
   }
   impl.pending.reset();
   impl.generation = nextGeneration;
   impl.awaitingKeyFrame = true;
-  impl.endOfStreamBegun = false;
-  impl.endOfStreamSinkNotified = false;
+  impl.endOfStream = Impl::EndOfStream::Streaming;
   impl.lastError.reset();
   impl.currentCompressedBytes = 0;
   if (impl.sink != nullptr) {
@@ -491,13 +489,8 @@ VideoDecoderRetireProgress
 SoftwareVp8Decoder::retire(std::uint64_t retiredGeneration,
                            std::uint64_t invalidationGeneration) noexcept {
   Impl &impl = *impl_;
-  if (impl.retirementStarted) {
-    if (impl.retirementRetired != retiredGeneration ||
-        impl.retirementInvalidation != invalidationGeneration) {
-      return VideoDecoderRetireProgress::StaleGeneration;
-    }
-    return impl.retirementDone ? VideoDecoderRetireProgress::Done
-                               : VideoDecoderRetireProgress::Failed;
+  if (impl.retirement) {
+    return impl.retirement->replay(retiredGeneration, invalidationGeneration);
   }
   if (retiredGeneration != impl.generation || invalidationGeneration == 0 ||
       invalidationGeneration <= retiredGeneration) {
@@ -505,9 +498,8 @@ SoftwareVp8Decoder::retire(std::uint64_t retiredGeneration,
                ? VideoDecoderRetireProgress::StaleGeneration
                : VideoDecoderRetireProgress::Failed;
   }
-  impl.retirementStarted = true;
-  impl.retirementRetired = retiredGeneration;
-  impl.retirementInvalidation = invalidationGeneration;
+  impl.retirement =
+      VideoDecoderRetirement{retiredGeneration, invalidationGeneration};
   impl.pending.reset();
   if (impl.sink != nullptr) {
     impl.sink->flush(invalidationGeneration);
@@ -518,15 +510,13 @@ SoftwareVp8Decoder::retire(std::uint64_t retiredGeneration,
   impl.releasePool();
   impl.configured = false;
   impl.awaitingKeyFrame = true;
-  impl.endOfStreamBegun = false;
-  impl.endOfStreamSinkNotified = false;
-  impl.retirementDone = true;
+  impl.endOfStream = Impl::EndOfStream::Streaming;
   return VideoDecoderRetireProgress::Done;
 }
 
 void SoftwareVp8Decoder::close() noexcept {
   Impl &impl = *impl_;
-  if (impl.retirementStarted) {
+  if (impl.retirement) {
     return;
   }
   if (!impl.configured && !impl.pool.configured() && !impl.codecOpen) {
@@ -543,8 +533,7 @@ void SoftwareVp8Decoder::close() noexcept {
   impl.releasePool();
   impl.configured = false;
   impl.awaitingKeyFrame = true;
-  impl.endOfStreamBegun = false;
-  impl.endOfStreamSinkNotified = false;
+  impl.endOfStream = Impl::EndOfStream::Streaming;
 }
 
 VideoDecoderStats SoftwareVp8Decoder::stats() const noexcept {
@@ -564,7 +553,8 @@ VideoDecoderStats SoftwareVp8Decoder::stats() const noexcept {
   result.inFlightFrames = 0;
   result.retainedPresentationFrames = impl.pending ? 1U : 0U;
   result.acceptsCompressedSample =
-      impl.configured && !impl.endOfStreamBegun && !impl.pending;
+      impl.configured &&
+      impl.endOfStream == Impl::EndOfStream::Streaming && !impl.pending;
   // VP8 has no B-frames and never displays an alternate-reference frame, so
   // decode order is presentation order and the reorder floor is zero -- the
   // same value deriveCodecReorderDepth() returns for VP9.
@@ -581,9 +571,10 @@ VideoDecoderStats SoftwareVp8Decoder::stats() const noexcept {
   result.outOfOrderDrops = 0;
   result.pendingPresentationFrames = impl.pending ? 1U : 0U;
   result.peakPendingPresentationFrames = impl.pending ? 1U : 0U;
-  result.endOfStreamBegun = impl.endOfStreamBegun;
-  result.endOfStreamCallbacksFinalized = impl.endOfStreamBegun;
-  result.endOfStreamSinkNotified = impl.endOfStreamSinkNotified;
+  result.endOfStreamBegun = impl.endOfStream != Impl::EndOfStream::Streaming;
+  result.endOfStreamCallbacksFinalized = result.endOfStreamBegun;
+  result.endOfStreamSinkNotified =
+      impl.endOfStream == Impl::EndOfStream::SinkNotified;
   result.outputInterop = impl.options.outputInterop;
   result.requestedOutputPixelFormat =
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;

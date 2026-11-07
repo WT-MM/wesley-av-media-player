@@ -4,15 +4,10 @@
 #include <limits>
 #include <new>
 #include <utility>
+#include <variant>
 
 namespace wam::macos {
 namespace {
-
-enum class AdmissionOwner : std::uint8_t {
-  None,
-  Main,
-  Preview,
-};
 
 void clearError(std::string* error) noexcept {
   if (error == nullptr) {
@@ -40,18 +35,43 @@ void clearError(std::string* error) noexcept {
 }  // namespace
 
 struct NativeTrackedVideoArbiter::State final {
-  struct Admission {
-    AdmissionOwner owner{AdmissionOwner::None};
-    NativeTrackedFrameSequence internalSequence{};
-    NativeTrackedFrameSequence mainSequence{};
-    NativeTrackedVideoPreviewSequence previewSequence{};
-    std::uint64_t generation{0};
-    FrameTiming timing{};
-
-    [[nodiscard]] bool active() const noexcept {
-      return owner != AdmissionOwner::None;
-    }
+  // The one frame the wrapped capacity-one output holds, under the identity
+  // the arbiter gave it.
+  struct AdmittedFrame {
+    NativeTrackedFrameSequence internalSequence;
+    std::uint64_t generation;
+    FrameTiming timing;
   };
+  struct Empty {};
+  struct MainAdmitted {
+    AdmittedFrame frame;
+    NativeTrackedFrameSequence sequence;
+  };
+  struct PreviewAdmitted {
+    AdmittedFrame frame;
+    NativeTrackedVideoPreviewSequence sequence;
+    // A main lifecycle operation or the preview client asked to cancel;
+    // further preview submits back off until this frame's terminal event.
+    bool cancelRequested{false};
+  };
+  using Admission = std::variant<Empty, MainAdmitted, PreviewAdmitted>;
+
+  [[nodiscard]] bool admitted() const noexcept {
+    return !std::holds_alternative<Empty>(admission);
+  }
+  [[nodiscard]] const AdmittedFrame* admittedFrame() const noexcept {
+    if (const auto* main = std::get_if<MainAdmitted>(&admission)) {
+      return &main->frame;
+    }
+    if (const auto* preview = std::get_if<PreviewAdmitted>(&admission)) {
+      return &preview->frame;
+    }
+    return nullptr;
+  }
+  [[nodiscard]] bool previewCancelRequested() const noexcept {
+    const auto* preview = std::get_if<PreviewAdmitted>(&admission);
+    return preview != nullptr && preview->cancelRequested;
+  }
 
   explicit State(std::shared_ptr<NativeTrackedVideoOutput> wrapped) noexcept
       : output(std::move(wrapped)) {}
@@ -92,11 +112,10 @@ struct NativeTrackedVideoArbiter::State final {
     ++nextPreviewSequence;
   }
 
-  [[nodiscard]] bool allocateEvent(AdmissionOwner owner,
+  [[nodiscard]] bool allocateEvent(bool preview,
                                    std::uint64_t* sequence) noexcept {
-    std::uint64_t* highWater = owner == AdmissionOwner::Preview
-                                   ? &previewEventSequence
-                                   : &mainEventSequence;
+    std::uint64_t* highWater =
+        preview ? &previewEventSequence : &mainEventSequence;
     if (*highWater == std::numeric_limits<std::uint64_t>::max()) {
       fatal = true;
       return false;
@@ -107,10 +126,11 @@ struct NativeTrackedVideoArbiter::State final {
 
   [[nodiscard]] bool validFrameEvent(
       const NativeTrackedVideoEvent& event) const noexcept {
-    return admission.active() && event.frameSequence.valid() &&
-           event.frameSequence == admission.internalSequence &&
-           event.generation == admission.generation &&
-           sameFrameTiming(event.timing, admission.timing);
+    const AdmittedFrame* frame = admittedFrame();
+    return frame != nullptr && event.frameSequence.valid() &&
+           event.frameSequence == frame->internalSequence &&
+           event.generation == frame->generation &&
+           sameFrameTiming(event.timing, frame->timing);
   }
 
   // Moves at most one raw event into exactly one typed owner mailbox. Calls
@@ -135,12 +155,13 @@ struct NativeTrackedVideoArbiter::State final {
       return;
     }
     std::uint64_t publicEventSequence = 0;
-    if (!allocateEvent(admission.owner, &publicEventSequence)) {
+    const auto* preview = std::get_if<PreviewAdmitted>(&admission);
+    if (!allocateEvent(preview != nullptr, &publicEventSequence)) {
       return;
     }
-    if (admission.owner == AdmissionOwner::Main) {
+    if (const auto* main = std::get_if<MainAdmitted>(&admission)) {
       mainEvent.emplace(NativeTrackedVideoEvent{
-          event->kind, publicEventSequence, admission.mainSequence,
+          event->kind, publicEventSequence, main->sequence,
           event->generation, event->timing});
       if (event->kind == NativeTrackedVideoEventKind::FrameDrawn) {
         ++mainDrawnFrames;
@@ -150,19 +171,14 @@ struct NativeTrackedVideoArbiter::State final {
       }
       return;
     }
-    if (admission.owner == AdmissionOwner::Preview) {
-      previewEvent.emplace(NativeTrackedVideoPreviewEvent{
-          previewKind(event->kind), publicEventSequence,
-          admission.previewSequence, event->generation, event->timing});
-      // The arbiter has consumed the real output terminal fact and the
-      // underlying lease is released. Keep the typed preview event pending
-      // (and therefore keep global admission backpressured), but do not make
-      // main lifecycle progress depend on the preview client polling it.
-      admission = {};
-      previewCancelPending = false;
-      return;
-    }
-    fatal = true;
+    previewEvent.emplace(NativeTrackedVideoPreviewEvent{
+        previewKind(event->kind), publicEventSequence, preview->sequence,
+        event->generation, event->timing});
+    // The arbiter has consumed the real output terminal fact and the
+    // underlying lease is released. Keep the typed preview event pending
+    // (and therefore keep global admission backpressured), but do not make
+    // main lifecycle progress depend on the preview client polling it.
+    admission = Empty{};
   }
 
   [[nodiscard]] NativeTrackedVideoCapacity capacity(
@@ -175,34 +191,32 @@ struct NativeTrackedVideoArbiter::State final {
     if (wrapped != NativeTrackedVideoCapacity::Available) {
       return wrapped;
     }
-    return admission.active() || mainEvent || previewEvent
+    return admitted() || mainEvent || previewEvent
                ? NativeTrackedVideoCapacity::Backpressure
                : NativeTrackedVideoCapacity::Available;
   }
 
-  void consumeAdmission(AdmissionOwner owner) noexcept {
-    if (admission.owner != owner) {
+  // The main client took the terminal event of its admitted frame.
+  void consumeMainAdmission() noexcept {
+    if (!std::holds_alternative<MainAdmitted>(admission)) {
       fatal = true;
       return;
     }
-    admission = {};
-    if (owner == AdmissionOwner::Preview) {
-      previewCancelPending = false;
-    }
+    admission = Empty{};
   }
 
   [[nodiscard]] bool frameTerminalPending() const noexcept {
-    return admission.active() && (mainEvent || previewEvent);
+    return admitted() && (mainEvent || previewEvent);
   }
 
   void requestPreviewCancel() noexcept {
-    if (admission.owner == AdmissionOwner::Preview) {
-      previewCancelPending = true;
+    if (auto* preview = std::get_if<PreviewAdmitted>(&admission)) {
+      preview->cancelRequested = true;
     }
   }
 
   std::shared_ptr<NativeTrackedVideoOutput> output;
-  Admission admission{};
+  Admission admission;
   std::optional<NativeTrackedVideoEvent> mainEvent;
   std::optional<NativeTrackedVideoPreviewEvent> previewEvent;
   NativeTrackedFrameSequence lastMainSequence{};
@@ -216,7 +230,6 @@ struct NativeTrackedVideoArbiter::State final {
   std::uint64_t mainSupersededFrames{0};
   bool internalSequenceExhausted{false};
   bool previewSequenceExhausted{false};
-  bool previewCancelPending{false};
   bool fatal{false};
 };
 
@@ -270,9 +283,8 @@ class NativeTrackedVideoArbiter::MainOutput final
     }
     state_->commitInternal();
     state_->lastMainSequence = sequence;
-    state_->admission = State::Admission{AdmissionOwner::Main, internal,
-                                         sequence, {}, generation,
-                                         frame.timing()};
+    state_->admission = State::MainAdmitted{
+        {internal, generation, frame.timing()}, sequence};
     ++state_->mainSubmittedFrames;
     return NativeTrackedVideoSubmitStatus::Accepted;
   }
@@ -287,7 +299,7 @@ class NativeTrackedVideoArbiter::MainOutput final
         std::move(state_->mainEvent);
     state_->mainEvent.reset();
     if (result->frameSequence.valid()) {
-      state_->consumeAdmission(AdmissionOwner::Main);
+      state_->consumeMainAdmission();
     }
     return result;
   }
@@ -306,9 +318,8 @@ class NativeTrackedVideoArbiter::MainOutput final
     if (state_->fatal) {
       return NativeTrackedVideoOutputProgress::Failed;
     }
-    return state_->admission.active()
-               ? NativeTrackedVideoOutputProgress::Quiescing
-               : progress;
+    return state_->admitted() ? NativeTrackedVideoOutputProgress::Quiescing
+                              : progress;
   }
 
   [[nodiscard]] NativeTrackedVideoOutputProgress closeProgress(
@@ -324,9 +335,8 @@ class NativeTrackedVideoArbiter::MainOutput final
     if (state_->fatal) {
       return NativeTrackedVideoOutputProgress::Failed;
     }
-    return state_->admission.active()
-               ? NativeTrackedVideoOutputProgress::Quiescing
-               : progress;
+    return state_->admitted() ? NativeTrackedVideoOutputProgress::Quiescing
+                              : progress;
   }
 
   // Capability facts are forwarded: the arbiter neither samples, converts nor
@@ -353,17 +363,16 @@ class NativeTrackedVideoArbiter::MainOutput final
       const noexcept override {
     state_->pumpEvent();
     NativeTrackedVideoOutputFacts result = state_->output->facts();
+    const auto* main = std::get_if<State::MainAdmitted>(&state_->admission);
     result.admittedFrame =
-        state_->admission.owner == AdmissionOwner::Main
-            ? state_->admission.mainSequence
-            : NativeTrackedFrameSequence{};
+        main != nullptr ? main->sequence : NativeTrackedFrameSequence{};
     result.submittedFrames = state_->mainSubmittedFrames;
     result.drawnFrames = state_->mainDrawnFrames;
     result.supersededFrames = state_->mainSupersededFrames;
     result.lastEventSequence = state_->mainEventSequence;
     // Preserve the shared capacity-one credit without exposing a preview
     // identity through the main facade.
-    result.retainedFrames = state_->admission.active() ? 1U : 0U;
+    result.retainedFrames = state_->admitted() ? 1U : 0U;
     result.eventPending = state_->mainEvent.has_value();
     result.fatal = result.fatal || state_->fatal;
     return result;
@@ -381,7 +390,7 @@ class NativeTrackedVideoArbiter::PreviewPort final
 
   [[nodiscard]] NativeTrackedVideoCapacity capacity(
       std::uint64_t generation) const noexcept override {
-    if (state_->previewCancelPending) {
+    if (state_->previewCancelRequested()) {
       return NativeTrackedVideoCapacity::Backpressure;
     }
     return state_->capacity(generation);
@@ -423,9 +432,8 @@ class NativeTrackedVideoArbiter::PreviewPort final
     }
     state_->commitInternal();
     state_->commitPreview();
-    state_->admission = State::Admission{AdmissionOwner::Preview, internal,
-                                         {}, preview, generation,
-                                         frame.timing()};
+    state_->admission = State::PreviewAdmitted{
+        {internal, generation, frame.timing()}, preview};
     return {NativeTrackedVideoSubmitStatus::Accepted, preview};
   }
 
@@ -448,7 +456,7 @@ class NativeTrackedVideoArbiter::PreviewPort final
     if (state_->fatal) {
       return NativeTrackedVideoPreviewCancelProgress::Failed;
     }
-    return state_->admission.owner == AdmissionOwner::Preview
+    return std::holds_alternative<State::PreviewAdmitted>(state_->admission)
                ? NativeTrackedVideoPreviewCancelProgress::Quiescing
                : NativeTrackedVideoPreviewCancelProgress::Done;
   }

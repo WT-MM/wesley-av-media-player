@@ -30,6 +30,7 @@
 #include <string_view>
 #include <vector>
 #include <utility>
+#include <variant>
 
 namespace wam::macos {
 namespace {
@@ -193,7 +194,7 @@ struct ConsumerTrace {
         static_cast<__uint128_t>(record.sinceSeekLanding) <
             static_cast<__uint128_t>(owner.clock.ticksPerSecond) * 2;
     record.late = late;
-    record.awaitingOutput = owner.awaitingDraw.valid();
+    record.awaitingOutput = owner.awaitingDraw.has_value();
     // Only late retirements and their preceding submission reach the GUI ring.
     if (late) {
       if (previousSubmission.commit &&
@@ -535,13 +536,68 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
          keyFrame == sample.keyFrame;
 }
 
-enum class Lifecycle : std::uint8_t {
-  None,
-  Flush,
-  Retire,
-  Cancel,
-  Close,
+template <typename... Arms>
+struct Overloaded : Arms... {
+  using Arms::operator()...;
 };
+
+// An exact retired/next generation pair: a seek flush's, or a retirement's
+// retired/invalidation pair.
+struct GenerationPair {
+  MediaGeneration retired{0};
+  MediaGeneration next{0};
+  [[nodiscard]] bool operator==(const GenerationPair&) const = default;
+};
+
+enum class TerminalKind : std::uint8_t { Close, Cancel };
+
+// The route's lifecycle. Per-state data lives in its state; `generation`,
+// `timeline` and `track` beside it are the route's current presentation
+// identity, which every state reads.
+namespace route {
+struct Created {};
+// The first arm's output invalidation to armGeneration is pending.
+struct Arming {};
+// The arm is proved; configure() consumes it exactly once.
+struct Armed {};
+struct Running {
+  enum class EndOfStream : std::uint8_t { NotBegun, Begun, DecoderDone, Done };
+  // Same-generation handoff of decoded-surface ownership to the preview
+  // decoder. Quiescing gates admission at once; a seek flush or terminal
+  // operation ends it.
+  enum class PreviewHandoff : std::uint8_t { None, Quiescing, Quiesced };
+  EndOfStream endOfStream{EndOfStream::NotBegun};
+  PreviewHandoff preview{PreviewHandoff::None};
+  // The seek flush that produced this generation, so its exact replay
+  // answers Done.
+  std::optional<GenerationPair> completedFlush;
+};
+struct Flushing {
+  GenerationPair pair;
+  media::NativeMediaGenerationTimeline timeline;
+};
+struct Terminating {
+  TerminalKind kind;
+  MediaGeneration terminal;
+};
+struct Retiring {
+  GenerationPair pair;
+  bool decoderRetired{false};
+};
+struct Closed {
+  bool cancelled;
+};
+struct Retired {
+  GenerationPair pair;
+};
+using State = std::variant<Created, Arming, Armed, Running, Flushing,
+                           Terminating, Retiring, Closed, Retired>;
+}  // namespace route
+
+// How the tracked output broke the protocol, if it did. A protocol violation
+// vetoes every terminal proof; an exactly matched failed frame lets the
+// fatal-tolerant terminal close complete.
+enum class OutputFault : std::uint8_t { None, MatchedFrame, Protocol };
 
 enum class PumpStatus : std::uint8_t {
   Idle,
@@ -715,13 +771,67 @@ struct NativeVideoConsumer::Impl {
     return failure != NativeVideoConsumerFailure::None;
   }
 
-  // Everything a pending seek flush owns. Six paths abandon or complete one,
-  // and every one of them must forget all four facts together.
-  void clearFlushState() noexcept {
-    flushRetired = 0;
-    flushTarget = 0;
-    flushTimeline = {};
-    flushDecoderApplied = false;
+  [[nodiscard]] route::Running* running() noexcept {
+    return std::get_if<route::Running>(&state);
+  }
+  [[nodiscard]] const route::Running* running() const noexcept {
+    return std::get_if<route::Running>(&state);
+  }
+
+  // A FrameSuperseded may answer only an invalidation this route started.
+  [[nodiscard]] bool invalidating() const noexcept {
+    return std::visit(
+        Overloaded{[](const route::Created&) { return false; },
+                   [](const route::Arming&) { return false; },
+                   [](const route::Armed&) { return false; },
+                   [](const route::Running&) { return false; },
+                   [](const route::Flushing&) { return true; },
+                   [](const route::Terminating&) { return true; },
+                   [](const route::Retiring&) { return true; },
+                   [](const route::Closed&) { return false; },
+                   [](const route::Retired&) { return true; }},
+        state);
+  }
+
+  [[nodiscard]] bool decoderEndOfStreamDone() const noexcept {
+    const route::Running* route = running();
+    if (route == nullptr) {
+      return false;
+    }
+    switch (route->endOfStream) {
+    case route::Running::EndOfStream::NotBegun:
+    case route::Running::EndOfStream::Begun:
+      return false;
+    case route::Running::EndOfStream::DecoderDone:
+    case route::Running::EndOfStream::Done:
+      return true;
+    }
+    return false;
+  }
+
+  // The decoder answered Done: it has emitted its last frame. Decoders answer
+  // Done only after beginEndOfStream().
+  void decoderEndOfStreamDrained() noexcept {
+    route::Running* route = running();
+    if (route == nullptr) {
+      return;
+    }
+    switch (route->endOfStream) {
+    case route::Running::EndOfStream::NotBegun:
+    case route::Running::EndOfStream::Begun:
+      route->endOfStream = route::Running::EndOfStream::DecoderDone;
+      break;
+    case route::Running::EndOfStream::DecoderDone:
+    case route::Running::EndOfStream::Done:
+      break;
+    }
+  }
+
+  void protocolViolated() noexcept { outputFault = OutputFault::Protocol; }
+  void matchedFrameFailed() noexcept {
+    if (outputFault == OutputFault::None) {
+      outputFault = OutputFault::MatchedFrame;
+    }
   }
 
   // Everything presentation knows about the current generation's picture.
@@ -733,33 +843,19 @@ struct NativeVideoConsumer::Impl {
   }
 
   [[nodiscard]] bool endOfStreamDrained() const noexcept {
-    return decoderEndOfStreamDone && sink.ended() && !heldFrame &&
-           !awaitingDraw.valid();
-  }
-
-  // The terminal close finished: the graph is closed (or cancelled) and gives
-  // its process slot back.
-  void markClosed(Lifecycle ended) noexcept {
-    configured = false;
-    cancelled = ended == Lifecycle::Cancel;
-    closed = true;
-    lifecycle = Lifecycle::None;
-  }
-
-  void resetEndOfStream() noexcept {
-    endOfStreamBegun = false;
-    decoderEndOfStreamDone = false;
-    endOfStreamDone = false;
+    return decoderEndOfStreamDone() && sink.ended() && !heldFrame &&
+           !awaitingDraw;
   }
 
   // The highest generation any stage of this graph has been shown: the one
-  // that a terminal close or a retirement must move past.
+  // that a terminal close or a retirement must move past. A pending arm or
+  // seek target is already counted by armGeneration and
+  // highestExposedGeneration.
   [[nodiscard]] MediaGeneration exposedGeneration() const noexcept {
     const MediaGeneration outputGeneration =
         output == nullptr ? 0 : output->facts().generation;
-    return std::max({generation, armGeneration, flushTarget,
-                     highestExposedGeneration, outputGeneration,
-                     decoder.stats().generation});
+    return std::max({generation, armGeneration, highestExposedGeneration,
+                     outputGeneration, decoder.stats().generation});
   }
 
   // After the output reported Done for a flush (closed false) or a terminal
@@ -771,10 +867,10 @@ struct NativeVideoConsumer::Impl {
       std::uint64_t provedGeneration, bool closed,
       const char* failureText) noexcept {
     const NativeTrackedVideoOutputFacts facts = output->facts();
-    if ((closed && outputProtocolViolation) ||
+    if ((closed && outputFault == OutputFault::Protocol) ||
         !outputSettledAt(facts, provedGeneration, closed,
-                         closed && matchedFrameFailure) ||
-        awaitingDraw.valid()) {
+                         closed && outputFault == OutputFault::MatchedFrame) ||
+        awaitingDraw) {
       latch(NativeVideoConsumerFailure::Output, failureText);
       return std::nullopt;
     }
@@ -796,17 +892,10 @@ struct NativeVideoConsumer::Impl {
                : mapped;
   }
 
-  void clearPreviewHandoff() noexcept {
-    previewQuiesceGeneration = 0;
-    previewReleasedGeneration = 0;
-    previewQuiesceStarted = false;
-    previewQuiesced = false;
-    previewDecoderFlushed = false;
-    previewResumeNeedsKeyFrame = false;
-  }
-
   [[nodiscard]] bool previewAdmissionGated() const noexcept {
-    return previewQuiesceStarted;
+    const route::Running* route = running();
+    return route != nullptr &&
+           route->preview != route::Running::PreviewHandoff::None;
   }
 
   [[nodiscard]] bool refreshClock() noexcept {
@@ -824,9 +913,7 @@ struct NativeVideoConsumer::Impl {
   ConsumerTrace trace;
 
   void clearDueHint() noexcept {
-    nextDueMediaTime = {};
-    nextDueHostTicks = 0;
-    nextDueKnown = false;
+    nextDue.reset();
   }
 
   void setDueHint(MediaTime presentation) noexcept {
@@ -866,16 +953,22 @@ struct NativeVideoConsumer::Impl {
                     currentClock->sampledHostTicks) {
       return;
     }
-    nextDueMediaTime = presentation;
-    nextDueHostTicks = currentClock->sampledHostTicks + delta;
-    nextDueKnown = true;
-    trace.noteDeadline(nextDueHostTicks);
+    nextDue = DueHint{presentation, currentClock->sampledHostTicks + delta};
+    trace.noteDeadline(nextDue->hostTicks);
+  }
+
+  // The event names exactly the frame whose terminal event is owed.
+  [[nodiscard]] bool awaitsEvent(const NativeTrackedVideoEvent& event) const
+      noexcept {
+    return awaitingDraw && event.frameSequence == awaitingDraw->sequence &&
+           event.generation == awaitingDraw->timing.generation &&
+           sameFrameTiming(event.timing, awaitingDraw->timing);
   }
 
   [[nodiscard]] PumpStatus consumeOutputEvent() noexcept {
     const auto protocolFailure = [this](const char* gate) noexcept {
       latch(NativeVideoConsumerFailure::Output, gate);
-      outputProtocolViolation = true;
+      protocolViolated();
       return PumpStatus::Failed;
     };
     if (output == nullptr) {
@@ -894,11 +987,9 @@ struct NativeVideoConsumer::Impl {
     switch (event->kind) {
     case NativeTrackedVideoEventKind::FrameDrawn:
     case NativeTrackedVideoEventKind::FrameSuperseded:
-      if (!awaitingDraw.valid() || event->frameSequence != awaitingDraw ||
-          event->generation != awaitingTiming.generation ||
-          !sameFrameTiming(event->timing, awaitingTiming) ||
+      if (!awaitsEvent(*event) ||
           (event->kind == NativeTrackedVideoEventKind::FrameSuperseded &&
-           lifecycle == Lifecycle::None)) {
+           !invalidating())) {
         return protocolFailure(
             "tracked video output drew a frame this route never submitted");
       }
@@ -906,24 +997,20 @@ struct NativeVideoConsumer::Impl {
         if (drawnFrames == 0) firstDrawPts = {event->timing.presentationTime.value, event->timing.presentationTime.timescale};
         ++drawnFrames;
       }
-      awaitingDraw = {};
-      awaitingTiming = {};
+      awaitingDraw.reset();
       lastTerminalEvent = event;
       return PumpStatus::Progress;
     case NativeTrackedVideoEventKind::Failed:
-      if (!awaitingDraw.valid() || event->frameSequence != awaitingDraw ||
-          event->generation != awaitingTiming.generation ||
-          !sameFrameTiming(event->timing, awaitingTiming)) {
+      if (!awaitsEvent(*event)) {
         return protocolFailure(
             "tracked video output failed a frame this route never submitted");
       }
       // Failed is an exact terminal frame event. The output has released its
       // lease, so retire the matching compositor credit even though the route
       // remains fail-closed and will require terminal retirement/quarantine.
-      awaitingDraw = {};
-      awaitingTiming = {};
+      awaitingDraw.reset();
       lastTerminalEvent = event;
-      matchedFrameFailure = true;
+      matchedFrameFailed();
       latch(NativeVideoConsumerFailure::Output,
             "tracked video output failed the awaited frame");
       return PumpStatus::MatchedFrameFailure;
@@ -944,7 +1031,7 @@ struct NativeVideoConsumer::Impl {
     // let the scheduler self-drain at real time. When compositing returns, the
     // real terminal event retires the credit and the next due frame is
     // submitted immediately.
-    const bool submissionBlocked = awaitingDraw.valid();
+    const bool submissionBlocked = awaitingDraw.has_value();
     if (!heldFrame) {
       if (submissionBlocked && sink.size() == 0) {
         return PumpStatus::Blocked;
@@ -1001,7 +1088,7 @@ struct NativeVideoConsumer::Impl {
       // meet the successor. Idle lets pumpPresentation drain the decoder for
       // that successor while this frame is held.
       const FrameLease* next = sink.peek();
-      if (next == nullptr && !sink.ended() && !decoderEndOfStreamDone) {
+      if (next == nullptr && !sink.ended() && !decoderEndOfStreamDone()) {
         return PumpStatus::Idle;
       }
       const auto nextStart =
@@ -1096,8 +1183,7 @@ struct NativeVideoConsumer::Impl {
     }
     trace.submitted(*this);
     captions.notePresented(timing.presentationTime);
-    awaitingDraw = submittedSequence;
-    awaitingTiming = timing;
+    awaitingDraw = AwaitingDraw{submittedSequence, timing};
     heldFrame.reset();
     ++submittedFrames;
     nextFrameSequence =
@@ -1147,7 +1233,7 @@ struct NativeVideoConsumer::Impl {
             "video decoder presentation drain failed", error);
       return PumpStatus::Failed;
     case VideoDecodeDrainProgress::Done:
-      decoderEndOfStreamDone = true;
+      decoderEndOfStreamDrained();
       break;
     case VideoDecodeDrainProgress::Progress:
     case VideoDecodeDrainProgress::Quiescing:
@@ -1188,14 +1274,11 @@ struct NativeVideoConsumer::Impl {
 
   NativeVideoConsumerFailure failure{NativeVideoConsumerFailure::None};
   std::string failureText;
-  Lifecycle lifecycle{Lifecycle::None};
+  OutputFault outputFault{OutputFault::None};
+  route::State state;
   MediaGeneration generation{0};
+  // The one arm operation's generation; immutable once set.
   MediaGeneration armGeneration{0};
-  MediaGeneration flushRetired{0};
-  MediaGeneration flushTarget{0};
-  MediaGeneration completedFlushRetired{0};
-  MediaGeneration completedFlushTarget{0};
-  MediaGeneration terminalGeneration{0};
   // The highest generation a flush() call has named, recorded before that
   // call decides anything. The dispatcher hands retire() the generation it
   // passed to flush() -- see NativeVideoConsumer::flush() in the port
@@ -1206,7 +1289,6 @@ struct NativeVideoConsumer::Impl {
   media::MediaTrackId track{0};
   MediaTime trackDuration{};
   media::NativeMediaGenerationTimeline timeline{};
-  media::NativeMediaGenerationTimeline flushTimeline{};
   std::optional<FrameLease> heldFrame;
   // One overwriteable observation snapshot for controller telemetry. It is
   // not compositor credit: the exact output event itself retires that credit,
@@ -1215,10 +1297,18 @@ struct NativeVideoConsumer::Impl {
   std::optional<NativeTrackedVideoOutputFacts> retiredOutputFacts;
   std::optional<media::NativeMediaClockSnapshot> currentClock;
   NativeTrackedFrameSequence nextFrameSequence{1};
-  NativeTrackedFrameSequence awaitingDraw{};
-  FrameTiming awaitingTiming{};
-  MediaTime nextDueMediaTime{};
-  std::uint64_t nextDueHostTicks{0};
+  // The submitted frame whose terminal output event is still owed.
+  struct AwaitingDraw {
+    NativeTrackedFrameSequence sequence;
+    FrameTiming timing;
+  };
+  std::optional<AwaitingDraw> awaitingDraw;
+  // When the held frame falls due, if the clock can say.
+  struct DueHint {
+    MediaTime mediaTime;
+    std::uint64_t hostTicks;
+  };
+  std::optional<DueHint> nextDue;
   std::uint64_t lastOutputEventSequence{0};
   std::uint64_t submittedFrames{0};
   std::uint64_t drawnFrames{0};
@@ -1231,28 +1321,6 @@ struct NativeVideoConsumer::Impl {
   // operation that empties VideoToolbox: configure, seek flush, and the
   // same-generation preview quiesce.
   std::optional<MediaTime> generationStartPresentation;
-  bool armDone{false};
-  bool armConsumed{false};
-  bool configured{false};
-  bool endOfStreamBegun{false};
-  bool decoderEndOfStreamDone{false};
-  bool endOfStreamDone{false};
-  bool decoderClosed{false};
-  bool flushDecoderApplied{false};
-  bool completedFlush{false};
-  MediaGeneration retirementRetired{0};
-  MediaGeneration retirementInvalidation{0};
-  bool retirementStarted{false};
-  bool retirementDone{false};
-  bool matchedFrameFailure{false};
-  bool outputProtocolViolation{false};
-  bool nextDueKnown{false};
-  MediaGeneration previewQuiesceGeneration{0};
-  MediaGeneration previewReleasedGeneration{0};
-  bool previewQuiesceStarted{false};
-  bool previewQuiesced{false};
-  bool previewDecoderFlushed{false};
-  bool previewResumeNeedsKeyFrame{false};
 #if defined(WAM_NATIVE_TEST_SEAMS)
   // Fixture-free scheduler tests do not create a real codec configuration.
   // This proves only that the public handoff state machine treats their
@@ -1260,8 +1328,6 @@ struct NativeVideoConsumer::Impl {
   // no bypass of the decoder facts below.
   bool testSyntheticDecoderConfigured{false};
 #endif
-  bool cancelled{false};
-  bool closed{false};
   // True from create() until this graph's own Done close gives its envelope
   // slot back. The envelope is a count, where a double release would silently
   // manufacture a slot and let N + 1 graphs live at once. The terminal paths
@@ -1438,22 +1504,24 @@ NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
     return NativeVideoConsumerArmProgress::Failed;
   }
   Impl& impl = *impl_;
-  if (impl.configured || impl.armConsumed || impl.lifecycle != Lifecycle::None ||
-      impl.closed || impl.failed()) {
+  if (impl.failed()) {
     return NativeVideoConsumerArmProgress::Failed;
   }
-  if (impl.armGeneration != 0 && impl.armGeneration != generation) {
+  const bool created = std::holds_alternative<route::Created>(impl.state);
+  if (!created && !std::holds_alternative<route::Arming>(impl.state) &&
+      !std::holds_alternative<route::Armed>(impl.state)) {
+    return NativeVideoConsumerArmProgress::Failed;
+  }
+  if (!created && impl.armGeneration != generation) {
     return NativeVideoConsumerArmProgress::StaleGeneration;
   }
-  if (impl.armDone) {
+  if (std::holds_alternative<route::Armed>(impl.state)) {
     return NativeVideoConsumerArmProgress::Done;
   }
-  impl.armGeneration = generation;
-  // Retain the exact output operation even before dispatcher configure. A
-  // close that supersedes a Quiescing pre-arm must finish this render-side
-  // invalidation pair rather than issue a conflicting close operation.
-  impl.flushRetired = 0;
-  impl.flushTarget = generation;
+  if (created) {
+    impl.armGeneration = generation;
+    impl.state = route::Arming{};
+  }
   const PumpStatus pendingEvent = impl.consumeOutputEvent();
   if (pendingEvent == PumpStatus::Failed ||
       pendingEvent == PumpStatus::Stale) {
@@ -1473,9 +1541,7 @@ NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
                             "tracked video output arm facts are invalid")) {
       return NativeVideoConsumerArmProgress::Failed;
     }
-    impl.armDone = true;
-    impl.flushRetired = 0;
-    impl.flushTarget = 0;
+    impl.state = route::Armed{};
     return NativeVideoConsumerArmProgress::Done;
   }
   case NativeTrackedVideoOutputProgress::Quiescing:
@@ -1501,36 +1567,31 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
   if (generation != impl.generation) {
     return NativeVideoConsumerPreviewProgress::StaleGeneration;
   }
-  if (impl.previewQuiesceStarted) {
-    if (impl.previewQuiesceGeneration != generation) {
-      return NativeVideoConsumerPreviewProgress::StaleGeneration;
-    }
-    if (impl.previewQuiesced) {
-      return NativeVideoConsumerPreviewProgress::Done;
-    }
-  } else {
-    if (!impl.configured || impl.failed() || impl.closed || impl.cancelled ||
-        impl.endOfStreamBegun || impl.lifecycle != Lifecycle::None ||
+  route::Running* running = impl.running();
+  if (running == nullptr) {
+    return NativeVideoConsumerPreviewProgress::Failed;
+  }
+  switch (running->preview) {
+  case route::Running::PreviewHandoff::Quiesced:
+    return NativeVideoConsumerPreviewProgress::Done;
+  case route::Running::PreviewHandoff::Quiescing:
+    break;
+  case route::Running::PreviewHandoff::None:
+    if (impl.failed() ||
+        running->endOfStream != route::Running::EndOfStream::NotBegun ||
         impl.output == nullptr) {
       return NativeVideoConsumerPreviewProgress::Failed;
     }
     // This is the admission linearization point. No dispatcher-facing call
     // can accept another compressed sample after the owner begins handoff.
-    impl.previewQuiesceGeneration = generation;
-    impl.previewReleasedGeneration = 0;
-    impl.previewQuiesceStarted = true;
-    impl.previewQuiesced = false;
-    impl.previewResumeNeedsKeyFrame = false;
-  }
-
-  if (!impl.previewDecoderFlushed) {
+    running->preview = route::Running::PreviewHandoff::Quiescing;
     // Same-generation flush is deliberate: it synchronously retires every VT
     // callback and decoder/sink lease while preserving playback lineage. It
     // does not call the tracked output's flush/close lifecycle. Software
     // releases its worker so preview can reuse bounded process capacity.
     impl.decoder.suspendForPreview(generation);
     impl.resetPresentation();
-    impl.previewDecoderFlushed = true;
+    break;
   }
 
   const VideoDecoderStats decoderFacts = impl.decoder.stats();
@@ -1573,9 +1634,9 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
     return NativeVideoConsumerPreviewProgress::Failed;
   }
 
-  if (impl.awaitingDraw.valid()) {
+  if (impl.awaitingDraw) {
     if (outputFacts.retainedFrames != 1 ||
-        outputFacts.admittedFrame != impl.awaitingDraw) {
+        outputFacts.admittedFrame != impl.awaitingDraw->sequence) {
       impl.latch(NativeVideoConsumerFailure::Output,
                  "tracked video output does not retain the awaited preview "
                  "frame");
@@ -1600,80 +1661,7 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
                : NativeVideoConsumerPreviewProgress::Quiescing;
   }
 
-  impl.previewQuiesced = true;
-  return NativeVideoConsumerPreviewProgress::Done;
-}
-
-NativeVideoConsumerPreviewProgress
-NativeVideoConsumer::releasePreviewQuiesce(
-    MediaGeneration generation,
-    NativeVideoConsumerPreviewRelease release) noexcept {
-  if (impl_ == nullptr || generation == 0) {
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-  Impl& impl = *impl_;
-  if (!impl.previewQuiesceStarted) {
-    if (impl.previewReleasedGeneration == generation) {
-      return NativeVideoConsumerPreviewProgress::Done;
-    }
-    if (impl.previewReleasedGeneration != 0 ||
-        generation != impl.generation) {
-      return NativeVideoConsumerPreviewProgress::StaleGeneration;
-    }
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-  if (impl.previewQuiesceGeneration != generation ||
-      generation != impl.generation) {
-    return NativeVideoConsumerPreviewProgress::StaleGeneration;
-  }
-  if (!impl.previewQuiesced) {
-    const NativeVideoConsumerPreviewProgress quiescing =
-        quiesceForPreview(generation);
-    if (quiescing != NativeVideoConsumerPreviewProgress::Done) {
-      return quiescing;
-    }
-  }
-  if (release !=
-      NativeVideoConsumerPreviewRelease::NextSampleIsKeyFrame) {
-    return NativeVideoConsumerPreviewProgress::KeyFrameRequired;
-  }
-  if (impl.failed() || impl.closed || impl.cancelled ||
-      impl.lifecycle != Lifecycle::None || impl.output == nullptr) {
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-  if (!impl.decoder.resumeAfterPreview()) {
-    impl.latch(NativeVideoConsumerFailure::Decoder,
-               "video decoder could not resume after preview handoff");
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-  const VideoDecoderStats decoderFacts = impl.decoder.stats();
-  bool decoderConfigured = decoderFacts.configured;
-#if defined(WAM_NATIVE_TEST_SEAMS)
-  decoderConfigured =
-      decoderConfigured || impl.testSyntheticDecoderConfigured;
-#endif
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
-  if (!decoderConfigured || decoderFacts.generation != generation ||
-      !decoderFacts.awaitingKeyFrame || decoderFacts.inFlightFrames != 0 ||
-      decoderFacts.retainedPresentationFrames != 0 ||
-      decoderFacts.pendingPresentationFrames != 0 ||
-      outputFacts.fatal || outputFacts.closed ||
-      outputFacts.generation != generation ||
-      outputFacts.retainedFrames != 0 ||
-      outputFacts.admittedFrame.valid() || outputFacts.eventPending ||
-      outputFacts.invalidationPending || impl.awaitingDraw.valid() ||
-      impl.heldFrame || impl.sink.size() != 0) {
-    impl.latch(NativeVideoConsumerFailure::Lifecycle,
-               "native video preview release facts are invalid");
-    return NativeVideoConsumerPreviewProgress::Failed;
-  }
-
-  impl.previewReleasedGeneration = generation;
-  impl.previewQuiesceGeneration = 0;
-  impl.previewQuiesceStarted = false;
-  impl.previewQuiesced = false;
-  impl.previewDecoderFlushed = false;
-  impl.previewResumeNeedsKeyFrame = true;
+  running->preview = route::Running::PreviewHandoff::Quiesced;
   return NativeVideoConsumerPreviewProgress::Done;
 }
 
@@ -1689,8 +1677,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   if (generation != impl.armGeneration) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
-  if (impl.failed() || impl.configured || !impl.armDone || impl.armConsumed ||
-      impl.lifecycle != Lifecycle::None) {
+  if (impl.failed() || !std::holds_alternative<route::Armed>(impl.state)) {
     assignError(error, "native video generation was not armed exactly once");
     return media::NativeMediaConsumeResult::Failed;
   }
@@ -1727,7 +1714,6 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
     return media::NativeMediaConsumeResult::Failed;
   }
 
-  impl.armConsumed = true;
   impl.sink.flush(generation);
   const VideoStreamConfiguration configuration =
       videoStreamConfigurationFor(track, generation);
@@ -1754,7 +1740,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   impl.captions.configure(track);
   impl.currentClock.reset();
   impl.generationStartPresentation.reset();
-  impl.configured = true;
+  impl.state = route::Running{};
   return media::NativeMediaConsumeResult::Accepted;
 }
 
@@ -1780,30 +1766,51 @@ media::NativeMediaConsumeResult NativeVideoConsumer::capacity(
     // which is the more informative of the two.
     return media::NativeMediaConsumeResult::Failed;
   }
-  if (!impl.configured) {
-    impl.latch(NativeVideoConsumerFailure::Lifecycle,
-               "native video capacity was queried before configure");
+  const char* refusal = std::visit(
+      Overloaded{
+          [](const route::Created&) {
+            return "native video capacity was queried before configure";
+          },
+          [](const route::Arming&) {
+            return "native video capacity was queried before configure";
+          },
+          [](const route::Armed&) {
+            return "native video capacity was queried before configure";
+          },
+          [](const route::Running&) -> const char* { return nullptr; },
+          [](const route::Flushing&) {
+            return "native video capacity was queried during a lifecycle "
+                   "operation";
+          },
+          [](const route::Terminating&) {
+            return "native video capacity was queried during a lifecycle "
+                   "operation";
+          },
+          [](const route::Retiring&) {
+            return "native video capacity was queried during a lifecycle "
+                   "operation";
+          },
+          [](const route::Closed& closed) {
+            return closed.cancelled
+                       ? "native video capacity was queried after cancel"
+                       : "native video capacity was queried after close";
+          },
+          [](const route::Retired&) {
+            return "native video capacity was queried after close";
+          }},
+      impl.state);
+  if (refusal != nullptr) {
+    impl.latch(NativeVideoConsumerFailure::Lifecycle, refusal);
     return media::NativeMediaConsumeResult::Failed;
   }
-  if (impl.closed) {
-    impl.latch(NativeVideoConsumerFailure::Lifecycle,
-               "native video capacity was queried after close");
-    return media::NativeMediaConsumeResult::Failed;
-  }
-  if (impl.cancelled) {
-    impl.latch(NativeVideoConsumerFailure::Lifecycle,
-               "native video capacity was queried after cancel");
-    return media::NativeMediaConsumeResult::Failed;
-  }
-  if (impl.lifecycle != Lifecycle::None) {
-    impl.latch(NativeVideoConsumerFailure::Lifecycle,
-               "native video capacity was queried during a lifecycle "
-               "operation");
-    return media::NativeMediaConsumeResult::Failed;
-  }
-  if (impl.endOfStreamBegun) {
-    return impl.endOfStreamDone ? media::NativeMediaConsumeResult::Drained
-                                : media::NativeMediaConsumeResult::Backpressure;
+  switch (impl.running()->endOfStream) {
+  case route::Running::EndOfStream::NotBegun:
+    break;
+  case route::Running::EndOfStream::Begun:
+  case route::Running::EndOfStream::DecoderDone:
+    return media::NativeMediaConsumeResult::Backpressure;
+  case route::Running::EndOfStream::Done:
+    return media::NativeMediaConsumeResult::Drained;
   }
   const PumpStatus pumped = impl.pumpPresentation(false, nullptr);
   switch (pumped) {
@@ -1864,14 +1871,9 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
   if (impl.previewAdmissionGated()) {
     return media::NativeMediaConsumeResult::Backpressure;
   }
-  if (impl.previewResumeNeedsKeyFrame && !sample.keyFrame) {
-    impl.latch(NativeVideoConsumerFailure::InvalidSample,
-               "preview release requires the next video sample to be a key "
-               "frame", error);
-    return media::NativeMediaConsumeResult::Failed;
-  }
-  if (!impl.configured || impl.failed() || impl.endOfStreamBegun ||
-      impl.lifecycle != Lifecycle::None || impl.closed || impl.cancelled) {
+  const route::Running* running = impl.running();
+  if (running == nullptr || impl.failed() ||
+      running->endOfStream != route::Running::EndOfStream::NotBegun) {
     assignError(error, "native video consumer is not accepting samples");
     return media::NativeMediaConsumeResult::Failed;
   }
@@ -2011,7 +2013,6 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
     if (sample.keyFrame && !impl.generationStartPresentation) {
       impl.generationStartPresentation = sample.presentationTime;
     }
-    impl.previewResumeNeedsKeyFrame = false;
     return media::NativeMediaConsumeResult::Accepted;
   }
   impl.latch(NativeVideoConsumerFailure::Decoder,
@@ -2049,14 +2050,8 @@ media::NativeMediaConsumeResult NativeVideoConsumer::endOfStream(
   if (impl.previewAdmissionGated()) {
     return media::NativeMediaConsumeResult::Backpressure;
   }
-  if (impl.previewResumeNeedsKeyFrame) {
-    impl.latch(NativeVideoConsumerFailure::Lifecycle,
-               "preview release cannot reach end of stream before a key frame",
-               error);
-    return media::NativeMediaConsumeResult::Failed;
-  }
-  if (!impl.configured || impl.failed() || end.track != impl.track ||
-      impl.lifecycle != Lifecycle::None || impl.closed || impl.cancelled) {
+  route::Running* running = impl.running();
+  if (running == nullptr || impl.failed() || end.track != impl.track) {
     impl.latch(NativeVideoConsumerFailure::Lifecycle,
                "native video consumer is not accepting end of stream", error);
     return media::NativeMediaConsumeResult::Failed;
@@ -2071,12 +2066,13 @@ media::NativeMediaConsumeResult NativeVideoConsumer::endOfStream(
                "video decoder refused to begin end of stream", error);
     return media::NativeMediaConsumeResult::Failed;
   case VideoDecodeDrainProgress::Done:
-    impl.endOfStreamBegun = true;
-    impl.decoderEndOfStreamDone = true;
+    impl.decoderEndOfStreamDrained();
     return media::NativeMediaConsumeResult::Draining;
   case VideoDecodeDrainProgress::Progress:
   case VideoDecodeDrainProgress::Quiescing:
-    impl.endOfStreamBegun = true;
+    if (running->endOfStream == route::Running::EndOfStream::NotBegun) {
+      running->endOfStream = route::Running::EndOfStream::Begun;
+    }
     return media::NativeMediaConsumeResult::Draining;
   }
   impl.latch(NativeVideoConsumerFailure::Decoder,
@@ -2098,11 +2094,17 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::drain(
   if (impl.previewAdmissionGated()) {
     return media::NativeMediaConsumerProgress::Quiescing;
   }
-  if (!impl.configured || !impl.endOfStreamBegun || impl.failed() ||
-      impl.lifecycle != Lifecycle::None || impl.closed || impl.cancelled) {
+  route::Running* running = impl.running();
+  if (running == nullptr || impl.failed()) {
     return media::NativeMediaConsumerProgress::Failed;
   }
-  if (impl.endOfStreamDone) {
+  switch (running->endOfStream) {
+  case route::Running::EndOfStream::NotBegun:
+    return media::NativeMediaConsumerProgress::Failed;
+  case route::Running::EndOfStream::Begun:
+  case route::Running::EndOfStream::DecoderDone:
+    break;
+  case route::Running::EndOfStream::Done:
     return media::NativeMediaConsumerProgress::Done;
   }
   const PumpStatus pumped = impl.pumpPresentation(true, error);
@@ -2114,7 +2116,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::drain(
     return media::NativeMediaConsumerProgress::Failed;
   case PumpStatus::Progress:
     if (impl.endOfStreamDrained()) {
-      impl.endOfStreamDone = true;
+      running->endOfStream = route::Running::EndOfStream::Done;
       return media::NativeMediaConsumerProgress::Done;
     }
     return media::NativeMediaConsumerProgress::Progress;
@@ -2124,7 +2126,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::drain(
     break;
   }
   if (impl.endOfStreamDrained()) {
-    impl.endOfStreamDone = true;
+    running->endOfStream = route::Running::EndOfStream::Done;
     return media::NativeMediaConsumerProgress::Done;
   }
   return media::NativeMediaConsumerProgress::Quiescing;
@@ -2138,30 +2140,29 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
     return media::NativeMediaConsumerProgress::Failed;
   }
   Impl& impl = *impl_;
-  if (impl.retirementStarted) {
+  if (std::holds_alternative<route::Retiring>(impl.state) ||
+      std::holds_alternative<route::Retired>(impl.state)) {
     return media::NativeMediaConsumerProgress::Failed;
   }
   if (nextGeneration > retiredGeneration &&
       nextGeneration > impl.highestExposedGeneration) {
     impl.highestExposedGeneration = nextGeneration;
   }
-  if (impl.completedFlush &&
-      impl.completedFlushRetired == retiredGeneration &&
-      impl.completedFlushTarget == nextGeneration &&
-      impl.timeline == timeline && impl.generation == nextGeneration) {
-    return media::NativeMediaConsumerProgress::Done;
-  }
-  if (impl.lifecycle == Lifecycle::Flush) {
-    if (impl.flushRetired != retiredGeneration ||
-        impl.flushTarget != nextGeneration || impl.flushTimeline != timeline) {
+  const GenerationPair pair{retiredGeneration, nextGeneration};
+  if (const route::Flushing* flushing =
+          std::get_if<route::Flushing>(&impl.state)) {
+    if (flushing->pair != pair || flushing->timeline != timeline) {
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
-  } else {
+  } else if (const route::Running* running = impl.running()) {
+    if (running->completedFlush == pair && impl.timeline == timeline &&
+        impl.generation == nextGeneration) {
+      return media::NativeMediaConsumerProgress::Done;
+    }
     if (retiredGeneration != impl.generation) {
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
-    if (impl.lifecycle != Lifecycle::None || !impl.configured ||
-        impl.failed() || nextGeneration <= retiredGeneration ||
+    if (impl.failed() || nextGeneration <= retiredGeneration ||
         nextGeneration == std::numeric_limits<MediaGeneration>::max()) {
       return media::NativeMediaConsumerProgress::Failed;
     }
@@ -2173,18 +2174,14 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
     }
     // A real seek owns the decoder/output generation transition and safely
     // supersedes either phase of the same-generation preview handoff.
-    impl.clearPreviewHandoff();
-    impl.lifecycle = Lifecycle::Flush;
-    impl.flushRetired = retiredGeneration;
-    impl.flushTarget = nextGeneration;
-    impl.flushTimeline = timeline;
-  }
-  if (!impl.flushDecoderApplied) {
+    impl.state = route::Flushing{pair, timeline};
     impl.decoder.flush(nextGeneration);
     impl.captions.resetForSeek();
     impl.resetPresentation();
-    impl.resetEndOfStream();
-    impl.flushDecoderApplied = true;
+  } else {
+    return retiredGeneration != impl.generation
+               ? media::NativeMediaConsumerProgress::StaleGeneration
+               : media::NativeMediaConsumerProgress::Failed;
   }
   const PumpStatus event = impl.consumeOutputEvent();
   if (event == PumpStatus::Failed ||
@@ -2206,14 +2203,10 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
           "tracked video output facts are invalid after the seek flush")) {
     return media::NativeMediaConsumerProgress::Failed;
   }
-  impl.completedFlushRetired = retiredGeneration;
-  impl.completedFlushTarget = nextGeneration;
-  impl.completedFlush = true;
   impl.generation = nextGeneration;
   impl.timeline = timeline;
   impl.trace.noteTimeline(timeline.requestedTarget.value != 0);
-  impl.lifecycle = Lifecycle::None;
-  impl.clearFlushState();
+  impl.state = route::Running{.completedFlush = pair};
   return media::NativeMediaConsumerProgress::Done;
 }
 
@@ -2235,136 +2228,95 @@ void releaseConsumerClaim(ImplType& impl) noexcept {
 
 template <typename ImplType>
 [[nodiscard]] media::NativeMediaConsumerProgress terminalProgress(
-    ImplType& impl, Lifecycle lifecycle,
+    ImplType& impl, TerminalKind kind,
     MediaGeneration expectedGeneration) noexcept {
-  if (impl.closed) {
-    if (lifecycle == Lifecycle::Cancel &&
-        (!impl.cancelled || expectedGeneration != impl.generation)) {
-      return expectedGeneration != impl.generation
-                 ? media::NativeMediaConsumerProgress::StaleGeneration
-                 : media::NativeMediaConsumerProgress::Failed;
-    }
-    return media::NativeMediaConsumerProgress::Done;
+  using Progress = media::NativeMediaConsumerProgress;
+  const bool cancel = kind == TerminalKind::Cancel;
+  const bool expected = expectedGeneration == impl.generation;
+  // nullopt: begin (or continue) the terminal operation.
+  const std::optional<Progress> settled = std::visit(
+      Overloaded{
+          [&](const route::Closed& closed) -> std::optional<Progress> {
+            if (cancel && (!closed.cancelled || !expected)) {
+              return expected ? Progress::Failed : Progress::StaleGeneration;
+            }
+            return Progress::Done;
+          },
+          [&](const route::Retired&) -> std::optional<Progress> {
+            if (cancel) {
+              return expected ? Progress::Failed : Progress::StaleGeneration;
+            }
+            return Progress::Done;
+          },
+          [&](const route::Terminating& terminating) -> std::optional<Progress> {
+            if (cancel && !expected) {
+              return Progress::StaleGeneration;
+            }
+            return terminating.kind == kind ? std::nullopt
+                                            : std::optional(Progress::Failed);
+          },
+          // A cancel never supersedes a lifecycle operation; a close
+          // supersedes a seek flush. Retirement is finished through retire().
+          [&](const route::Flushing&) -> std::optional<Progress> {
+            if (cancel) {
+              return expected ? Progress::Failed : Progress::StaleGeneration;
+            }
+            return std::nullopt;
+          },
+          [&](const route::Retiring&) -> std::optional<Progress> {
+            return cancel && !expected ? Progress::StaleGeneration
+                                       : Progress::Failed;
+          },
+          [&](const auto&) -> std::optional<Progress> {
+            if (cancel && !expected) {
+              return Progress::StaleGeneration;
+            }
+            return std::nullopt;
+          }},
+      impl.state);
+  if (settled) {
+    return *settled;
   }
-  if (lifecycle == Lifecycle::Cancel && expectedGeneration != impl.generation) {
-    return media::NativeMediaConsumerProgress::StaleGeneration;
-  }
-  if (impl.lifecycle != Lifecycle::None && impl.lifecycle != lifecycle &&
-      lifecycle != Lifecycle::Close) {
-    return media::NativeMediaConsumerProgress::Failed;
-  }
-  if (impl.lifecycle != lifecycle) {
+  if (!std::holds_alternative<route::Terminating>(impl.state)) {
     const auto final = media::nextMediaGeneration(impl.exposedGeneration());
     if (!final) {
       impl.latch(NativeVideoConsumerFailure::Lifecycle,
                  "native video terminal generation would overflow");
-      return media::NativeMediaConsumerProgress::Failed;
+      return Progress::Failed;
     }
-    impl.clearPreviewHandoff();
-    impl.lifecycle = lifecycle;
-    impl.terminalGeneration = *final;
-    // Close supersedes dispatcher-visible flush configuration. A normal close
-    // finishes the exact output pair below; an exact frame failure lets the
-    // output's fatal-tolerant terminal close supersede that pair.
-    if (lifecycle == Lifecycle::Close && impl.flushTarget != 0) {
-      impl.flushTimeline = {};
-    }
-  }
-  if (!impl.decoderClosed) {
+    // A terminal close supersedes an arm or seek flush still pending in the
+    // output (NativeTrackedOutputProtocol::completeClose), and the terminal
+    // generation lies past that flush's target.
+    impl.state = route::Terminating{kind, *final};
     impl.decoder.close();
-    impl.decoderClosed = true;
     impl.resetPresentation();
   }
-  if (impl.outputProtocolViolation) {
-    return media::NativeMediaConsumerProgress::Failed;
-  }
-
-  // Dispatcher close may supersede an in-flight seek. NativeTrackedVideoOutput
-  // keeps an exact flush operation pending until its render invalidation is
-  // proved and intentionally does not let close silently erase that proof.
-  // Finish the already-started exact pair first, then burn a strictly newer
-  // terminal generation on a later owner call.
-  if (impl.flushTarget != 0 && !impl.matchedFrameFailure) {
-    const PumpStatus flushEvent = impl.consumeOutputEvent();
-    if (flushEvent == PumpStatus::MatchedFrameFailure) {
-      // The companion tracked-output contract makes terminal close supersede
-      // its now-fatal pending flush. Preserve the strictly newer terminal
-      // generation already derived from arm/flush target and proceed below.
-      impl.clearFlushState();
-    } else {
-      if (flushEvent == PumpStatus::Failed) {
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      if (flushEvent == PumpStatus::Stale) {
-        return media::NativeMediaConsumerProgress::StaleGeneration;
-      }
-      if (impl.output == nullptr) {
-        impl.latch(NativeVideoConsumerFailure::Lifecycle,
-                   "tracked video output is missing during terminal close");
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      const NativeTrackedVideoOutputProgress flushOutput =
-          impl.output->flushProgress(impl.flushRetired, impl.flushTarget);
-      if (flushOutput != NativeTrackedVideoOutputProgress::Done) {
-        return impl.forwardOutputProgress(
-            flushOutput, flushEvent,
-            "tracked video output failed the flush superseded by close");
-      }
-      if (!impl.settledOutput(impl.flushTarget, false,
-                              "tracked video output facts are invalid after "
-                              "the close flush")) {
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      impl.generation = impl.flushTarget;
-      impl.clearFlushState();
-      // The terminal generation was initially derived while the output could
-      // still report retired facts. Rebase it exactly once above the generation
-      // whose invalidation has now been proved.
-      const auto final = media::nextMediaGeneration(impl.generation);
-      if (!final) {
-        impl.latch(NativeVideoConsumerFailure::Lifecycle,
-                   "rebased native video terminal generation would overflow");
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      impl.terminalGeneration = *final;
-      return media::NativeMediaConsumerProgress::Progress;
-    }
-  } else if (impl.flushTarget != 0) {
-    // A prior owner call already consumed the exact frame failure. Do not ask
-    // fatal output state to finish a nonterminal flush; final close owns its
-    // supersession and render invalidation proof.
-    impl.clearFlushState();
+  const MediaGeneration terminal =
+      std::get<route::Terminating>(impl.state).terminal;
+  if (impl.outputFault == OutputFault::Protocol) {
+    return Progress::Failed;
   }
   const PumpStatus event = impl.consumeOutputEvent();
   if (event == PumpStatus::Failed) {
-    return media::NativeMediaConsumerProgress::Failed;
+    return Progress::Failed;
   }
-  if (event == PumpStatus::MatchedFrameFailure) {
-    // Exact identity/timing validation and credit retirement occurred inside
-    // consumeOutputEvent. Generic fatal facts can never authorize this path.
-    impl.clearFlushState();
+  if (impl.output != nullptr) {
+    const NativeTrackedVideoOutputProgress output =
+        impl.output->closeProgress(terminal);
+    if (output != NativeTrackedVideoOutputProgress::Done) {
+      return impl.forwardOutputProgress(
+          output, event, "tracked video output failed the terminal close");
+    }
+    if (!impl.settledOutput(terminal, true,
+                            "tracked video output facts are invalid after the "
+                            "terminal close")) {
+      return Progress::Failed;
+    }
+    impl.output.reset();
   }
-  if (impl.output == nullptr) {
-    impl.markClosed(lifecycle);
-    releaseConsumerClaim(impl);
-    return media::NativeMediaConsumerProgress::Done;
-  }
-  const NativeTrackedVideoOutputProgress output =
-      impl.output->closeProgress(impl.terminalGeneration);
-  if (output != NativeTrackedVideoOutputProgress::Done) {
-    return impl.forwardOutputProgress(
-        output, event,
-        "tracked video output failed the terminal close");
-  }
-  if (!impl.settledOutput(impl.terminalGeneration, true,
-                          "tracked video output facts are invalid after the "
-                          "terminal close")) {
-    return media::NativeMediaConsumerProgress::Failed;
-  }
-  impl.output.reset();
-  impl.markClosed(lifecycle);
+  impl.state = route::Closed{cancel};
   releaseConsumerClaim(impl);
-  return media::NativeMediaConsumerProgress::Done;
+  return Progress::Done;
 }
 
 }  // namespace
@@ -2376,59 +2328,66 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
     return media::NativeMediaConsumerProgress::Failed;
   }
   Impl& impl = *impl_;
-  if (impl.retirementStarted) {
-    if (impl.retirementRetired != retiredGeneration ||
-        impl.retirementInvalidation != invalidationGeneration) {
-      return media::NativeMediaConsumerProgress::StaleGeneration;
-    }
-    if (impl.retirementDone) {
-      return media::NativeMediaConsumerProgress::Done;
-    }
-  } else {
-    if (impl.closed || impl.cancelled ||
-        (impl.lifecycle != Lifecycle::None &&
-         impl.lifecycle != Lifecycle::Flush)) {
-      return media::NativeMediaConsumerProgress::Failed;
-    }
-    const MediaGeneration exposed = impl.exposedGeneration();
-    if (retiredGeneration != exposed || invalidationGeneration == 0 ||
-        invalidationGeneration <= exposed) {
-      return retiredGeneration != exposed
-                 ? media::NativeMediaConsumerProgress::StaleGeneration
-                 : media::NativeMediaConsumerProgress::Failed;
-    }
-    impl.retirementStarted = true;
-    impl.clearPreviewHandoff();
-    impl.retirementRetired = retiredGeneration;
-    impl.retirementInvalidation = invalidationGeneration;
-    impl.lifecycle = Lifecycle::Retire;
-    impl.terminalGeneration = invalidationGeneration;
+  using Progress = media::NativeMediaConsumerProgress;
+  const GenerationPair pair{retiredGeneration, invalidationGeneration};
+  // nullopt: begin (or continue) the retirement.
+  const std::optional<Progress> settled = std::visit(
+      Overloaded{
+          [&](const route::Retired& retired) -> std::optional<Progress> {
+            return retired.pair == pair ? Progress::Done
+                                        : Progress::StaleGeneration;
+          },
+          [&](const route::Retiring& retiring) -> std::optional<Progress> {
+            return retiring.pair == pair
+                       ? std::nullopt
+                       : std::optional(Progress::StaleGeneration);
+          },
+          [](const route::Terminating&) -> std::optional<Progress> {
+            return Progress::Failed;
+          },
+          [](const route::Closed&) -> std::optional<Progress> {
+            return Progress::Failed;
+          },
+          // Exact public retirement supersedes arm/seek output work
+          // terminally.
+          [&](const auto&) -> std::optional<Progress> {
+            const MediaGeneration exposed = impl.exposedGeneration();
+            if (retiredGeneration != exposed) {
+              return Progress::StaleGeneration;
+            }
+            if (invalidationGeneration == 0 ||
+                invalidationGeneration <= exposed) {
+              return Progress::Failed;
+            }
+            return std::nullopt;
+          }},
+      impl.state);
+  if (settled) {
+    return *settled;
+  }
+  if (!std::holds_alternative<route::Retiring>(impl.state)) {
+    impl.state = route::Retiring{pair};
+  }
+  route::Retiring& retiring = std::get<route::Retiring>(impl.state);
+
+  if (impl.outputFault == OutputFault::Protocol) {
+    return Progress::Failed;
   }
 
-  if (impl.outputProtocolViolation) {
-    return media::NativeMediaConsumerProgress::Failed;
-  }
-
-  // Exact public retirement supersedes arm/seek output work terminally. A
-  // matched frame failure is also terminal evidence; malformed failure never
+  // A matched frame failure is terminal evidence; malformed failure never
   // becomes retirement authority.
   const PumpStatus event = impl.consumeOutputEvent();
   if (event == PumpStatus::Failed || event == PumpStatus::Stale) {
-    return event == PumpStatus::Stale
-               ? media::NativeMediaConsumerProgress::StaleGeneration
-               : media::NativeMediaConsumerProgress::Failed;
+    return event == PumpStatus::Stale ? Progress::StaleGeneration
+                                      : Progress::Failed;
   }
-  if (event == PumpStatus::MatchedFrameFailure) {
-    impl.matchedFrameFailure = true;
-  }
-  impl.clearFlushState();
   impl.resetPresentation();
 
-  if (!impl.decoderClosed) {
+  if (!retiring.decoderRetired) {
     const MediaGeneration decoderRetired = impl.decoder.stats().generation;
     switch (impl.decoder.retire(decoderRetired, invalidationGeneration)) {
     case VideoDecoderRetireProgress::Done:
-      impl.decoderClosed = true;
+      retiring.decoderRetired = true;
       break;
     case VideoDecoderRetireProgress::StaleGeneration:
       return media::NativeMediaConsumerProgress::StaleGeneration;
@@ -2477,10 +2436,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   impl.retiredOutputFacts = *outputFacts;
   impl.output.reset();
   impl.generation = invalidationGeneration;
-  impl.configured = false;
-  impl.resetEndOfStream();
-  impl.closed = true;
-  impl.retirementDone = true;
+  impl.state = route::Retired{pair};
   releaseConsumerClaim(impl);
   return media::NativeMediaConsumerProgress::Done;
 }
@@ -2490,21 +2446,24 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::cancel(
   if (impl_ == nullptr) {
     return media::NativeMediaConsumerProgress::Failed;
   }
-  return terminalProgress(*impl_, Lifecycle::Cancel, generation);
+  return terminalProgress(*impl_, TerminalKind::Cancel, generation);
 }
 
 media::NativeMediaConsumerProgress NativeVideoConsumer::close() noexcept {
   if (impl_ == nullptr) {
     return media::NativeMediaConsumerProgress::Done;
   }
-  if (impl_->retirementStarted) {
-    return retire(impl_->retirementRetired,
-                  impl_->retirementInvalidation);
+  Impl& impl = *impl_;
+  if (const auto* retiring = std::get_if<route::Retiring>(&impl.state)) {
+    return retire(retiring->pair.retired, retiring->pair.next);
   }
-  if (impl_->lifecycle == Lifecycle::Cancel) {
-    return terminalProgress(*impl_, Lifecycle::Cancel, impl_->generation);
+  if (const auto* retired = std::get_if<route::Retired>(&impl.state)) {
+    return retire(retired->pair.retired, retired->pair.next);
   }
-  return terminalProgress(*impl_, Lifecycle::Close, impl_->generation);
+  const auto* terminating = std::get_if<route::Terminating>(&impl.state);
+  return terminalProgress(
+      impl, terminating != nullptr ? terminating->kind : TerminalKind::Close,
+      impl.generation);
 }
 
 const std::string& NativeVideoConsumer::failureText() const noexcept {
@@ -2535,7 +2494,7 @@ NativeVideoConsumer::takeOutputEvent() noexcept {
 std::uint64_t NativeVideoConsumer::nextDueHostTicks() const noexcept {
   return impl_ == nullptr
              ? 0
-             : (impl_->nextDueKnown ? impl_->nextDueHostTicks : 0);
+             : (impl_->nextDue ? impl_->nextDue->hostTicks : 0);
 }
 
 NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
@@ -2548,28 +2507,40 @@ NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
   result.generation = impl.generation;
   result.armedGeneration = impl.armGeneration;
   result.nextFrameSequence = impl.nextFrameSequence;
-  result.awaitingDraw = impl.awaitingDraw;
+  result.awaitingDraw =
+      impl.awaitingDraw ? impl.awaitingDraw->sequence
+                        : NativeTrackedFrameSequence{};
   result.submittedFrames = impl.submittedFrames;
   result.drawnFrames = impl.drawnFrames;
   result.firstDrawPts = impl.firstDrawPts;
   result.discardedPrerollFrames = impl.discardedPrerollFrames;
   result.discardedLateFrames = impl.discardedLateFrames;
   result.discardedLeadingPictures = impl.discardedLeadingPictures;
-  result.nextDueMediaTime = impl.nextDueMediaTime;
-  result.nextDueHostTicks = impl.nextDueHostTicks;
+  if (impl.nextDue) {
+    result.nextDueMediaTime = impl.nextDue->mediaTime;
+    result.nextDueHostTicks = impl.nextDue->hostTicks;
+  }
   result.decodedQueueDepth = impl.sink.size();
-  result.configured = impl.configured;
-  result.endOfStreamBegun = impl.endOfStreamBegun;
-  result.endOfStreamDone = impl.endOfStreamDone;
+  const route::Running* running = impl.running();
+  result.configured = running != nullptr ||
+                      std::holds_alternative<route::Flushing>(impl.state);
+  result.endOfStreamBegun =
+      running != nullptr &&
+      running->endOfStream != route::Running::EndOfStream::NotBegun;
+  result.endOfStreamDone =
+      running != nullptr &&
+      running->endOfStream == route::Running::EndOfStream::Done;
   result.heldFrame = impl.heldFrame.has_value();
-  result.outputBlocked = impl.awaitingDraw.valid() || impl.heldFrame;
-  result.nextDueKnown = impl.nextDueKnown;
-  result.previewQuiesceGeneration = impl.previewQuiesceGeneration;
-  result.previewReleasedGeneration = impl.previewReleasedGeneration;
-  result.previewQuiesceStarted = impl.previewQuiesceStarted;
-  result.previewQuiesced = impl.previewQuiesced;
-  result.previewResumeNeedsKeyFrame = impl.previewResumeNeedsKeyFrame;
-  result.closed = impl.closed;
+  result.outputBlocked = impl.awaitingDraw || impl.heldFrame;
+  result.nextDueKnown = impl.nextDue.has_value();
+  result.previewQuiesceStarted = impl.previewAdmissionGated();
+  result.previewQuiesceGeneration =
+      result.previewQuiesceStarted ? impl.generation : 0;
+  result.previewQuiesced =
+      running != nullptr &&
+      running->preview == route::Running::PreviewHandoff::Quiesced;
+  result.closed = std::holds_alternative<route::Closed>(impl.state) ||
+                  std::holds_alternative<route::Retired>(impl.state);
   result.failure = impl.failure;
   result.decoder = impl.decoder.stats();
   result.decodedFrames = result.decoder.deliveredFrames;
@@ -2590,15 +2561,14 @@ bool NativeVideoConsumerTestAccess::installSchedulerGeneration(
     const media::NativeMediaGenerationTimeline& timeline) noexcept {
   if (consumer.impl_ == nullptr || timeline.generation == 0 ||
       consumer.impl_->armGeneration != timeline.generation ||
-      !consumer.impl_->armDone || consumer.impl_->armConsumed) {
+      !std::holds_alternative<route::Armed>(consumer.impl_->state)) {
     return false;
   }
-  consumer.impl_->armConsumed = true;
   consumer.impl_->generation = timeline.generation;
   consumer.impl_->timeline = timeline;
   consumer.impl_->trackDuration = {60, 1};
   consumer.impl_->sink.flush(timeline.generation);
-  consumer.impl_->configured = true;
+  consumer.impl_->state = route::Running{};
   consumer.impl_->testSyntheticDecoderConfigured = true;
   return true;
 }

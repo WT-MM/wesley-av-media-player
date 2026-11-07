@@ -516,8 +516,8 @@ double PlayerController::exactNativeSeekTarget(double seconds) const noexcept {
   //
   // The guard is exactly one grid step, which is the whole of what the
   // preflight's strict inequality needs. End of stream overtaking a commit
-  // that lands in the last frame is NativeMediaSession's concern
-  // (commitRunStatePending), not seek arithmetic, so no wider guard is needed.
+  // that lands in the last frame is NativeMediaSession's concern (its commit
+  // handshake state), not seek arithmetic, so no wider guard is needed.
   constexpr double kSeekGrid = 64.0;
   const double bounded = boundedSeekTarget(seconds);
   if (!std::isfinite(bounded) || bounded <= 0.0)

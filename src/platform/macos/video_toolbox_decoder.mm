@@ -79,9 +79,6 @@ recordLimits() noexcept {
   media::VideoCodecConfigurationLimits limits;
   limits.admitHighDynamicRangeColor = true;
   limits.admitHardwareH264Profiles = true;
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-  limits.admitSoftwareProfiles = true;
-#endif
   return limits;
 }
 
@@ -143,6 +140,15 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
   return CodecReorderDepth{facts.intrinsicReorderDepth,
                            CodecReorderDepthOrigin::Declared};
 }
+
+// Whether the output callback may hand decoded frames on. Discarding drops
+// them (an invalidation or an unconfigured decoder); FailedClosed also turns
+// every completion into a tombstone until the presentation state is reset.
+enum class CallbackAdmission : std::uint8_t {
+  Accepting,
+  Discarding,
+  FailedClosed,
+};
 
 struct AsyncDecodeState {
   enum class FrameRefConSlotState : std::uint8_t {
@@ -225,8 +231,7 @@ struct AsyncDecodeState {
   OSType actualOutputPixelFormat{0};
   CMVideoDimensions expectedCodedDimensions{0, 0};
   CMTime lastDeliveredPresentationTime{kCMTimeInvalid};
-  bool discarding{false};
-  bool callbackFailedClosed{false};
+  CallbackAdmission admission{CallbackAdmission::Accepting};
   AsyncError lastError;
   const VideoDecoderProgressHandler progressHandler;
 #if defined(WAM_NATIVE_TEST_SEAMS)
@@ -314,6 +319,14 @@ bool timeBefore(CMTime left, CMTime right) noexcept {
          CMTimeCompare(left, right) < 0;
 }
 
+// An invalidation stops frame delivery; a failed-closed callback path stays
+// failed closed.
+void stopAcceptingLocked(AsyncDecodeState &state) noexcept {
+  if (state.admission == CallbackAdmission::Accepting) {
+    state.admission = CallbackAdmission::Discarding;
+  }
+}
+
 void collectCompletedDecodesLocked(AsyncDecodeState &state) {
   while (!state.completedDecodes.empty() &&
          state.completedDecodes.front().submissionSequence ==
@@ -324,8 +337,7 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
     if (completed.slot != nullptr) {
       if (completed.slot->state !=
           AsyncDecodeState::FrameRefConSlotState::CallbackComplete) {
-        state.callbackFailedClosed = true;
-        state.discarding = true;
+        state.admission = CallbackAdmission::FailedClosed;
         assignAsyncErrorLocked(
             state, "VideoToolbox frame-refcon slot retired out of state");
       }
@@ -336,8 +348,7 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
       completed.slot->timing = {};
     }
     if (state.inFlight == 0) {
-      state.callbackFailedClosed = true;
-      state.discarding = true;
+      state.admission = CallbackAdmission::FailedClosed;
       assignAsyncErrorLocked(
           state, "VideoToolbox ordered completion lost its admission credit");
     } else {
@@ -368,8 +379,7 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
       // submission-order credits agree. Fail closed rather than permit a
       // callback-owned vector allocation beyond its reserved ceiling.
       completed.frame.reset();
-      state.callbackFailedClosed = true;
-      state.discarding = true;
+      state.admission = CallbackAdmission::FailedClosed;
       incrementSaturated(state.dropped);
       assignAsyncErrorLocked(
           state, "decoded-frame retention exceeded its bounded admission");
@@ -410,7 +420,9 @@ void resetPresentationState(
     }
     state->currentCompressedBytes = 0;
     state->lastDeliveredPresentationTime = kCMTimeInvalid;
-    state->callbackFailedClosed = false;
+    if (state->admission == CallbackAdmission::FailedClosed) {
+      state->admission = CallbackAdmission::Discarding;
+    }
   }
   // Release decoder surfaces outside the state mutex, then return the empty
   // vector's pre-reserved storage before another callback can enter.
@@ -889,7 +901,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
           *state, "VideoToolbox invoked an invalid frame-refcon callback");
       return;
     }
-    if (state->callbackFailedClosed) {
+    if (state->admission == CallbackAdmission::FailedClosed) {
       incrementSaturated(state->dropped);
       insertCompletionTombstoneLocked(*state, slot, submissionSequence);
       collectCompletedDecodesLocked(*state);
@@ -912,7 +924,8 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
               *state,
               "VideoToolbox returned success without a decoded pixel buffer");
         }
-      } else if (state->discarding || timing.generation != state->generation) {
+      } else if (state->admission != CallbackAdmission::Accepting ||
+                 timing.generation != state->generation) {
         // A flush advances the generation before waiting for callbacks, so an
         // old frame is released here without ever reaching the new timeline.
         incrementSaturated(state->dropped);
@@ -1044,8 +1057,7 @@ void failDecodedFrameCallback(
         completion.frame.reset();
       }
       state->pendingPresentationFrames.clear();
-      state->callbackFailedClosed = true;
-      state->discarding = true;
+      state->admission = CallbackAdmission::FailedClosed;
       incrementSaturated(state->dropped);
       assignAsyncErrorLocked(*state, diagnostic);
       insertCompletionTombstoneLocked(*state, slot, submissionSequence);
@@ -1615,11 +1627,18 @@ struct VideoToolboxDecoder::Impl {
   CMVideoFormatDescriptionRef formatDescription{nullptr};
   VTDecompressionSessionRef session{nullptr};
   bool configured{false};
-  bool ended{false};
-  bool endOfStreamCallbacksFinalized{false};
-  bool endOfStreamSinkNotified{false};
-  bool endOfStreamFailed{false};
-  std::string endOfStreamError;
+  // Streaming until beginEndOfStream issues FinishDelayedFrames; then every
+  // callback is waited out, and finally the sink hears endOfStream once.
+  enum class EndOfStream : std::uint8_t {
+    Streaming,
+    Ended,
+    CallbacksFinalized,
+    SinkNotified,
+  };
+  EndOfStream endOfStream{EndOfStream::Streaming};
+  // The first drain/end-of-stream failure; absorbing until the next
+  // configure or flush.
+  std::optional<std::string> endOfStreamFailure;
   bool awaitingKeyFrame{true};
   bool usingHardware{false};
   bool preferHardware{true};
@@ -1631,10 +1650,7 @@ struct VideoToolboxDecoder::Impl {
   // -layer interop, which otherwise deliberately leaves it unpinned -- see
   // createSessionLocked().
   bool hdrOutputSurfaceRequired{false};
-  std::uint64_t retirementRetiredGeneration{0};
-  std::uint64_t retirementInvalidationGeneration{0};
-  bool retirementStarted{false};
-  bool retirementDone{false};
+  std::optional<VideoDecoderRetirement> retirement;
 #if defined(WAM_NATIVE_TEST_SEAMS)
   std::size_t testReservedInFlight{0};
   // VideoToolbox may invoke the output handler before DecodeFrame returns
@@ -2071,7 +2087,7 @@ struct VideoToolboxDecoder::Impl {
     {
       std::lock_guard stateLock(async->mutex);
       async->generation = generation;
-      async->discarding = true;
+      stopAcceptingLocked(*async);
       if (clearError) {
         async->lastError.reset();
       }
@@ -2113,21 +2129,29 @@ struct VideoToolboxDecoder::Impl {
     return result;
   }
 
+  [[nodiscard]] bool endOfStreamBegun() const noexcept {
+    switch (endOfStream) {
+    case EndOfStream::Streaming:
+      return false;
+    case EndOfStream::Ended:
+    case EndOfStream::CallbacksFinalized:
+    case EndOfStream::SinkNotified:
+      return true;
+    }
+    return true;
+  }
+
   void resetEndOfStreamLocked() noexcept {
-    ended = false;
-    endOfStreamCallbacksFinalized = false;
-    endOfStreamSinkNotified = false;
-    endOfStreamFailed = false;
-    endOfStreamError.clear();
+    endOfStream = EndOfStream::Streaming;
+    endOfStreamFailure.reset();
   }
 
   VideoDecodeDrainProgress failEndOfStreamLocked(
       std::string message, std::string *error) {
-    endOfStreamFailed = true;
-    if (endOfStreamError.empty()) {
-      endOfStreamError = std::move(message);
+    if (!endOfStreamFailure) {
+      endOfStreamFailure = std::move(message);
     }
-    assignError(error, endOfStreamError);
+    assignError(error, *endOfStreamFailure);
     return VideoDecodeDrainProgress::Failed;
   }
 
@@ -2145,11 +2169,11 @@ struct VideoToolboxDecoder::Impl {
                          "generation");
       return VideoDecodeDrainProgress::StaleGeneration;
     }
-    if (endOfStreamFailed) {
-      assignError(error, endOfStreamError);
+    if (endOfStreamFailure) {
+      assignError(error, *endOfStreamFailure);
       return VideoDecodeDrainProgress::Failed;
     }
-    if (endOfStreamSinkNotified) {
+    if (endOfStream == EndOfStream::SinkNotified) {
       return VideoDecodeDrainProgress::Done;
     }
     return inFlight == 0 ? VideoDecodeDrainProgress::Progress
@@ -2175,11 +2199,11 @@ struct VideoToolboxDecoder::Impl {
                            "generation");
         return VideoDecodeDrainProgress::StaleGeneration;
       }
-      if (ended) {
+      if (endOfStreamBegun()) {
         // The exact operation is idempotent. Its current result is sampled
         // below without repeating FinishDelayedFrames.
       } else {
-        ended = true;
+        endOfStream = EndOfStream::Ended;
         newlyBegun = true;
       }
     }
@@ -2224,12 +2248,13 @@ struct VideoToolboxDecoder::Impl {
         return VideoDecodeDrainProgress::StaleGeneration;
       }
     }
+    const bool ended = endOfStreamBegun();
     if (requireEndOfStream && !ended) {
       assignError(error, "end-of-stream operation has not begun");
       return VideoDecodeDrainProgress::Failed;
     }
-    if (endOfStreamFailed) {
-      assignError(error, endOfStreamError);
+    if (endOfStreamFailure) {
+      assignError(error, *endOfStreamFailure);
       return VideoDecodeDrainProgress::Failed;
     }
 
@@ -2245,7 +2270,7 @@ struct VideoToolboxDecoder::Impl {
       return failEndOfStreamLocked(std::move(*asyncError), error);
     }
 
-    if (ended && !endOfStreamCallbacksFinalized) {
+    if (endOfStream == EndOfStream::Ended) {
       if (current == VideoDecodeDrainProgress::Quiescing) {
         return current;
       }
@@ -2259,7 +2284,7 @@ struct VideoToolboxDecoder::Impl {
                         waitStatus),
             error);
       }
-      endOfStreamCallbacksFinalized = true;
+      endOfStream = EndOfStream::CallbacksFinalized;
       if (auto asyncError = takeAsyncErrorLocked()) {
         return failEndOfStreamLocked(std::move(*asyncError), error);
       }
@@ -2419,7 +2444,7 @@ struct VideoToolboxDecoder::Impl {
       return failDrain(
           "decoded frame sink end-of-stream threw an unknown exception");
     }
-    endOfStreamSinkNotified = true;
+    endOfStream = EndOfStream::SinkNotified;
     notifyProgress(async);
     return VideoDecodeDrainProgress::Done;
   }
@@ -2500,7 +2525,7 @@ bool VideoToolboxDecoder::configure(
 
   std::lock_guard operationLock(impl_->operationMutex);
 
-  if (impl_->retirementStarted) {
+  if (impl_->retirement.has_value()) {
     assignError(error, "VideoToolbox decoder was terminally retired");
     return false;
   }
@@ -2517,7 +2542,7 @@ bool VideoToolboxDecoder::configure(
   {
     std::lock_guard stateLock(impl_->async->mutex);
     impl_->async->sink = nullptr;
-    impl_->async->discarding = true;
+    stopAcceptingLocked(*impl_->async);
   }
   if (impl_->formatDescription != nullptr) {
     CFRelease(impl_->formatDescription);
@@ -2600,7 +2625,7 @@ bool VideoToolboxDecoder::configure(
     std::lock_guard stateLock(impl_->async->mutex);
     impl_->async->sink = &sink;
     impl_->async->generation = configuration.generation;
-    impl_->async->discarding = false;
+    impl_->async->admission = CallbackAdmission::Accepting;
     impl_->async->inFlight = 0;
     impl_->async->activeCallbacks = 0;
     impl_->async->submitted = 0;
@@ -2631,7 +2656,6 @@ bool VideoToolboxDecoder::configure(
     impl_->async->actualOutputPixelFormat = 0;
     impl_->async->expectedCodedDimensions = configuration.codedSize;
     impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
-    impl_->async->callbackFailedClosed = false;
     impl_->async->lastError.reset();
 #if defined(WAM_NATIVE_TEST_SEAMS)
     impl_->async->failNextAllocationPoint.reset();
@@ -2644,7 +2668,7 @@ bool VideoToolboxDecoder::configure(
   if (!impl_->createSessionLocked(error)) {
     std::lock_guard stateLock(impl_->async->mutex);
     impl_->async->sink = nullptr;
-    impl_->async->discarding = true;
+    stopAcceptingLocked(*impl_->async);
     CFRelease(impl_->formatDescription);
     impl_->formatDescription = nullptr;
     return false;
@@ -2674,7 +2698,7 @@ VideoDecodeSubmitResult VideoToolboxDecoder::submitCMSampleBuffer(
                 "compressed CoreMedia sample belongs to a stale generation");
     return VideoDecodeSubmitResult::Rejected;
   }
-  if (impl_->ended) {
+  if (impl_->endOfStreamBegun()) {
     assignError(error, "cannot submit compressed data after end of stream");
     return VideoDecodeSubmitResult::Rejected;
   }
@@ -2833,13 +2857,15 @@ VideoDecodeDrainProgress VideoToolboxDecoder::drainEndOfStream(
 
 void VideoToolboxDecoder::flush(std::uint64_t nextGeneration) noexcept {
   std::lock_guard operationLock(impl_->operationMutex);
-  if (impl_->retirementStarted) {
+  if (impl_->retirement.has_value()) {
     return;
   }
   impl_->invalidateGenerationLocked(nextGeneration, true);
   {
     std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->discarding = !impl_->configured;
+    impl_->async->admission = impl_->configured
+                                  ? CallbackAdmission::Accepting
+                                  : CallbackAdmission::Discarding;
   }
   impl_->resetEndOfStreamLocked();
   impl_->awaitingKeyFrame = true;
@@ -2853,13 +2879,8 @@ VideoDecoderRetireProgress VideoToolboxDecoder::retire(
     return VideoDecoderRetireProgress::Failed;
   }
   std::lock_guard operationLock(impl_->operationMutex);
-  if (impl_->retirementStarted) {
-    if (impl_->retirementRetiredGeneration != retiredGeneration ||
-        impl_->retirementInvalidationGeneration != invalidationGeneration) {
-      return VideoDecoderRetireProgress::StaleGeneration;
-    }
-    return impl_->retirementDone ? VideoDecoderRetireProgress::Done
-                                 : VideoDecoderRetireProgress::Failed;
+  if (impl_->retirement) {
+    return impl_->retirement->replay(retiredGeneration, invalidationGeneration);
   }
   std::uint64_t exposedGeneration = 0;
   {
@@ -2873,12 +2894,9 @@ VideoDecoderRetireProgress VideoToolboxDecoder::retire(
                ? VideoDecoderRetireProgress::StaleGeneration
                : VideoDecoderRetireProgress::Failed;
   }
-  impl_->retirementStarted = true;
-  impl_->retirementRetiredGeneration = retiredGeneration;
-  impl_->retirementInvalidationGeneration = invalidationGeneration;
-
+  impl_->retirement =
+      VideoDecoderRetirement{retiredGeneration, invalidationGeneration};
   impl_->invalidateGenerationLocked(invalidationGeneration, false);
-  impl_->retirementDone = true;
   impl_->detachLocked();
   return VideoDecoderRetireProgress::Done;
 }
@@ -2888,7 +2906,7 @@ void VideoToolboxDecoder::close() noexcept {
     return;
   }
   std::lock_guard operationLock(impl_->operationMutex);
-  if (impl_->retirementStarted) {
+  if (impl_->retirement.has_value()) {
     return;
   }
   if (!impl_->configured && impl_->session == nullptr &&
@@ -2915,7 +2933,8 @@ VideoDecoderStats VideoToolboxDecoder::stats() const noexcept {
     result.retainedPresentationFrames =
         impl_->async->pendingPresentationFrames.size();
     result.acceptsCompressedSample =
-        impl_->configured && !impl_->ended && !impl_->async->discarding &&
+        impl_->configured && !impl_->endOfStreamBegun() &&
+        impl_->async->admission == CallbackAdmission::Accepting &&
         !admissionSaturatedLocked(*impl_->async,
                                   impl_->options.maxInFlightFrames);
     result.codecReorderFrames = impl_->async->codecReorderFrames;
@@ -2936,10 +2955,12 @@ VideoDecoderStats VideoToolboxDecoder::stats() const noexcept {
         impl_->async->pendingPresentationFrames.size();
     result.peakPendingPresentationFrames =
         impl_->async->peakPendingPresentationFrames;
-    result.endOfStreamBegun = impl_->ended;
+    result.endOfStreamBegun = impl_->endOfStreamBegun();
     result.endOfStreamCallbacksFinalized =
-        impl_->endOfStreamCallbacksFinalized;
-    result.endOfStreamSinkNotified = impl_->endOfStreamSinkNotified;
+        impl_->endOfStream == Impl::EndOfStream::CallbacksFinalized ||
+        impl_->endOfStream == Impl::EndOfStream::SinkNotified;
+    result.endOfStreamSinkNotified =
+        impl_->endOfStream == Impl::EndOfStream::SinkNotified;
     result.requestedOutputPixelFormat = impl_->outputPixelFormat;
     result.actualOutputPixelFormat = impl_->async->actualOutputPixelFormat;
   }
@@ -3335,8 +3356,7 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     decoder.impl_->async->actualOutputPixelFormat = 0;
     decoder.impl_->async->expectedCodedDimensions = {64, 32};
     decoder.impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
-    decoder.impl_->async->discarding = false;
-    decoder.impl_->async->callbackFailedClosed = false;
+    decoder.impl_->async->admission = CallbackAdmission::Accepting;
     decoder.impl_->async->endOfStreamBackpressureRetries = 0;
     decoder.impl_->async->sinkBackpressureRetries = 0;
     decoder.impl_->async->surfaceBudgetRejections = 0;

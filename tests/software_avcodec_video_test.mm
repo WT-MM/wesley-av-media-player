@@ -2,6 +2,7 @@
 #include "platform/macos/video_decode_lane.hpp"
 #include "media/video_codec_configuration.hpp"
 #include "media/media_codec_facts.hpp"
+#include "media/avcodec/decode_worker.hpp"
 #include "support/expect.hpp"
 #include <chrono>
 #include <cstdio>
@@ -56,7 +57,7 @@ struct TestDecoder {
   SoftwareAvcodecVideoDecoder software;
   VideoDecodeLane lane;
   bool configure(const VideoStreamConfiguration& c,DecodedFrameSink& sink,std::string* e) {
-    return productionLane?lane.configure(c,sink,e,false):software.configure(c,sink,e);
+    return productionLane?lane.configure(c,sink,e):software.configure(c,sink,e);
   }
   VideoDecodeSubmitResult submitCMSampleBuffer(CMSampleBufferRef sample,std::uint64_t g,std::string* e) {
     return productionLane?lane.submitCMSampleBuffer(sample,g,e):software.submitCMSampleBuffer(sample,g,e);
@@ -110,6 +111,7 @@ int main(int argc,char** argv) {
   std::ifstream raw(referencePath,std::ios::binary|std::ios::ate);REQUIRE(raw.good());const auto rawSize=raw.tellg();REQUIRE(rawSize>0);
   sink.reference.resize(static_cast<std::size_t>(rawSize));raw.seekg(0);raw.read(reinterpret_cast<char*>(sink.reference.data()),rawSize);REQUIRE(raw.good());
   TestDecoder decoder{true};
+  setNativeVideoHardwareDisabledForTesting(true);
   VideoStreamConfiguration config;config.codec=asp?'mp4v':vp9?'vp09':'avc1';config.codedSize={320,180};config.codecConfiguration=extra;config.generation=1;
   const auto plan=nativeVideoDecodePlan(config,true,false);
   EXPECT(plan.implementation==wam::media::DecodeImplementation::Libavcodec);
@@ -154,6 +156,40 @@ int main(int argc,char** argv) {
   EXPECT(decoder.retire(2,3)==VideoDecoderRetireProgress::Done);
   EXPECT(decoder.retire(2,3)==VideoDecoderRetireProgress::Done);
   EXPECT(decoder.retire(2,4)==VideoDecoderRetireProgress::StaleGeneration);
+
+  // A seek's decoder restart that fails must surface as a failed drain, not as
+  // a decoder that reports itself configured and quiescent forever. Preview
+  // handoff releases the worker; other lanes then exhaust the process worker
+  // queue, so the seek's restart is refused.
+  {
+    Sink restartSink;
+    VideoDecodeLane lane;
+    REQUIRE(lane.configure(config,restartSink,&error));
+    lane.suspendForPreview(2);
+    std::vector<std::unique_ptr<wam::media::avcodec::DecodeWorker>> others;
+    for(unsigned i=0;i<4*wam::media::kNativeSoftwareProcessWorkers;++i) {
+      auto worker=std::make_unique<wam::media::avcodec::DecodeWorker>(
+          wam::media::avcodec::FrameHandler{[](void*,const AVFrame&,const wam::media::avcodec::PacketTiming&) noexcept {
+            return wam::media::avcodec::FrameResult::Backpressure;
+          },nullptr});
+      wam::media::avcodec::Configuration other{wam::media::avcodec::Codec::Vp9,{},1,1,320,180};
+      other.bitDepth=8; other.chroma=1;
+      const bool admitted=worker->configure(other);
+      others.push_back(std::move(worker));
+      if(!admitted) break;
+    }
+    REQUIRE(!others.back()->hasCapacity() && others.back()->failure());
+    lane.flush(3);
+    error.clear();
+    EXPECT(lane.drainPresentation(3,&error)==VideoDecodeDrainProgress::Failed);
+    EXPECT(error=="AvcodecFlushFailed");
+    EXPECT(!lane.stats().configured);
+    lane.flush(4);
+    EXPECT(lane.drainPresentation(4,&error)==VideoDecodeDrainProgress::Failed);
+    others.clear();
+    lane.close();
+    EXPECT(lane.stats().generation==5 && restartSink.generation==5);
+  }
   std::puts("video adapter packet/EOS/flush/backpressure and surface format passed");
   return failures==0?0:1;
 }

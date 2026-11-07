@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <limits>
 #include <mutex>
+#include <string_view>
 #include <utility>
 #include <variant>
 
@@ -299,20 +300,50 @@ struct NativePreviewFrameLane::Impl final {
   };
 
   struct Active final {
+    // Compressed input: reading the source, the source ended, or the
+    // decoder's end of stream has begun (it accepts no further sample).
+    enum class Input : std::uint8_t { Reading, SourceEnded, DecoderEnding };
+    // A newer request, cancel, stop or failure supersedes a live epoch;
+    // Retired once its source, decoder and sink were released while the
+    // output may still owe the awaited frame's terminal event.
+    enum class Retirement : std::uint8_t { Live, Cancelling, Retired };
+    // The submitted frame whose terminal event is owed. `superseded`: a
+    // retarget made the draw stale, so it publishes nothing.
+    struct AwaitingDraw {
+      NativeTrackedVideoPreviewSequence sequence;
+      FrameTiming timing;
+      bool superseded{false};
+    };
+    struct Decoding {};
+    // Drawn, and the cached lease still covers the target.
+    struct PresentedIdle {};
+
+    [[nodiscard]] AwaitingDraw* awaiting() noexcept {
+      return std::get_if<AwaitingDraw>(&output);
+    }
+    [[nodiscard]] const AwaitingDraw* awaiting() const noexcept {
+      return std::get_if<AwaitingDraw>(&output);
+    }
+    [[nodiscard]] bool cancelling() const noexcept {
+      return retirement != Retirement::Live;
+    }
+    void beginCancel() noexcept {
+      if (retirement == Retirement::Live) {
+        retirement = Retirement::Cancelling;
+      }
+    }
+
     Request request{};
     std::uint64_t epoch{0};
     MediaTime decodedFrontier{};
     std::optional<MediaSample> sample;
-    NativeTrackedVideoPreviewSequence awaitingDraw{};
-    FrameTiming awaitingTiming{};
     FrameLease cachedFrame;
-    bool sourceEnded{false};
-    bool endOfStreamBegun{false};
-    bool cancelling{false};
-    bool localRetired{false};
-    bool presentedIdle{false};
-    bool awaitingSuperseded{false};
+    Input input{Input::Reading};
+    Retirement retirement{Retirement::Live};
+    std::variant<Decoding, AwaitingDraw, PresentedIdle> output;
   };
+
+  enum class LaneState : std::uint8_t { Running, Stopping, Stopped, Failed };
 
   Impl(NativePreviewFrameLaneBinding laneBinding,
        std::shared_ptr<NativeTrackedVideoPreviewPort> previewOutput,
@@ -374,8 +405,8 @@ struct NativePreviewFrameLane::Impl final {
         sample.presentationTime, sample.keyFrame, generationStartPresentation);
   }
 
-  void latchFailure(const char* message) noexcept {
-    failed = true;
+  void latchFailure(std::string_view message) noexcept {
+    state = LaneState::Failed;
     if (error.empty()) {
       try {
         error.assign(message);
@@ -385,19 +416,8 @@ struct NativePreviewFrameLane::Impl final {
     cleanupFailure();
   }
 
-  void latchFailure(const std::string& message) noexcept {
-    failed = true;
-    if (error.empty()) {
-      try {
-        error = message;
-      } catch (...) {
-      }
-    }
-    cleanupFailure();
-  }
-
   void retireLocal(Active& value) noexcept {
-    if (value.localRetired) {
+    if (value.retirement == Active::Retirement::Retired) {
       return;
     }
     source->requestCancel(value.epoch);
@@ -407,14 +427,13 @@ struct NativePreviewFrameLane::Impl final {
     value.sample.reset();
     value.cachedFrame.reset();
     value.decodedFrontier = {};
-    value.localRetired = true;
+    value.retirement = Active::Retirement::Retired;
   }
 
   void cleanupFailure() noexcept {
     pending.reset();
     presented.reset();
     if (active) {
-      active->cancelling = true;
       retireLocal(*active);
     } else {
       source->close();
@@ -422,6 +441,16 @@ struct NativePreviewFrameLane::Impl final {
       sink.flush(binding.activePlaybackGeneration.value);
     }
     static_cast<void>(output->cancel());
+  }
+
+  // The event names exactly the active epoch's awaited frame.
+  [[nodiscard]] bool awaits(
+      const NativeTrackedVideoPreviewEvent& event) const noexcept {
+    const Active::AwaitingDraw* awaiting =
+        active ? active->awaiting() : nullptr;
+    return awaiting != nullptr && event.frameSequence == awaiting->sequence &&
+           event.generation == binding.activePlaybackGeneration.value &&
+           sameFrameTiming(event.timing, awaiting->timing);
   }
 
   void advanceDecodedFrontier(Active& value, MediaTime candidate) noexcept {
@@ -475,9 +504,7 @@ struct NativePreviewFrameLane::Impl final {
   std::uint64_t framesDrawn{0};
   std::uint64_t staleCompletions{0};
   std::uint64_t lastOutputEventSequence{0};
-  bool stopStarted{false};
-  bool stopped{false};
-  bool failed{false};
+  LaneState state{LaneState::Running};
   std::string error;
 };
 
@@ -519,7 +546,6 @@ NativePreviewFrameLane::~NativePreviewFrameLane() {
     return;
   }
   if (impl_->active) {
-    impl_->active->cancelling = true;
     impl_->retireLocal(*impl_->active);
   }
   impl_->pending.reset();
@@ -537,10 +563,13 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
       command.generation != impl_->binding.activePlaybackGeneration) {
     return NativePreviewFrameRequestStatus::Invalid;
   }
-  if (impl_->stopped || impl_->stopStarted) {
+  switch (impl_->state) {
+  case Impl::LaneState::Running:
+    break;
+  case Impl::LaneState::Stopping:
+  case Impl::LaneState::Stopped:
     return NativePreviewFrameRequestStatus::Closed;
-  }
-  if (impl_->failed) {
+  case Impl::LaneState::Failed:
     return NativePreviewFrameRequestStatus::Failed;
   }
   if (!preview_protocol::follows(impl_->acceptedThrough, command.stamp)) {
@@ -553,8 +582,7 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
   }
 
   const bool replaced = impl_->pending.has_value() || impl_->active.has_value();
-  if (impl_->active && !impl_->active->cancelling &&
-      !impl_->active->localRetired && !impl_->pending &&
+  if (impl_->active && !impl_->active->cancelling() && !impl_->pending &&
       sameGesture(impl_->active->request.command, command) &&
       canReuseForward(impl_->active->request.target,
                       impl_->active->decodedFrontier, target.exact())) {
@@ -565,15 +593,14 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
     // Once EOS has been entered, the decoder cannot accept another sample.
     // The retained exact frame remains reusable, but any later interval must
     // restart from a sync sample in a fresh graph.
-    if ((!active.sourceEnded && !active.endOfStreamBegun) || cachedCovers) {
+    if (active.input == Impl::Active::Input::Reading || cachedCovers) {
       if (!impl_->source->advanceTarget(active.epoch, target.exact())) {
         impl_->latchFailure("preview source rejected a valid forward retarget");
         return NativePreviewFrameRequestStatus::Failed;
       }
       active.request = Impl::Request{command, target.exact()};
-      active.presentedIdle = false;
       impl_->presented.reset();
-      if (active.awaitingDraw.valid()) {
+      if (Impl::Active::AwaitingDraw* awaiting = active.awaiting()) {
         // Even if the retained frame covers the new target, its compositor
         // event may already predate this request. Consume its real terminal
         // event as stale, then resubmit the cached lease for a new exact draw.
@@ -582,8 +609,9 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
           impl_->latchFailure("preview output retarget cancellation failed");
           return NativePreviewFrameRequestStatus::Failed;
         }
-        active.awaitingSuperseded = true;
+        awaiting->superseded = true;
       } else if (cachedCovers) {
+        active.output = Impl::Active::Decoding{};
         std::string error;
         const auto staged = impl_->sink.timing();
         if (staged.has_value()) {
@@ -607,6 +635,7 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
           }
         }
       } else {
+        active.output = Impl::Active::Decoding{};
         active.cachedFrame.reset();
       }
       ++impl_->acceptedRequests;
@@ -621,7 +650,7 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
     }
   }
   if (impl_->active) {
-    impl_->active->cancelling = true;
+    impl_->active->beginCancel();
     impl_->source->requestCancel(impl_->active->epoch);
     static_cast<void>(impl_->output->cancel());
   }
@@ -639,7 +668,7 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
 
 NativePreviewFrameCancelProgress NativePreviewFrameLane::cancel(
     const preview_protocol::PreviewFrame& command) noexcept {
-  if (impl_ == nullptr || impl_->failed) {
+  if (impl_ == nullptr || impl_->state == Impl::LaneState::Failed) {
     return NativePreviewFrameCancelProgress::Failed;
   }
   if (impl_->pending && sameCommand(impl_->pending->command, command)) {
@@ -653,7 +682,6 @@ NativePreviewFrameCancelProgress NativePreviewFrameLane::cancel(
              impl_->pending) {
     return NativePreviewFrameCancelProgress::Stale;
   }
-  impl_->active->cancelling = true;
   impl_->retireLocal(*impl_->active);
   const NativeTrackedVideoPreviewCancelProgress output =
       impl_->output->cancel();
@@ -662,7 +690,7 @@ NativePreviewFrameCancelProgress NativePreviewFrameLane::cancel(
     return NativePreviewFrameCancelProgress::Failed;
   }
   if (output == NativeTrackedVideoPreviewCancelProgress::Done &&
-      !impl_->active->awaitingDraw.valid()) {
+      impl_->active->awaiting() == nullptr) {
     impl_->active.reset();
     return NativePreviewFrameCancelProgress::Done;
   }
@@ -670,20 +698,23 @@ NativePreviewFrameCancelProgress NativePreviewFrameLane::cancel(
 }
 
 NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
-  if (impl_ == nullptr || impl_->failed) {
+  if (impl_ == nullptr) {
     return NativePreviewFramePumpProgress::Failed;
   }
-  if (impl_->stopped) {
+  switch (impl_->state) {
+  case Impl::LaneState::Running:
+  case Impl::LaneState::Stopping:
+    break;
+  case Impl::LaneState::Stopped:
     return NativePreviewFramePumpProgress::Stopped;
+  case Impl::LaneState::Failed:
+    return NativePreviewFramePumpProgress::Failed;
   }
   try {
     if (auto event = impl_->output->takeEvent()) {
       if (event->eventSequence == 0 ||
           event->eventSequence <= impl_->lastOutputEventSequence ||
-          !impl_->active || !impl_->active->awaitingDraw.valid() ||
-          event->frameSequence != impl_->active->awaitingDraw ||
-          event->generation != impl_->binding.activePlaybackGeneration.value ||
-          !sameFrameTiming(event->timing, impl_->active->awaitingTiming)) {
+          !impl_->awaits(*event)) {
         impl_->latchFailure("preview output event violated its exact identity");
         return NativePreviewFramePumpProgress::Failed;
       }
@@ -697,10 +728,10 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
                 : "preview output reported an unknown event kind");
         return NativePreviewFramePumpProgress::Failed;
       }
+      const bool superseded = impl_->active->awaiting()->superseded;
       const bool publish =
           event->kind == NativeTrackedVideoPreviewEventKind::FrameDrawn &&
-          !impl_->active->cancelling && !impl_->pending &&
-          !impl_->active->awaitingSuperseded &&
+          !impl_->active->cancelling() && !impl_->pending && !superseded &&
           frameExtendsBeyondTarget(event->timing,
                                    impl_->active->request.target);
       if (publish) {
@@ -723,9 +754,8 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
         ++impl_->staleCompletions;
       }
       Impl::Active& active = *impl_->active;
-      active.awaitingDraw = {};
-      active.awaitingTiming = {};
-      if (active.cancelling || impl_->pending) {
+      active.output = Impl::Active::Decoding{};
+      if (active.cancelling() || impl_->pending) {
         impl_->retireLocal(active);
         impl_->active.reset();
       } else {
@@ -736,7 +766,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
             active.cachedFrame && frameExtendsBeyondTarget(
                                       active.cachedFrame.timing(),
                                       active.request.target);
-        if ((active.awaitingSuperseded ||
+        if ((superseded ||
              event->kind ==
                  NativeTrackedVideoPreviewEventKind::FrameSuperseded) &&
             cachedCovers) {
@@ -750,19 +780,16 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
                                     : error);
             return NativePreviewFramePumpProgress::Failed;
           }
-          active.presentedIdle = false;
         } else if (cachedCovers) {
-          active.presentedIdle = true;
+          active.output = Impl::Active::PresentedIdle{};
         } else {
           active.cachedFrame.reset();
-          active.presentedIdle = false;
         }
-        active.awaitingSuperseded = false;
       }
       return NativePreviewFramePumpProgress::Progress;
     }
 
-    if (impl_->active && impl_->active->cancelling) {
+    if (impl_->active && impl_->active->cancelling()) {
       impl_->retireLocal(*impl_->active);
       const auto progress = impl_->output->cancel();
       if (progress == NativeTrackedVideoPreviewCancelProgress::Failed) {
@@ -770,7 +797,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
         return NativePreviewFramePumpProgress::Failed;
       }
       if (progress == NativeTrackedVideoPreviewCancelProgress::Done &&
-          !impl_->active->awaitingDraw.valid()) {
+          impl_->active->awaiting() == nullptr) {
         impl_->active.reset();
         return NativePreviewFramePumpProgress::Progress;
       }
@@ -792,7 +819,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
           {epoch, impl_->active->request.target});
       if (begun.status != NativePreviewStatus::Ready) {
         if (begun.status == NativePreviewStatus::Cancelled) {
-          impl_->active->cancelling = true;
+          impl_->active->beginCancel();
           return NativePreviewFramePumpProgress::Progress;
         }
         impl_->latchFailure(begun.error.empty()
@@ -819,11 +846,10 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       return NativePreviewFramePumpProgress::Idle;
     }
     Impl::Active& active = *impl_->active;
-    if (active.awaitingDraw.valid()) {
+    if (std::holds_alternative<Impl::Active::AwaitingDraw>(active.output)) {
       return NativePreviewFramePumpProgress::Quiescing;
     }
-
-    if (active.presentedIdle) {
+    if (std::holds_alternative<Impl::Active::PresentedIdle>(active.output)) {
       return NativePreviewFramePumpProgress::Idle;
     }
 
@@ -863,7 +889,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       case NativeTrackedVideoCapacity::Backpressure:
         return NativePreviewFramePumpProgress::Quiescing;
       case NativeTrackedVideoCapacity::StaleGeneration:
-        active.cancelling = true;
+        active.beginCancel();
         return NativePreviewFramePumpProgress::Progress;
       case NativeTrackedVideoCapacity::Failed:
         impl_->latchFailure("preview output capacity failed");
@@ -879,7 +905,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       case NativeTrackedVideoSubmitStatus::Backpressure:
         return NativePreviewFramePumpProgress::Quiescing;
       case NativeTrackedVideoSubmitStatus::StaleGeneration:
-        active.cancelling = true;
+        active.beginCancel();
         return NativePreviewFramePumpProgress::Progress;
       case NativeTrackedVideoSubmitStatus::Failed:
         impl_->latchFailure(error.empty() ? "preview frame submit failed"
@@ -892,8 +918,8 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
         impl_->latchFailure("preview output accepted without an identity");
         return NativePreviewFramePumpProgress::Failed;
       }
-      active.awaitingDraw = submitted.result.sequence;
-      active.awaitingTiming = submitted.timing;
+      active.output = Impl::Active::AwaitingDraw{submitted.result.sequence,
+                                                 submitted.timing};
       active.cachedFrame = std::move(submitted.retainedFrame);
       if (const auto cachedPresentation =
               exactMediaTime(active.cachedFrame.timing().presentationTime)) {
@@ -916,31 +942,34 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
         impl_->latchFailure(*decoderError);
         return NativePreviewFramePumpProgress::Failed;
       }
-      const VideoDecodeDrainProgress drained = active.sourceEnded
-          ? (active.endOfStreamBegun
-                 ? impl_->decoder.drainEndOfStream(
-                       impl_->binding.activePlaybackGeneration.value,
-                       &impl_->error)
-                 : impl_->decoder.beginEndOfStream(
-                       impl_->binding.activePlaybackGeneration.value,
-                       &impl_->error))
-          : impl_->decoder.drainPresentation(
-                impl_->binding.activePlaybackGeneration.value,
-                &impl_->error);
-      if (active.sourceEnded && !active.endOfStreamBegun &&
-          drained != VideoDecodeDrainProgress::Failed &&
-          drained != VideoDecodeDrainProgress::StaleGeneration) {
-        active.endOfStreamBegun = true;
+      const std::uint64_t generation =
+          impl_->binding.activePlaybackGeneration.value;
+      std::string drainError;
+      VideoDecodeDrainProgress drained = VideoDecodeDrainProgress::Failed;
+      switch (active.input) {
+      case Impl::Active::Input::Reading:
+        drained = impl_->decoder.drainPresentation(generation, &drainError);
+        break;
+      case Impl::Active::Input::SourceEnded:
+        drained = impl_->decoder.beginEndOfStream(generation, &drainError);
+        if (drained != VideoDecodeDrainProgress::Failed &&
+            drained != VideoDecodeDrainProgress::StaleGeneration) {
+          active.input = Impl::Active::Input::DecoderEnding;
+        }
+        break;
+      case Impl::Active::Input::DecoderEnding:
+        drained = impl_->decoder.drainEndOfStream(generation, &drainError);
+        break;
       }
       switch (drained) {
       case VideoDecodeDrainProgress::Failed:
       case VideoDecodeDrainProgress::StaleGeneration:
-        impl_->latchFailure(impl_->error.empty()
-                                ? "preview decoder drain failed"
-                                : impl_->error);
+        impl_->latchFailure(drainError.empty() ? "preview decoder drain failed"
+                                               : drainError);
         return NativePreviewFramePumpProgress::Failed;
       case VideoDecodeDrainProgress::Done:
-        if (active.sourceEnded && impl_->sink.size() == 0) {
+        if (active.input != Impl::Active::Input::Reading &&
+            impl_->sink.size() == 0) {
           impl_->latchFailure("preview target produced no presentable frame");
           return NativePreviewFramePumpProgress::Failed;
         }
@@ -948,7 +977,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       case VideoDecodeDrainProgress::Progress:
         return NativePreviewFramePumpProgress::Progress;
       case VideoDecodeDrainProgress::Quiescing:
-        if (active.sourceEnded ||
+        if (active.input != Impl::Active::Input::Reading ||
             !impl_->decoder.stats().acceptsCompressedSample) {
           return NativePreviewFramePumpProgress::Quiescing;
         }
@@ -988,7 +1017,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       }
     }
 
-    if (active.sourceEnded) {
+    if (active.input != Impl::Active::Input::Reading) {
       return NativePreviewFramePumpProgress::Quiescing;
     }
     NativePreviewReadResult read = impl_->source->readNext(active.epoch);
@@ -1016,11 +1045,11 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       return NativePreviewFramePumpProgress::Progress;
     }
     if (std::holds_alternative<NativePreviewEndOfStream>(read)) {
-      active.sourceEnded = true;
+      active.input = Impl::Active::Input::SourceEnded;
       return NativePreviewFramePumpProgress::Progress;
     }
     if (std::holds_alternative<NativePreviewCancelled>(read)) {
-      active.cancelling = true;
+      active.beginCancel();
       return NativePreviewFramePumpProgress::Progress;
     }
     const auto* failure = std::get_if<NativePreviewFailure>(&read);
@@ -1051,20 +1080,19 @@ NativePreviewFrameLane::takePresented() noexcept {
 
 NativePreviewFrameCancelProgress NativePreviewFrameLane::stop(
     preview_protocol::Generation activePlaybackGeneration) noexcept {
-  if (impl_ == nullptr || impl_->failed) {
+  if (impl_ == nullptr || impl_->state == Impl::LaneState::Failed) {
     return NativePreviewFrameCancelProgress::Failed;
   }
   if (activePlaybackGeneration != impl_->binding.activePlaybackGeneration) {
     return NativePreviewFrameCancelProgress::Stale;
   }
-  if (impl_->stopped) {
+  if (impl_->state == Impl::LaneState::Stopped) {
     return NativePreviewFrameCancelProgress::Done;
   }
-  impl_->stopStarted = true;
+  impl_->state = Impl::LaneState::Stopping;
   impl_->pending.reset();
   impl_->presented.reset();
   if (impl_->active) {
-    impl_->active->cancelling = true;
     impl_->retireLocal(*impl_->active);
   } else {
     impl_->source->close();
@@ -1074,10 +1102,7 @@ NativePreviewFrameCancelProgress NativePreviewFrameLane::stop(
   if (auto event = impl_->output->takeEvent()) {
     if (event->eventSequence == 0 ||
         event->eventSequence <= impl_->lastOutputEventSequence ||
-        !impl_->active || !impl_->active->awaitingDraw.valid() ||
-        event->frameSequence != impl_->active->awaitingDraw ||
-        event->generation != activePlaybackGeneration.value ||
-        !sameFrameTiming(event->timing, impl_->active->awaitingTiming)) {
+        !impl_->awaits(*event)) {
       impl_->latchFailure("preview stop observed an invalid terminal event");
       return NativePreviewFrameCancelProgress::Failed;
     }
@@ -1102,11 +1127,11 @@ NativePreviewFrameCancelProgress NativePreviewFrameLane::stop(
   if (output == NativeTrackedVideoPreviewCancelProgress::Quiescing) {
     return NativePreviewFrameCancelProgress::Quiescing;
   }
-  if (impl_->active && impl_->active->awaitingDraw.valid()) {
+  if (impl_->active && impl_->active->awaiting() != nullptr) {
     return NativePreviewFrameCancelProgress::Quiescing;
   }
   impl_->active.reset();
-  impl_->stopped = true;
+  impl_->state = Impl::LaneState::Stopped;
   return NativePreviewFrameCancelProgress::Done;
 }
 
@@ -1120,9 +1145,10 @@ NativePreviewFrameLaneFacts NativePreviewFrameLane::facts() const noexcept {
       impl_->binding.activePlaybackGeneration.value;
   result.activeEpoch = impl_->active ? impl_->active->epoch : 0;
   result.epochHighWater = impl_->epochHighWater;
+  const Impl::Active::AwaitingDraw* awaiting =
+      impl_->active ? impl_->active->awaiting() : nullptr;
   result.awaitingDraw =
-      impl_->active ? impl_->active->awaitingDraw
-                    : NativeTrackedVideoPreviewSequence{};
+      awaiting ? awaiting->sequence : NativeTrackedVideoPreviewSequence{};
   result.pendingCommands = impl_->pending ? 1U : 0U;
   result.stagedCompressedSamples =
       impl_->active && impl_->active->sample ? 1U : 0U;
@@ -1143,10 +1169,10 @@ NativePreviewFrameLaneFacts NativePreviewFrameLane::facts() const noexcept {
   result.framesDrawn = impl_->framesDrawn;
   result.staleCompletions = impl_->staleCompletions;
   result.active = impl_->active.has_value();
-  result.cancelling = impl_->active && impl_->active->cancelling;
+  result.cancelling = impl_->active && impl_->active->cancelling();
   result.presentedPending = impl_->presented.has_value();
-  result.stopped = impl_->stopped;
-  result.failed = impl_->failed;
+  result.stopped = impl_->state == Impl::LaneState::Stopped;
+  result.failed = impl_->state == Impl::LaneState::Failed;
   try {
     result.error = impl_->error;
   } catch (...) {
