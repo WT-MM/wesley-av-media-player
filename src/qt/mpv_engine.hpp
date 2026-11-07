@@ -3,11 +3,16 @@
 #include "playback_policy.hpp"
 #include "native_playback_metrics.hpp"
 
+#include <QByteArray>
+#include <QSize>
 #include <QString>
 #include <QUrl>
 
+#include <mpv/client.h>
+
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -20,6 +25,12 @@ namespace wam::qt {
 
 class PlayerController;
 class PlayerCore;
+
+// mpv's `path` (and playlist filename) as a URL: local paths become file URLs.
+[[nodiscard]] QUrl urlFromMpvPath(const QString &path);
+// mpv's vid/aid/sid text as a selection: 0 for "no", the track id, or -1 when
+// it states neither.
+[[nodiscard]] std::int64_t parseTrackSelection(const QString &text);
 
 // mpv echoes a command's 64-bit reply_userdata back with its reply. The top
 // bits name the protocol that issued the command and the rest is that
@@ -250,6 +261,39 @@ public:
   // True once no render context is busy and the lifecycle is Empty.
   [[nodiscard]] bool renderingReleased() const;
   [[nodiscard]] NativePlaybackMetricsSample metrics() const;
+
+  // The one way to talk to the mpv handle. Every call is a no-op (or empty
+  // answer) until the core is ready; setters warn on failure.
+  [[nodiscard]] QString mpvErrorDetail(int error) const;
+  [[nodiscard]] std::optional<std::int64_t> intProperty(const char *name) const;
+  [[nodiscard]] std::optional<double> doubleProperty(const char *name) const;
+  [[nodiscard]] std::optional<bool> flagProperty(const char *name) const;
+  [[nodiscard]] std::optional<QString> stringProperty(const char *name) const;
+  bool setCoreProperty(const char *name, mpv_format format, void *value);
+  void setPropertyAsync(const char *name, mpv_format format, void *value);
+  // Synchronous command; returns mpv's status.
+  int commandNow(const char **arguments);
+  void abortCommand(std::uint64_t reply_userdata);
+  bool setPlaybackProperty(const char *name, const char *value);
+  void applyPlaybackBufferPolicy(PlaybackSourceClass source_class);
+  // A track selection: 0 deselects, a negative value leaves it alone.
+  bool setTrackSelection(const char *name, std::int64_t selection);
+  int sendCommand(const std::initializer_list<QByteArray> &arguments,
+                  std::uint64_t reply_userdata = 0);
+
+  [[nodiscard]] std::int64_t playlistEntryIdAtPosition(
+      const char *position_property) const;
+  [[nodiscard]] std::int64_t currentPlaylistEntryId() const;
+  [[nodiscard]] std::int64_t playingPlaylistEntryId() const;
+  [[nodiscard]] std::int64_t playlistEntryCount() const;
+  [[nodiscard]] std::int64_t playlistPositionForEntry(std::int64_t entry_id) const;
+  [[nodiscard]] QUrl playlistEntrySource(std::int64_t entry_id) const;
+  // vid/aid/sid as a positive track id, or -1.
+  [[nodiscard]] std::int64_t currentTrackId(const char *name) const;
+  // parseTrackSelection of the live vid/aid/sid.
+  [[nodiscard]] std::int64_t currentTrackSelection(const char *name) const;
+  [[nodiscard]] QSize currentVideoDisplaySize() const;
+  [[nodiscard]] std::optional<bool> currentFileHasTrackType(const char *type) const;
 
   void detachOwner();
 
