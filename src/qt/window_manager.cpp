@@ -204,9 +204,9 @@ bool verifyResumeTracker() {
 PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
                            QQmlEngine &engine)
     : QObject(&manager), manager_(manager) {
-  // One QML context per window. `player` and `windowChrome` are resolved out
-  // of it, so qml/Main.qml -- which reads both as bare context properties --
-  // works as an N-instance component: each instance sees its own objects.
+  // One QML context per window. `player` is resolved out of it, so
+  // qml/Main.qml works as an N-instance component: each instance sees its
+  // own controller.
   context_ = new QQmlContext(engine.rootContext(), this);
 
   controller_ = new PlayerController(this);
@@ -237,15 +237,9 @@ PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
     connect(controller_, &PlayerController::videoDisplaySizeChanged, chrome_, [this] {
       chrome_->setExactVideoDisplaySize(controller_->exactVideoDisplaySize(), controller_->source());
     });
-    context_->setContextProperty(QStringLiteral("windowChrome"), chrome_);
-    // The chrome cannot exist before the window it wraps, so it is necessarily
-    // published after Component.onCompleted has already run with the name
-    // undefined. Main.qml guards every use with `typeof windowChrome`, which
-    // is deliberately not a binding dependency, so nothing re-evaluates on its
-    // own: this call is what lets the window adopt the bridge (read the real
-    // AppKit titlebar height, arm the aspect lock) at the first moment it
-    // exists.
-    QMetaObject::invokeMethod(qml_root_, "adoptWindowChrome");
+    // The chrome cannot exist before the window it wraps, so it arrives as a
+    // property set after creation; Main.qml adopts it on the change.
+    qml_root_->setProperty("windowChrome", QVariant::fromValue(chrome_));
   }
 #endif
 

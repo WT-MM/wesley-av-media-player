@@ -130,7 +130,7 @@ ApplicationWindow {
         ? 0
         : (nativeTitlebarHeight > 0 ? nativeTitlebarHeight : SafeArea.margins.top)
     // The current video's displayed size, read from the file when the source
-    // changes, or (0, 0) for audio-only media or before "windowChrome" exists.
+    // changes, or (0, 0) for audio-only media or before the chrome bridge exists.
     // Drives the native window's aspect-ratio lock, its aspect snap, its
     // double-click "Actual Size" and its fit-to-screen zoom.
     //
@@ -194,11 +194,8 @@ ApplicationWindow {
     // so a re-open of the same file cannot resize the window a second time
     // (see onVideoNaturalSizeChanged).
     property url snappedSource: ""
-    // True when the process was launched by the benchmark harness -- the
-    // window chrome bridge is not guaranteed to exist yet at binding-eval
-    // time (see the "typeof windowChrome" guards throughout this file), so
-    // this mirrors windowChrome.benchmarkMode defensively.
-    readonly property bool benchmarkModeActive: (typeof windowChrome !== "undefined" && windowChrome) ? windowChrome.benchmarkMode : false
+    // True when the process was launched by the benchmark harness.
+    readonly property bool benchmarkModeActive: root.windowChrome ? root.windowChrome.benchmarkMode : false
     // "window hugs the video" (QuickTime-style floating, no letterbox bars)
     // is only actually in effect windowed, with media loaded whose aspect is
     // known, and never under the benchmark harness -- which owns window
@@ -291,9 +288,9 @@ ApplicationWindow {
     function pointerInTitlebar() {
         if (visibility === Window.FullScreen)
             return false;
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return titlebarHover.hovered;
-        return windowChrome.pointerInTitlebarBand();
+        return root.windowChrome.pointerInTitlebarBand();
     }
 
     function revealControls() {
@@ -392,8 +389,7 @@ ApplicationWindow {
     // whatever is chosen loads into THIS window.
     function openMedia() {
         mediaDialogOpensNewWindow = false;
-        if (controller.openFileDialog)
-            controller.openFileDialog();
+        showMediaDialog();
     }
 
     // File > Open and Cmd-O, routed here by WindowManager::openMedia(): the
@@ -404,8 +400,7 @@ ApplicationWindow {
     // time the dialog was cancelled.
     function openMediaInNewWindow() {
         mediaDialogOpensNewWindow = true;
-        if (controller.openFileDialog)
-            controller.openFileDialog();
+        showMediaDialog();
     }
 
     function showMediaDialog() {
@@ -557,13 +552,13 @@ ApplicationWindow {
     // Returns false when it could not act, so the caller knows the state did
     // not change.
     function toggleFillScreenPadded() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return false;
         // Fullscreen owns the frame outright; padding underneath it would be
         // invisible now and a frame AppKit would fight on the way out.
         if (root.visibility === Window.FullScreen)
             return false;
-        if (!windowChrome.setFillScreenPadded(!root.fillScreenPadded))
+        if (!root.windowChrome.setFillScreenPadded(!root.fillScreenPadded))
             return false;
         root.fillScreenPadded = !root.fillScreenPadded;
         root.revealControls();
@@ -576,15 +571,15 @@ ApplicationWindow {
     // change, HDR answer) goes through it rather than reaching for the bridge
     // itself.
     function applyViewingModes() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return;
         root.vividBoostApplied =
-            windowChrome.setVividBoost(root.vividActive ? root.vividBoostFactor : 1);
-        windowChrome.setTheaterDim(root.theaterDimEnabled, root.theaterDimOpacity);
+            root.windowChrome.setVividBoost(root.vividActive ? root.vividBoostFactor : 1);
+        root.windowChrome.setTheaterDim(root.theaterDimEnabled, root.theaterDimOpacity);
     }
 
     function toggleVividBoost() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return false;
         // Refused rather than toggled for an HDR source: there is no headroom
         // left to move it into, and a toggle that reads as on while doing
@@ -598,7 +593,7 @@ ApplicationWindow {
     }
 
     function toggleTheaterDim() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return false;
         root.theaterDimEnabled = !root.theaterDimEnabled;
         root.applyViewingModes();
@@ -612,9 +607,9 @@ ApplicationWindow {
     // for. Drop the memory and the mode together rather than leaving a toggle
     // armed on a rectangle that is no longer the answer to any question.
     function forgetFillScreenPadded() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return;
-        windowChrome.clearFillScreenPadded();
+        root.windowChrome.clearFillScreenPadded();
         root.fillScreenPadded = false;
     }
 
@@ -667,23 +662,19 @@ ApplicationWindow {
         appHost.hideAndPauseAll();
     }
 
-    // Called by WindowManager the moment this window's chrome bridge exists.
-    //
-    // The bridge cannot be constructed before the QQuickWindow it wraps, so it
-    // is necessarily published into this window's QML context AFTER
-    // Component.onCompleted has already run with the name undefined -- and
-    // `typeof windowChrome` is deliberately not a binding dependency, so
-    // nothing re-evaluates on its own. This is the hook that lets the window
-    // adopt the bridge at the first instant it exists: read the real AppKit
-    // titlebar height instead of falling back to Qt's safe-area inset, and arm
-    // the interactive aspect lock.
-    function adoptWindowChrome() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+    // The macOS chrome bridge (src/qt/macos_window_chrome.hpp), or null where
+    // there is none. WindowManager sets it once, right after creating the
+    // window: the bridge cannot exist before the QQuickWindow it wraps.
+    property var windowChrome: null
+
+    // Adopt the bridge the moment it arrives: the real AppKit titlebar height
+    // instead of Qt's safe-area inset, the interactive aspect lock, and any
+    // viewing mode already set.
+    onWindowChromeChanged: {
+        if (!root.windowChrome)
             return;
-        nativeTitlebarHeight = windowChrome.titlebarHeight();
+        nativeTitlebarHeight = root.windowChrome.titlebarHeight();
         applyWindowAspectLock();
-        // A viewing mode already set when the bridge arrives is applied here
-        // rather than at first click.
         applyViewingModes();
         revealControls();
     }
@@ -700,12 +691,12 @@ ApplicationWindow {
     // Returns false (a no-op) without the native window bridge or until the
     // video's native pixel size has been probed.
     function resizeToActualSize() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return false;
         if (root.videoNaturalSize.width <= 0 || root.videoNaturalSize.height <= 0)
             return false;
         root.forgetFillScreenPadded();
-        windowChrome.resizeToActualSize(root.videoNaturalSize.width, root.videoNaturalSize.height);
+        root.windowChrome.resizeToActualSize(root.videoNaturalSize.width, root.videoNaturalSize.height);
         return true;
     }
 
@@ -716,12 +707,12 @@ ApplicationWindow {
     // transport's own button. Returns false when the native window bridge is
     // unavailable so the caller can fall back.
     function resizeToFitScreen() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return false;
         if (visibility === Window.FullScreen)
             return false;
         root.forgetFillScreenPadded();
-        windowChrome.resizeToFitScreen(root.videoNaturalSize.width, root.videoNaturalSize.height);
+        root.windowChrome.resizeToFitScreen(root.videoNaturalSize.width, root.videoNaturalSize.height);
         return true;
     }
 
@@ -735,12 +726,12 @@ ApplicationWindow {
     // setting change, so unticking takes effect on the very next drag rather
     // than at the next launch.
     function applyWindowAspectLock() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return;
         if (root.windowHugsVideoActive)
-            windowChrome.setContentAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
+            root.windowChrome.setContentAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
         else
-            windowChrome.setContentAspectRatio(0, 0);
+            root.windowChrome.setContentAspectRatio(0, 0);
     }
 
     // "window hugs the video": re-snap the windowed frame to the current
@@ -753,13 +744,13 @@ ApplicationWindow {
     function maybeResnapToHugVideo() {
         if (!root.windowHugsVideoActive)
             return;
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return;
         // The interactive drag itself is already aspect-locked by AppKit
         // (see macos_window_chrome.mm's InteractiveAspectLock), but a
         // programmatic snap issued mid-drag is exactly the kind of fight
         // this feature must never start.
-        if (windowChrome.interactiveResizeActive())
+        if (root.windowChrome.interactiveResizeActive())
             return;
         const aspect = root.videoNaturalSize.width / root.videoNaturalSize.height;
         if (!(aspect > 0))
@@ -767,7 +758,7 @@ ApplicationWindow {
         const expectedHeight = root.width / aspect;
         if (Math.abs(expectedHeight - root.height) <= 1)
             return;
-        windowChrome.snapToVideoAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
+        root.windowChrome.snapToVideoAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
     }
 
     function rememberDialogFocus() {
@@ -803,8 +794,6 @@ ApplicationWindow {
         stage.forceActiveFocus();
         if (controller.appearance !== undefined)
             appearance = controller.appearance;
-        if (typeof windowChrome !== "undefined" && windowChrome)
-            nativeTitlebarHeight = windowChrome.titlebarHeight();
         revealControls();
     }
 
@@ -822,7 +811,7 @@ ApplicationWindow {
         id: hugsVideoResnapTimer
         // Debounced, not immediate: restarted from every width/height change
         // below, so a live drag (already aspect-locked by
-        // windowChrome.setContentAspectRatio's interactive lock, and further
+        // root.windowChrome.setContentAspectRatio's interactive lock, and further
         // guarded by interactiveResizeActive() in maybeResnapToHugVideo) or
         // an in-flight zoom animation (resizeToFitScreen/resizeToActualSize,
         // ~240ms) keeps pushing this out instead of racing either one -- it
@@ -1287,8 +1276,8 @@ ApplicationWindow {
                 Accessible.onPressAction: revealCaret.reveal()
 
                 function reveal() {
-                    if (typeof windowChrome !== "undefined" && windowChrome)
-                        windowChrome.revealInFinder(root.controller.source);
+                    if (root.windowChrome)
+                        root.windowChrome.revealInFinder(root.controller.source);
                     // Finder takes activation from here, which fades this
                     // window's chrome out. Re-arming the idle timer keeps the
                     // band up for the moment the pointer is still on it.
@@ -1855,25 +1844,12 @@ ApplicationWindow {
     Connections {
         target: root.controller
 
-        function onOpenFileDialogRequested() {
-            root.showMediaDialog();
-        }
-
-        function onFullscreenToggleRequested() {
-            root.visibility = root.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen;
-            root.revealControls();
-        }
-
         function onExportSelectionRequested() {
             root.showExportDialog();
         }
 
         function onGenerateCaptionsRequested() {
             root.showCaptionDialog();
-        }
-
-        function onOpenSubtitleFileDialogRequested() {
-            root.showSubtitleDialog();
         }
 
         function onLastErrorChanged() {
@@ -1959,21 +1935,21 @@ ApplicationWindow {
             // clause: the old size stays put until the new answer arrives, so
             // a file-to-file replacement does not flash the window through a
             // size no video ever had.
-            if (typeof windowChrome === "undefined" || !windowChrome || !root.controller.hasMedia)
+            if (!root.windowChrome || !root.controller.hasMedia)
                 return;
-            windowChrome.requestVideoNaturalSize(root.controller.source);
+            root.windowChrome.requestVideoNaturalSize(root.controller.source);
             // Until the answer lands, the previous file's verdict would be
             // the wrong one to hold: an SDR file opened after an HDR one
             // would keep the Vivid control greyed out. Reset to "not HDR" and
             // let the asynchronous answer correct it.
             root.sourceIsHdr = false;
             root.sourceIsHdrFor = root.controller.source;
-            windowChrome.requestSourceIsHdr(root.controller.source);
+            root.windowChrome.requestSourceIsHdr(root.controller.source);
         }
     }
 
     Connections {
-        target: (typeof windowChrome !== "undefined" && windowChrome) ? windowChrome : null
+        target: root.windowChrome
 
         function onSourceIsHdrReady(source, hdr) {
             if (!root.controller.hasMedia)
@@ -2034,7 +2010,7 @@ ApplicationWindow {
     // size-changed signal is emitted -- so waiting on that signal alone would
     // wait forever.
     function snapToSourceAspectOnce() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return;
         root.applyWindowAspectLock();
         // Let the probe speak first, always. For MP4 and MOV its answer is the
@@ -2070,10 +2046,10 @@ ApplicationWindow {
         }
         // The benchmark harness owns the window geometry for its runs and its
         // validity checks reject any bounds change it did not make itself.
-        if (windowChrome.benchmarkMode)
+        if (root.benchmarkModeActive)
             return;
         root.snappedSource = root.controller.source;
-        windowChrome.snapToVideoAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
+        root.windowChrome.snapToVideoAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
     }
 
     onVideoNaturalSizeChanged: root.snapToSourceAspectOnce()
@@ -2096,11 +2072,11 @@ ApplicationWindow {
     }
 
     onControlsRevealedChanged: {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return;
         // Same duration and curve as the band's and the transport's own
         // fades, so the traffic lights travel with them.
-        windowChrome.setTitlebarRevealed(controlsRevealed, !root.chromeInstantHide);
+        root.windowChrome.setTitlebarRevealed(controlsRevealed, !root.chromeInstantHide);
         // stageHover's cursorShape binding cannot deliver a blank cursor by
         // itself on the layer route: nothing repaints while the chrome is
         // hidden, so Qt only applies the shape on the next pointer event --
@@ -2108,7 +2084,7 @@ ApplicationWindow {
         // NSCursor's until-mouse-moves latch hides it NOW and hands control
         // back on the same movement that brings the chrome back.
         if (!controlsRevealed && stageHover.hovered && controller.hasMedia)
-            windowChrome.hideCursorUntilMouseMoves();
+            root.windowChrome.hideCursorUntilMouseMoves();
     }
 
     onActiveChanged: {
@@ -2158,9 +2134,9 @@ ApplicationWindow {
     // window Qt merely *thinks* is fullscreen still fades its chrome
     // correctly.
     function reassertTitlebarControls() {
-        if (typeof windowChrome === "undefined" || !windowChrome)
+        if (!root.windowChrome)
             return;
-        windowChrome.setTitlebarRevealed(root.controlsRevealed, false);
+        root.windowChrome.setTitlebarRevealed(root.controlsRevealed, false);
     }
 
     Timer {

@@ -289,10 +289,10 @@ void snapToVideoAspectRatio(QWindow *window, qreal videoWidth,
 
 namespace wam::qt {
 
-// Thin QML-invokable adapter over the free functions above. main.cpp installs
-// one instance as the "windowChrome" context property once the root QML
-// window exists; qml/Main.qml drives it from the same signals that already
-// show/hide FloatingControls.
+// Thin QML-invokable adapter over the free functions above. WindowManager
+// sets one instance as each window's `windowChrome` property once the root
+// QML window exists; qml/Main.qml drives it from the same signals that
+// already show/hide FloatingControls.
 class MacWindowChrome final : public QObject {
   Q_OBJECT
 

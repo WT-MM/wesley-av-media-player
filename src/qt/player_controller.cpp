@@ -848,8 +848,6 @@ void PlayerController::setSource(const QUrl &source) {
   open(source);
 }
 
-void PlayerController::openFileDialog() { emit openFileDialogRequested(); }
-
 bool PlayerController::open(const QUrl &source) {
   if (source.isEmpty())
     return false;
@@ -2919,10 +2917,6 @@ void PlayerController::selectSubtitleTrack(int id) {
   updateSubtitleForPosition();
 }
 
-void PlayerController::openSubtitleFileDialog() {
-  emit openSubtitleFileDialogRequested();
-}
-
 bool PlayerController::loadSubtitleFile(const QUrl &file) {
   const auto path = localPath(file);
   if (!path) {
@@ -2975,8 +2969,6 @@ bool PlayerController::attachSubtitleSource(const std::filesystem::path &path,
   selectSubtitleTrack(id);
   return true;
 }
-
-void PlayerController::toggleFullscreen() { emit fullscreenToggleRequested(); }
 
 void PlayerController::setPreservePitch(bool preserve) {
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)

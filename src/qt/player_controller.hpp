@@ -316,7 +316,6 @@ public:
 
   void setSource(const QUrl &source);
 
-  Q_INVOKABLE void openFileDialog();
   Q_INVOKABLE bool open(const QUrl &source);
   Q_INVOKABLE void play();
   Q_INVOKABLE void pause();
@@ -364,8 +363,6 @@ public:
   Q_INVOKABLE void selectSubtitleTrack(int id);
   // Adds a subtitle file as a source and selects it.
   Q_INVOKABLE bool loadSubtitleFile(const QUrl &file);
-  Q_INVOKABLE void openSubtitleFileDialog();
-  Q_INVOKABLE void toggleFullscreen();
   Q_INVOKABLE void setPreservePitch(bool preserve);
   Q_INVOKABLE void setAppearance(int appearance);
   Q_INVOKABLE void setSeekStepSeconds(double seconds);
@@ -462,11 +459,8 @@ signals:
 
   // The QML shell owns platform dialogs/window state. These requests keep the
   // playback core independent of Qt Widgets and native-window assumptions.
-  void openFileDialogRequested();
-  void fullscreenToggleRequested();
   void exportSelectionRequested(double trim_in, double trim_out);
   void generateCaptionsRequested();
-  void openSubtitleFileDialogRequested();
 
 private:
   friend class PlayerCore;
