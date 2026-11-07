@@ -100,6 +100,43 @@ compareMediaTime(MediaTime lhs, MediaTime rhs) noexcept;
   return MediaTime{value, static_cast<std::int32_t>(denominator)};
 }
 
+enum class TickRounding : std::uint8_t {
+  // Toward negative infinity, so a plan built on the tick never starts after
+  // the requested time.
+  Floor,
+  // Empty unless the time lies exactly on the tick grid.
+  Exact,
+};
+
+// The inverse of mediaTimeFromTicks: time expressed in ticks of a clock that
+// runs tickRateNumerator / tickRateDenominator ticks per second (an FFmpeg
+// time_base num/den is the rate den/num). Empty for an invalid time, a
+// nonpositive rate term, an inexact Exact conversion, or a result outside
+// int64.
+[[nodiscard]] constexpr std::optional<std::int64_t> mediaTimeToTicks(
+    MediaTime time, std::int64_t tickRateNumerator,
+    std::int64_t tickRateDenominator, TickRounding rounding) noexcept {
+  if (!time.valid() || tickRateNumerator <= 0 || tickRateDenominator <= 0) {
+    return std::nullopt;
+  }
+  // |value| < 2^63 and every factor < 2^63, so neither product overflows.
+  const __int128_t numerator =
+      static_cast<__int128_t>(time.value) * tickRateNumerator;
+  const __int128_t denominator =
+      static_cast<__int128_t>(time.timescale) * tickRateDenominator;
+  const __int128_t remainder = numerator % denominator;
+  if (rounding == TickRounding::Exact && remainder != 0) {
+    return std::nullopt;
+  }
+  const __int128_t ticks =
+      numerator / denominator - (remainder < 0 ? 1 : 0);
+  if (ticks < std::numeric_limits<std::int64_t>::min() ||
+      ticks > std::numeric_limits<std::int64_t>::max()) {
+    return std::nullopt;
+  }
+  return static_cast<std::int64_t>(ticks);
+}
+
 // Exact lhs + rhs, reduced; empty when either is invalid or the result does
 // not fit MediaTime.
 [[nodiscard]] constexpr std::optional<MediaTime> addMediaTime(

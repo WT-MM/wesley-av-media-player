@@ -1067,18 +1067,14 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
       return result;
     }
 
-    // Exact rational target -> 90 kHz ticks, rounded DOWN so the plan never
-    // starts after the requested time. __int128 keeps a large timescale exact.
-    const __int128 scaled = (static_cast<__int128>(target.value) *
-                             static_cast<__int128>(kTimestampHz)) /
-                            static_cast<__int128>(target.timescale);
-    if (scaled > std::numeric_limits<std::int64_t>::max()) {
+    const auto scaled =
+        mediaTimeToTicks(target, kTimestampHz, 1, TickRounding::Floor);
+    if (!scaled) {
       result.error = MediaRefusalClass::InvalidRequest;
       result.message = "seek target is outside the 90 kHz timeline";
       return result;
     }
-    const std::int64_t targetTick =
-        state.originTick + static_cast<std::int64_t>(scaled);
+    const std::int64_t targetTick = state.originTick + *scaled;
 
     // Binary search: the last index entry at or before the target. The ticks
     // are already unwrapped, so this is a plain integer compare even across a
@@ -1225,14 +1221,12 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
           if (walk.collecting) {
             const std::optional<MpegTsCompressedSample> unit =
                 finishUnit(state, walk, walk.pid, packetOffset);
-            if (unit && unit->decodableFromCold &&
-                unit->presentationTime.valid()) {
-              const std::int64_t unitTick =
-                  state.originTick +
-                  static_cast<std::int64_t>(
-                      (static_cast<__int128>(unit->presentationTime.value) *
-                       kTimestampHz) /
-                      unit->presentationTime.timescale);
+            const auto unitTicks =
+                unit ? mediaTimeToTicks(unit->presentationTime, kTimestampHz,
+                                        1, TickRounding::Floor)
+                     : std::nullopt;
+            if (unit && unit->decodableFromCold && unitTicks) {
+              const std::int64_t unitTick = state.originTick + *unitTicks;
               if (unitTick <= targetTick) {
                 atOrBefore = *unit;
                 atOrBeforeTick = unitTick;
