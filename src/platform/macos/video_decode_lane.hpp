@@ -86,7 +86,7 @@ namespace wam::macos {
 // (VP8 to libvpx, everything else to VideoToolbox). After that the only
 // per-call cost is one predictable variant dispatch that never changes for
 // the life of a generation -- not a lookup, not a virtual call, and nothing
-// that runs per pixel or per sample beyond that test. See
+// that runs per pixel or per sample. See
 // docs/AGENT_PERFORMANCE_PRINCIPLES.md, "Dispatch at the top, not in the
 // loop".
 //
@@ -180,7 +180,6 @@ public:
     return false;
 #else
     static_cast<void>(hardwareCapability);
-    active_ = &videoToolbox_;
     if (configuration.codec == kWamVideoCodecTypeVp8) {
       if (!SoftwareVp8Decoder::available()) {
         if (error != nullptr) {
@@ -188,13 +187,20 @@ public:
         }
         return false;
       }
-      auto vp8 = std::make_unique<SoftwareVp8Decoder>(options_);
+      // A closed VP8 decoder is reused (the preview lane reconfigures one
+      // per scrub epoch).
+      auto *current = std::get_if<std::unique_ptr<SoftwareVp8Decoder>>(&active_);
+      std::unique_ptr<SoftwareVp8Decoder> vp8 =
+          current != nullptr ? std::move(*current)
+                             : std::make_unique<SoftwareVp8Decoder>(options_);
+      active_ = &videoToolbox_;
       if (!vp8->configure(configuration, sink, error)) {
         return false;
       }
       active_ = std::move(vp8);
       return true;
     }
+    active_ = &videoToolbox_;
     return videoToolbox_.configure(configuration, sink, error);
 #endif
   }
