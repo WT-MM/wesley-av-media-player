@@ -2,7 +2,7 @@
 #include "media/startup_benchmark.hpp"
 #include <fstream>
 #include "media/audio_track_admission.hpp"
-#include "native_audio_sample_rates.hpp"
+#include "native_audio_admission.hpp"
 #include "media/mjpeg_admission.hpp"
 #include "avfoundation_media_source.hpp"
 #include "avfoundation_media_support.hpp"
@@ -2087,8 +2087,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
                 }
                 auto proposed = describeAudio(candidate, audioId, limits,
                                                &result.error);
-                if (!proposed || !proposed->audio ||
-                    !nativeAudioSampleRateSupported(proposed->audio->sampleRate)) {
+                if (!proposed || !admitAudioTrack(*proposed)) {
                   return false;
                 }
                 const auto previousDuration = mutableDescriptor->duration;
