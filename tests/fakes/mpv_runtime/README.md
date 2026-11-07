@@ -4,7 +4,8 @@
 libraries. It is never linked to WAM or to libmpv.
 
 On macOS, `tests/CMakeLists.txt` builds it five times, each into its own
-directory and each named exactly `WAMMpvFallback.dylib`:
+directory and each named as the bundled fallback (`WAM_MPV_FALLBACK_DYLIB` in
+`packaging/pins.env`):
 
 - `valid`: `WAM_FAKE_MPV_NEWER_MINOR=1`;
 - `missing`: `WAM_FAKE_MPV_OMIT_WAIT_EVENT=1`;
