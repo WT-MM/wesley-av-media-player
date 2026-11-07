@@ -17,6 +17,42 @@ struct Tick {
   friend constexpr bool operator==(Tick, Tick) = default;
 };
 
+// What the router's owner did with one controller command. NotOwned: no
+// route owns transport yet and the intent is retained; FallbackHandled: the
+// compatibility engine owns it and the caller applies the command there.
+enum class PauseDisposition : std::uint8_t {
+  NotOwned,
+  NativeHandled,
+  FallbackHandled,
+};
+
+enum class SeekDisposition : std::uint8_t {
+  NotOwned,
+  NativeHandled,
+  NativeRejected,
+  FallbackHandled,
+};
+
+enum class PreviewDisposition : std::uint8_t {
+  NotOwned,
+  Accepted,
+  Replaced,
+  Stale,
+  Rejected,
+};
+
+// Deferred and Unsupported are both quiet refusals, but they mean opposite
+// things to a caller: Deferred is "not right now" (wrong router state, a
+// handoff already in flight) and the next gesture may well succeed, while
+// Unsupported is "not for this source at all" -- an audio-only binding has
+// no frame to preview and never will, so the caller should stop demanding
+// one for the whole gesture instead of collecting a failure per sample.
+enum class PreviewHandoffDisposition : std::uint8_t {
+  Prepared,
+  Deferred,
+  Unsupported,
+};
+
 enum class Route : std::uint8_t {
   NativeEligibleLocal,
   FallbackOnly,

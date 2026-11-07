@@ -34,6 +34,8 @@ public:
   };
   enum class Read { Packet, End, Cancelled, Failed };
   static std::string runtimeFailure();
+  // The bundled library version and required demuxers, as built.
+  static std::string runtimeDescription();
   LibavformatCursor();
   ~LibavformatCursor();
   LibavformatCursor(const LibavformatCursor &) = delete;

@@ -4,6 +4,8 @@
 #include "media/subtitle_text.hpp"
 #include "media/native_display_geometry.hpp"
 #include "jobs.hpp"
+#include "mpv_engine.hpp"
+#include "native_engine.hpp"
 #include "media/live_caption_feed.hpp"
 #include "playback_policy.hpp"
 #include "scroll_gesture.hpp"
@@ -26,6 +28,7 @@ struct mpv_event_end_file;
 
 namespace wam::qt {
 
+class AppSettings;
 class MpvVideoItem;
 class NativePlaybackOwner;
 class PlayerCore;
@@ -99,17 +102,6 @@ class PlayerController final : public QObject {
   // design (the native gain stage saturates each sample to [-1, 1]; mpv is
   // given volume-max 400).
   Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
-  // The ceiling `volume` may be raised to, normalized the same way: 1.0 is
-  // 100% (no amplification at all) and 4.0 is the engine's own gain ceiling
-  // (src/platform/macos/native_audio_render_core.hpp's kMaximumGain). A
-  // persisted, app-level Preferences setting mirrored onto every window, like
-  // preservePitch; the Preferences panel offers 100/125/150/200/300/400% and
-  // the default is 200%.
-  //
-  // Lowering it below a window's current level clamps that level down at once
-  // and emits volumeClamped() so the window can say so on screen.
-  Q_PROPERTY(double maximumVolume READ maximumVolume WRITE setMaximumVolume
-                 NOTIFY maximumVolumeChanged)
   Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
   Q_PROPERTY(double rate READ rate WRITE setRate NOTIFY rateChanged)
   Q_PROPERTY(bool captionsVisible READ captionsVisible WRITE setCaptionsVisible
@@ -150,30 +142,6 @@ class PlayerController final : public QObject {
   // The selected source's id, or -1 for Off.
   Q_PROPERTY(int activeSubtitleTrack READ activeSubtitleTrack NOTIFY
                  activeSubtitleTrackChanged)
-  // LIVE PLAYBACK ONLY: at speeds other than 1x, true keeps the original
-  // pitch (time stretching) and false is classic varispeed, where pitch
-  // rises and falls with the speed. Both routes serve both modes and apply
-  // the change mid-playback -- native through the stretch stage's pitch
-  // offset in cents, the compatibility engine through mpv's
-  // audio-pitch-correction. This is the persisted Preferences setting;
-  // Quick Edit's Preserve pitch is a separate, export-scoped choice.
-  Q_PROPERTY(bool preservePitch READ preservePitch WRITE setPreservePitch NOTIFY
-                 preservePitchChanged)
-  Q_PROPERTY(int appearance READ appearance WRITE setAppearance NOTIFY
-                 appearanceChanged)
-  Q_PROPERTY(double seekStepSeconds READ seekStepSeconds WRITE
-                 setSeekStepSeconds NOTIFY seekStepSecondsChanged)
-  // QuickTime-style floating window: when true, the windowed frame is kept
-  // hugging the current video's aspect ratio (no letterbox bars). Purely a
-  // QML/window-chrome behavior toggle; the controller only stores and
-  // persists it. Default on. See qml/Main.qml's re-snap machinery.
-  Q_PROPERTY(bool windowHugsVideo READ windowHugsVideo WRITE
-                 setWindowHugsVideo NOTIFY windowHugsVideoChanged)
-  // Pointer-scroll gestures over the video surface (vertical = volume,
-  // horizontal = timeline sweep). A persisted, app-level Preferences setting
-  // mirrored onto every window, like preservePitch. Default on.
-  Q_PROPERTY(bool scrollGesturesEnabled READ scrollGesturesEnabled WRITE
-                 setScrollGesturesEnabled NOTIFY scrollGesturesEnabledChanged)
   // True from the first admitted wheel delta until the gesture settles. The
   // transport's own wheel block stands down while it is true, so a sweep that
   // started over the picture is not killed by the chrome revealing itself
@@ -256,10 +224,8 @@ public:
   [[nodiscard]] media::MediaDisplaySize exactVideoDisplaySize() const { return exact_video_display_size_; }
   // Normalized UI volume. mpv's 0..400 range maps to 0..4 here; 1.0 is 100%.
   [[nodiscard]] double volume() const { return volume_; }
+  // The ceiling setVolume clamps to, applied from AppSettings::maximumVolume.
   [[nodiscard]] double maximumVolume() const { return maximum_volume_; }
-  [[nodiscard]] bool scrollGesturesEnabled() const {
-    return scroll_gestures_enabled_;
-  }
   [[nodiscard]] bool scrollGestureActive() const {
     return scroll_gesture_active_;
   }
@@ -283,15 +249,11 @@ public:
   }
   [[nodiscard]] QVariantList subtitleTracks() const;
   [[nodiscard]] int activeSubtitleTrack() const;
+  // The pitch mode the engines apply (AppSettings::preservePitch). Both
+  // routes serve both modes mid-playback: native through the stretch stage's
+  // pitch offset in cents, the compatibility engine through mpv's
+  // audio-pitch-correction.
   [[nodiscard]] bool preservePitch() const { return preserve_pitch_; }
-  // 0 = light (default), 1 = dark, 2 = follow the operating system.
-  [[nodiscard]] int appearance() const { return appearance_; }
-  // Seconds skipped by the Left/Right arrow shortcuts and the transport's
-  // skip buttons. Whole-second values in [1, 60]; default 5.
-  [[nodiscard]] double seekStepSeconds() const { return seek_step_seconds_; }
-  // See the Q_PROPERTY doc above: purely a persisted preference the QML
-  // window chrome reads and reacts to.
-  [[nodiscard]] bool windowHugsVideo() const { return window_hugs_video_; }
   [[nodiscard]] double trimIn() const { return trim_in_; }
   [[nodiscard]] double trimOut() const { return trim_out_; }
   [[nodiscard]] double exportSpeed() const { return export_speed_; }
@@ -316,6 +278,11 @@ public:
 
   void setSource(const QUrl &source);
 
+  // Follows the app-level preferences from here on: the pitch mode and the
+  // volume ceiling are applied to this window's engines, the seek step and
+  // scroll gestures are read from them. Without it those features are off.
+  void bindSettings(const AppSettings &settings);
+
   Q_INVOKABLE void openFileDialog();
   Q_INVOKABLE bool open(const QUrl &source);
   Q_INVOKABLE void play();
@@ -336,8 +303,9 @@ public:
   Q_INVOKABLE void toggleMute();
   Q_INVOKABLE void setMuted(bool muted);
   Q_INVOKABLE void setVolume(double volume);
-  Q_INVOKABLE void setMaximumVolume(double maximum);
-  Q_INVOKABLE void setScrollGesturesEnabled(bool enabled);
+  // Lowering the ceiling below the current level clamps that level down at
+  // once and emits volumeClamped() so the window can say so on screen.
+  void setMaximumVolume(double maximum);
 
   // One wheel event over the video surface. The arguments are the QML
   // WheelEvent's own fields, passed through untouched so the normalization
@@ -366,10 +334,7 @@ public:
   Q_INVOKABLE bool loadSubtitleFile(const QUrl &file);
   Q_INVOKABLE void openSubtitleFileDialog();
   Q_INVOKABLE void toggleFullscreen();
-  Q_INVOKABLE void setPreservePitch(bool preserve);
-  Q_INVOKABLE void setAppearance(int appearance);
-  Q_INVOKABLE void setSeekStepSeconds(double seconds);
-  Q_INVOKABLE void setWindowHugsVideo(bool hugsVideo);
+  void setPreservePitch(bool preserve);
   Q_INVOKABLE void setTrimIn(double seconds);
   Q_INVOKABLE void setTrimOut(double seconds);
   Q_INVOKABLE void setExportSpeed(double speed);
@@ -427,13 +392,11 @@ signals:
   void durationChanged();
   void videoDisplaySizeChanged();
   void volumeChanged();
-  void maximumVolumeChanged();
   // The level was pulled down because the maximum-volume setting was lowered
   // under it -- not because anything asked for a new level. qml/Main.qml puts
   // the resulting value on screen in the volume OSD, so a boost silently
   // disappearing always has a visible cause.
   void volumeClamped();
-  void scrollGesturesEnabledChanged();
   void scrollGestureActiveChanged();
   void mutedChanged();
   void rateChanged();
@@ -442,10 +405,6 @@ signals:
   void subtitleBitmapChanged();
   void subtitleTracksChanged();
   void activeSubtitleTrackChanged();
-  void preservePitchChanged();
-  void appearanceChanged();
-  void seekStepSecondsChanged();
-  void windowHugsVideoChanged();
   void trimInChanged();
   void trimOutChanged();
   void exportSpeedChanged();
@@ -474,70 +433,13 @@ private:
   friend class NativePlaybackOwner;
   friend class PlayerControllerTestAccess;
 
-  struct OpenAttempt {
-    std::uint64_t id = 0;
-    std::uint64_t request_serial = 0;
-    std::uint64_t render_stamp = 0;
-    std::int64_t playlist_entry_id = -1;
-    bool reply_ready = false;
-    bool file_loaded = false;
-    bool playback_restarted = false;
-  };
-
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  struct RoutedFallbackOpen {
-    std::uint64_t attempt = 0;
-    std::uint64_t serial = 0;
-    std::uint64_t source_key = 0;
-    PlaybackSourceClass source_class{PlaybackSourceClass::Network};
-  };
-#endif
-
-  enum class RenderRecoveryMode {
-    NoReselection,
-    VideoReselect,
-    FullReload,
-  };
-
-  struct RenderRecovery {
-    std::uint64_t request_serial = 0;
-    double position = 0.0;
-    bool paused = true;
-    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
-    std::int64_t video_track_id = -1;
-    std::int64_t audio_track_id = -1;
-    std::int64_t subtitle_track_id = -1;
-    bool file_has_audio_track = false;
-    bool track_snapshot_proven = false;
-    std::vector<std::filesystem::path> external_subtitles;
-    QUrl reload_source;
-    std::int64_t playlist_position = -1;
-    bool preserve_playlist_context = false;
-    std::uint64_t accepted_render_stamp = 0;
-    bool command_failed = false;
-    bool file_loaded = false;
-    bool playback_restarted = false;
-    bool external_subtitles_restored = false;
-    std::size_t external_subtitles_restored_count = 0;
-    bool per_file_state_restored = false;
-    bool transport_restored = false;
-    bool position_overridden = false;
-    std::uint64_t completion_token = 0;
-    int restore_retry_count = 0;
-    bool restore_retry_queued = false;
-    QString restore_failure;
-  };
-
-  struct RenderRecoveryAttempt {
-    std::uint64_t id = 0;
-    std::uint64_t request_serial = 0;
-    std::uint64_t render_stamp = 0;
-    std::int64_t playlist_entry_id = -1;
-    std::int64_t video_track_id = -1;
-    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
-    std::int64_t started_playlist_entry_id = -1;
-    bool restarted_playlist_entry = false;
-  };
+  using OpenAttempt = MpvEngine::OpenAttempt;
+  using RoutedFallbackOpen = MpvEngine::RoutedFallbackOpen;
+  using RenderRecoveryMode = MpvEngine::RenderRecoveryMode;
+  using RenderRecovery = MpvEngine::RenderRecovery;
+  using RenderRecoveryAttempt = MpvEngine::RenderRecoveryAttempt;
+  using StartupPlaybackSync = MpvEngine::StartupPlaybackSync;
+  using PlaylistEntryRange = MpvEngine::PlaylistEntryRange;
 
   struct LivePlaybackState {
     bool paused = true;
@@ -545,22 +447,6 @@ private:
     std::optional<bool> eof_reached;
     std::optional<double> position;
     std::optional<double> duration;
-  };
-
-  struct StartupPlaybackSync {
-    std::uint64_t request_serial = 0;
-    std::uint64_t render_stamp = 0;
-    std::int64_t playlist_entry_id = -1;
-    bool intended_paused = false;
-    std::optional<double> intended_position;
-    bool position_overridden = false;
-    std::uint64_t completion_token = 0;
-    int retry_count = 0;
-  };
-
-  struct PlaylistEntryRange {
-    std::int64_t first = -1;
-    std::uint64_t count = 0;
   };
 
   struct ScrubSeek {
@@ -764,8 +650,7 @@ private:
   [[nodiscard]] NativeSeekDispatch
   dispatchNativeSeekIntent(const NativeSeekIntent &intent, void *context,
                            NativeSeekSubmitter submitter);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  // The production NativePreviewSubmitter: `context` is the NativePlaybackOwner
+  // The production NativePreviewSubmitter: `context` is the NativeEngine
   // and the mapping from its PreviewDisposition to NativePreviewSubmission is
   // stated here once, for the demand, presented and failed entry points alike.
   [[nodiscard]] static NativePreviewSubmission
@@ -780,7 +665,6 @@ private:
   dispatchNativeSeekIntent(const NativeSeekIntent &intent);
   void
   nativeCommitReady(const ::wam::media::native_playback::CommitReady &ready);
-#endif
   [[nodiscard]] bool completeNativePreviewPresented(
       std::uint64_t gesture, std::uint64_t request,
       double actual_presentation_time, void *context,
@@ -794,6 +678,14 @@ private:
   void nativeCommitFailed(std::uint64_t gesture,
                           std::uint64_t request) noexcept;
   void setNativeScrubPauseIntent(bool paused);
+  // A native scrub or seek owns the logical pause intent until it commits.
+  // Play at the end, or within one frame of it (never less than 50 ms),
+  // replays from the start. `frame_duration` is the playing engine's own
+  // frame duration, 0 when it knows none.
+  [[nodiscard]] bool atEndForReplay(double frame_duration) const noexcept;
+  [[nodiscard]] bool nativeSeekInFlight() const noexcept {
+    return native_scrub_intent_ || native_seek_intent_;
+  }
   void invalidateNativeScrubIntent() noexcept;
   void invalidateNativeSeekIntents() noexcept;
   void publishNativeMainPosition(double position);
@@ -877,7 +769,6 @@ private:
   [[nodiscard]] bool engineReady() const;
   [[nodiscard]] bool needsRenderContext() const;
   bool initializePlaybackEngine();
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   void prepareRoutedOpenIntent(const QUrl &source);
   [[nodiscard]] bool nativeRouteAdmissionAllowed() const noexcept;
   [[nodiscard]] bool
@@ -887,7 +778,6 @@ private:
   void notifyRoutedFallbackOpenFailed();
   [[nodiscard]] bool resetRoutedFallbackCoreAfterRelease(
       const std::shared_ptr<PlayerCore> &expected_core);
-#endif
   void finishStopUi(bool stop_compatibility_engine);
   bool flushPendingOpen(std::uint64_t render_stamp);
   bool flushRenderRecovery(std::uint64_t render_stamp);
@@ -930,14 +820,11 @@ private:
   void pollBackgroundWork();
   bool attachSubtitleFile(const std::filesystem::path &subtitle);
 
-  std::shared_ptr<PlayerCore> core_;
-  std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> fallback_runtime_;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  std::shared_ptr<PlayerCore> fallback_reset_core_;
-  std::unique_ptr<NativePlaybackOwner> native_playback_;
-  std::optional<RoutedFallbackOpen> routed_fallback_open_;
-#endif
+  MpvEngine mpv_;
+  // Null when this build has no native engine.
+  std::unique_ptr<NativeEngine> native_;
   QPointer<MpvVideoItem> video_item_;
+  const AppSettings *settings_ = nullptr;
   QTimer *work_timer_ = nullptr;
   QTimer *scrub_timeout_timer_ = nullptr;
   // Pointer-scroll gestures. The model owns the axis lock and the detent; the
@@ -981,13 +868,7 @@ private:
   // requested_source_ is the authoritative GUI intent. source_ mirrors mpv's
   // observed path and can briefly clear during asynchronous replacement.
   QUrl requested_source_;
-  QUrl pending_source_;
-  QUrl committed_entry_source_;
-  std::int64_t committed_playlist_position_ = -1;
   QString media_title_;
-  int appearance_ = 0;
-  double seek_step_seconds_ = 5.0;
-  bool window_hugs_video_ = true;
   QString last_error_;
   QString last_notice_;
   QString export_status_;
@@ -1000,7 +881,6 @@ private:
   bool idle_ = true;
   bool eof_reached_ = false;
   bool muted_ = false;
-  bool scroll_gestures_enabled_ = true;
   bool scroll_gesture_active_ = false;
   bool captions_visible_ = true;
   bool preserve_pitch_ = true;
@@ -1025,19 +905,10 @@ private:
   bool export_cancel_requested_ = false;
   bool export_completion_pending_ = false;
   bool caption_completion_pending_ = false;
-  bool observed_current_path_ = false;
   // See beginTeardown(): silences user-facing errors once this controller's
   // window is on its way out.
   bool tearing_down_ = false;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  // Whether THIS controller currently contributes a hold to the process-wide
-  // macOS playback activity assertion. The assertion is reference counted over
-  // every window's hold, so each window has to know whether it is already
-  // holding before it adds or drops one.
-  bool macos_activity_held_ = false;
-#endif
   std::uint64_t request_serial_ = 0;
-  std::uint64_t pending_request_serial_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;
   std::uint64_t next_scrub_gesture_id_ = 0;
@@ -1049,25 +920,10 @@ private:
   std::uint64_t scrub_timeout_command_ = 0;
   std::uint64_t next_render_recovery_completion_token_ = 0;
   std::uint64_t next_startup_playback_sync_token_ = 0;
-  std::uint64_t last_reported_render_failure_stamp_ = 0;
-  std::int64_t active_event_playlist_entry_id_ = -1;
-  std::int64_t terminal_playlist_entry_id_ = -1;
-  std::int64_t last_error_playlist_entry_id_ = -1;
-  std::int64_t selected_video_track_id_ = -1;
-  std::int64_t selected_audio_track_id_ = -1;
-  std::int64_t selected_subtitle_track_id_ = -1;
-  std::int64_t selected_tracks_playlist_entry_id_ = -1;
-  std::optional<bool> current_file_has_audio_track_;
-  std::vector<std::filesystem::path> attached_subtitle_files_;
-  // The subset of the above this player GENERATED, so the Subtitles menu can
-  // name them honestly. A file the user loaded is not a generated caption.
+  // The subset of mpv_.lineage.attached_subtitle_files this player GENERATED,
+  // so the Subtitles menu can name them honestly. A file the user loaded is
+  // not a generated caption.
   std::vector<std::filesystem::path> generated_caption_files_;
-  std::vector<PlaylistEntryRange> redirect_ranges_;
-  std::optional<OpenAttempt> open_attempt_;
-  std::optional<OpenAttempt> committed_open_;
-  std::optional<RenderRecovery> render_recovery_;
-  std::optional<RenderRecoveryAttempt> render_recovery_attempt_;
-  std::optional<StartupPlaybackSync> startup_playback_sync_;
   std::optional<ScrubSeek> scrub_seek_;
   std::optional<NativeScrubIntent> native_scrub_intent_;
   std::optional<NativeSeekIntent> native_seek_intent_;
