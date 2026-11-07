@@ -339,15 +339,31 @@ public:
              std::uint64_t render_stamp);
   };
 
+  // Startup's deferred snapshot: waiting for PLAYBACK_RESTART, a completion
+  // queued for the end of the event drain, or a retry timer pending after a
+  // live state that disagreed. A queued completion or retry runs only while
+  // its token is current.
+  struct StartupAwaitingRestart {};
+  struct StartupCompletionQueued {
+    std::uint64_t token;
+  };
+  struct StartupRetryQueued {
+    std::uint64_t token;
+  };
+  using StartupSyncPhase =
+      std::variant<StartupAwaitingRestart, StartupCompletionQueued,
+                   StartupRetryQueued>;
+
   struct StartupPlaybackSync {
     std::uint64_t request_serial = 0;
     std::uint64_t render_stamp = 0;
     std::int64_t playlist_entry_id = -1;
     bool intended_paused = false;
+    // Set only by a user seek during startup, which then outranks the live
+    // position.
     std::optional<double> intended_position;
-    bool position_overridden = false;
-    std::uint64_t completion_token = 0;
     int retry_count = 0;
+    StartupSyncPhase phase;
   };
 
   struct PlaylistEntryRange {
@@ -574,10 +590,7 @@ public:
   void commitRenderRecovery(const RenderRecovery &recovery,
                             const LivePlaybackState &live_state);
   void queueStartupPlaybackSync();
-  void finishStartupPlaybackSync(std::uint64_t completion_token,
-                                 std::uint64_t request_serial,
-                                 std::uint64_t render_stamp,
-                                 std::int64_t playlist_entry_id);
+  void finishStartupPlaybackSync(std::uint64_t completion_token);
   void reconcileStartupPlaybackSync(const LivePlaybackState &live_state);
   void commitStartupPlaybackSync(const LivePlaybackState &live_state);
   void scheduleRenderRecoveryRetry(const QString &error);
@@ -672,8 +685,8 @@ private:
   std::uint64_t next_scrub_command_id_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;
-  std::uint64_t next_render_recovery_token_ = 0;
-  std::uint64_t next_startup_playback_sync_token_ = 0;
+  // Tokens for queued recovery/startup retries and completions.
+  std::uint64_t next_deferred_token_ = 0;
   QTimer *scrub_timeout_timer_ = nullptr;
   std::uint64_t scrub_timeout_gesture_ = 0;
   std::uint64_t scrub_timeout_request_serial_ = 0;

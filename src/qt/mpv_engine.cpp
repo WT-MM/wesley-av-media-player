@@ -1240,7 +1240,7 @@ void MpvEngine::queueRenderRecoveryCompletion() {
     return;
   }
 
-  const std::uint64_t completion_token = nextToken(next_render_recovery_token_);
+  const std::uint64_t completion_token = nextToken(next_deferred_token_);
   const std::uint64_t render_stamp = restoring->stamp;
   const std::int64_t playlist_entry_id = lineage.committed_open->playlist_entry_id;
   restoring->completion_token = completion_token;
@@ -1361,7 +1361,8 @@ void MpvEngine::commitRenderRecovery(
 
 void MpvEngine::queueStartupPlaybackSync() {
   if (!lineage.startup_playback_sync || !lineage.committed_open || !core ||
-      lineage.startup_playback_sync->completion_token != 0 ||
+      std::holds_alternative<StartupCompletionQueued>(
+          lineage.startup_playback_sync->phase) ||
       lineage.startup_playback_sync->request_serial != host_.requestSerial() ||
       lineage.startup_playback_sync->playlist_entry_id < 0 ||
       lineage.startup_playback_sync->playlist_entry_id !=
@@ -1369,40 +1370,22 @@ void MpvEngine::queueStartupPlaybackSync() {
     return;
   }
 
-  ++next_startup_playback_sync_token_;
-  if (next_startup_playback_sync_token_ == 0)
-    ++next_startup_playback_sync_token_;
-  const std::uint64_t completion_token = next_startup_playback_sync_token_;
-  const std::uint64_t request_serial = lineage.startup_playback_sync->request_serial;
-  const std::uint64_t render_stamp = lineage.startup_playback_sync->render_stamp;
-  const std::int64_t playlist_entry_id =
-      lineage.startup_playback_sync->playlist_entry_id;
-  lineage.startup_playback_sync->completion_token = completion_token;
-
-  QTimer::singleShot(0, owner_,
-                     [this, completion_token, request_serial, render_stamp,
-                      playlist_entry_id] {
-                       finishStartupPlaybackSync(completion_token,
-                                                 request_serial, render_stamp,
-                                                 playlist_entry_id);
-                     });
+  const std::uint64_t completion_token = nextToken(next_deferred_token_);
+  lineage.startup_playback_sync->phase = StartupCompletionQueued{completion_token};
+  QTimer::singleShot(0, owner_, [this, completion_token] {
+    finishStartupPlaybackSync(completion_token);
+  });
 }
 
-void MpvEngine::finishStartupPlaybackSync(
-    std::uint64_t completion_token, std::uint64_t request_serial,
-    std::uint64_t render_stamp, std::int64_t playlist_entry_id) {
-  const auto completion_is_current = [this, completion_token, request_serial,
-                                      render_stamp, playlist_entry_id] {
-    return lineage.startup_playback_sync && lineage.committed_open && core &&
-           lineage.startup_playback_sync->completion_token == completion_token &&
-           lineage.startup_playback_sync->request_serial == request_serial &&
-           lineage.startup_playback_sync->render_stamp == render_stamp &&
-           lineage.startup_playback_sync->playlist_entry_id == playlist_entry_id &&
-           lineage.committed_open->request_serial == request_serial &&
-           lineage.committed_open->render_stamp == render_stamp &&
-           lineage.committed_open->playlist_entry_id == playlist_entry_id &&
-           lineage.active_event_playlist_entry_id == playlist_entry_id &&
-           core->validateRenderTicket({render_stamp});
+void MpvEngine::finishStartupPlaybackSync(std::uint64_t completion_token) {
+  const auto completion_is_current = [&] {
+    if (!lineage.startup_playback_sync)
+      return false;
+    const StartupPlaybackSync &sync = *lineage.startup_playback_sync;
+    const auto *queued = std::get_if<StartupCompletionQueued>(&sync.phase);
+    return queued && queued->token == completion_token &&
+           committedOutputIs(sync.request_serial, sync.render_stamp,
+                             sync.playlist_entry_id);
   };
 
   if (!completion_is_current())
@@ -1415,29 +1398,24 @@ void MpvEngine::finishStartupPlaybackSync(
   if (!completion_is_current())
     return;
 
-  lineage.startup_playback_sync->completion_token = 0;
+  StartupPlaybackSync &sync = *lineage.startup_playback_sync;
+  sync.phase = StartupAwaitingRestart{};
   const auto live_state = readLivePlaybackState();
-  const bool live_state_matches =
-      live_state &&
-      livePlaybackStateMatches(lineage.startup_playback_sync->intended_paused,
-                               *live_state);
-  if (!live_state_matches) {
-    if (lineage.startup_playback_sync->retry_count < 3) {
-      constexpr std::array<int, 3> kRetryDelaysMs{0, 16, 50};
-      const int retry_index = lineage.startup_playback_sync->retry_count++;
+  if (!live_state || !livePlaybackStateMatches(sync.intended_paused, *live_state)) {
+    if (sync.retry_count < 3) {
+      const int retry_index = sync.retry_count++;
+      const std::uint64_t retry_token = nextToken(next_deferred_token_);
+      sync.phase = StartupRetryQueued{retry_token};
       QTimer::singleShot(
           kRetryDelaysMs[static_cast<std::size_t>(retry_index)], owner_,
-          [this, request_serial, render_stamp, playlist_entry_id] {
-            if (!lineage.startup_playback_sync || !lineage.committed_open ||
-                lineage.startup_playback_sync->request_serial != request_serial ||
-                lineage.startup_playback_sync->render_stamp != render_stamp ||
-                lineage.startup_playback_sync->playlist_entry_id !=
-                    playlist_entry_id ||
-                lineage.committed_open->request_serial != request_serial ||
-                lineage.committed_open->render_stamp != render_stamp ||
-                lineage.committed_open->playlist_entry_id != playlist_entry_id) {
+          [this, retry_token] {
+            const auto *retry =
+                lineage.startup_playback_sync
+                    ? std::get_if<StartupRetryQueued>(
+                          &lineage.startup_playback_sync->phase)
+                    : nullptr;
+            if (!retry || retry->token != retry_token)
               return;
-            }
             queueStartupPlaybackSync();
           });
       return;
@@ -1484,8 +1462,8 @@ void MpvEngine::commitStartupPlaybackSync(
   const MpvTransportChange change = host_.assignTransport(
       {live_state.paused, live_state.idle,
        live_state.eof_reached.value_or(host_.eofReached()),
-       startup_sync.position_overridden
-           ? startup_sync.intended_position.value_or(host_.position())
+       startup_sync.intended_position
+           ? *startup_sync.intended_position
            : live_state.position.value_or(host_.position())});
   lineage.startup_playback_sync.reset();
   cacheCurrentTrackSelection();
@@ -1507,7 +1485,7 @@ void MpvEngine::scheduleRenderRecoveryRetry(const QString &error) {
   }
 
   const int retry_index = lineage.render_recovery->restore_retries++;
-  const std::uint64_t retry_token = nextToken(next_render_recovery_token_);
+  const std::uint64_t retry_token = nextToken(next_deferred_token_);
   restoring->retry_token = retry_token;
   QTimer::singleShot(kRetryDelaysMs[static_cast<std::size_t>(retry_index)],
                      owner_, [this, retry_token] {
@@ -1590,13 +1568,12 @@ void MpvEngine::handleRenderInvalidated(
       // still available during teardown.
       const StartupPlaybackSync startup_sync = *lineage.startup_playback_sync;
       startup_paused_intent = startup_sync.intended_paused;
-      if (startup_sync.position_overridden)
-        startup_position = startup_sync.intended_position;
+      startup_position = startup_sync.intended_position;
       if (const auto live_state = readLivePlaybackState()) {
         startup_terminal_state =
-            !startup_sync.position_overridden &&
+            !startup_sync.intended_position &&
             (live_state->idle || live_state->eof_reached.value_or(false));
-        if (!startup_sync.position_overridden)
+        if (!startup_sync.intended_position)
           startup_position = live_state->position;
         if (startup_terminal_state)
           startup_paused_intent = true;
@@ -1952,7 +1929,7 @@ void MpvEngine::handleStartFile(std::int64_t playlist_entry_id) {
   if (lineage.startup_playback_sync &&
       lineage.startup_playback_sync->request_serial == host_.requestSerial()) {
     lineage.startup_playback_sync->playlist_entry_id = playlist_entry_id;
-    lineage.startup_playback_sync->completion_token = 0;
+    lineage.startup_playback_sync->phase = StartupAwaitingRestart{};
     lineage.startup_playback_sync->retry_count = 0;
   }
   const std::int64_t live_playlist_position =
@@ -2725,7 +2702,6 @@ void MpvEngine::overrideIntendedPosition(double target) {
   if (lineage.startup_playback_sync &&
       lineage.startup_playback_sync->request_serial == request_serial) {
     lineage.startup_playback_sync->intended_position = target;
-    lineage.startup_playback_sync->position_overridden = true;
   }
 }
 

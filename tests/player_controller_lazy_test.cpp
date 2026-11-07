@@ -151,7 +151,8 @@ class PlayerControllerTestAccess final {
   static bool startupPlaybackSyncQueued(
       const PlayerController &controller) {
     return controller.mpv_.lineage.startup_playback_sync &&
-           controller.mpv_.lineage.startup_playback_sync->completion_token != 0;
+           std::holds_alternative<MpvEngine::StartupCompletionQueued>(
+               controller.mpv_.lineage.startup_playback_sync->phase);
   }
 
   static bool startupPlaybackIntendsPause(
@@ -163,7 +164,7 @@ class PlayerControllerTestAccess final {
   static bool startupPositionOverridden(
       const PlayerController &controller) {
     return controller.mpv_.lineage.startup_playback_sync &&
-           controller.mpv_.lineage.startup_playback_sync->position_overridden;
+           controller.mpv_.lineage.startup_playback_sync->intended_position;
   }
 
   static double startupIntendedPosition(
