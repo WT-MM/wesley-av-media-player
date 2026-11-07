@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/byte_source.hpp"
 #include "platform/macos/core_media_carriage.hpp"
 #include "platform/macos/native_preview_source.hpp"
 
@@ -35,6 +36,118 @@ inline void publishPreviewCancellation(
                                           std::memory_order_acquire)) {
   }
 }
+
+// One preview source's epoch machine, shared by every preview backend. The
+// owner thread drives
+//
+//   Idle -> Beginning(e) -> Open(e) -> AtEnd(e),  and back to Idle on retire,
+//
+// while the public operation slot, the active epoch, the high-water mark and
+// the cancellation latch are published atomically so any thread may cancel
+// and read facts.
+class NativePreviewEpochs {
+ public:
+  enum class Phase : std::uint8_t { Idle, Beginning, Open, AtEnd };
+
+  [[nodiscard]] bool admits(std::uint64_t epoch) const noexcept {
+    return epoch != 0 && epoch > highWater_.load(std::memory_order_acquire);
+  }
+
+  // Burns the previous cancellation latch, publishes the new operation slot,
+  // then raises the high-water mark; the caller then retires its old reader
+  // with retire(false). A late cancel for the old slot is harmless, and every
+  // cancel after the operation store either reaches this epoch or remains
+  // latched until it is live.
+  void announce(std::uint64_t epoch) noexcept {
+    cancelled_.store(0, std::memory_order_release);
+    operation_.store(epoch, std::memory_order_release);
+    highWater_.store(epoch, std::memory_order_release);
+  }
+
+  // From here a cancellation probe answers for `epoch`.
+  void beginning(std::uint64_t epoch) noexcept {
+    active_.store(epoch, std::memory_order_release);
+    phase_ = Phase::Beginning;
+  }
+
+  void opened() noexcept {
+    open_.store(true, std::memory_order_release);
+    phase_ = Phase::Open;
+  }
+
+  // The reader stays open at its end: a repeated read answers end of stream
+  // and a forward retarget is still served.
+  void reachedEnd() noexcept { phase_ = Phase::AtEnd; }
+
+  void retire(bool withdrawOperation = true) noexcept {
+    active_.store(0, std::memory_order_release);
+    if (withdrawOperation) {
+      operation_.store(0, std::memory_order_release);
+    }
+    open_.store(false, std::memory_order_release);
+    phase_ = Phase::Idle;
+  }
+
+  void requestCancel(std::uint64_t epoch) noexcept {
+    publishPreviewCancellation(operation_, cancelled_, epoch);
+  }
+
+  [[nodiscard]] Phase phase() const noexcept { return phase_; }
+
+  [[nodiscard]] bool cancelled(std::uint64_t epoch) const noexcept {
+    return cancelled_.load(std::memory_order_acquire) == epoch;
+  }
+
+  // The live epoch's cancellation, as a demuxer's probe observes it.
+  [[nodiscard]] bool activeCancelled() const noexcept {
+    const std::uint64_t active = active_.load(std::memory_order_acquire);
+    return active != 0 && cancelled(active);
+  }
+
+  // `epoch` is the open read operation.
+  [[nodiscard]] bool reading(std::uint64_t epoch) const noexcept {
+    if (epoch == 0 || epoch != active_.load(std::memory_order_acquire)) {
+      return false;
+    }
+    switch (phase_) {
+    case Phase::Idle:
+    case Phase::Beginning:
+      return false;
+    case Phase::Open:
+    case Phase::AtEnd:
+      return true;
+    }
+    return false;
+  }
+
+  // `epoch` is the open, uncancelled public operation, so it may retarget.
+  [[nodiscard]] bool retargetable(std::uint64_t epoch) const noexcept {
+    return reading(epoch) &&
+           epoch == operation_.load(std::memory_order_acquire) &&
+           !cancelled(epoch);
+  }
+
+  void publish(NativePreviewSourceFacts& facts) const noexcept {
+    facts.operationEpoch = operation_.load(std::memory_order_acquire);
+    facts.activeEpoch = active_.load(std::memory_order_acquire);
+    facts.epochHighWater = highWater_.load(std::memory_order_acquire);
+    facts.open = open_.load(std::memory_order_acquire);
+    facts.cancelled = facts.activeEpoch != 0 && cancelled(facts.activeEpoch);
+  }
+
+  // The live public operation, for a backend that must reach its reader.
+  [[nodiscard]] bool operationIs(std::uint64_t epoch) const noexcept {
+    return epoch != 0 && operation_.load(std::memory_order_acquire) == epoch;
+  }
+
+ private:
+  Phase phase_{Phase::Idle};
+  std::atomic<std::uint64_t> active_{0};
+  std::atomic<std::uint64_t> operation_{0};
+  std::atomic<std::uint64_t> highWater_{0};
+  std::atomic<std::uint64_t> cancelled_{0};
+  std::atomic<bool> open_{false};
+};
 
 // The one preview body shared by every backend built on a payload-free custom
 // demuxer (Matroska, MPEG-TS), mirroring NativeCustomSourceCore on the main
@@ -107,35 +220,25 @@ class NativePreviewSourceCore final : public NativePreviewSource {
       NativePreviewRequest request) noexcept override {
     NativePreviewBeginOutcome outcome;
     outcome.epoch = request.epoch;
-    if (!validTarget(request.target) || request.epoch == 0 ||
-        request.epoch <= epochHighWater_.load(std::memory_order_acquire)) {
+    if (!validTarget(request.target) || !epochs_.admits(request.epoch)) {
       outcome.error = "preview request is stale or invalid";
       return outcome;
     }
     try {
-      // Burn the previous cancellation latch, publish the new operation slot,
-      // raise the high-water mark, then retire the old cursor. A late cancel
-      // for the old slot is harmless and every cancel after the
-      // operationEpoch store either reaches this generation or remains
-      // latched until it is live.
-      cancelledEpoch_.store(0, std::memory_order_release);
-      operationEpoch_.store(request.epoch, std::memory_order_release);
-      epochHighWater_.store(request.epoch, std::memory_order_release);
+      epochs_.announce(request.epoch);
       retireActive(false);
       target_ = request.target;
       publishTarget(request.target);
       publishDecodeStart({});
-      eos_ = false;
 
-      if (cancelledEpoch_.load(std::memory_order_acquire) == request.epoch) {
+      if (epochs_.cancelled(request.epoch)) {
         outcome.status = NativePreviewStatus::Cancelled;
         retireActive();
         return outcome;
       }
-      // Published before planning so the demuxer's cancellation probe --
-      // which compares against the active epoch -- already answers for this
-      // epoch while planGeneration() and makeVideoCursor() run.
-      activeEpoch_.store(request.epoch, std::memory_order_release);
+      // Before planning, so the demuxer's cancellation probe already answers
+      // for this epoch while planGeneration() and makeVideoCursor() run.
+      epochs_.beginning(request.epoch);
 
       const typename Traits::PlanOutcome planned = asset_->planGeneration(
           request.target, media::MediaSeekMode::Accurate, cancellation());
@@ -182,13 +285,13 @@ class NativePreviewSourceCore final : public NativePreviewSource {
       cursorsStarted_.fetch_add(1, std::memory_order_relaxed);
       Traits::noteCursorStarted(*context_);
 
-      if (cancelledEpoch_.load(std::memory_order_acquire) == request.epoch) {
+      if (epochs_.cancelled(request.epoch)) {
         outcome.status = NativePreviewStatus::Cancelled;
         retireActive();
         return outcome;
       }
       publishDecodeStart(plan.actualDecodeStart);
-      open_.store(true, std::memory_order_release);
+      epochs_.opened();
       outcome.status = NativePreviewStatus::Ready;
       outcome.actualDecodeStart = plan.actualDecodeStart;
       return outcome;
@@ -208,11 +311,7 @@ class NativePreviewSourceCore final : public NativePreviewSource {
   // boundary the next samples are measured against moves.
   [[nodiscard]] bool advanceTarget(std::uint64_t expectedEpoch,
                                    media::MediaTime target) noexcept override {
-    if (expectedEpoch == 0 || !validTarget(target) ||
-        expectedEpoch != activeEpoch_.load(std::memory_order_acquire) ||
-        expectedEpoch != operationEpoch_.load(std::memory_order_acquire) ||
-        !open_.load(std::memory_order_acquire) ||
-        cancelledEpoch_.load(std::memory_order_acquire) == expectedEpoch) {
+    if (!validTarget(target) || !epochs_.retargetable(expectedEpoch)) {
       return false;
     }
     const auto order = media::compareMediaTime(target_, target);
@@ -227,28 +326,26 @@ class NativePreviewSourceCore final : public NativePreviewSource {
 
   [[nodiscard]] NativePreviewReadResult readNext(
       std::uint64_t expectedEpoch) noexcept override {
-    if (expectedEpoch == 0 ||
-        expectedEpoch != activeEpoch_.load(std::memory_order_acquire) ||
-        !open_.load(std::memory_order_acquire)) {
+    if (!epochs_.reading(expectedEpoch)) {
       return NativePreviewCancelled{expectedEpoch};
     }
-    if (cancelledEpoch_.load(std::memory_order_acquire) == expectedEpoch) {
+    if (epochs_.cancelled(expectedEpoch)) {
       retireActive();
       return NativePreviewCancelled{expectedEpoch};
     }
-    if (eos_) {
+    if (epochs_.phase() == NativePreviewEpochs::Phase::AtEnd) {
       return NativePreviewEndOfStream{expectedEpoch};
     }
     try {
       typename Traits::CursorReadResult read =
           cursor_->readNext(cancellation());
       if (std::holds_alternative<typename Traits::CursorCancelled>(read) ||
-          cancelledEpoch_.load(std::memory_order_acquire) == expectedEpoch) {
+          epochs_.cancelled(expectedEpoch)) {
         retireActive();
         return NativePreviewCancelled{expectedEpoch};
       }
       if (std::holds_alternative<typename Traits::CursorEnd>(read)) {
-        eos_ = true;
+        epochs_.reachedEnd();
         return NativePreviewEndOfStream{expectedEpoch};
       }
       if (const auto* failed =
@@ -340,7 +437,7 @@ class NativePreviewSourceCore final : public NativePreviewSource {
                                ? named(" preview sample failed validation")
                                : std::move(error)};
       }
-      if (cancelledEpoch_.load(std::memory_order_acquire) == expectedEpoch) {
+      if (epochs_.cancelled(expectedEpoch)) {
         retireActive();
         return NativePreviewCancelled{expectedEpoch};
       }
@@ -361,7 +458,7 @@ class NativePreviewSourceCore final : public NativePreviewSource {
   // The demuxer takes its cancellation from the probe, so there is no reader
   // object to abort out of band.
   void requestCancel(std::uint64_t epoch) noexcept override {
-    publishPreviewCancellation(operationEpoch_, cancelledEpoch_, epoch);
+    epochs_.requestCancel(epoch);
   }
 
   void close() noexcept override {
@@ -369,14 +466,11 @@ class NativePreviewSourceCore final : public NativePreviewSource {
     target_ = {};
     publishTarget({});
     publishDecodeStart({});
-    eos_ = false;
   }
 
   [[nodiscard]] NativePreviewSourceFacts facts() const noexcept override {
     NativePreviewSourceFacts result;
-    result.operationEpoch = operationEpoch_.load(std::memory_order_acquire);
-    result.activeEpoch = activeEpoch_.load(std::memory_order_acquire);
-    result.epochHighWater = epochHighWater_.load(std::memory_order_acquire);
+    epochs_.publish(result);
     result.target.timescale = targetScale_.load(std::memory_order_acquire);
     result.target.value = targetValue_.load(std::memory_order_relaxed);
     result.actualDecodeStart.timescale =
@@ -389,10 +483,6 @@ class NativePreviewSourceCore final : public NativePreviewSource {
         peakStagedSampleBuffers_.load(std::memory_order_relaxed);
     result.samplesRead = samplesRead_.load(std::memory_order_relaxed);
     result.forwardRetargets = forwardRetargets_.load(std::memory_order_relaxed);
-    result.open = open_.load(std::memory_order_acquire);
-    result.cancelled =
-        result.activeEpoch != 0 &&
-        cancelledEpoch_.load(std::memory_order_acquire) == result.activeEpoch;
     // The assetLoad* facts stay zero: preview is only ever handed the context
     // the main source already produced. The neutral facts call one cursor a
     // reader, exactly as an AVAssetReader is the AVFoundation route's.
@@ -441,11 +531,7 @@ class NativePreviewSourceCore final : public NativePreviewSource {
   // reaches here.
   void retireActive(bool withdrawOperation = true) noexcept {
     cursor_.reset();
-    activeEpoch_.store(0, std::memory_order_release);
-    if (withdrawOperation) {
-      operationEpoch_.store(0, std::memory_order_release);
-    }
-    open_.store(false, std::memory_order_release);
+    epochs_.retire(withdrawOperation);
     clearStage();
   }
 
@@ -478,15 +564,9 @@ class NativePreviewSourceCore final : public NativePreviewSource {
   // this latch is what planGeneration(), every cursor read and every payload
   // copy observes. Only the owner thread, inside a demuxer call it made
   // itself, dereferences the context, so the probe reads atomics only.
-  [[nodiscard]] bool isCancelled() const noexcept {
-    const std::uint64_t active = activeEpoch_.load(std::memory_order_acquire);
-    return active != 0 &&
-           cancelledEpoch_.load(std::memory_order_acquire) == active;
-  }
-
   [[nodiscard]] static bool cancellationProbe(const void* context) noexcept {
     const auto* self = static_cast<const NativePreviewSourceCore*>(context);
-    return self != nullptr && self->isCancelled();
+    return self != nullptr && self->epochs_.activeCancelled();
   }
 
   [[nodiscard]] media::CancellationToken cancellation() const noexcept {
@@ -509,12 +589,8 @@ class NativePreviewSourceCore final : public NativePreviewSource {
 
   std::unique_ptr<Cursor> cursor_;
   media::MediaTime target_{};
-  bool eos_{false};
+  NativePreviewEpochs epochs_;
 
-  std::atomic<std::uint64_t> activeEpoch_{0};
-  std::atomic<std::uint64_t> operationEpoch_{0};
-  std::atomic<std::uint64_t> epochHighWater_{0};
-  std::atomic<std::uint64_t> cancelledEpoch_{0};
   std::atomic<std::int64_t> targetValue_{0};
   std::atomic<std::int32_t> targetScale_{0};
   std::atomic<std::int64_t> decodeStartValue_{0};
@@ -529,7 +605,6 @@ class NativePreviewSourceCore final : public NativePreviewSource {
   // accumulates the same two facts across main seeks and previews.
   std::atomic<std::uint64_t> cursorCreationAttempts_{0};
   std::atomic<std::uint64_t> cursorsStarted_{0};
-  std::atomic<bool> open_{false};
 };
 
 }  // namespace wam::macos

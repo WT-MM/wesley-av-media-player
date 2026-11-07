@@ -5,6 +5,7 @@
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
 #include "core_media_source_support.hpp"
+#include "native_preview_source_core.hpp"
 
 #import <AVFoundation/AVFoundation.h>
 
@@ -416,15 +417,11 @@ struct AVFoundationPreviewSource::Impl final {
         &publishedGeneration,
         std::shared_ptr<AVFoundationPreviewGeneration>{},
         std::memory_order_acq_rel);
-    activeEpoch.store(0, std::memory_order_release);
-    if (withdrawOperation) {
-      operationEpoch.store(0, std::memory_order_release);
-    }
+    epochs.retire(withdrawOperation);
     if (active != nullptr) {
       active->cancel();
     }
     ownerGeneration.reset();
-    open.store(false, std::memory_order_release);
     currentStagedCompressedBytes.store(0, std::memory_order_release);
     stagedSampleBuffers.store(0, std::memory_order_release);
   }
@@ -465,12 +462,7 @@ struct AVFoundationPreviewSource::Impl final {
   std::shared_ptr<AVFoundationPreviewGeneration> publishedGeneration;
   MediaTime target{};
   MediaTime actualDecodeStart{};
-  bool eos{false};
-
-  std::atomic<std::uint64_t> activeEpoch{0};
-  std::atomic<std::uint64_t> operationEpoch{0};
-  std::atomic<std::uint64_t> epochHighWater{0};
-  std::atomic<std::uint64_t> cancelledEpoch{0};
+  NativePreviewEpochs epochs;
   std::atomic<std::int64_t> targetValue{0};
   std::atomic<std::int32_t> targetScale{0};
   std::atomic<std::int64_t> decodeStartValue{0};
@@ -482,7 +474,6 @@ struct AVFoundationPreviewSource::Impl final {
   std::atomic<std::uint64_t> samplesRead{0};
   std::atomic<std::uint64_t> discontinuitiesRead{0};
   std::atomic<std::uint64_t> forwardRetargets{0};
-  std::atomic<bool> open{false};
 #if defined(WAM_NATIVE_TEST_SEAMS)
   std::atomic<AVFoundationPreviewCancelInterleaveHook> cancelInterleaveHook{
       nullptr};
@@ -532,35 +523,24 @@ NativePreviewBeginOutcome AVFoundationPreviewSource::begin(
   NativePreviewBeginOutcome outcome;
   outcome.epoch = request.epoch;
   if (impl_ == nullptr || !validRequest(impl_->binding, request) ||
-      request.epoch <=
-          impl_->epochHighWater.load(std::memory_order_acquire)) {
+      !impl_->epochs.admits(request.epoch)) {
     outcome.error = "preview request is stale or invalid";
     return outcome;
   }
   try {
-    // Publish the private epoch's exact cancellation slot, then burn it before
-    // retiring the old reader. Clearing the old latch precedes publication:
-    // a late cancel for the old slot is harmless, while every cancel after the
-    // operationEpoch store either reaches the new generation or remains
-    // latched until that generation is published. Publishing the slot before
-    // the high-water mark also leaves no accepted-but-uncancellable window.
-    impl_->cancelledEpoch.store(0, std::memory_order_release);
-    impl_->operationEpoch.store(request.epoch, std::memory_order_release);
-    impl_->epochHighWater.store(request.epoch, std::memory_order_release);
+    impl_->epochs.announce(request.epoch);
     impl_->retireActive(false);
     impl_->target = request.target;
     impl_->actualDecodeStart = {};
     impl_->publishTarget(request.target);
     impl_->publishDecodeStart({});
-    impl_->eos = false;
 
-    if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
-        request.epoch) {
+    if (impl_->epochs.cancelled(request.epoch)) {
       outcome.status = NativePreviewStatus::Cancelled;
       impl_->retireActive();
       return outcome;
     }
-    impl_->activeEpoch.store(request.epoch, std::memory_order_release);
+    impl_->epochs.beginning(request.epoch);
     impl_->ownerGeneration =
         impl_->backend->makeGeneration(impl_->binding, request);
     if (impl_->ownerGeneration == nullptr ||
@@ -573,14 +553,12 @@ NativePreviewBeginOutcome AVFoundationPreviewSource::begin(
     std::atomic_store_explicit(&impl_->publishedGeneration,
                                impl_->ownerGeneration,
                                std::memory_order_release);
-    if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
-        request.epoch) {
+    if (impl_->epochs.cancelled(request.epoch)) {
       impl_->ownerGeneration->cancel();
     }
     AVFoundationPreviewGenerationStart started =
         impl_->ownerGeneration->start();
-    if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
-            request.epoch ||
+    if (impl_->epochs.cancelled(request.epoch) ||
         started.status == NativePreviewStatus::Cancelled) {
       outcome.status = NativePreviewStatus::Cancelled;
       outcome.error = std::move(started.error);
@@ -604,7 +582,7 @@ NativePreviewBeginOutcome AVFoundationPreviewSource::begin(
     }
     impl_->actualDecodeStart = started.actualDecodeStart;
     impl_->publishDecodeStart(started.actualDecodeStart);
-    impl_->open.store(true, std::memory_order_release);
+    impl_->epochs.opened();
     outcome.status = NativePreviewStatus::Ready;
     outcome.actualDecodeStart = started.actualDecodeStart;
     return outcome;
@@ -621,17 +599,14 @@ NativePreviewBeginOutcome AVFoundationPreviewSource::begin(
 
 NativePreviewReadResult AVFoundationPreviewSource::readNext(
     std::uint64_t expectedEpoch) noexcept {
-  if (impl_ == nullptr || expectedEpoch == 0 ||
-      expectedEpoch != impl_->activeEpoch.load(std::memory_order_acquire) ||
-      !impl_->open.load(std::memory_order_acquire)) {
+  if (impl_ == nullptr || !impl_->epochs.reading(expectedEpoch)) {
     return NativePreviewCancelled{expectedEpoch};
   }
-  if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
-      expectedEpoch) {
+  if (impl_->epochs.cancelled(expectedEpoch)) {
     impl_->retireActive();
     return NativePreviewCancelled{expectedEpoch};
   }
-  if (impl_->eos) {
+  if (impl_->epochs.phase() == NativePreviewEpochs::Phase::AtEnd) {
     return NativePreviewEndOfStream{expectedEpoch};
   }
   try {
@@ -659,8 +634,7 @@ NativePreviewReadResult AVFoundationPreviewSource::readNext(
                                                 std::memory_order_release);
       impl_->stagedSampleBuffers.store(0, std::memory_order_release);
     };
-    if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
-            expectedEpoch ||
+    if (impl_->epochs.cancelled(expectedEpoch) ||
         copied.status == AVFoundationPreviewSampleStatus::Cancelled) {
       clearStage();
       impl_->retireActive();
@@ -668,7 +642,7 @@ NativePreviewReadResult AVFoundationPreviewSource::readNext(
     }
     if (copied.status == AVFoundationPreviewSampleStatus::EndOfStream) {
       clearStage();
-      impl_->eos = true;
+      impl_->epochs.reachedEnd();
       return NativePreviewEndOfStream{expectedEpoch};
     }
     if (copied.status != AVFoundationPreviewSampleStatus::Sample ||
@@ -717,8 +691,7 @@ NativePreviewReadResult AVFoundationPreviewSource::readNext(
                 ? "preview discontinuity is invalid"
                 : std::move(discontinuityError)};
       }
-      if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
-          expectedEpoch) {
+      if (impl_->epochs.cancelled(expectedEpoch)) {
         impl_->retireActive();
         return NativePreviewCancelled{expectedEpoch};
       }
@@ -740,8 +713,7 @@ NativePreviewReadResult AVFoundationPreviewSource::readNext(
       impl_->retireActive();
       return NativePreviewFailure{expectedEpoch, std::move(error)};
     }
-    if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
-        expectedEpoch) {
+    if (impl_->epochs.cancelled(expectedEpoch)) {
       impl_->retireActive();
       return NativePreviewCancelled{expectedEpoch};
     }
@@ -765,13 +737,9 @@ NativePreviewReadResult AVFoundationPreviewSource::readNext(
 
 bool AVFoundationPreviewSource::advanceTarget(
     std::uint64_t expectedEpoch, MediaTime target) noexcept {
-  if (impl_ == nullptr || expectedEpoch == 0 || !target.valid() ||
-      target.value < 0 ||
-      expectedEpoch != impl_->activeEpoch.load(std::memory_order_acquire) ||
-      expectedEpoch != impl_->operationEpoch.load(std::memory_order_acquire) ||
-      !impl_->open.load(std::memory_order_acquire) ||
-      impl_->cancelledEpoch.load(std::memory_order_acquire) == expectedEpoch ||
-      !exactNonnegativeTimeWithinDuration(target, impl_->binding.descriptor->duration)) {
+  if (impl_ == nullptr || !impl_->epochs.retargetable(expectedEpoch) ||
+      !exactNonnegativeTimeWithinDuration(
+          target, impl_->binding.descriptor->duration)) {
     return false;
   }
   const auto order = media::compareMediaTime(impl_->target, target);
@@ -786,8 +754,7 @@ bool AVFoundationPreviewSource::advanceTarget(
 
 void AVFoundationPreviewSource::requestCancel(
     std::uint64_t epoch) noexcept {
-  if (impl_ == nullptr || epoch == 0 ||
-      impl_->operationEpoch.load(std::memory_order_acquire) != epoch) {
+  if (impl_ == nullptr || !impl_->epochs.operationIs(epoch)) {
     return;
   }
 #if defined(WAM_NATIVE_TEST_SEAMS)
@@ -797,26 +764,9 @@ void AVFoundationPreviewSource::requestCancel(
          impl_->cancelInterleaveContext.load(std::memory_order_acquire));
   }
 #endif
-  // Epochs are strictly increasing. Revalidate the public operation before
-  // every publication attempt, let an exact newer cancellation replace a
-  // stale smaller value, and never let a stale caller overwrite an already
-  // published newer cancellation. This remains correct if a caller pauses
-  // after its first operation check while begin() replaces the reader.
-  std::uint64_t observed =
-      impl_->cancelledEpoch.load(std::memory_order_acquire);
-  for (;;) {
-    if (impl_->operationEpoch.load(std::memory_order_acquire) != epoch ||
-        observed > epoch) {
-      return;
-    }
-    if (observed == epoch) {
-      break;
-    }
-    if (impl_->cancelledEpoch.compare_exchange_weak(
-            observed, epoch, std::memory_order_acq_rel,
-            std::memory_order_acquire)) {
-      break;
-    }
+  impl_->epochs.requestCancel(epoch);
+  if (!impl_->epochs.cancelled(epoch)) {
+    return;
   }
   auto active = std::atomic_load_explicit(&impl_->publishedGeneration,
                                           std::memory_order_acquire);
@@ -835,7 +785,6 @@ void AVFoundationPreviewSource::close() noexcept {
     impl_->actualDecodeStart = {};
     impl_->publishTarget({});
     impl_->publishDecodeStart({});
-    impl_->eos = false;
   } catch (...) {
   }
 }
@@ -846,12 +795,7 @@ NativePreviewSourceFacts AVFoundationPreviewSource::facts()
   if (impl_ == nullptr) {
     return result;
   }
-  result.operationEpoch =
-      impl_->operationEpoch.load(std::memory_order_acquire);
-  result.activeEpoch =
-      impl_->activeEpoch.load(std::memory_order_acquire);
-  result.epochHighWater =
-      impl_->epochHighWater.load(std::memory_order_acquire);
+  impl_->epochs.publish(result);
   result.target.timescale =
       impl_->targetScale.load(std::memory_order_acquire);
   result.target.value = impl_->targetValue.load(std::memory_order_relaxed);
@@ -868,11 +812,6 @@ NativePreviewSourceFacts AVFoundationPreviewSource::facts()
       impl_->discontinuitiesRead.load(std::memory_order_relaxed);
   result.forwardRetargets =
       impl_->forwardRetargets.load(std::memory_order_relaxed);
-  result.open = impl_->open.load(std::memory_order_acquire);
-  result.cancelled =
-      result.activeEpoch != 0 &&
-      impl_->cancelledEpoch.load(std::memory_order_acquire) ==
-          result.activeEpoch;
   result.backend = impl_->backend->facts();
   return result;
 }

@@ -882,20 +882,27 @@ public:
   Preview(std::shared_ptr<const Context> context,
           const MediaTrackDescriptor &track)
       : context_(std::move(context)), track_(track) {}
+  ~Preview() override { close(); }
   NativePreviewBeginOutcome
   begin(NativePreviewRequest request) noexcept override {
     NativePreviewBeginOutcome out;
     out.epoch = request.epoch;
-    if (!request.epoch || request.epoch <= facts_.epochHighWater ||
-        !request.target.valid() || request.target.value < 0 ||
-        compareMediaTime(request.target, context_->descriptor()->duration) ==
-            MediaTimeOrder::Greater)
+    if (!epochs_.admits(request.epoch) ||
+        !exactNonnegativeTimeWithinDuration(request.target,
+                                            context_->descriptor()->duration)) {
+      out.error = "preview request is stale or invalid";
       return out;
-    operation_.store(request.epoch, std::memory_order_release);
-    facts_.epochHighWater = request.epoch;
+    }
+    epochs_.announce(request.epoch);
+    retireActive(false);
     facts_.target = request.target;
-    facts_.open = false;
-    reader_.reset();
+    facts_.actualDecodeStart = {};
+    if (epochs_.cancelled(request.epoch)) {
+      out.status = NativePreviewStatus::Cancelled;
+      retireActive();
+      return out;
+    }
+    epochs_.beginning(request.epoch);
     try {
       reader_ = std::make_unique<PacketReader>();
       ++facts_.backend.readersCreated;
@@ -904,75 +911,90 @@ public:
               CancellationToken{
                   this,
                   [](const void *value) noexcept {
-                    return static_cast<const Preview *>(value)->isCancelled();
+                    return static_cast<const Preview *>(value)
+                        ->epochs_.activeCancelled();
                   }},
               out.error) ||
           !reader_->initialize(track_, out.error)) {
         out.status = NativePreviewStatus::Unsupported;
+        retireActive();
         return out;
       }
       if (reader_->cursor.identity() != context_->identity) {
         out.status = NativePreviewStatus::Failed;
         out.error = "LibavformatFileChanged";
-        reader_.reset();
+        retireActive();
         return out;
       }
       out.actualDecodeStart = preceding(*context_, request.target);
       if (!reader_->cursor.seek(context_->selectedStream, out.actualDecodeStart,
                                 out.error)) {
         out.status = NativePreviewStatus::Failed;
+        retireActive();
         return out;
       }
-      if (isCancelled()) {
+      if (epochs_.cancelled(request.epoch)) {
         out.status = NativePreviewStatus::Cancelled;
+        retireActive();
         return out;
       }
-      facts_.activeEpoch = request.epoch;
       facts_.actualDecodeStart = out.actualDecodeStart;
-      facts_.open = true;
       ++facts_.backend.readersStarted;
+      epochs_.opened();
       out.status = NativePreviewStatus::Ready;
       return out;
     } catch (...) {
       out.status = NativePreviewStatus::Failed;
       out.error = "LibavformatPreviewAllocation";
+      retireActive();
       return out;
     }
   }
   bool advanceTarget(std::uint64_t epoch, MediaTime target) noexcept override {
-    if (epoch != facts_.activeEpoch || !facts_.open || isCancelled() ||
-        !target.valid() ||
-        compareMediaTime(target, facts_.target) == MediaTimeOrder::Less ||
-        compareMediaTime(target, context_->descriptor()->duration) ==
-            MediaTimeOrder::Greater)
+    if (!epochs_.retargetable(epoch) ||
+        !exactNonnegativeTimeWithinDuration(target,
+                                            context_->descriptor()->duration))
+      return false;
+    const auto order = compareMediaTime(facts_.target, target);
+    if (!order || *order == MediaTimeOrder::Greater)
       return false;
     facts_.target = target;
     ++facts_.forwardRetargets;
     return true;
   }
   NativePreviewReadResult readNext(std::uint64_t epoch) noexcept override {
-    if (isCancelled())
+    if (!epochs_.reading(epoch))
       return NativePreviewCancelled{epoch};
-    if (!facts_.open || epoch != facts_.activeEpoch)
-      return NativePreviewFailure{epoch, "LibavformatPreviewEpochMismatch"};
+    if (epochs_.cancelled(epoch)) {
+      retireActive();
+      return NativePreviewCancelled{epoch};
+    }
+    if (epochs_.phase() == NativePreviewEpochs::Phase::AtEnd)
+      return NativePreviewEndOfStream{epoch};
     std::string error;
     LibavformatCursor::Packet packet;
     for (unsigned skipped = 0; skipped < 4096; ++skipped) {
       const auto rc = reader_->cursor.read(packet, error);
       if (rc == LibavformatCursor::Read::End) {
-        facts_.open = false;
+        epochs_.reachedEnd();
         return NativePreviewEndOfStream{epoch};
       }
-      if (rc == LibavformatCursor::Read::Cancelled)
+      if (rc == LibavformatCursor::Read::Cancelled) {
+        retireActive();
         return NativePreviewCancelled{epoch};
-      if (rc != LibavformatCursor::Read::Packet)
+      }
+      if (rc != LibavformatCursor::Read::Packet) {
+        retireActive();
         return NativePreviewFailure{epoch, std::move(error)};
+      }
       if (packet.stream != context_->selectedStream)
         continue;
       MediaSample sample;
       if (!reader_->materialize(packet, epoch, facts_.target, *context_,
-                                track_, sample, error))
+                                track_, sample, error)) {
+        retireActive();
         return NativePreviewFailure{epoch, std::move(error)};
+      }
       ++facts_.samplesRead;
       facts_.peakStagedSampleBuffers = 1;
       memory_.peakStagedCompressedBytes =
@@ -980,21 +1002,20 @@ public:
                    std::uint64_t(packet.bytes.size()));
       return sample;
     }
+    retireActive();
     return NativePreviewFailure{epoch, "LibavformatPreviewInterleaveLimit"};
   }
   void requestCancel(std::uint64_t epoch) noexcept override {
-    publishPreviewCancellation(operation_, cancelled_, epoch);
+    epochs_.requestCancel(epoch);
   }
   void close() noexcept override {
-    operation_.store(0, std::memory_order_release);
-    reader_.reset();
-    facts_.open = false;
-    facts_.activeEpoch = 0;
+    retireActive();
+    facts_.target = {};
+    facts_.actualDecodeStart = {};
   }
   NativePreviewSourceFacts facts() const noexcept override {
     auto result = facts_;
-    result.operationEpoch = operation_.load(std::memory_order_acquire);
-    result.cancelled = isCancelled();
+    epochs_.publish(result);
     return result;
   }
   NativePreviewSourceMemoryFacts memoryFacts() const noexcept override {
@@ -1002,16 +1023,15 @@ public:
   }
 
 private:
+  void retireActive(bool withdrawOperation = true) noexcept {
+    reader_.reset();
+    epochs_.retire(withdrawOperation);
+  }
   std::shared_ptr<const Context> context_;
   // Borrowed from the descriptor the context retains for this source's life.
   const MediaTrackDescriptor &track_;
   std::unique_ptr<PacketReader> reader_;
-  bool isCancelled() const noexcept {
-    const auto active = operation_.load(std::memory_order_acquire);
-    return active && cancelled_.load(std::memory_order_acquire) == active;
-  }
-  std::atomic<std::uint64_t> cancelled_{};
-  std::atomic<std::uint64_t> operation_{};
+  NativePreviewEpochs epochs_;
   NativePreviewSourceFacts facts_{};
   NativePreviewSourceMemoryFacts memory_{};
 };
