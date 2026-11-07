@@ -398,13 +398,6 @@ target_include_directories(wam_launch_rules_test PRIVATE ${PROJECT_SOURCE_DIR}/s
 target_link_libraries(wam_launch_rules_test PRIVATE Qt6::Core)
 add_test(NAME launch_rules COMMAND wam_launch_rules_test)
 
-add_executable(wam_mpv_hwdec_interop_policy_test
-  mpv_hwdec_interop_policy_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/mpv_hwdec_interop_policy.hpp)
-target_include_directories(wam_mpv_hwdec_interop_policy_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-add_test(NAME mpv_hwdec_interop_policy
-  COMMAND wam_mpv_hwdec_interop_policy_test)
-
 add_executable(wam_jobs_test jobs_test.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
 target_include_directories(wam_jobs_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME jobs COMMAND wam_jobs_test)
@@ -563,6 +556,9 @@ if(APPLE)
         --source "$<TARGET_FILE:wam_native_coverage_source_probe>"
         --ffmpeg "${WAM_TEST_FFMPEG}")
     set_tests_properties(macos_native_coverage_integration PROPERTIES TIMEOUT 90)
+    add_test(NAME native_coverage_revert_anchors
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/native_coverage_revert.py" --check-anchors)
     add_test(NAME macos_native_phase0b_integration
       COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/native_phase0b_integration.py"
@@ -574,7 +570,7 @@ if(APPLE)
     add_executable(wam_native_audio_converter_test
       native_audio_converter_test.mm)
     target_link_libraries(wam_native_audio_converter_test PRIVATE
-      wam_macos_native_backend)
+      wam_macos_native_backend_test_seams)
     add_test(NAME macos_native_audio_converter
       COMMAND wam_native_audio_converter_test)
     set_tests_properties(macos_native_audio_converter PROPERTIES
@@ -805,10 +801,7 @@ if(APPLE)
     set_tests_properties(macos_native_playback_owner_contract PROPERTIES
       TIMEOUT 10)
 
-    add_executable(wam_native_open_preflight_test
-      native_open_preflight_test.mm
-      ${PROJECT_SOURCE_DIR}/src/qt/native_open_preflight.hpp
-      ${PROJECT_SOURCE_DIR}/src/qt/native_open_preflight.mm)
+    add_executable(wam_native_open_preflight_test native_open_preflight_test.mm)
     target_include_directories(wam_native_open_preflight_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_link_libraries(wam_native_open_preflight_test PRIVATE
       wam_macos_native_session_system
@@ -880,8 +873,6 @@ if(APPLE)
     set_tests_properties(macos_native_video PROPERTIES SKIP_RETURN_CODE 77)
 
     # OpenGL/CGL hardware gate matching the shipping Qt graphics backend.
-    # The item is absent from default application builds; the opt-in
-    # production seam compiles it but does not register or construct it.
     add_executable(wam_native_qt_gl_compositor_test
       native_qt_gl_compositor_test.mm
       ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.hpp
@@ -1205,7 +1196,7 @@ endif()
 if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
 # Quiet UI regressions use only generated, silent media and the in-process
 # window seam; run serially so probes do not compete for native admission.
-  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics gapseek badscript)
+  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics gapseek badscript hdr)
     add_test(NAME ui_${ui_case}
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/ui_regression_test.py"
         --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_TEST_FFMPEG}" --case "${ui_case}"

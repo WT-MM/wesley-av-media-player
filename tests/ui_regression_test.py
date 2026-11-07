@@ -159,5 +159,18 @@ elif case == 'gapseek':
     events = [r.get('event') for r in reports]
     check(events.count('commit_seek_submitted') == 2 and events.count('commit_frame_drawn') == 2,
           'A seek between stated frame intervals must draw and release the next seek')
+elif case == 'hdr':
+    # HDR and display size come from the engine that demuxed the file, so
+    # Matroska and MPEG-TS (which AVFoundation cannot open) report them too.
+    for ext in ('mkv', 'ts', 'mp4'):
+        clip = root / f'pq.{ext}'
+        subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30',
+                        '-vf', 'setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc',
+                        '-t', '4', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', str(clip)], check=True, timeout=60)
+        _, reports, _ = run('hdr-' + ext, clip, 'report@2000', ms=3000)
+        row = windows(reports)[-1]
+        check(row['hdr'] == 1 and row['vnat'] == '320x180', f'PQ {ext} must report HDR and its size')
+    _, reports, _ = run('sdr', media, 'report@2000', ms=3000)
+    check(windows(reports)[-1]['hdr'] == 0, 'An untagged file is SDR')
 else:
     raise AssertionError(case)

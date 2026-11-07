@@ -896,7 +896,8 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
     const MediaTrackDescriptor& audio,
     const std::filesystem::path& path) noexcept {
   const std::int64_t leadIn =
-      media::mediaCodecFacts(audio.codec).decoderLeadInFrames;
+      media::decoderLeadInFrames(
+          audio.codec, audio.audio ? audio.audio->framesPerPacket : 0U);
   if (leadIn == 0 || !bareAudioElementaryStream(path)) {
     return kCMTimeZero;
   }
@@ -3357,7 +3358,7 @@ struct AVFoundationMediaSource::Impl final
       return std::nullopt;
     }
 
-    auto storage = std::make_shared<CoreMediaSampleStorage>(owned.release(), bytes);
+    auto storage = leaseSampleBuffer(std::move(owned), bytes);
     MediaSample mediaSample;
     mediaSample.generation = generation;
     mediaSample.track = trackId;
@@ -3369,16 +3370,8 @@ struct AVFoundationMediaSource::Impl final
     mediaSample.sampleCount = sampleCount;
     mediaSample.aacPiecewiseTimeline = aacPiecewiseTimeline;
     mediaSample.payload = MediaPayloadLease(std::move(storage));
-    if (kind == MediaSampleKind::EncodedVideo && requestedTarget &&
-        seekMode == media::MediaSeekMode::Accurate) {
-      const auto decodeOnly = accurateVideoDecodeOnly(
-          *pts, duration, *requestedTarget, error);
-      if (!decodeOnly) {
-        return std::nullopt;
-      }
-      mediaSample.decodeOnly = *decodeOnly;
-    }
-    if (!media::validateMediaSample(mediaSample, *descriptor, limits, error)) {
+    if (!sealSample(mediaSample, kind == MediaSampleKind::EncodedVideo,
+                    error)) {
       return std::nullopt;
     }
     return StagedSample{trackId, order, std::move(mediaSample), bytes};
@@ -3446,24 +3439,15 @@ struct AVFoundationMediaSource::Impl final
         continue;
       }
       if (admission && video) {
+        // A head-trimmed edit list's random-access point is preroll before
+        // the movie origin, so a negative presentation time is admitted.
         const auto* sample = std::get_if<MediaSample>(&head->value);
-        // Nonnegativity is deliberately NOT required of this sample. On the
-        // movie timeline the random-access point a head-trimmed edit list
-        // makes the reader walk back to legitimately precedes the origin --
-        // it is the sample that decodes the picture AT the origin, and it is
-        // preroll, marked decodeOnly and retired against the presentation
-        // floor rather than presented. This is the video reading of the same
-        // fact MediaTime already states for the audio lane's priming access
-        // unit: "negative values are valid (for example, edit-list and preroll
-        // timestamps)". What this generation must still begin on is a real,
-        // positive-duration SYNC picture, and that is what is checked.
-        if (sample == nullptr || !sample->keyFrame ||
-            !sample->presentationTime.valid() ||
-            !sample->duration.valid() || sample->duration.value <= 0) {
-          assignError(
-              error,
-              "first video sample is not a positive-duration sync access "
-              "unit");
+        if (sample == nullptr) {
+          assignError(error, "first video sample is not a positive-duration "
+                             "sync access unit");
+          return false;
+        }
+        if (!admitsFirstVideoSample(*sample, true, error)) {
           return false;
         }
       }
@@ -3713,22 +3697,13 @@ struct AVFoundationMediaSource::Impl final
       withdrawFailedOperation();
       return generationStart(std::move(started));
     }
-    if ((options.selection.requireVideo &&
-         !started.descriptor->selectedVideo) ||
-        (options.selection.requireAudio &&
-         !started.descriptor->selectedAudio)) {
+    if (!selectsRequiredTracks(*started.descriptor, options, &started.error)) {
       started.status = AVFoundationGenerationStatus::Unsupported;
-      started.error = "AVFoundation did not select every required track";
       withdrawFailedOperation();
       return generationStart(std::move(started));
     }
-    descriptor = started.descriptor;
-    assetContext = started.assetContext;
-    videoTerminal = !descriptor->selectedVideo;
-    audioTerminal = !descriptor->selectedAudio;
-    if ((!videoTerminal && !stage(true, true, &started.error)) ||
-        (!audioTerminal && !stage(false, true, &started.error)) ||
-        isCancelled()) {
+    installGeneration(started.descriptor, started.assetContext);
+    if (!stageAdmissionHeads(&started.error)) {
       started.status = isCancelled()
                            ? AVFoundationGenerationStatus::Cancelled
                            : AVFoundationGenerationStatus::Unsupported;
@@ -3741,8 +3716,7 @@ struct AVFoundationMediaSource::Impl final
                               started.declaredPresentationEnd,
                               started.declaredAudioEnd)
             .value_or(media::MediaAudioGenerationWindow{});
-    open = true;
-    openSnapshot.store(true, std::memory_order_release);
+    publishOpen();
     return generationStart(std::move(started));
   }
 };

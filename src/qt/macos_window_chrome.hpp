@@ -13,16 +13,6 @@ class QWindow;
 
 namespace wam::macos_window_chrome {
 
-// Reads `source`'s first video track's natural (display) pixel size directly
-// from the container via AVFoundation, independent of whichever playback
-// backend (native AVFoundation/VideoToolbox route or the libmpv fallback) is
-// actually rendering it (PlayerController::videoDisplaySize is the
-// engine-reported counterpart, used for containers AVFoundation cannot
-// demux). An invalid QSizeF means `source` is not a local file, has no video track, or could
-// not be inspected. Synchronous: intended for one call per newly opened
-// local source, not a per-frame or polling query.
-[[nodiscard]] QSizeF videoNaturalSizeForSource(const QUrl &source);
-
 // Test-only window capture (the WAM_TEST_WINDOW_SCRIPT `videograb` verb).
 //
 // Writes a PNG of `window` AS COMPOSITED, which is the only way to see the
@@ -188,7 +178,11 @@ void setTitlebarControlsRevealed(QWindow *window, bool revealed,
 // between a mouse-down on the window and the matching mouse-up, which is the
 // entire lifetime of a drag-resize and never overlaps a programmatic one.
 // A non-positive dimension clears the lock so the window resizes freely.
-void setContentAspectRatio(QWindow *window, qreal width, qreal height);
+//
+// `exact`, when non-empty, is the backend's rational display size and
+// replaces the width/height arguments in this and the sizing calls below.
+void setContentAspectRatio(QWindow *window, const media::MediaDisplaySize &exact,
+                           qreal width, qreal height);
 
 // True for the exact span setContentAspectRatio's interactive-only lock is
 // armed on `window` -- from a border mouse-down that starts a drag-resize
@@ -200,8 +194,8 @@ void setContentAspectRatio(QWindow *window, qreal width, qreal height);
 // Resizes `window` so a `videoPixelWidth` x `videoPixelHeight` video renders
 // at 1:1 native pixels (dividing by the window's screen's backing scale
 // factor), centered on that screen and clamped to its visible frame.
-void resizeToActualSize(QWindow *window, qreal videoPixelWidth,
-                        qreal videoPixelHeight);
+void resizeToActualSize(QWindow *window, const media::MediaDisplaySize &exact,
+                        qreal videoPixelWidth, qreal videoPixelHeight);
 
 // QuickTime's green-button zoom, as a double-click on the video: grows
 // `window` to the largest `videoWidth`:`videoHeight` rectangle that fits the
@@ -210,7 +204,8 @@ void resizeToActualSize(QWindow *window, qreal videoPixelWidth,
 // outright, which is what an audio-only source wants. Calling it again while
 // `window` still sits at that fitted frame restores the frame it had before
 // the fit, mirroring AppKit's zoom toggle.
-void resizeToFitScreen(QWindow *window, qreal videoWidth, qreal videoHeight);
+void resizeToFitScreen(QWindow *window, const media::MediaDisplaySize &exact,
+                       qreal videoWidth, qreal videoHeight);
 
 // "Fill Screen (Padded)": with `filled` true, grows `window` to its screen's
 // entire visible frame and remembers the exact frame it had first; with
@@ -282,8 +277,8 @@ qreal setVividBoost(QWindow *window, qreal boost);
 // not a persistent constraint -- unlike setContentAspectRatio, it does not
 // affect subsequent user drags or programmatic/AppleScript resizes. A
 // non-positive dimension is a no-op.
-void snapToVideoAspectRatio(QWindow *window, qreal videoWidth,
-                            qreal videoHeight);
+void snapToVideoAspectRatio(QWindow *window, const media::MediaDisplaySize &exact,
+                            qreal videoWidth, qreal videoHeight);
 
 } // namespace wam::macos_window_chrome
 
@@ -295,9 +290,6 @@ namespace wam::qt {
 // already show/hide FloatingControls.
 class MacWindowChrome final : public QObject {
   Q_OBJECT
-
-  media::MediaDisplaySize exactDisplaySize_;
-  QUrl exactDisplaySource_;
 
   // True when the test seams are admitted (testSeams(), test_seams.hpp). The
   // harness positions the window itself and its validity checks reject any
@@ -319,7 +311,8 @@ public:
   // NSCursor's own until-mouse-moves latch keeps cursor and chrome in sync
   // by construction: the movement that brings one back brings both.
   Q_INVOKABLE void hideCursorUntilMouseMoves();
-  void setExactVideoDisplaySize(media::MediaDisplaySize size, const QUrl& source);
+  // PlayerController::exactVideoDisplaySize, kept current by WindowManager.
+  void setExactVideoDisplaySize(media::MediaDisplaySize size);
   Q_INVOKABLE void setContentAspectRatio(qreal width, qreal height);
   Q_INVOKABLE bool interactiveResizeActive() const;
   Q_INVOKABLE void resizeToActualSize(qreal videoPixelWidth,
@@ -330,13 +323,6 @@ public:
   Q_INVOKABLE bool setFillScreenPadded(bool filled);
   Q_INVOKABLE void clearFillScreenPadded();
   Q_INVOKABLE void snapToVideoAspectRatio(qreal videoWidth, qreal videoHeight);
-  Q_INVOKABLE QSizeF videoNaturalSizeForSource(const QUrl &source) const;
-  // Asynchronous variant of videoNaturalSizeForSource: the synchronous read
-  // returns (0, 0) on a cold open because the asset's tracks have not loaded
-  // yet, which would skip both the aspect lock and the aspect snap.
-  // Loads the tracks off-thread and answers with videoNaturalSizeReady on the
-  // GUI thread; a (0, 0) reply means the source has no readable video track.
-  Q_INVOKABLE void requestVideoNaturalSize(const QUrl &source);
   Q_INVOKABLE qreal titlebarHeight() const;
   Q_INVOKABLE bool pointerInTitlebarBand() const;
 
@@ -345,40 +331,27 @@ public:
   // headroom clamp, so QML reports the real number rather than the request.
   // Passing 1.0 turns the mode off and stops the headroom watch.
   Q_INVOKABLE qreal setVividBoost(qreal boost);
-  Q_INVOKABLE qreal vividBoost() const;
-  Q_INVOKABLE qreal edrHeadroom() const;
-  // Whether `source` is already HDR, answered asynchronously through
-  // sourceIsHdrReady. Asynchronous for the same reason
-  // requestVideoNaturalSize is: on a cold open the asset's tracks have not
-  // loaded yet and a synchronous read would answer "not HDR" for every file.
-  // A source with no readable video track answers false.
-  Q_INVOKABLE void requestSourceIsHdr(const QUrl &source);
 
   // --- Theater dim ------------------------------------------------------
   // Shows or hides this window's theater overlay: a borderless, click-through
   // black window on every screen, ordered directly beneath this player window
   // and above everything else. `opacity` is 0..1 black coverage.
   Q_INVOKABLE void setTheaterDim(bool enabled, qreal opacity);
-  Q_INVOKABLE bool theaterDimActive() const;
   // Drives the title band's reveal caret (qml/Main.qml). Returns whether a
   // Finder window was actually asked for, so the caller -- and the log line
   // this leaves behind -- can tell a declined reveal from a completed one.
   Q_INVOKABLE bool revealInFinder(const QUrl &source) const;
 
 signals:
-  void videoNaturalSizeReady(const QUrl &source, qreal width, qreal height);
   // A real mouse double-click landed in the titlebar band (outside the
   // traffic lights). QML cannot observe this itself: AppKit's titlebar
   // drag region consumes the click before the QML scene sees it, so a
   // local event monitor detects it natively and swallows AppKit's own
   // titlebar double-click zoom in the same breath.
   void titlebarDoubleClicked();
-  // The answer to requestSourceIsHdr. QML uses it to gate the Vivid toggle:
-  // an HDR source already occupies the extended range, so boosting it would
-  // only clip its highlights.
-  void sourceIsHdrReady(const QUrl &source, bool hdr);
 
 private:
+  media::MediaDisplaySize exactDisplaySize_;
   // Re-clamps the applied boost against the screen's current headroom. Called
   // from the watch timer while the mode is on.
   void reclampVividBoost();

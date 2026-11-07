@@ -77,8 +77,8 @@ public:
   }
   bool materialize(const LibavformatCursor::Packet &packet,
                    MediaGeneration generation, MediaTime target,
-                   const MediaTrackDescriptor &track, MediaSample &out,
-                   std::string &error) {
+                   const Context &context, const MediaTrackDescriptor &track,
+                   MediaSample &out, std::string &error) {
     const auto decodeOnly =
         track.audio ? std::optional<bool>(false)
                     : accurateVideoDecodeOnly(packet.pts, packet.duration,
@@ -129,7 +129,7 @@ public:
       if (floorFrame && frame && *floorFrame-*frame>=audioPrimingFrames(track.codec,track.audio->framesPerPacket))
         static_cast<void>(statedImmediatePlayoutFrame(owned.get()));
     }
-    *free = std::make_shared<CoreMediaSampleStorage>(owned.release(), size);
+    *free = leaseSampleBuffer(std::move(owned), size);
     out.generation = generation;
     out.track = track.id;
     out.kind = track.audio ? MediaSampleKind::EncodedAudio
@@ -141,7 +141,8 @@ public:
     out.decodeOnly = *decodeOnly;
     out.aacPiecewiseTimeline = track.codec == MediaCodec::Aac;
     out.payload = MediaPayloadLease(*free);
-    return true;
+    return validateMediaSample(out, *context.descriptor(), context.limits(),
+                               &error);
   }
 };
 bool audioDescriptor(const LibavformatCursor::Stream& stream, MediaTrackDescriptor& track,
@@ -773,7 +774,8 @@ struct LibavformatMediaSource::Impl final
     const auto* track = packetTrack(pending->stream);
     MediaSample sample;
     if (track == nullptr ||
-        !reader->materialize(*pending, generation, target, *track, sample, message)) {
+        !reader->materialize(*pending, generation, target, *assetContext, *track,
+                             sample, message)) {
       if (error != nullptr) *error = std::move(message);
       return false;
     }
@@ -968,8 +970,8 @@ public:
       if (packet.stream != context_->selectedStream)
         continue;
       MediaSample sample;
-      if (!reader_->materialize(packet, epoch, facts_.target, track_, sample,
-                                error))
+      if (!reader_->materialize(packet, epoch, facts_.target, *context_,
+                                track_, sample, error))
         return NativePreviewFailure{epoch, std::move(error)};
       ++facts_.samplesRead;
       facts_.peakStagedSampleBuffers = 1;

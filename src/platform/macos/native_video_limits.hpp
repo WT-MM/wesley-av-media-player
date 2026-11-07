@@ -11,7 +11,7 @@ namespace wam::macos::native_video_limits {
 // the original CMSampleBuffer storage and do not create an application payload
 // copy, but every retained unit is still charged against this logical bound.
 inline constexpr std::size_t kMaximumCompressedVideoAccessUnitBytes =
-    8ULL * 1024ULL * 1024ULL;
+    media::MediaSourceLimits::kHardMaximumVideoSampleBytes;
 
 // The native lane retains one selected codec configuration record. This is therefore
 // both the per-codec limit and the aggregate codec-configuration limit for one

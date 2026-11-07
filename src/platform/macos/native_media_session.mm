@@ -2082,13 +2082,10 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         publicPreviewUnavailable = !descriptor->selectedVideo.has_value();
         published.ownership = ownership;
         published.dispatcherObservedVideo = dispatcherObservedVideo;
-        // The selected video track's on-screen rectangle, carried on Prepared
-        // so window geometry can be shaped from the container that was
-        // actually demuxed. It is the only route by which a Matroska, WebM or
-        // MPEG-TS natural size can reach the window: the Qt layer's other
-        // source is an AVURLAsset, and AVFoundation cannot demux any of the
-        // three. Empty for an audio-only source, which the contract reads as
-        // "unknown" and geometry leaves alone.
+        // The selected video track's on-screen rectangle and HDR transfer,
+        // carried on Prepared so window geometry and the Vivid gate come from
+        // the container that was actually demuxed. Empty size for an
+        // audio-only source, which the contract reads as "unknown".
         const media::MediaDisplaySize displaySize =
             media::mediaSourceDisplaySize(*descriptor);
         factMailbox.emplace(protocol::Prepared{
@@ -2096,7 +2093,8 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
             {descriptorDurationSeconds(*descriptor),
              descriptor->selectedAudio.has_value(),
              descriptor->selectedVideo.has_value(), displaySize.width,
-             displaySize.height},
+             displaySize.height,
+             media::mediaSourceHighDynamicRange(*descriptor)},
             prepareCommand.reservedGeneration});
         committed = true;
       }

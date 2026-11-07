@@ -935,6 +935,12 @@ struct MediaDisplaySize {
 [[nodiscard]] MediaDisplaySize mediaSourceDisplaySize(
     const MediaSourceDescriptor& descriptor) noexcept;
 
+// Whether the selected video track carries an HDR transfer (PQ or HLG). False
+// for an audio-only source. Primaries are deliberately not consulted: BT.2020
+// with a BT.709 transfer is wide-gamut SDR.
+[[nodiscard]] bool mediaSourceHighDynamicRange(
+    const MediaSourceDescriptor& descriptor) noexcept;
+
 // Single-owner pull boundary. openLocalFile(), seek(), readNext(), and close()
 // are confined to one source worker/retirement owner and may block there;
 // requestCancel() is prompt, noexcept, and callable from any thread. A source

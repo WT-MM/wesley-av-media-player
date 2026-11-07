@@ -34,10 +34,6 @@ QImage SubtitleBitmapStore::lookup(quint64 key) const {
 SubtitleBitmapProvider::SubtitleBitmapProvider()
     : QQuickImageProvider(QQuickImageProvider::Image) {}
 
-QString SubtitleBitmapProvider::name() {
-  return QString::fromLatin1(kProviderName);
-}
-
 QString SubtitleBitmapProvider::urlFor(quint64 key, quint64 serial) {
   return QStringLiteral("image://%1/%2/%3")
       .arg(QString::fromLatin1(kProviderName))

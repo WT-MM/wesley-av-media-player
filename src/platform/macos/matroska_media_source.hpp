@@ -57,10 +57,10 @@ struct MatroskaSourceTraits {
   // either cap.
   static constexpr std::int64_t kVideoMergeLeadNanoseconds{250'000'000};
 
-  static constexpr auto adoptContext = &adoptPreparedMatroskaAssetContext;
+  static constexpr auto adoptContext = &MatroskaAssetContext::adopt;
   static constexpr auto noteCursorCreationAttempt =
-      &noteMatroskaAssetContextCursorCreationAttempt;
-  static constexpr auto noteCursorStarted = &noteMatroskaAssetContextCursorStarted;
+      &MatroskaAssetContext::noteCursorCreationAttempt;
+  static constexpr auto noteCursorStarted = &MatroskaAssetContext::noteCursorStarted;
   // The first Cue's exact tick, or empty for a Cue-less asset.
   [[nodiscard]] static std::optional<media::MediaTime> videoOrigin(
       const PreparedAsset& asset) noexcept;

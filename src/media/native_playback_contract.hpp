@@ -305,6 +305,10 @@ struct PreparedDescriptor {
   // src/qt/native_playback_owner.mm's Prepared arm.
   media::MediaRational displayWidth{};
   media::MediaRational displayHeight{};
+  // The selected video track's transfer is PQ or HLG
+  // (media::mediaSourceHighDynamicRange). Published as
+  // PlayerController::videoHdr.
+  bool highDynamicRange{false};
 
   friend constexpr bool operator==(const PreparedDescriptor &,
                                    const PreparedDescriptor &) = default;

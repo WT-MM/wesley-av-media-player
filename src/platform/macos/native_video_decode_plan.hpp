@@ -1,7 +1,7 @@
 #pragma once
 #include "media/native_decode_plan.hpp"
 #include "media/video_codec_configuration.hpp"
-#include "native_video_presenter.hpp"
+#include "video_decoder_contract.hpp"
 #include "native_video_codec_capability.hpp"
 #include <VideoToolbox/VideoToolbox.h>
 #include <optional>

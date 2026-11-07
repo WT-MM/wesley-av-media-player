@@ -1,4 +1,5 @@
 #include "native_audio_converter_backends.hpp"
+#include "platform/macos/native_primitives.hpp"
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "software_avcodec_audio_backend.hpp"
 #endif
@@ -19,12 +20,6 @@ namespace {
 
 constexpr OSStatus kInputTemporarilyUnavailable = 'wamu';
 constexpr std::size_t kMaximumPacketsPerFill = 16;
-
-void assignError(std::string *error, const char *message) {
-  if (error != nullptr) {
-    *error = message;
-  }
-}
 
 [[nodiscard]] AudioStreamBasicDescription
 exactAsbd(const media::MediaAudioFormat &format) noexcept {

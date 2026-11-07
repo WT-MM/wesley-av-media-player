@@ -794,6 +794,16 @@ MediaDisplaySize mediaSourceDisplaySize(
   return mediaVideoDisplaySize(*selected->video);
 }
 
+bool mediaSourceHighDynamicRange(
+    const MediaSourceDescriptor& descriptor) noexcept {
+  const MediaTrackDescriptor* selected =
+      descriptor.selectedVideo.has_value()
+          ? findMediaTrack(descriptor, *descriptor.selectedVideo)
+          : nullptr;
+  return selected != nullptr && selected->video.has_value() &&
+         mediaTransferIsHighDynamicRange(selected->video->transferFunction);
+}
+
 bool validateMediaSourceDescriptor(const MediaSourceDescriptor& descriptor,
                                    const MediaSourceLimits& limits,
                                    std::string* error) noexcept {

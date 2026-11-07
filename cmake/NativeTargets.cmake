@@ -196,8 +196,8 @@ find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing REQUIRED)
       src/platform/macos/avfoundation_media_source.mm
       src/platform/macos/avfoundation_preview_source.hpp
       src/platform/macos/avfoundation_preview_source.mm
+      src/platform/macos/custom_asset_context.hpp
       src/platform/macos/matroska_asset_context.hpp
-      src/platform/macos/matroska_asset_context.cpp
       src/platform/macos/matroska_media_source.hpp
       src/platform/macos/matroska_media_source.mm
       src/platform/macos/matroska_preview_source.hpp
@@ -207,7 +207,6 @@ find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing REQUIRED)
       src/platform/macos/matroska_sample_builder.hpp
       src/platform/macos/matroska_sample_builder.mm
       src/platform/macos/mpegts_asset_context.hpp
-      src/platform/macos/mpegts_asset_context.cpp
       src/platform/macos/mpegts_media_source.hpp
       src/platform/macos/mpegts_media_source.mm
       src/platform/macos/mpegts_preview_source.hpp

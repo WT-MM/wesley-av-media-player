@@ -9,13 +9,12 @@ import sys
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--output',required=True)
-    parser.add_argument('--scratch',required=True)
-    parser.add_argument('--groups',default='u8,rates,retry,retry-retirement,retry-source,he-aac,ebml,opus,notice,progress,progress-publication')
+    parser.add_argument('--output')
+    parser.add_argument('--scratch')
+    parser.add_argument('--groups',default='u8,rates,retry,retry-retirement,retry-source,he-aac,ebml,opus,progress,progress-publication')
+    parser.add_argument('--check-anchors',action='store_true',help='only confirm every mutation still matches its source')
     a=parser.parse_args()
     repo=Path(__file__).resolve().parents[1]
-    scratch=Path(a.scratch);scratch.mkdir(parents=True,exist_ok=True)
-    output=Path(a.output);output.mkdir(parents=True,exist_ok=True)
     common=[sys.executable,'tests/native_coverage_integration.py','--audio','build/wam_native_coverage_audio_probe',
             '--source','build/wam_native_coverage_source_probe','--ffmpeg','/opt/homebrew/bin/ffmpeg']
     gui=[sys.executable,'tests/native_coverage_wiring_test.py','--app','build/WAM.app/Contents/MacOS/WAM',
@@ -29,10 +28,17 @@ def main():
       'he-aac':('src/media/matroska_demuxer.cpp',[("result.message = bestRefusal + \"; candidates: [\" + candidateRefusals + \"]\";","result.message = \"no selected audio candidate passed complete codec admission\";")],common+['--case','he-aac']),
       'ebml':('tests/native_coverage_integration.py',[("            while len(payload) >= (1 << (7*sw))-1:\n                sw += 1\n                assert sw <= 8, 'EBML payload exceeds finite size envelope'\n","")],common+['--case','opus']),
       'opus':('src/media/matroska_demuxer.cpp',[("OpusOutputSampleRateUnsupported","AudioCodecConfigurationRefused")],common+['--case','opus']),
-      'notice':('src/qt/native_playback_owner.mm',[("if (admissionRouteChoice) {","if (false && admissionRouteChoice) {")],gui+['--case','notice']),
       'progress-publication':('src/platform/macos/native_media_session.mm',[("          progressCommitSeek();\n          publishMetrics();", "          progressCommitSeek();")],gui+['--case','progress']),
-      'progress':('src/qt/native_playback_owner.mm',[("if (!nativeSeekProgress_.expired(progress.decodedPrerollFrames)) {","if (false && !nativeSeekProgress_.expired(progress.decodedPrerollFrames)) {")],gui+['--case','progress']),
+      'progress':('src/platform/macos/native_playback_owner.mm',[("if (!nativeSeekProgress_.expired(progress.decodedPrerollFrames)) {","if (false && !nativeSeekProgress_.expired(progress.decodedPrerollFrames)) {")],gui+['--case','progress']),
     }
+    if a.check_anchors:
+        stale=[(name,filename,before) for name,(filename,edits,_) in groups.items()
+               for before,_ in edits if before not in (repo/filename).read_text()]
+        for row in stale:print('stale mutation anchor:',*row)
+        sys.exit(1 if stale else 0)
+    assert a.output and a.scratch,'--output and --scratch are required'
+    scratch=Path(a.scratch);scratch.mkdir(parents=True,exist_ok=True)
+    output=Path(a.output);output.mkdir(parents=True,exist_ok=True)
     report=output/'revert-proofs.json'
     receipts=json.loads(report.read_text()) if report.exists() else []
     def run(argv,log):
