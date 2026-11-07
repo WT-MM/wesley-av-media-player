@@ -3,7 +3,6 @@
 #include "media/avcodec/runtime.hpp"
 #include <array>
 #include <cstdio>
-#include <cstring>
 #include <memory>
 #include <thread>
 #include "support/expect.hpp"
@@ -38,14 +37,16 @@ int main() {
   for(auto& worker:workers) {worker=std::make_unique<DecodeWorker>(FrameHandler{receive,nullptr});EXPECT(worker->configure(config));}
   EXPECT(DecodeWorker::reservedWorkers()==16);
   const auto reserved=DecodeWorker::reservedProcessBytes();EXPECT(reserved>0);
-  DecodeWorker refused({receive,nullptr});EXPECT(!refused.configure(config));
-  EXPECT(refused.failure() && std::strcmp(refused.failure(),"AvcodecWorkerBudgetExceeded")==0);
-  refused.close();EXPECT(DecodeWorker::reservedProcessBytes()==reserved);
+  // A seventeenth worker queues without reserving; queue overflow is
+  // avcodec_admission_queue's subject.
+  DecodeWorker queued({receive,nullptr});EXPECT(queued.configure(config));
+  EXPECT(!queued.hasCapacity() && DecodeWorker::pendingWorkers()==1 && DecodeWorker::reservedWorkers()==16);
+  queued.close();EXPECT(DecodeWorker::reservedProcessBytes()==reserved && DecodeWorker::pendingWorkers()==0);
   for(auto& worker:workers)worker->close();
   EXPECT(DecodeWorker::reservedProcessBytes()==0 && DecodeWorker::reservedWorkers()==0);
   DecodeWorker large({receive,nullptr});config.codec=Codec::Mpeg4;config.width=1920;config.height=1088;
   config.rate=0;config.channels=0;EXPECT(large.configure(config));large.close();
   EXPECT(DecodeWorker::reservedProcessBytes()==0 && DecodeWorker::reservedWorkers()==0);
-  std::puts("derived planes, enforced allocator, cross-thread retirement, 16-worker admission and cancellation passed");
+  std::puts("derived planes, enforced allocator, cross-thread retirement, 16-worker admission and queued cancellation passed");
   return failures == 0 ? 0 : 1;
 }

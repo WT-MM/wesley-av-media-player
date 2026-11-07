@@ -7,7 +7,6 @@
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "software_avcodec_video_decoder.hpp"
 #include "native_video_decode_plan.hpp"
-#include "media/software_color_qualification.hpp"
 #endif
 
 #include <cstdint>
@@ -124,13 +123,12 @@ public:
   VideoDecodeLane &operator=(VideoDecodeLane &&) = delete;
 
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
-                               DecodedFrameSink &sink, std::string *error,
-                               std::optional<bool> hardwareCapability = {}) {
+                               DecodedFrameSink &sink, std::string *error) {
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
     close();
     software_.reset();
     avcodec_.reset();
-    const auto plan = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), hardwareCapability);
+    const auto plan = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available());
     for (const auto& candidate : plan.candidates) {
       if (candidate.refusal != media::DecodeRefusal::None) continue;
       auto configured = configuration;
@@ -147,28 +145,12 @@ public:
         }
         videoToolbox_.close();
         break;
-      case media::DecodeImplementation::Libavcodec: {
-        const auto codec = media::mediaCodecForCoreMediaType(configuration.codec);
-        const auto& facts = media::mediaCodecFacts(codec);
-        media::VideoCodecConfigurationLimits limits;
-        limits.admitSoftwareProfiles = true;
-        limits.admitHighDynamicRangeColor = true;
-        const auto inspected = media::inspectVideoCodecConfiguration(
-            codec, facts.configurationKind, configuration.codecConfiguration, limits);
-        auto colorFacts = inspected.facts.value_or(media::VideoCodecConfigurationFacts{});
-        if (configuration.fullRangeVideo)
-          colorFacts.color.fullRange = *configuration.fullRangeVideo;
-        if (!inspected.admitted() || !media::softwareColorQualified(
-                colorFacts, configuration.highDynamicRangeTransfer)) {
-          if (error) *error = "SoftwareColorUnqualified";
-          return false;
-        }
+      case media::DecodeImplementation::Libavcodec:
         avcodec_ = std::make_unique<SoftwareAvcodecVideoDecoder>(options_);
         if (!avcodec_->configure(configured, sink, error)) return false;
         std::fprintf(stderr, "WAM: native decoder stage=Libavcodec codec=%08x\n", configuration.codec);
         if (error) error->clear();
         return true;
-      }
       case media::DecodeImplementation::Libvpx:
         software_ = std::make_unique<SoftwareVp8Decoder>(options_);
         if (!software_->configure(configured, sink, error)) return false;
@@ -181,7 +163,6 @@ public:
     if (error) *error = "NativeDecodePlanExhausted";
     return false;
 #else
-    static_cast<void>(hardwareCapability);
     if (configuration.codec == kWamVideoCodecTypeVp8) {
       if (!SoftwareVp8Decoder::available()) {
         if (error != nullptr) {

@@ -56,7 +56,7 @@ struct TestDecoder {
   SoftwareAvcodecVideoDecoder software;
   VideoDecodeLane lane;
   bool configure(const VideoStreamConfiguration& c,DecodedFrameSink& sink,std::string* e) {
-    return productionLane?lane.configure(c,sink,e,false):software.configure(c,sink,e);
+    return productionLane?lane.configure(c,sink,e):software.configure(c,sink,e);
   }
   VideoDecodeSubmitResult submitCMSampleBuffer(CMSampleBufferRef sample,std::uint64_t g,std::string* e) {
     return productionLane?lane.submitCMSampleBuffer(sample,g,e):software.submitCMSampleBuffer(sample,g,e);
@@ -110,6 +110,7 @@ int main(int argc,char** argv) {
   std::ifstream raw(referencePath,std::ios::binary|std::ios::ate);REQUIRE(raw.good());const auto rawSize=raw.tellg();REQUIRE(rawSize>0);
   sink.reference.resize(static_cast<std::size_t>(rawSize));raw.seekg(0);raw.read(reinterpret_cast<char*>(sink.reference.data()),rawSize);REQUIRE(raw.good());
   TestDecoder decoder{true};
+  setNativeVideoHardwareDisabledForTesting(true);
   VideoStreamConfiguration config;config.codec=asp?'mp4v':vp9?'vp09':'avc1';config.codedSize={320,180};config.codecConfiguration=extra;config.generation=1;
   const auto plan=nativeVideoDecodePlan(config,true,false);
   EXPECT(plan.implementation==wam::media::DecodeImplementation::Libavcodec);
