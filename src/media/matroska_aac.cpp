@@ -8,10 +8,6 @@ namespace {
 
 constexpr std::uint64_t kNanosecondsPerSecond{1'000'000'000ULL};
 
-[[nodiscard]] bool supportedSampleRate(std::uint32_t sampleRate) noexcept {
-  return sampleRate == 44'100U || sampleRate == 48'000U;
-}
-
 using WideSigned = __int128_t;
 using WideUnsigned = __uint128_t;
 
@@ -157,26 +153,7 @@ audioPacketGridTime(AacFrameGridPosition position) noexcept {
       static_cast<WideUnsigned>(
           static_cast<std::uint32_t>(position.origin.timescale)) *
       static_cast<WideUnsigned>(position.sampleRate);
-  const WideUnsigned divisor =
-      wideGcd(unsignedMagnitude(numerator), denominator);
-  if (divisor == 0U) {
-    return std::nullopt;
-  }
-
-  const WideSigned reducedNumerator =
-      numerator / static_cast<WideSigned>(divisor);
-  const WideUnsigned reducedDenominator = denominator / divisor;
-  if (reducedNumerator <
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::min()) ||
-      reducedNumerator >
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::max()) ||
-      reducedDenominator >
-          static_cast<WideUnsigned>(std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-
-  return MediaTime{static_cast<std::int64_t>(reducedNumerator),
-                   static_cast<std::int32_t>(reducedDenominator)};
+  return mediaTimeFromTicks(numerator, denominator);
 }
 
 std::optional<std::int64_t>
@@ -196,17 +173,11 @@ nearestMatroskaTick(AacFrameGridPosition position,
       static_cast<WideUnsigned>(
           static_cast<std::uint32_t>(exactTime->timescale)) *
       static_cast<WideUnsigned>(timestampScaleNanoseconds);
-  const WideUnsigned magnitude = unsignedMagnitude(numerator);
-  WideUnsigned roundedMagnitude = magnitude / denominator;
-  const WideUnsigned remainder = magnitude % denominator;
-  const WideUnsigned halfDenominator = denominator / 2U;
-  const bool exactHalf =
-      (denominator & 1U) == 0U && remainder == halfDenominator;
-  if (remainder > halfDenominator ||
-      (exactHalf && (roundedMagnitude & static_cast<WideUnsigned>(1U)) != 0U)) {
-    ++roundedMagnitude;
+  const auto rounded = roundTiesToEven(numerator, denominator);
+  if (!rounded) {
+    return std::nullopt;
   }
-
+  const WideUnsigned roundedMagnitude = rounded->magnitude;
   if (numerator >= 0) {
     if (roundedMagnitude >
         static_cast<WideUnsigned>(std::numeric_limits<std::int64_t>::max())) {
@@ -223,14 +194,6 @@ nearestMatroskaTick(AacFrameGridPosition position,
     return std::numeric_limits<std::int64_t>::min();
   }
   return -static_cast<std::int64_t>(roundedMagnitude);
-}
-
-bool matroskaTickMatchesAacAccessUnit(
-    std::int64_t observedTick, AacFrameGridPosition position,
-    std::uint64_t timestampScaleNanoseconds) noexcept {
-  const auto expected =
-      nearestMatroskaTick(position, timestampScaleNanoseconds);
-  return expected.has_value() && *expected == observedTick;
 }
 
 std::optional<AacTickGridProjection> nearestAudioPacketForMatroskaTick(
@@ -332,21 +295,6 @@ std::optional<AacTickGridProjection> nearestAudioPacketForMatroskaTick(
   return AacTickGridProjection{ordinal, *exactPresentationTime,
                                *quantizedGridTick, signedResidual,
                                signedResidual == 0};
-}
-
-std::optional<MediaTime>
-aacAccessUnitGridTime(AacFrameGridPosition position) noexcept {
-  if (!supportedSampleRate(position.sampleRate)) return std::nullopt;
-  return audioPacketGridTime(position);
-}
-
-std::optional<AacTickGridProjection> nearestAacAccessUnitForMatroskaTick(
-    std::int64_t observedTick, MediaTime origin, std::uint32_t sampleRate,
-    std::uint64_t timestampScaleNanoseconds,
-    std::uint32_t samplesPerAccessUnitValue) noexcept {
-  if (!supportedSampleRate(sampleRate)) return std::nullopt;
-  return nearestAudioPacketForMatroskaTick(observedTick, origin, sampleRate,
-      timestampScaleNanoseconds, samplesPerAccessUnitValue);
 }
 
 } // namespace wam::media::matroska
