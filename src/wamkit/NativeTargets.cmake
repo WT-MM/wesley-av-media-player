@@ -188,6 +188,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
       src/platform/macos/native_preview_source.mm
       src/platform/macos/native_audio_converter.hpp
       src/platform/macos/native_audio_converter.mm
+      src/platform/macos/native_audio_converter_backends.hpp
+      src/platform/macos/native_audio_converter_backends.mm
       src/platform/macos/native_audio_output.hpp
       src/platform/macos/native_audio_output.mm
       src/platform/macos/native_audio_stretch_stage.hpp

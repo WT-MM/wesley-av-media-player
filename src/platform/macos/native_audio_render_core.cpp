@@ -1,6 +1,7 @@
 #include "native_audio_render_core.hpp"
 
 #include <algorithm>
+#include <utility>
 #include <bit>
 #include <cmath>
 #include <limits>
@@ -594,6 +595,13 @@ NativeAudioRenderResult &NativeAudioRenderCore::refuse(
     NativeAudioRenderFailure failure) noexcept {
   result.failure = failure;
   latchFailure(failure);
+  return reject(result, result.admission);
+}
+
+NativeAudioRenderResult &NativeAudioRenderCore::reject(
+    NativeAudioRenderResult &result,
+    NativeMediaSegmentAdmission admission) noexcept {
+  result.admission = admission;
   next_discontinuous_ = true;
   prior_sample_time_valid_ = false;
   saturatingAdd(rejected_callbacks_, 1);
@@ -605,8 +613,7 @@ NativeAudioRenderCore::PrefixSplit NativeAudioRenderCore::computePrefixSplit(
     std::uint64_t readableFrames, std::uint64_t fullOutputFrames,
     bool terminalCurrent, std::uint64_t terminalFrame) const noexcept {
   const std::uint64_t rateDenominator = media::native_playback::kNativeRateGrid;
-  const std::uint64_t rateNumerator =
-      rate.numerator * (rateDenominator / rate.denominator);
+  const std::uint64_t rateNumerator = rate.gridNumerator();
   // floor((carry + output * p) / q) is the output media advance.
   // Client callbacks need not divide q: the output unit can resample a
   // 44.1 kHz stream into a 48 kHz device period.
@@ -743,13 +750,9 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       input.generation != generation || input.sampleRate != active_sample_rate_ ||
       input.streamFrameStart != cursor_frame_) {
     silenceAll();
-    result.admission = input.generation == generation
-                           ? NativeMediaSegmentAdmission::Invalid
-                           : NativeMediaSegmentAdmission::Stale;
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return reject(result, input.generation == generation
+                              ? NativeMediaSegmentAdmission::Invalid
+                              : NativeMediaSegmentAdmission::Stale);
   }
 
   // Adapter admission uses the input cursor; all clock arithmetic uses output.
@@ -792,23 +795,22 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     const bool pitchChanged = requestedPreservePitch != active_preserve_pitch_;
     if ((rateChanged || pitchChanged) && requested.valid() &&
         (requested.unity() || stretchAvailable)) {
-      if ((!requested.unity() || cursor_frame_ != output_cursor_frame_) &&
+      if ((!requested.unity() || stageEngaged()) &&
           !stretch_.setRate(stretch_.context, requested.numerator,
                             requested.denominator, requestedPreservePitch)) {
         silenceAll();
         return refuse(result, NativeAudioRenderFailure::StretchStageFailed);
       }
       const std::uint32_t requestedLatency =
-          requested.unity() && cursor_frame_ == output_cursor_frame_ ? 0U
+          requested.unity() && !stageEngaged() ? 0U
                             : stretch_.latencyOutputFrames(stretch_.context);
       bool admitRate = true;
       // A zero media budget publishes no interval. It can latch immediately;
       // the first carried input frame will establish the new clock slope.
       const auto requestedFrames =
-          ((rateChanged ? 0U : rate_carry_) + static_cast<std::uint64_t>(input.frameCount) *
-                             requested.numerator *
-                             (media::native_playback::kNativeRateGrid /
-                              requested.denominator)) /
+          ((rateChanged ? 0U : rate_carry_) +
+           static_cast<std::uint64_t>(input.frameCount) *
+               requested.gridNumerator()) /
           media::native_playback::kNativeRateGrid;
       if (rateChanged && running_ && !next_discontinuous_ &&
           requestedFrames != 0) {
@@ -841,7 +843,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
         }
       }
       if (!admitRate) {
-        if ((!active_rate_.unity() || cursor_frame_ != output_cursor_frame_) &&
+        if ((!active_rate_.unity() || stageEngaged()) &&
             !stretch_.setRate(stretch_.context, active_rate_.numerator,
                               active_rate_.denominator,
                               active_preserve_pitch_)) {
@@ -863,8 +865,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   }
   const NativePlaybackRate rate = active_rate_;
   const std::uint64_t rateDenominator = media::native_playback::kNativeRateGrid;
-  const std::uint64_t rateNumerator =
-      rate.numerator * (rateDenominator / rate.denominator);
+  const std::uint64_t rateNumerator = rate.gridNumerator();
 
   // Group-delay shift. Audio emitted by this callback is HEARD
   // later by the stretch stage's group delay at this rate plus the output
@@ -926,11 +927,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   if (terminalCurrent && input.streamFrameStart == terminalFrame) {
     silenceAll();
     if (heard_first_host_ticks < prior_end_host_ticks_) {
-      result.admission = NativeMediaSegmentAdmission::Invalid;
-      next_discontinuous_ = true;
-      prior_sample_time_valid_ = false;
-      saturatingAdd(rejected_callbacks_, 1);
-      return result;
+      return reject(result, NativeMediaSegmentAdmission::Invalid);
     }
 
     const bool committedPlayableBoundary =
@@ -940,11 +937,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
         !first_segment_committed_.load(std::memory_order_relaxed) &&
         terminalFrame == activation_cursor_frame_;
     if (!committedPlayableBoundary && !emptyGenerationBoundary) {
-      result.admission = NativeMediaSegmentAdmission::Invalid;
-      next_discontinuous_ = true;
-      prior_sample_time_valid_ = false;
-      saturatingAdd(rejected_callbacks_, 1);
-      return result;
+      return reject(result, NativeMediaSegmentAdmission::Invalid);
     }
 
     // The final output interval must be heard before the owner stops audio.
@@ -1004,9 +997,11 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     readable.frames -= retired;
     saturatingAdd(retired_late_frames_, retired);
   }
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (after_preflight_hook_ != nullptr) {
     after_preflight_hook_(after_preflight_context_);
   }
+#endif
   const NativeAudioRenderFailure failureAfterHook = failure();
   if (failureAfterHook != NativeAudioRenderFailure::None) {
     silenceAll();
@@ -1014,11 +1009,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   }
   if (readable.staleConsumer) {
     silenceAll();
-    result.admission = NativeMediaSegmentAdmission::Stale;
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return reject(result, NativeMediaSegmentAdmission::Stale);
   }
   result.bufferedPcmFramesAfter = static_cast<std::uint32_t>(
       std::min<std::size_t>(readable.frames,
@@ -1026,7 +1017,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   result.bufferedPcmFramesKnown = true;
 
   const bool useStretch = !rate.unity() || stretch_latency_output_frames_ != 0 ||
-                          cursor_frame_ != output_cursor_frame_;
+                          stageEngaged();
   const std::uint64_t ringLead = lead_in_end_frame_ > cursor_frame_
                                     ? lead_in_end_frame_ - cursor_frame_ : 0;
   const std::uint64_t ringEnd = cursor_frame_ + ringLead + readable.frames;
@@ -1058,8 +1049,9 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
 
   if (useStretch) {
     // Input demand is bounded by the snapshot and one slab per stage slice.
+    constexpr std::uint32_t kSlice = NativeAudioStretchStage::kSliceOutputFrames;
     const auto cap = static_cast<std::uint64_t>(NativePcmRing::kFramesPerSlab) *
-                     ((input.frameCount + 1023U) / 1024U);
+                     ((input.frameCount + kSlice - 1U) / kSlice);
     const auto head = std::min(ringLead, cap);
     const auto pcm = std::min<std::uint64_t>(readable.frames, cap - head);
     const auto tail = declared_end_frame_ > cursor_frame_ + head + pcm &&
@@ -1213,13 +1205,11 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   }
 
   if (!running_) {
-    // The resume anchor carries the exact rational as its double. It is only
-    // the unbounded fallback slope -- every published interval derives its
-    // own rate from endpoints that are exact by construction -- but it must
-    // still name the right speed for the instant before the first interval
-    // of this run lands.
-    if (!clock_.runAtHostTicks(generation, heard_first_host_ticks,
-                               rate.toDouble())) {
+    // The resume rate is only the unbounded fallback slope -- every
+    // published interval derives its own rate from endpoints that are exact
+    // by construction -- but it must still name the right speed for the
+    // instant before the first interval of this run lands.
+    if (!clock_.runAtHostTicks(generation, heard_first_host_ticks, rate)) {
       silenceAll();
       return refuse(result, NativeAudioRenderFailure::ResumeRejected);
     }
@@ -1240,32 +1230,21 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
 
   const NativeMediaSegmentReservation reservation =
       clock_.reserveSegment(generation, segment);
-  result.admission = reservation.admission;
   if (!reservation.accepted()) {
     silenceAll();
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return reject(result, reservation.admission);
   }
+  result.admission = reservation.admission;
 
   if (acceptedWithoutPcm(reservation)) {
-    bool committed = false;
-    if (fail_next_commit_) {
-      fail_next_commit_ = false;
-      static_cast<void>(clock_.cancelSegment(reservation));
-    } else {
-      committed = clock_.commitSegment(reservation);
-    }
+    const bool committed = commitClockSegment(reservation);
     if (!committed) {
       silenceAll();
       return refuse(result, NativeAudioRenderFailure::ClockCommitFailed);
     }
     result.committed = true;
     segment_serial_ = segment.serial;
-    zero(interleavedStereoOutput);
-    result.silentFrames = input.frameCount;
-    saturatingAdd(silent_frames_, input.frameCount);
+    silenceAll();
     saturatingAdd(metadata_corrections_, 1);
     next_discontinuous_ = true;
     prior_sample_time_valid_ = false;
@@ -1304,9 +1283,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     if (consumed.invalidInput || consumed.staleConsumer || consumed.underrun ||
         consumed.pcmFrames != pcmShareFrames || consumed.silentFrames != 0) {
       static_cast<void>(clock_.cancelSegment(reservation));
-      zero(interleavedStereoOutput);
-      result.silentFrames = input.frameCount;
-      saturatingAdd(silent_frames_, input.frameCount);
+      silenceAll();
       return refuse(result, NativeAudioRenderFailure::RingContractViolation);
     }
   } else {
@@ -1324,9 +1301,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     pull_ring_taken_ = 0;
     if (!rendered || ringFailed) {
       static_cast<void>(clock_.cancelSegment(reservation));
-      zero(interleavedStereoOutput);
-      result.silentFrames = input.frameCount;
-      saturatingAdd(silent_frames_, input.frameCount);
+      silenceAll();
       return refuse(result,
                     ringFailed
                         ? NativeAudioRenderFailure::RingContractViolation
@@ -1342,17 +1317,9 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     saturatingAdd(stretched_callbacks_, 1);
   }
 
-  bool committed = false;
-  if (fail_next_commit_) {
-    fail_next_commit_ = false;
-    static_cast<void>(clock_.cancelSegment(reservation));
-  } else {
-    committed = clock_.commitSegment(reservation);
-  }
+  const bool committed = commitClockSegment(reservation);
   if (!committed) {
-    zero(interleavedStereoOutput);
-    result.silentFrames = input.frameCount;
-    saturatingAdd(silent_frames_, input.frameCount);
+    silenceAll();
     return refuse(result, NativeAudioRenderFailure::ClockCommitFailed);
   }
 
@@ -1432,8 +1399,6 @@ NativeAudioRenderStats NativeAudioRenderCore::stats() const noexcept {
   result.endOfStreamFacts = eof_facts_.load(std::memory_order_relaxed);
   result.stretchedCallbacks =
       stretched_callbacks_.load(std::memory_order_relaxed);
-  result.stretchShortfallFrames =
-      stretch_shortfall_frames_.load(std::memory_order_relaxed);
   result.rateChanges = rate_changes_.load(std::memory_order_relaxed);
   result.rate = requestedRate();
   result.failure = failure();
@@ -1447,6 +1412,17 @@ NativeAudioRenderFailure NativeAudioRenderCore::failure() const noexcept {
 
 std::size_t NativeAudioRenderCore::queuedRingSlabs() const noexcept {
   return ring_.queuedSlabs();
+}
+
+bool NativeAudioRenderCore::commitClockSegment(
+    const NativeMediaSegmentReservation &reservation) noexcept {
+#if defined(WAM_NATIVE_TEST_SEAMS)
+  if (std::exchange(fail_next_commit_, false)) {
+    static_cast<void>(clock_.cancelSegment(reservation));
+    return false;
+  }
+#endif
+  return clock_.commitSegment(reservation);
 }
 
 } // namespace wam::macos

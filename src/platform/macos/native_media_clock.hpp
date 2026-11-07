@@ -143,19 +143,13 @@ public:
   [[nodiscard]] std::uint64_t ticksPerSecond() const noexcept;
   [[nodiscard]] NativeMediaClockSnapshot sample() const noexcept;
 
-  // Establishes a strictly newer active generation. UINT64_MAX is reserved
-  // for terminal invalidation.
+  using PlaybackRate = media::native_playback::PlaybackRateRatio;
+
+  // Establishes a strictly newer active generation at an exact position.
+  // UINT64_MAX is reserved for terminal invalidation.
   [[nodiscard]] bool anchor(std::uint64_t generation,
-                            double mediaSeconds, double rate,
+                            media::MediaTime position, PlaybackRate rate,
                             bool running) noexcept;
-  [[nodiscard]] bool anchorExact(std::uint64_t generation, media::MediaTime target,
-                                  double rate, bool running) noexcept;
-  [[nodiscard]] bool seekExact(std::uint64_t expectedGeneration,
-                                std::uint64_t nextGeneration, media::MediaTime target) noexcept;
-  [[nodiscard]] bool anchorAtHostTicks(std::uint64_t generation,
-                                       std::uint64_t hostTicks,
-                                       double mediaSeconds, double rate,
-                                       bool running) noexcept;
 
   // Prepares publication before an output callback destructively consumes
   // PCM. The single PCM consumer first obtains an exact readable-frame count
@@ -180,15 +174,15 @@ public:
 
   [[nodiscard]] bool seek(std::uint64_t expectedGeneration,
                           std::uint64_t nextGeneration,
-                          double mediaSeconds) noexcept;
+                          media::MediaTime position) noexcept;
   [[nodiscard]] bool pause(std::uint64_t generation) noexcept;
-  [[nodiscard]] bool run(std::uint64_t generation, double rate) noexcept;
+  [[nodiscard]] bool run(std::uint64_t generation, PlaybackRate rate) noexcept;
 
   // Resumes an exact paused generation at an externally supplied future host
   // tick without consulting the local clock. Running states are rejected.
   [[nodiscard]] bool runAtHostTicks(std::uint64_t expectedGeneration,
                                     std::uint64_t hostTicks,
-                                    double rate) noexcept;
+                                    PlaybackRate rate) noexcept;
 
   [[nodiscard]] bool stop(std::uint64_t expectedGeneration,
                           std::uint64_t invalidationGeneration) noexcept;
@@ -211,7 +205,7 @@ private:
     std::uint64_t anchorHostTicks{0};
     std::uint64_t latestSegmentSerial{0};
     double anchorMediaSeconds{0.0};
-    double rate{1.0};
+    PlaybackRate rate{};
     SegmentState currentSegment;
     SegmentState pendingSegment;
     // Exact future rate boundaries behind the first pending interval.

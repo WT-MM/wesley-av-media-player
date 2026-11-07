@@ -70,38 +70,33 @@ struct NativeAudioRenderCoreTestAccess {
 
 struct NativeAudioOutputTestAccess {
   static void setBeforeAdmissionHook(NativeAudioOutput &output,
-                                     NativeAudioOutput::TestHook hook,
+                                     NativeTestHook::Function hook,
                                      void *context) noexcept {
-    output.before_admission_hook_ = hook;
-    output.before_admission_context_ = context;
+    output.before_admission_hook_ = {hook, context};
   }
 
   static void setBeforeStartCommitHook(NativeAudioOutput &output,
-                                       NativeAudioOutput::TestHook hook,
+                                       NativeTestHook::Function hook,
                                        void *context) noexcept {
-    output.before_start_commit_hook_ = hook;
-    output.before_start_commit_context_ = context;
+    output.before_start_commit_hook_ = {hook, context};
   }
 
   static void setAfterCallbackWakeHook(NativeAudioOutput &output,
-                                       NativeAudioOutput::TestHook hook,
+                                       NativeTestHook::Function hook,
                                        void *context) noexcept {
-    output.after_callback_wake_hook_ = hook;
-    output.after_callback_wake_context_ = context;
+    output.after_callback_wake_hook_ = {hook, context};
   }
 
   static void setAfterListenerWakeHook(NativeAudioOutput &output,
-                                       NativeAudioOutput::TestHook hook,
+                                       NativeTestHook::Function hook,
                                        void *context) noexcept {
-    output.after_listener_wake_hook_ = hook;
-    output.after_listener_wake_context_ = context;
+    output.after_listener_wake_hook_ = {hook, context};
   }
 
   static void setAfterFactsBridgeOwnerHook(
-      NativeAudioOutput &output, NativeAudioOutput::TestHook hook,
+      NativeAudioOutput &output, NativeTestHook::Function hook,
       void *context) noexcept {
-    output.after_facts_bridge_owner_hook_ = hook;
-    output.after_facts_bridge_owner_context_ = context;
+    output.after_facts_bridge_owner_hook_ = {hook, context};
   }
 
   // Seeds the exactly-adjacent carry state the render callback would have left
@@ -161,13 +156,6 @@ static_assert(noexcept(std::declval<NativeAudioOutput &>().close()));
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr std::uint64_t kHostTicksPerSecond = 48000;
 constexpr OSStatus kFakeFailure = -70001;
-
-[[nodiscard]] double mediaSecondsAtFrame(
-    MediaTime origin, std::uint64_t frame,
-    std::uint32_t sampleRate) noexcept {
-  return wam::media::mediaTimeSecondsAtFrame(origin, frame, sampleRate)
-      .value_or(-1.0);
-}
 
 enum class Call : std::uint8_t {
   None,
@@ -658,12 +646,11 @@ struct Fixture {
   bool anchored{false};
 
   explicit Fixture(std::uint64_t frequency = kHostTicksPerSecond,
-                   double initialMediaSeconds = 0.0)
+                   MediaTime initialPosition = {0, 1})
       : hostFrequency(frequency), clock(host.seam(frequency)),
         core(ring, clock, frequency) {
     fake.hostFrequency = static_cast<double>(frequency);
-    anchored = clock.anchorAtHostTicks(
-        1, 0, initialMediaSeconds, 1.0, false);
+    anchored = clock.anchor(1, initialPosition, {}, false);
     output = NativeAudioOutput::create(core, fake.table(), wake.seam());
     wake.output = output.get();
   }
@@ -954,8 +941,7 @@ void testConfigurationAndExactDeviceFormat() {
       wam::media::mediaTimeSecondsAtFrame(origin, cursor, kSampleRate);
   const std::optional<double> directlyRoundedOrigin =
       wam::media::mediaTimeSeconds(origin);
-  Fixture nonzeroOrigin(kHostTicksPerSecond,
-                        originSeconds.value_or(-1.0));
+  Fixture nonzeroOrigin(kHostTicksPerSecond, origin);
   NativeAudioOutputConfiguration originConfiguration =
       nonzeroOrigin.configuration(kSampleRate, cursor);
   originConfiguration.mediaOrigin = origin;
@@ -973,8 +959,7 @@ void testConfigurationAndExactDeviceFormat() {
   constexpr MediaTime firstAudioFrame{1143, 8000};
   const auto visualSeconds = wam::media::mediaTimeSeconds(visualTarget);
   const auto audioSeconds = wam::media::mediaTimeSeconds(firstAudioFrame);
-  Fixture dualOrigin(kHostTicksPerSecond,
-                     visualSeconds.value_or(-1.0));
+  Fixture dualOrigin(kHostTicksPerSecond, visualTarget);
   NativeAudioOutputConfiguration dualConfiguration =
       dualOrigin.configuration();
   dualConfiguration.mediaOrigin = firstAudioFrame;
@@ -1008,8 +993,8 @@ void testConfigurationAndExactDeviceFormat() {
       mismatchedRing, mismatchedClock, kHostTicksPerSecond * 2U);
   FakeAudioUnit mismatchedFake;
   WakeCounter mismatchedWake;
-  const bool mismatchedAnchor = mismatchedClock.anchorAtHostTicks(
-      1, 0, 0.0, 1.0, false);
+  const bool mismatchedAnchor = mismatchedClock.anchor(
+      1, MediaTime{0, 1}, {}, false);
   std::shared_ptr<NativeAudioOutput> mismatchedOutput =
       NativeAudioOutput::create(mismatchedCore, mismatchedFake.table(),
                                 mismatchedWake.seam());
@@ -1559,7 +1544,7 @@ void testFrameAndTimestampOverflow() {
   constexpr std::uint64_t maximumExactFrame = std::uint64_t{1} << 53U;
   Fixture frameOverflow(
       kHostTicksPerSecond,
-      mediaSecondsAtFrame({0, 1}, maximumExactFrame, kSampleRate));
+      *wam::media::mediaTimeFromTicks(maximumExactFrame, kSampleRate));
   expect(frameOverflow.anchored &&
              frameOverflow.output->configure(
                  frameOverflow.configuration(kSampleRate,
@@ -1700,7 +1685,7 @@ struct WindowHarness {
       std::make_unique<NativePcmRing>(1)};
   NativeMediaClock clock{host.seam(kHostTicksPerSecond)};
   NativeAudioRenderCore core{*ringStorage, clock, kHostTicksPerSecond};
-  bool anchored{clock.anchorAtHostTicks(1, 0, 0.0, 1.0, false)};
+  bool anchored{clock.anchor(1, MediaTime{0, 1}, {}, false)};
   FakeAudioUnit fake;
   WakeCounter wake;
   std::shared_ptr<NativeAudioOutput> output;
@@ -1908,7 +1893,7 @@ void testSeekKeepsHardwareRunning() {
              std::all_of(samples.begin(), samples.end(), [](float x) { return x == 0; }) &&
              fixture.clock.sample().publicationSerial == serial,
          "closed seek admission emits silence without clock publication or allocation");
-  expect(fixture.ring.flush(2) && fixture.clock.seek(1, 2, 10.0) &&
+  expect(fixture.ring.flush(2) && fixture.clock.seek(1, 2, MediaTime{10, 1}) &&
              fixture.output->activate(2, 0, {10, 1}, {10, 1}) == NativeAudioOutputProgress::Done &&
              publishConstant(fixture.ring, 32, 1.0F, 2) &&
              fixture.output->start() == NativeAudioOutputProgress::Done,
@@ -2079,7 +2064,7 @@ void testWakeGatesResetAcrossGenerationActivation() {
   fixture.host.ticks.store(kFrames, std::memory_order_relaxed);
   expect(fixture.output->stop() == NativeAudioOutputProgress::Done &&
              fixture.core.settlePausedAfterStop(1) &&
-             fixture.ring.flush(2) && fixture.clock.seek(1, 2, 0.0) &&
+             fixture.ring.flush(2) && fixture.clock.seek(1, 2, MediaTime{0, 1}) &&
              fixture.output->activate(2, 0, {0, 1}, {0, 1}) ==
                  NativeAudioOutputProgress::Done,
          "quiescent seek activates a distinct output generation");
@@ -2159,7 +2144,7 @@ void testRefillEdgeTracksSlabRetirement() {
   fixture.core.setPaused(true);
   expect(fixture.output->stop() == NativeAudioOutputProgress::Done &&
              fixture.clock.pause(1) && fixture.core.settlePausedAfterStop(1) &&
-             fixture.ring.flush(2) && fixture.clock.seek(1, 2, 0.0) &&
+             fixture.ring.flush(2) && fixture.clock.seek(1, 2, MediaTime{0, 1}) &&
              fixture.output->activate(2, 0, {0, 1}, {0, 1}) ==
                  NativeAudioOutputProgress::Done,
          "quiescent seek flushes the ring and activates a new generation");

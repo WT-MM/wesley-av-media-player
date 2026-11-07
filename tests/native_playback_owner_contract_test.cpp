@@ -10,6 +10,12 @@ using wam::macos::NativeMediaSession;
 
 namespace {
 
+// The owner's seconds -> exact edge: no exact form becomes an invalid time.
+wam::media::MediaTime secondsTime(double seconds) {
+  return wam::media::exactNonnegativeMediaTime(seconds).value_or(
+      wam::media::MediaTime{});
+}
+
 void expect(bool condition, const char* message) {
   if (condition)
     return;
@@ -32,8 +38,13 @@ native::Prepared prepared(const native::Prepare& prepare) {
           prepare.reservedGeneration};
 }
 
+wam::media::MediaTime at(double seconds) {
+  return *wam::media::exactNonnegativeMediaTime(seconds);
+}
+
 native::CommitReady commitReady(const native::CommitSeek& commit,
                                 std::uint64_t drawSequence) {
+  const wam::media::MediaTime target = at(commit.targetSeconds);
   return {commit.stamp,
           commit.targetGeneration,
           commit.gesture,
@@ -42,7 +53,12 @@ native::CommitReady commitReady(const native::CommitSeek& commit,
           {commit.stamp, commit.targetGeneration,
            native::AudioClockAnchorId{1}, commit.targetSeconds, true, 1.0},
           {commit.stamp, commit.targetGeneration, drawSequence,
-           commit.targetSeconds, 1.0 / 30.0}};
+           commit.targetSeconds, 1.0 / 30.0},
+          target,
+          target,
+          {0, 1},
+          target,
+          {1, 30}};
 }
 
 void nativeSuccessCreatesNoFallback() {
@@ -137,11 +153,11 @@ void replacementRetainsLatestSourceUntilStop() {
 }
 
 void preflightIsPureAndExact() {
-  expect(NativeMediaSession::preflightInitialPosition(0.0).has_value(),
+  expect(NativeMediaSession::preflightInitialPosition(secondsTime(0.0)).has_value(),
          "zero is an exact native initial position");
-  expect(NativeMediaSession::preflightInitialPosition(0.5).has_value(),
+  expect(NativeMediaSession::preflightInitialPosition(secondsTime(0.5)).has_value(),
          "binary half second is exact");
-  expect(!NativeMediaSession::preflightInitialPosition(-1.0).has_value(),
+  expect(!NativeMediaSession::preflightInitialPosition(secondsTime(-1.0)).has_value(),
          "negative initial position fails closed");
 }
 
@@ -175,7 +191,7 @@ void commitBridgeRetainsIdentityPauseAndExactProof() {
          "physical scrub pause retains the active generation");
   const native::CommitSeek commit =
       action(route.commitSeek({native::GestureId{31},
-                               native::RequestId{47}, 22.5, 8},
+                               native::RequestId{47}, at(22.5), 8},
                               {5}),
              router::ActionKind::NativeCommitSeek,
              "owner dispatches one exact native commit")
@@ -256,7 +272,7 @@ void previewBridgeIsCapacityOneAndCommitFollowsLatest() {
          "only an exact latest preview terminal crosses the owner bridge");
   const native::CommitSeek commit =
       action(route.commitSeek({native::GestureId{41}, native::RequestId{53},
-                               14.0, 8},
+                               at(14.0), 8},
                               {6}),
              router::ActionKind::NativeCommitSeek,
              "release follows latest preview with one fresh commit")
@@ -287,7 +303,7 @@ void commitFailureRetiresBeforeCompatibility() {
          "failed commit source activates");
   const native::CommitSeek commit =
       action(route.commitSeek({native::GestureId{4}, native::RequestId{5},
-                               35.0, 2},
+                               at(35.0), 2},
                               {4}),
              router::ActionKind::NativeCommitSeek,
              "failed commit is admitted exactly once")

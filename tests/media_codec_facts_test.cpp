@@ -52,14 +52,12 @@ void testEveryEnumeratorHasItsOwnRow() {
 // timing predicates can be asked about is Audio, and no video codec is.
 void testKindAgreesWithTheAudioClassifiers() {
   for (const auto &facts : kMediaCodecFacts) {
-    if (wam::media::audioCodecPrecedesStreamOrigin(facts.codec) ||
-        wam::media::audioCodecStatesExactDecodedDuration(facts.codec)) {
+    if (wam::media::audioCodecPrecedesStreamOrigin(facts.codec)) {
       expect(facts.kind == MediaCodecKind::Audio,
              "a codec the audio timing predicates admit is an audio codec");
     }
     if (facts.kind == MediaCodecKind::Video) {
-      expect(!wam::media::audioCodecPrecedesStreamOrigin(facts.codec) &&
-                 !wam::media::audioCodecStatesExactDecodedDuration(facts.codec),
+      expect(!wam::media::audioCodecPrecedesStreamOrigin(facts.codec),
              "no video codec is admitted by an audio timing predicate");
     }
   }

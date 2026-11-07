@@ -15,10 +15,15 @@ namespace wam::media {
          static_cast<__int128>(threshold) * target.timescale * start.timescale;
 }
 
+// How long a native phase (open, start, seek without decode progress, stop or
+// close) may stall before its host gives up on it.
+inline constexpr unsigned kNativeStallDeadlineMilliseconds = 10'000;
+
 // Progress extends the inactivity deadline; elapsed seek duration never does.
 struct SeekProgressDeadline {
   static constexpr unsigned pollMilliseconds = 250;
-  static constexpr unsigned inactivityMilliseconds = 10'000;
+  static constexpr unsigned inactivityMilliseconds =
+      kNativeStallDeadlineMilliseconds;
   std::uint64_t decodedFrames{0};
   unsigned idleMilliseconds{0};
 

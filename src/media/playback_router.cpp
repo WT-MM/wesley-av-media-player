@@ -148,7 +148,7 @@ void PlaybackRouter::clearCurrent() noexcept {
   start_ = {};
   latestPreview_ = {};
   commitSeek_ = {};
-  exactCommitTarget_.reset();
+  commitTarget_ = {};
   commitDrawBaseline_ = 0;
   stop_ = {};
   fallbackReservationExhausted_ = false;
@@ -437,9 +437,11 @@ Transition PlaybackRouter::previewFrame(const PreviewFrameRequest &request,
 
 Transition PlaybackRouter::commitSeek(const CommitSeekRequest &request,
                                       Tick now) noexcept {
+  const auto target = canonicalNonnegativeTime(request.target);
+  const auto targetSeconds = target ? mediaTimeSeconds(*target) : std::nullopt;
   if (!acceptTick(now) || !native::valid(request.gesture) ||
-      !native::valid(request.request) ||
-      !native::validPosition(request.targetSeconds) ||
+      !native::valid(request.request) || !targetSeconds ||
+      !native::validPosition(*targetSeconds) ||
       request.drawBaseline == std::numeric_limits<std::uint64_t>::max()) {
     return invalid();
   }
@@ -468,7 +470,7 @@ Transition PlaybackRouter::commitSeek(const CommitSeekRequest &request,
                              targetGeneration,
                              request.gesture,
                              request.request,
-                             request.targetSeconds};
+                             *targetSeconds};
   const bool follows =
       native::valid(latestPreview_)
           ? native::commitFollowsLatestPreview(
@@ -481,9 +483,9 @@ Transition PlaybackRouter::commitSeek(const CommitSeekRequest &request,
   }
   latestPreview_ = {};
   commitSeek_ = command;
-  exactCommitTarget_.reset();
+  commitTarget_ = *target;
   commitDrawBaseline_ = request.drawBaseline;
-  initialPositionSeconds_ = request.targetSeconds;
+  initialPositionSeconds_ = *targetSeconds;
   state_ = State::NativeSeeking;
   deadlineArmed_ = timeouts_.seekTicks != 0;
   deadline_ = deadline(now, timeouts_.seekTicks);
@@ -561,6 +563,18 @@ Transition PlaybackRouter::advance(Tick now) noexcept {
     return beginNativeStop(true, now);
   }
   return ignored();
+}
+
+Transition PlaybackRouter::expirePhase(Tick now) noexcept {
+  if (!acceptTick(now)) {
+    return invalid();
+  }
+  if (!isBoundedNativePhase(state_)) {
+    return ignored();
+  }
+  deadlineArmed_ = true;
+  deadline_ = now;
+  return state_ == State::NativeStopping ? applied() : advance(now);
 }
 
 Transition PlaybackRouter::onNativePrepared(const native::Prepared &event,
@@ -652,8 +666,8 @@ Transition PlaybackRouter::onNativeCommitReady(
     return invalid();
   }
   if (state_ != State::NativeSeeking ||
-      exactCommitTarget_.has_value() ||
-      !native::commitReadyMatches(commitSeek_, commitDrawBaseline_, event)) {
+      !native::commitReadyMatches(commitSeek_, commitTarget_,
+                                  commitDrawBaseline_, event)) {
     return ignored();
   }
   generation_ = commitSeek_.targetGeneration;
@@ -662,40 +676,12 @@ Transition PlaybackRouter::onNativeCommitReady(
     return beginNativeStop(true, now);
   }
   commitSeek_ = {};
-  exactCommitTarget_.reset();
+  commitTarget_ = {};
   commitDrawBaseline_ = 0;
   state_ = State::NativeActive;
   native::SetRunState command{{attempt_, serial}, generation_,
                               intendedPaused_, intendedRate_,
                               intendedPreservePitch_};
-  return applied(nativeRunAction(command));
-}
-
-Transition PlaybackRouter::commitSeekExact(const CommitSeekRequest& request,
-    MediaTime target, Tick now) noexcept {
-  const auto exact = canonicalNonnegativeTime(target);
-  if (!exact || mediaTimeSeconds(*exact) != request.targetSeconds) return invalid();
-  auto result = commitSeek(request, now);
-  if (result.action && result.action->kind == ActionKind::NativeCommitSeek)
-    exactCommitTarget_ = *exact;
-  return result;
-}
-
-Transition PlaybackRouter::onNativeExactCommitReady(const native::ExactCommitReady& event,
-    Tick now) noexcept {
-  if (!acceptTick(now)) return invalid();
-  if (state_ != State::NativeSeeking || !exactCommitTarget_ ||
-      !native::exactCommitReadyMatches(commitSeek_, *exactCommitTarget_, commitDrawBaseline_, event))
-    return ignored();
-  generation_ = commitSeek_.targetGeneration;
-  native::Serial serial;
-  if (!reserveLiveSerial(serial)) return beginNativeStop(true, now);
-  commitSeek_ = {};
-  exactCommitTarget_.reset();
-  commitDrawBaseline_ = 0;
-  state_ = State::NativeActive;
-  native::SetRunState command{{attempt_, serial}, generation_,
-      intendedPaused_, intendedRate_, intendedPreservePitch_};
   return applied(nativeRunAction(command));
 }
 

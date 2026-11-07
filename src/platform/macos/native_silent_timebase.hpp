@@ -1,8 +1,8 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
-#include "native_audio_session.hpp"
 #include "native_media_clock.hpp"
+#include "native_session_ports.hpp"
 
 #include <memory>
 
@@ -24,18 +24,17 @@ namespace wam::macos {
 // absent-device failure mode, and the underrun/late-frame retirement machinery
 // that has nothing to retire here.
 //
-// The surface deliberately mirrors the subset of NativeAudioSession that
-// NativeMediaSession actuates through its SessionAudioControl table, so the
-// session's Start / SetRunState / CommitSeek / Ended chains need no silent
-// branch: they issue the same calls and validate the same clock proofs. Gain and
-// mute are accepted and discarded because a silent generation has no PCM to
-// scale, and the owner must not have to special-case a user volume gesture.
+// It is the session's SessionClockAuthority for such a generation, so the
+// Start / SetRunState / CommitSeek / Ended chains need no silent branch: they
+// issue the same calls and validate the same clock proofs. Gain and mute are
+// accepted and discarded because a silent generation has no PCM to scale, and
+// the owner must not have to special-case a user volume gesture.
 //
 // Every method is confined to the one session worker thread, exactly like
 // NativeAudioSession's owner-thread operations. visibleClock() is the sole
 // method safe to sample concurrently, and only under NativeMediaClock's own
 // lock-free publication contract.
-class NativeSilentTimebase final {
+class NativeSilentTimebase final : public SessionClockAuthority {
  public:
   [[nodiscard]] static std::unique_ptr<NativeSilentTimebase> create(
       NativeMediaHostClock hostClock) noexcept;
@@ -45,39 +44,35 @@ class NativeSilentTimebase final {
   NativeSilentTimebase(NativeSilentTimebase&&) = delete;
   NativeSilentTimebase& operator=(NativeSilentTimebase&&) = delete;
 
-  // Quiescent generation transition. positionSeconds becomes the exact paused
-  // commit position of the new generation, so a CommitSeek proof comparing
-  // visibleClock().mediaSeconds against its binary64 target matches bit for
-  // bit. The first activation anchors a fresh generation; later activations
-  // must name a strictly newer generation and pause the retired one first.
+  // Quiescent generation transition. target becomes the exact paused commit
+  // position of the new generation, so a CommitSeek proof comparing the
+  // clock's exact paused target against its own target matches exactly. The
+  // first activation anchors a fresh generation; later activations must name
+  // a strictly newer generation and pause the retired one first.
   [[nodiscard]] bool activate(media::MediaGeneration generation,
-                              double positionSeconds) noexcept;
-
-  [[nodiscard]] bool activateExact(media::MediaGeneration generation,
-                                   media::MediaTime target) noexcept;
+                              media::MediaTime target) noexcept;
 
   // Opens transport admission for the activated generation. The clock is
   // already anchored paused at its commit position, so unlike an audio start
   // there is nothing to prebuffer and this never reports WaitingForData.
-  [[nodiscard]] NativeAudioSessionProgress start() noexcept;
-  [[nodiscard]] NativeAudioSessionProgress setPaused(bool paused) noexcept;
-  // Accepted and discarded; see the class comment.
-  [[nodiscard]] NativeAudioSessionProgress setGain(float gain) noexcept;
-  [[nodiscard]] NativeAudioSessionProgress setMuted(bool muted) noexcept;
+  NativeAudioSessionProgress start() noexcept override;
+  NativeAudioSessionProgress setPaused(bool paused) noexcept override;
+  NativeAudioSessionProgress setGain(float gain) noexcept override;
+  NativeAudioSessionProgress setMuted(bool muted) noexcept override;
   // Playback rate on the silent route is a pure host-clock scaling: there is
   // no PCM to stretch, so the exact rational is handed straight to the clock
-  // as its running slope. A rate set while paused is cached and takes effect
-  // at the next resume, which is the same discipline the audio route uses.
-  [[nodiscard]] NativeAudioSessionProgress
-  setRate(NativePlaybackRate rate) noexcept;
+  // as its running slope, and there is no pitch to preserve. A rate set while
+  // paused is cached and takes effect at the next resume, which is the same
+  // discipline the audio route uses.
+  NativeAudioSessionProgress setRate(NativePlaybackRate rate,
+                                     bool preservePitch) noexcept override;
   // Freezes the timebase at its current position and closes admission. The
   // session samples visibleClock() immediately afterwards for the Ended
   // position, so this must leave a valid, paused, current publication.
-  [[nodiscard]] NativeAudioSessionProgress stop() noexcept;
+  NativeAudioSessionProgress stop() noexcept override;
 
-  [[nodiscard]] NativeMediaClockSnapshot visibleClock() const noexcept;
-  [[nodiscard]] media::MediaGeneration
-  highestExposedGeneration() const noexcept;
+  NativeMediaClockSnapshot visibleClock() const noexcept override;
+  media::MediaGeneration highestExposedGeneration() const noexcept override;
   // Terminal invalidation, mirroring NativeAudioSession::retire(). The clock
   // publication moves to the invalidation generation and no later activation
   // is accepted.

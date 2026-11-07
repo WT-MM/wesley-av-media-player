@@ -339,7 +339,8 @@ bool NativeAudioStretchUnit::stageRender(void *context,
   // Divide this callback's integer budget across slices without a residual.
   std::uint32_t previousBudget = 0;
   for (std::uint32_t offset = 0; offset < outputFrames;) {
-    const auto frames = std::min<std::uint32_t>(1024, outputFrames - offset);
+    const auto frames = std::min<std::uint32_t>(
+        NativeAudioStretchStage::kSliceOutputFrames, outputFrames - offset);
     const auto endBudget = static_cast<std::uint32_t>(
         static_cast<std::uint64_t>(offset + frames) * budget / outputFrames);
     const auto sliceBudget = endBudget - previousBudget;

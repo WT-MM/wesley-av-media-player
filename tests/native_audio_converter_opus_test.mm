@@ -24,6 +24,19 @@ namespace {
 using namespace wam::macos;
 using namespace wam::media;
 
+// prepare() then commitPrepared(), the pair every production owner calls.
+NativeAudioSubmitResult submit(NativeAudioConverter &converter,
+                               MediaSample &&sample, std::string *error) {
+  NativeAudioPrepareOutcome outcome = converter.prepare(sample, error);
+  if (outcome.result != NativeAudioSubmitResult::Accepted) {
+    return outcome.result;
+  }
+  return converter.commitPrepared(std::move(outcome.prepared),
+                                  std::move(sample))
+             ? NativeAudioSubmitResult::Accepted
+             : NativeAudioSubmitResult::Failed;
+}
+
 
 // AudioToolbox swallows exactly this many leading frames from a freshly
 // created Opus converter, so an Opus generation decodes this many fewer PCM
@@ -242,7 +255,7 @@ public:
     configuredFormatTag = configuration.input.formatTag;
     configuredFramesPerPacket = configuration.input.framesPerPacket;
     configuredLayoutTag = configuration.input.channelLayoutTag;
-    cookieSize = configuration.magicCookie.size();
+    cookieSize = configuration.codecConfiguration.size();
     return true;
   }
 
@@ -331,7 +344,7 @@ NativeAudioPumpResult decodeOneOpusBlock(Fixture &fixture,
                                {0, 0, false, false, true}});
   auto sample = makeSample(fixture.track, generation, kOpusPackets,
                            kFirstSampleFrame);
-  expect(fixture.converter->submit(std::move(sample), error) ==
+  expect(submit(*fixture.converter, std::move(sample), error) ==
              NativeAudioSubmitResult::Accepted,
          "the negative-timestamp Opus generation is admitted");
   return fixture.converter->pump(error);
@@ -524,7 +537,7 @@ void testNonOpusCodecsAreUnaffected() {
   auto sample = makeSample(exact.track, 9, kAacPackets, 0);
   std::string error;
   expect(exact.ready &&
-             exact.converter->submit(std::move(sample), &error) ==
+             submit(*exact.converter, std::move(sample), &error) ==
                  NativeAudioSubmitResult::Accepted &&
              exact.converter->pump(&error) == NativeAudioPumpResult::Published,
          "an AAC generation publishes its full declared frame count");
@@ -549,7 +562,7 @@ void testNonOpusCodecsAreUnaffected() {
   auto shortSample = makeSample(shortByLeadIn.track, 10, kAacPackets, 0);
   std::string shortError;
   expect(shortByLeadIn.ready &&
-             shortByLeadIn.converter->submit(std::move(shortSample),
+             submit(*shortByLeadIn.converter, std::move(shortSample),
                                              &shortError) ==
                  NativeAudioSubmitResult::Accepted &&
              shortByLeadIn.converter->pump(&shortError) ==

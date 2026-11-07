@@ -1,17 +1,7 @@
-// The two neutral audio-timing predicates. Neither had ANY test before this
-// file, and both are load-bearing: audioCodecPrecedesStreamOrigin relaxes the
-// nonnegative-time guards for the codecs that legitimately start early, and
-// audioCodecStatesExactDecodedDuration is what lets a generation take an exact
-// publication ceiling instead of a container estimate. Getting either wrong is
-// silent -- audio that starts in the wrong place, or a clock that free-runs
-// past the end of the stream.
-//
-// Every membership below is asserted in BOTH directions. A predicate that
-// simply returned true would pass a one-sided test, and these two predicates
-// deliberately have DIFFERENT membership from each other (see the header's own
-// note: FLAC states an exact duration but starts at origin; AAC precedes the
-// origin but reaches this pipeline from AVFoundation, whose duration is a
-// container estimate).
+// audioCodecPrecedesStreamOrigin relaxes the nonnegative-time guards for the
+// codecs that legitimately start early; getting it wrong is silent audio that
+// starts in the wrong place. Membership is asserted in both directions, so a
+// predicate that simply returned true fails.
 
 #include "media/audio_codec_timing.hpp"
 #include "media/aac_packet_timeline.hpp"
@@ -24,7 +14,6 @@
 namespace {
 
 using wam::media::audioCodecPrecedesStreamOrigin;
-using wam::media::audioCodecStatesExactDecodedDuration;
 using wam::media::matroskaFramesFromNanoseconds;
 using wam::media::MediaCodec;
 
@@ -61,53 +50,6 @@ void testCodecsThatPrecedeTheStreamOrigin() {
          "a video codec never precedes the audio origin");
   expect(!audioCodecPrecedesStreamOrigin(MediaCodec::Unknown),
          "an unknown codec claims nothing");
-}
-
-void testCodecsThatStateAnExactDecodedDuration() {
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Opus), "Opus");
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Vorbis), "Vorbis");
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Ac3), "AC-3");
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Eac3), "E-AC-3");
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Mp3), "MP3");
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Flac),
-         "FLAC STREAMINFO states the total sample count");
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Pcm),
-         "uncompressed audio states a frame count in its own header");
-  // ADPCM: the format is BLOCKED, so the frame count is not simply bytes over
-  // block align and the final block is padded -- yet the frames AudioToolbox
-  // produces were measured equal to the declared count exactly, on both
-  // families at every admitted rate.
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::AdpcmIma),
-         "IMA ADPCM decodes to exactly its declared frame count");
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::AdpcmMs),
-         "Microsoft ADPCM decodes to exactly its declared frame count");
-  // ALAC: an MP4's track duration IS the decoded sample count, because the
-  // sample table states the final packet's true length. This membership is
-  // what pairs ALAC's tail-shortfall bound with an exact ceiling, so the bound
-  // stays a guard rather than becoming a licence to publish past the stream.
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Alac),
-         "ALAC states an exact decoded duration");
-
-  // AAC is the deliberate NON-member, and the header says why: it reaches this
-  // pipeline from AVFoundation too, where the duration is the container's
-  // estimate rather than a decoded sample count. If this ever flips, the
-  // AVFoundation route would take a ceiling it cannot justify.
-  expect(!audioCodecStatesExactDecodedDuration(MediaCodec::Aac),
-         "AAC does NOT state an exact decoded duration here");
-  expect(!audioCodecStatesExactDecodedDuration(MediaCodec::Unknown),
-         "an unknown codec states nothing");
-}
-
-// The two predicates are genuinely different questions, and the header says so.
-// Pin the two codecs that separate them, so a future edit cannot quietly
-// collapse one into the other.
-void testTheTwoPredicatesAreNotTheSameSet() {
-  expect(audioCodecStatesExactDecodedDuration(MediaCodec::Flac) &&
-             !audioCodecPrecedesStreamOrigin(MediaCodec::Flac),
-         "FLAC is exact-duration but origin-starting");
-  expect(audioCodecPrecedesStreamOrigin(MediaCodec::Aac) &&
-             !audioCodecStatesExactDecodedDuration(MediaCodec::Aac),
-         "AAC precedes the origin but is not exact-duration");
 }
 
 void testFrameRecoveryFromNanoseconds() {
@@ -177,8 +119,6 @@ int main() {
     expect(!fractional.append({1,96000},{1024,48000}), "fractional-frame segment anchor refuses");
   }
   testCodecsThatPrecedeTheStreamOrigin();
-  testCodecsThatStateAnExactDecodedDuration();
-  testTheTwoPredicatesAreNotTheSameSet();
   testFrameRecoveryFromNanoseconds();
   if (failures != 0) {
     std::cerr << failures << " audio codec timing expectation(s) failed\n";

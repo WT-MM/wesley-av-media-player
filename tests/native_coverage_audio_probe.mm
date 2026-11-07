@@ -7,7 +7,27 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <utility>
 #include <variant>
+
+namespace {
+
+// prepare() then commitPrepared(), the pair every production owner calls.
+wam::macos::NativeAudioSubmitResult
+submitSample(wam::macos::NativeAudioConverter &converter,
+             wam::media::MediaSample &&sample, std::string *error) {
+  auto outcome = converter.prepare(sample, error);
+  if (outcome.result != wam::macos::NativeAudioSubmitResult::Accepted) {
+    return outcome.result;
+  }
+  return converter.commitPrepared(std::move(outcome.prepared),
+                                  std::move(sample))
+             ? wam::macos::NativeAudioSubmitResult::Accepted
+             : wam::macos::NativeAudioSubmitResult::Failed;
+}
+
+} // namespace
 
 // This offline harness runs the production source, converter and ring on one
 // bounded worker. Its output is interleaved stereo float32 at the media rate.
@@ -105,7 +125,7 @@ int main(int argc, char **argv) {
     auto next = source->readNext(1);
     if (auto *sample = std::get_if<MediaSample>(&next)) {
       if (sample->track == track->id &&
-          converter.submit(std::move(*sample), &error) !=
+          submitSample(converter, std::move(*sample), &error) !=
               NativeAudioSubmitResult::Accepted)
         failed = true;
     } else if (auto *end = std::get_if<MediaEndOfStream>(&next)) {
