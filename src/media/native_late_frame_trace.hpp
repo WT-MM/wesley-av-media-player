@@ -100,5 +100,7 @@ struct Producer {
     }
   }
 };
+#else
+inline constexpr bool enabled = false;
 #endif
 } // namespace wam::media::late_trace

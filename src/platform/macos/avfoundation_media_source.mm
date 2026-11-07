@@ -1,3 +1,4 @@
+#include "media/native_late_frame_trace.hpp"
 #include "media/startup_benchmark.hpp"
 #include <fstream>
 #include "media/audio_track_admission.hpp"
@@ -2717,7 +2718,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
         }
         ++ordinal;
       } while ([cursor stepInDecodeOrderByCount:1] == 1);
-      if (std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY")) std::fprintf(stderr,
+      if (media::late_trace::enabled) std::fprintf(stderr,
           "WAM: AAC packet table packets=%llu scan_ms=%.3f\n",ordinal,
           std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-aacProofStart).count());
       if (!timeline->finish()) { assignError(error,"AacPacketTailTrimUnproven"); return std::nullopt; }
@@ -2766,7 +2767,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
       const MediaTime packetEnd{timeline->packets().back().start +
           timeline->packets().back().duration + *shiftFrames,static_cast<std::int32_t>(rate)};
       result->duration = media::compareMediaTime(packetEnd,*editEnd)==MediaTimeOrder::Less ? packetEnd : *editEnd;
-      if (std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY")) std::fprintf(stderr,
+      if (media::late_trace::enabled) std::fprintf(stderr,
           "WAM: AAC proof packets=%llu total_ms=%.3f shift=%lld packet_end=%lld edit_end=%lld\n",
           ordinal, std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-aacProofStart).count(),
           *shiftFrames,packetEnd.value,editEnd->value);

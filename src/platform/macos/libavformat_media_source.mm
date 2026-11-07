@@ -5,6 +5,7 @@
 #include "media/media_codec_facts.hpp"
 #include "platform/macos/libavformat_media_source.hpp"
 #include "media/libavformat_cursor.hpp"
+#include "media/native_late_frame_trace.hpp"
 #include "media/codec/opus.hpp"
 #include "media/codec/aac.hpp"
 #include "media/media_iso_color.hpp"
@@ -785,8 +786,7 @@ struct LibavformatMediaSource::Impl final
       MediaSeekMode mode, const std::shared_ptr<const Context>& existingContext) {
     GenerationStart started;
     OpenTelemetry t;
-    t.enabled = existingContext == nullptr &&
-                std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY") != nullptr;
+    t.enabled = existingContext == nullptr && media::late_trace::enabled;
     t.begun = Clock::now();
     if (!resetForGeneration(requestedOptions, requestedGeneration,
                             requestedTarget, mode)) {
