@@ -2,7 +2,7 @@
 
 #include "macos_window_chrome.hpp"
 #include "native_benchmark_telemetry.hpp"
-#include "native_playback_owner.hpp"
+#include "qt/native_playback_owner.hpp"
 #include "platform/macos/native_embedding_support.hpp"
 #include "player_controller.hpp"
 #include "window_manager.hpp"

@@ -1,10 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 # Input is a locally supplied archive; this recipe never accesses the network.
-WAM_FFMPEG_VERSION=9.0.1
-WAM_FFMPEG_SHA256=cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635
 archive=${1:?usage: build_ffmpeg_lgpl.sh ARCHIVE [PREFIX]}
 repo=$(cd "$(dirname "$0")/.." && pwd)
+source "$repo/packaging/pins.env"
 prefix=${2:-$repo/third_party/ffmpeg-lgpl}
 [[ $(uname -m) == arm64 ]] || { echo 'FFmpegArchitectureUnsupported: arm64 required' >&2; exit 1; }
 [[ $(shasum -a 256 "$archive" | awk '{print $1}') == "$WAM_FFMPEG_SHA256" ]] || {
@@ -20,12 +19,12 @@ cd "$work/ffmpeg-$WAM_FFMPEG_VERSION"
 [[ $(cat RELEASE) == "$WAM_FFMPEG_VERSION" ]]
 python3 "$repo/scripts/apply_ffmpeg_memory_reservation.py" "$PWD"
 export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
-export MACOSX_DEPLOYMENT_TARGET=13.3
+export MACOSX_DEPLOYMENT_TARGET=$WAM_MACOS_DEPLOYMENT_TARGET
 export PKG_CONFIG_LIBDIR="$work/no-pkg-config"
 args=(
   --prefix="$prefix" --arch=arm64 --target-os=darwin --cc=clang --cxx=clang++
-  --extra-cflags=-mmacosx-version-min=13.3
-  --extra-ldflags=-mmacosx-version-min=13.3
+  --extra-cflags=-mmacosx-version-min=$WAM_MACOS_DEPLOYMENT_TARGET
+  --extra-ldflags=-mmacosx-version-min=$WAM_MACOS_DEPLOYMENT_TARGET
   --install-name-dir=@rpath --build-suffix=-wamnative
   --disable-static --enable-shared --disable-gpl --disable-nonfree --disable-version3
   --disable-autodetect --disable-programs --disable-doc --disable-debug
@@ -51,7 +50,7 @@ cp config.h config_components.h LICENSE.md COPYING.LGPLv2.1 "$receipt/"
 cp "$repo/third_party/ffmpeg-patches/wam_memory_reservation.inc" "$repo/scripts/apply_ffmpeg_memory_reservation.py" "$receipt/"
 cp ffbuild/config.log "$receipt/"
 {
-  printf 'version=%s\nsource_sha256=%s\narchitecture=arm64\ndeployment_target=13.3\n' "$WAM_FFMPEG_VERSION" "$WAM_FFMPEG_SHA256"
+  printf 'version=%s\nsource_sha256=%s\narchitecture=arm64\ndeployment_target=%s\n' "$WAM_FFMPEG_VERSION" "$WAM_FFMPEG_SHA256" "$WAM_MACOS_DEPLOYMENT_TARGET"
   shasum -a 256 "$repo/third_party/ffmpeg-patches/wam_memory_reservation.inc" "$repo/scripts/apply_ffmpeg_memory_reservation.py"
   printf 'build_seconds=%s\n' "$((SECONDS-start))"
   clang --version

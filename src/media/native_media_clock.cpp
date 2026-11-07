@@ -5,7 +5,7 @@
 #include <limits>
 #include <type_traits>
 
-namespace wam::macos {
+namespace wam::media {
 namespace {
 
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
@@ -918,4 +918,4 @@ bool NativeMediaClock::stop(
   return published;
 }
 
-} // namespace wam::macos
+} // namespace wam::media

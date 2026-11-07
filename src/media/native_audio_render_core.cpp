@@ -7,7 +7,7 @@
 #include <limits>
 #include <type_traits>
 
-namespace wam::macos {
+namespace wam::media {
 namespace {
 
 constexpr std::uint64_t kMaximumExactDoubleInteger =
@@ -1425,4 +1425,4 @@ bool NativeAudioRenderCore::commitClockSegment(
   return clock_.commitSegment(reservation);
 }
 
-} // namespace wam::macos
+} // namespace wam::media

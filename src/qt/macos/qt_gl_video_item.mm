@@ -1,5 +1,5 @@
 #include "qt_gl_video_item.hpp"
-#include "native_video_color.hpp"
+#include "platform/macos/native_video_color.hpp"
 
 #import <OpenGL/CGLIOSurface.h>
 #import <OpenGL/OpenGL.h>

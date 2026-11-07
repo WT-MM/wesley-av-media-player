@@ -152,26 +152,9 @@ Gatekeeper assessment, and only then creates the publishable ZIP and SHA-256
 sidecar. Its deterministic fixture replaces every Apple service/tool; repository
 tests never contact the notary service or use a real certificate.
 
-`.github/workflows/release-macos.yml` is limited to version tags and manual
-dispatch through the protected `macos-release` environment. Configure that
-environment with required reviewers, prevent self-review, and restrict allowed
-refs. It needs these environment values:
-
-- Variables: `MACOS_DEVELOPER_ID_APPLICATION`, `MACOS_TEAM_ID`,
-  `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID`,
-  `WAM_MACOS_QT_ARCHIVE_ARM64_URL`,
-  `WAM_MACOS_QT_ARCHIVE_ARM64_SHA256`,
-  `WAM_MACOS_QT_ARCHIVE_X86_64_URL`,
-  `WAM_MACOS_QT_ARCHIVE_X86_64_SHA256`,
-  `WAM_MACOS_MEDIA_ARCHIVE_ARM64_URL`,
-  `WAM_MACOS_MEDIA_ARCHIVE_ARM64_SHA256`,
-  `WAM_MACOS_MEDIA_ARCHIVE_X86_64_URL`, and
-  `WAM_MACOS_MEDIA_ARCHIVE_X86_64_SHA256`.
-- Secrets: `MACOS_DEVELOPER_ID_P12_BASE64`,
-  `MACOS_DEVELOPER_ID_P12_PASSWORD`, and `MACOS_NOTARY_KEY_BASE64`.
-
-Those credentials and the protected-environment policy are external release
-prerequisites. The other external blocker is an audited Qt/mpv/FFmpeg closure
+No workflow runs this step yet: the Developer ID certificate, notary key and a
+protected release environment (required reviewers, no self-review, restricted
+refs) are external release prerequisites. The other external blocker is an audited Qt/mpv/FFmpeg closure
 built at macOS 13.3 for each published architecture. Homebrew host binaries are
 valid development inputs but are not accepted as release provenance. A final
 quarantined clean-machine playback test remains a human release prerequisite.

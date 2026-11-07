@@ -432,7 +432,7 @@ NativeAudioUnitCallTable nativeAudioUnitSystemCallTable() noexcept {
 }
 
 std::shared_ptr<NativeAudioOutput> NativeAudioOutput::create(
-    NativeAudioRenderCore &renderCore,
+    media::NativeAudioRenderCore &renderCore,
     NativeAudioUnitCallTable calls,
     NativeAudioOutputWakeSeam wake) noexcept {
   if (wake.pending == nullptr || wake.signal == nullptr ||
@@ -476,7 +476,7 @@ std::shared_ptr<NativeAudioOutput> NativeAudioOutput::create(
 }
 
 NativeAudioOutput::NativeAudioOutput(
-    NativeAudioRenderCore &renderCore,
+    media::NativeAudioRenderCore &renderCore,
     NativeAudioUnitCallTable calls,
     NativeAudioOutputWakeSeam wake) noexcept
     : render_core_(renderCore), calls_(calls), wake_(wake) {}
@@ -1107,7 +1107,7 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   return NativeAudioOutputProgress::Done;
 }
 
-bool NativeAudioOutput::setRate(NativePlaybackRate rate) noexcept {
+bool NativeAudioOutput::setRate(media::NativePlaybackRate rate) noexcept {
   if (!rate.valid()) {
     return false;
   }
@@ -1126,7 +1126,7 @@ bool NativeAudioOutput::setRate(NativePlaybackRate rate) noexcept {
   return render_core_.setRate(rate);
 }
 
-NativePlaybackRate NativeAudioOutput::rate() const noexcept {
+media::NativePlaybackRate NativeAudioOutput::rate() const noexcept {
   return render_core_.requestedRate();
 }
 
@@ -1142,7 +1142,7 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
     std::uint64_t generation, std::uint64_t streamFrameCursor,
     media::MediaTime mediaOrigin,
     media::MediaTime pausedClockPosition,
-    NativeAudioDeclaredSilence declaredSilence) noexcept {
+    media::NativeAudioDeclaredSilence declaredSilence) noexcept {
 #if defined(WAM_NATIVE_TEST_SEAMS)
   if (nativeAudioDeviceRecoverySeekTestGate().exchange(false, std::memory_order_acq_rel)) {
     devicePropertyChanged(&gSlots[slot_index_].deviceListener, unit_,
@@ -1582,7 +1582,7 @@ bool NativeAudioOutput::exactSampleTime(
 
 bool NativeAudioOutput::callbackInput(
     const AudioTimeStamp &timestamp, std::uint32_t frameCount,
-    NativeAudioRenderInput *input,
+    media::NativeAudioRenderInput *input,
     __uint128_t *nextRemainder,
     __uint128_t *nextDenominator,
     std::uint64_t *nextRateScalarBits) noexcept {
@@ -1665,7 +1665,7 @@ bool NativeAudioOutput::callbackInput(
   input->hostTickRemainderAtStart = carry;
   input->sampleRate = sample_rate_;
   input->frameCount = frameCount;
-  input->timing = NativeAudioRenderInput::Timing::HostTicks;
+  input->timing = media::NativeAudioRenderInput::Timing::HostTicks;
 
   std::int64_t firstSample = 0;
   std::int64_t endSample = 0;
@@ -1674,7 +1674,7 @@ bool NativeAudioOutput::callbackInput(
                       &firstSample, &endSample)) {
     input->firstSampleTime = firstSample;
     input->endSampleTime = endSample;
-    input->timing = NativeAudioRenderInput::Timing::SampleTime;
+    input->timing = media::NativeAudioRenderInput::Timing::SampleTime;
   }
   *nextRemainder = remainder;
   *nextDenominator = denominator;
@@ -1926,7 +1926,7 @@ OSStatus NativeAudioOutput::render(
     return kAudio_ParamError;
   }
 
-  NativeAudioRenderInput input;
+  media::NativeAudioRenderInput input;
   __uint128_t nextRemainder = 0;
   __uint128_t nextDenominator = 0;
   std::uint64_t nextRateScalarBits = 0;
@@ -1940,7 +1940,7 @@ OSStatus NativeAudioOutput::render(
   }
 
   auto *samples = static_cast<float *>(data->mBuffers[0].mData);
-  const NativeAudioRenderResult result = render_core_.render(
+  const media::NativeAudioRenderResult result = render_core_.render(
       input, std::span<float>(samples,
                               static_cast<std::size_t>(frameCount) *
                                   kChannels));
@@ -1985,12 +1985,12 @@ OSStatus NativeAudioOutput::render(
     }
     frame_cursor_.store(cursor + advancedFrames, std::memory_order_release);
   }
-  if (result.failure != NativeAudioRenderFailure::None) {
+  if (result.failure != media::NativeAudioRenderFailure::None) {
     latchFailure(NativeAudioOutputFailure::RenderCoreFailed,
                  kAudio_ParamError);
   }
   const bool underrun =
-      result.admission == NativeMediaSegmentAdmission::Backpressure ||
+      result.admission == media::NativeMediaSegmentAdmission::Backpressure ||
       (result.committed && result.silentFrames != 0);
   if (result.pcmFrames != 0) {
     // Any consumed PCM proves that producer progress ended the prior

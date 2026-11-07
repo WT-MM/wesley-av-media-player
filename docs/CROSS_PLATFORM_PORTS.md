@@ -103,7 +103,7 @@ regression safety, not a substitute for the first two CI runs.
 | --- | --- |
 | `.github/workflows/build.yml` | Restores the saved Linux and Windows jobs and their package verification/upload steps. The entire original prefix, including `on:` and the macOS job, is byte-identical to HEAD. |
 | `CMakeLists.txt` | Exposes the neutral core tests on non-Apple platforms; links the non-Apple app to the shared parser/subtitle core; gates WAMKit entry points on APPLE; stages `ffmpeg.exe` on Windows; accepts `python` as well as `python3`; applies the Linux headless Qt environment to both controller tests. Moves neutral exact-time, color and audio-packet tests out of platform/decoder feature gates. Keeps the optional POSIX benchmark Apple-only as before. Adds overridable native fixture locations without changing their defaults. |
-| `src/wamkit/NativeTargets.cmake` | Builds the existing Qt-free parser/timing core for the portable app. All Apple framework/native-pipeline targets retain their APPLE gate. |
+| `cmake/NativeTargets.cmake` | Builds the existing Qt-free parser/timing core for the portable app. All Apple framework/native-pipeline targets retain their APPLE gate. |
 | `src/wamkit/CMakeLists.txt` | Makes the generated WAMKit fixture directory configurable; its default is unchanged. |
 | `src/qt/main.cpp` | Guards the Apple window-report/script helpers, supplies `background_launch=false` without the native feature, and limits the macOS document-app last-window policy to Apple. |
 | `src/media/matroska_subtitles.cpp` | Keeps `st_mtimespec` on Apple, uses `st_mtim` on Linux, and adds Windows wide-path/binary/non-inheritable open, 64-bit stat, explicit-offset ReadFile and FILETIME comparison. |

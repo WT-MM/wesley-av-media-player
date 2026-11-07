@@ -373,7 +373,7 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
 
 struct NativeMediaSessionChildLifetime final {
   struct ClockControl {
-    NativeMediaClockSnapshot snapshot{};
+    media::NativeMediaClockSnapshot snapshot{};
   };
   std::shared_ptr<void> caller;
   std::shared_ptr<NativeMediaSessionWake> wake;
@@ -418,7 +418,7 @@ struct NativeMediaSessionWake::Impl final {
   // Deadline state is confined to the session worker.
   bool hostPaced{false};
   bool heartbeat{true};
-  NativeMediaHostClock hostPacedClock{};
+  media::NativeMediaHostClock hostPacedClock{};
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   std::atomic<std::uint64_t> consumedTokens{0};
   std::atomic<std::uint64_t> consumeBarrierTarget{0};
@@ -468,7 +468,7 @@ namespace {
 constexpr std::uint64_t kHostPacedFloorNanos = 10ULL * 1000ULL * 1000ULL;
 
 [[nodiscard]] dispatch_time_t hostPacedDeadline(
-    bool hostPaced, bool heartbeat, NativeMediaHostClock hostClock,
+    bool hostPaced, bool heartbeat, media::NativeMediaHostClock hostClock,
     std::atomic<std::uint64_t>* dueSlot) noexcept {
   if (!hostPaced || hostClock.readTicks == nullptr ||
       hostClock.ticksPerSecond == 0 || dueSlot == nullptr) {
@@ -503,7 +503,7 @@ constexpr std::uint64_t kHostPacedFloorNanos = 10ULL * 1000ULL * 1000ULL;
 }  // namespace
 
 void NativeMediaSessionWake::setHostPacedDeadlines(
-    NativeMediaHostClock hostClock, bool heartbeat) noexcept {
+    media::NativeMediaHostClock hostClock, bool heartbeat) noexcept {
   if (impl_ == nullptr) {
     return;
   }
@@ -671,7 +671,7 @@ struct NativeMediaSession::Impl final {
 
   ~Impl() { shutdown(); }
 
-  static NativeMediaClockSnapshot sampleCachedClock(void* context) noexcept {
+  static media::NativeMediaClockSnapshot sampleCachedClock(void* context) noexcept {
     return static_cast<NativeMediaSessionChildLifetime::ClockControl*>(context)
         ->snapshot;
   }
@@ -2273,7 +2273,7 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
     }
-    NativeMediaClockSnapshot clock{};
+    media::NativeMediaClockSnapshot clock{};
     if (!withLiveIssue([&] { clock = authority->visibleClock(); })) {
       return;
     }
@@ -2688,7 +2688,7 @@ if (result != NativeAudioSessionProgress::Done) {
         commitAudioProof.has_value()) {
       return;
     }
-    NativeMediaClockSnapshot clock{};
+    media::NativeMediaClockSnapshot clock{};
     if (!withLiveIssue(
             [&] { clock = authority->visibleClock(); }, nullptr, false, true)) {
       return;
@@ -2921,7 +2921,7 @@ if (result != NativeAudioSessionProgress::Done) {
       static_cast<void>(publishFailure(protocol::FailureReason::AudioOutput, "ended/audio-stop"));
       return;
     }
-    NativeMediaClockSnapshot clock{};
+    media::NativeMediaClockSnapshot clock{};
     if (!withLiveIssue(
             [&] { clock = authority->visibleClock(); }, nullptr, true)) {
       return;
@@ -2990,7 +2990,7 @@ if (result != NativeAudioSessionProgress::Done) {
     // against, so it needs no second live clock sample and no live-issue
     // permit. refreshClock() only replaces it with a publicationCurrent
     // sample, so a stale value here is always a real earlier observation.
-    const NativeMediaClockSnapshot clock = childLifetime->clock->snapshot;
+    const media::NativeMediaClockSnapshot clock = childLifetime->clock->snapshot;
     if (clock.valid) {
       std::uint64_t mediaSecondsBits = 0;
       std::uint64_t rateBits = 0;
@@ -3034,7 +3034,7 @@ if (result != NativeAudioSessionProgress::Done) {
     if (!protocol::validLive(runStamp) || !protocol::validLive(runGeneration)) {
       return;
     }
-    const NativeMediaClockSnapshot clock = childLifetime->clock->snapshot;
+    const media::NativeMediaClockSnapshot clock = childLifetime->clock->snapshot;
     if (!clock.valid || clock.generation != runGeneration.value) {
       return;
     }
@@ -3050,7 +3050,7 @@ if (result != NativeAudioSessionProgress::Done) {
 
   void refreshClock() noexcept {
     if (authority != nullptr && dispatcherExposedGeneration) {
-      NativeMediaClockSnapshot sampled{};
+      media::NativeMediaClockSnapshot sampled{};
       if (!withLiveIssue([&] { sampled = authority->visibleClock(); })) {
         return;
       }
@@ -3097,7 +3097,7 @@ if (result != NativeAudioSessionProgress::Done) {
                         !endingLatched &&
                         (commitInFlight() || previewPending || !appliedPaused);
     dependencies.wake->setHostPacedDeadlines(
-        active ? dependencies.hostClock : NativeMediaHostClock{},
+        active ? dependencies.hostClock : media::NativeMediaHostClock{},
         silentTimebase != nullptr);
   }
 

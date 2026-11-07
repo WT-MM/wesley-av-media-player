@@ -35,7 +35,6 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -43,16 +42,8 @@ namespace wam {
 namespace {
 
 using namespace std::chrono_literals;
+using namespace detail;
 namespace fs = std::filesystem;
-
-std::string pathArgument(const fs::path &path) {
-#ifdef _WIN32
-  const auto utf8 = path.u8string();
-  return std::string(reinterpret_cast<const char *>(utf8.data()), utf8.size());
-#else
-  return path.string();
-#endif
-}
 
 struct ProcessResult {
   bool timed_out = false;
@@ -202,47 +193,12 @@ std::string displayCommand(const fs::path &executable,
 }
 
 #ifdef _WIN32
-std::wstring quoteWindowsArgument(const std::wstring &value) {
-  std::wstring result = L"\"";
-  std::size_t slashes = 0;
-  for (const wchar_t c : value) {
-    if (c == L'\\') {
-      ++slashes;
-    } else if (c == L'\"') {
-      result.append(slashes * 2 + 1, L'\\');
-      result.push_back(L'\"');
-      slashes = 0;
-    } else {
-      result.append(slashes, L'\\');
-      slashes = 0;
-      result.push_back(c);
-    }
-  }
-  result.append(slashes * 2, L'\\');
-  result.push_back(L'\"');
-  return result;
-}
-
-std::wstring utf8ToWide(const std::string &value) {
-  if (value.empty())
-    return {};
-  const int size =
-      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                          static_cast<int>(value.size()), nullptr, 0);
-  if (size <= 0)
-    return std::wstring(value.begin(), value.end());
-  std::wstring wide(static_cast<std::size_t>(size), L'\0');
-  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                      static_cast<int>(value.size()), wide.data(), size);
-  return wide;
-}
-
 std::wstring windowsCommandLine(const fs::path &executable,
                                 const std::vector<std::string> &arguments) {
   std::wstring line = quoteWindowsArgument(executable.wstring());
   for (const auto &argument : arguments) {
     line.push_back(L' ');
-    line += quoteWindowsArgument(utf8ToWide(argument));
+    line += quoteWindowsArgument(widenUtf8(argument, true));
   }
   return line;
 }
@@ -393,67 +349,6 @@ void drainPosixPipe(int pipe, std::string &output, ProcessMonitor* monitor = nul
   }
 }
 
-bool establishCaptionProcessGroup(pid_t child, int *error) {
-  if (setpgid(child, child) == 0)
-    return true;
-
-  const int setup_error = errno ? errno : 1;
-  // The child can reach exec before the parent's setpgid. Only signal a
-  // negative PID after proving the child owns that process-group identity.
-  if (setup_error == EACCES && getpgid(child) == child)
-    return true;
-  if (error)
-    *error = setup_error;
-  return false;
-}
-
-void signalVerifiedCaptionProcessGroup(pid_t group, int signal) {
-  int result = 0;
-  do {
-    result = kill(-group, signal);
-  } while (result != 0 && errno == EINTR);
-}
-
-bool reapCaptionChild(pid_t child, int *status, int *error) {
-  pid_t waited = -1;
-  do {
-    waited = waitpid(child, status, 0);
-  } while (waited < 0 && errno == EINTR);
-  if (waited == child)
-    return true;
-  if (error)
-    *error = errno ? errno : 1;
-  return false;
-}
-
-enum class CaptionChildObservation { Running, Exited, Error };
-
-CaptionChildObservation observeCaptionChild(pid_t child, int *error) {
-  siginfo_t information{};
-  int observed = -1;
-  do {
-    observed = waitid(P_PID, static_cast<id_t>(child), &information,
-                      WEXITED | WNOHANG | WNOWAIT);
-  } while (observed != 0 && errno == EINTR);
-  if (observed != 0) {
-    if (error)
-      *error = errno ? errno : 1;
-    return CaptionChildObservation::Error;
-  }
-  return information.si_pid == child ? CaptionChildObservation::Exited
-                                     : CaptionChildObservation::Running;
-}
-
-void terminateUnisolatedCaptionChild(pid_t child) {
-  int killed = 0;
-  do {
-    killed = kill(child, SIGKILL);
-  } while (killed != 0 && errno == EINTR);
-  int ignored_status = 0;
-  int ignored_error = 0;
-  reapCaptionChild(child, &ignored_status, &ignored_error);
-}
-
 ProcessResult runProcess(const fs::path &executable,
                          const std::vector<std::string> &arguments,
                          const detail::CancellationFlag &cancellation,
@@ -534,29 +429,24 @@ ProcessResult runProcess(const fs::path &executable,
   close(diagnostic_pipe[1]); diagnostics.write = -1;
   close(output_pipe[1]);
   int setup_error = 0;
-  if (!establishCaptionProcessGroup(pid, &setup_error)) {
+  if (!establishProcessGroup(pid, &setup_error)) {
     int observation_error = 0;
     const auto observation =
-        observeCaptionChild(pid, &observation_error);
+        observePosixChild(pid, &observation_error);
     int status = 0;
     int reap_error = 0;
-    const bool exited = observation == CaptionChildObservation::Exited &&
-                        reapCaptionChild(pid, &status, &reap_error);
-    if (observation == CaptionChildObservation::Running ||
-        (observation == CaptionChildObservation::Error &&
+    const bool exited = observation == ChildObservation::Exited &&
+                        reapPosixChild(pid, &status, &reap_error);
+    if (observation == ChildObservation::Running ||
+        (observation == ChildObservation::Error &&
          observation_error != ECHILD))
-      terminateUnisolatedCaptionChild(pid);
+      terminateUnisolatedChild(pid, 0);
     drainPosixPipe(output_pipe[0], result.output, &monitor);
     drainPosixPipe(diagnostic_pipe[0], result.output);
     close(output_pipe[0]);
     result.cancelled = cancellation.requested();
     if (exited) {
-      if (WIFEXITED(status))
-        result.exit_code = WEXITSTATUS(status);
-      else if (WIFSIGNALED(status))
-        result.exit_code = 128 + WTERMSIG(status);
-      if (result.cancelled)
-        result.exit_code = 130;
+      result.exit_code = result.cancelled ? 130 : normalizedExitCode(status);
     } else {
       result.launched = false;
       result.exit_code = result.cancelled ? 130 : setup_error;
@@ -582,24 +472,24 @@ ProcessResult runProcess(const fs::path &executable,
         termination_sent = true;
         force_at = std::chrono::steady_clock::now() +
                    kCaptionGracefulShutdownTimeout;
-        signalVerifiedCaptionProcessGroup(pid, SIGTERM);
+        signalVerifiedProcessGroup(pid, SIGTERM);
       } else {
         int observation_error = 0;
         const auto observation =
-            observeCaptionChild(pid, &observation_error);
-        if (observation == CaptionChildObservation::Error) {
+            observePosixChild(pid, &observation_error);
+        if (observation == ChildObservation::Error) {
           // After ECHILD the PID may already be reusable. Do not direct a
           // process-group signal at that numeric identity.
           if (observation_error != ECHILD) {
-            signalVerifiedCaptionProcessGroup(pid, SIGKILL);
+            signalVerifiedProcessGroup(pid, SIGKILL);
             int ignored_error = 0;
-            status_valid = reapCaptionChild(pid, &status, &ignored_error);
+            status_valid = reapPosixChild(pid, &status, &ignored_error);
           }
           if (!status_valid)
             result.exit_code = observation_error ? observation_error : 1;
           break;
         }
-        if (observation == CaptionChildObservation::Exited) {
+        if (observation == ChildObservation::Exited) {
           // waitid(WNOWAIT) leaves the leader unreaped. Re-check cancellation
           // before choosing between a normal reap and whole-group cleanup.
           if (cancellation.requested()) {
@@ -607,10 +497,10 @@ ProcessResult runProcess(const fs::path &executable,
             termination_sent = true;
             force_at = std::chrono::steady_clock::now() +
                        kCaptionGracefulShutdownTimeout;
-            signalVerifiedCaptionProcessGroup(pid, SIGTERM);
+            signalVerifiedProcessGroup(pid, SIGTERM);
           } else {
             int reap_error = 0;
-            status_valid = reapCaptionChild(pid, &status, &reap_error);
+            status_valid = reapPosixChild(pid, &status, &reap_error);
             if (!status_valid)
               result.exit_code = reap_error ? reap_error : 1;
             break;
@@ -623,18 +513,18 @@ ProcessResult runProcess(const fs::path &executable,
         std::chrono::steady_clock::now() >= force_at) {
       // Keep the leader waitable until this final group signal. Its unreaped
       // PID prevents the process-group number from being reused underneath us.
-      signalVerifiedCaptionProcessGroup(pid, SIGKILL);
+      signalVerifiedProcessGroup(pid, SIGKILL);
       int reap_error = 0;
       const auto reap_deadline = std::chrono::steady_clock::now()+500ms;
-      while (observeCaptionChild(pid,&reap_error)==CaptionChildObservation::Running &&
+      while (observePosixChild(pid,&reap_error)==ChildObservation::Running &&
              std::chrono::steady_clock::now()<reap_deadline)
         std::this_thread::sleep_for(kCaptionProcessPollInterval);
-      if (observeCaptionChild(pid,&reap_error)==CaptionChildObservation::Exited) {
-        status_valid = reapCaptionChild(pid, &status, &reap_error);
+      if (observePosixChild(pid,&reap_error)==ChildObservation::Exited) {
+        status_valid = reapPosixChild(pid, &status, &reap_error);
       } else if (reap_error != ECHILD) {
         // A driver can defer SIGKILL indefinitely. Reap eventually off-job;
         // the caption worker can retry on CPU and cancellation stays bounded.
-        std::thread([pid] { int ignored=0,error=0; reapCaptionChild(pid,&ignored,&error); }).detach();
+        std::thread([pid] { int ignored=0,error=0; reapPosixChild(pid,&ignored,&error); }).detach();
       }
       if (!status_valid) result.exit_code = 130;
       break;
@@ -645,10 +535,8 @@ ProcessResult runProcess(const fs::path &executable,
   drainPosixPipe(diagnostic_pipe[0], result.output);
   monitor.finish();
   close(output_pipe[0]);
-  if (status_valid && WIFEXITED(status))
-    result.exit_code = WEXITSTATUS(status);
-  else if (status_valid && WIFSIGNALED(status))
-    result.exit_code = 128 + WTERMSIG(status);
+  if (status_valid)
+    result.exit_code = normalizedExitCode(status);
   return result;
 }
 

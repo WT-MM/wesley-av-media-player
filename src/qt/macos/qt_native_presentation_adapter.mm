@@ -2,7 +2,7 @@
 #include "platform/macos/native_layer_host_view.hpp"
 #include "platform/macos/native_layer_presentation_state.hpp"
 #include "platform/macos/native_layer_video_output.hpp"
-#include "platform/macos/native_qt_gl_output.hpp"
+#include "qt/macos/native_qt_gl_output.hpp"
 #include <QQuickItem>
 #include <QQuickWindow>
 

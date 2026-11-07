@@ -1,4 +1,4 @@
-#include "platform/macos/native_audio_render_core.hpp"
+#include "media/native_audio_render_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -47,7 +47,7 @@ void operator delete[](void *memory, std::size_t) noexcept {
   std::free(memory);
 }
 
-namespace wam::macos {
+namespace wam::media {
 
 struct NativeAudioRenderCoreTestAccess {
   static void setAfterPreflightHook(NativeAudioRenderCore &core,
@@ -73,27 +73,27 @@ struct NativeAudioRenderCoreTestAccess {
   }
 };
 
-} // namespace wam::macos
+} // namespace wam::media
 
 namespace {
 
-using wam::macos::NativeAudioRenderCore;
-using wam::macos::NativeAudioRenderCoreTestAccess;
-using wam::macos::NativeAudioRenderFailure;
-using wam::macos::NativeAudioRenderInput;
-using wam::macos::NativeAudioRenderResult;
-using wam::macos::NativeAudioRenderStats;
-using wam::macos::NativeAudioStretchPull;
-using wam::macos::NativeAudioStretchStage;
-using wam::macos::NativePlaybackRate;
-using wam::macos::NativeAudioTerminalObservation;
-using wam::macos::NativeMediaClock;
-using wam::macos::NativeMediaClockSnapshot;
-using wam::macos::NativeMediaHostClock;
-using wam::macos::NativeMediaSegment;
-using wam::macos::NativeMediaSegmentAdmission;
-using wam::macos::NativeMediaSegmentContinuity;
-using wam::macos::NativePcmRing;
+using wam::media::NativeAudioRenderCore;
+using wam::media::NativeAudioRenderCoreTestAccess;
+using wam::media::NativeAudioRenderFailure;
+using wam::media::NativeAudioRenderInput;
+using wam::media::NativeAudioRenderResult;
+using wam::media::NativeAudioRenderStats;
+using wam::media::NativeAudioStretchPull;
+using wam::media::NativeAudioStretchStage;
+using wam::media::NativePlaybackRate;
+using wam::media::NativeAudioTerminalObservation;
+using wam::media::NativeMediaClock;
+using wam::media::NativeMediaClockSnapshot;
+using wam::media::NativeMediaHostClock;
+using wam::media::NativeMediaSegment;
+using wam::media::NativeMediaSegmentAdmission;
+using wam::media::NativeMediaSegmentContinuity;
+using wam::media::NativePcmRing;
 using wam::media::MediaTime;
 using wam::media::addMediaTime;
 using wam::media::mediaTimeFromTicks;

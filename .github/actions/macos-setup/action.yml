@@ -1,0 +1,85 @@
+name: macOS build setup
+description: >-
+  Setup shared by the macOS jobs: export packaging/pins.env, select the pinned
+  Xcode, and optionally install the pinned Qt, the release media closure and
+  the native LGPL FFmpeg SDK. Every cache key here hashes the pins file.
+inputs:
+  qt:
+    description: Install the pinned Qt
+    default: "false"
+  media-closure:
+    description: Install source build tools and restore or build third_party/media-closure
+    default: "false"
+  ffmpeg-lgpl:
+    description: Restore or build third_party/ffmpeg-lgpl
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Export the pins
+      shell: bash
+      run: grep '^WAM_' packaging/pins.env >> "$GITHUB_ENV"
+    - name: Select an Xcode whose SDK provides SpeechAnalyzer
+      # macos-15 defaults to Xcode 16.4 (macOS 15 SDK); the Apple caption
+      # backend is compile-probed and would silently build as the stub.
+      shell: bash
+      run: |
+        sudo xcode-select -s "$WAM_XCODE_APP"
+        xcrun --show-sdk-version
+    # Qt comes from the pinned installer: Homebrew's qt formula pulls node and
+    # llvm, and llvm has no bottle for this runner, so brew spent the whole job
+    # compiling it (v0.4.34, 2026-09-22).
+    - name: Install pinned Qt
+      if: inputs.qt == 'true'
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ env.WAM_QT_VERSION }}
+        modules: qtshadertools
+        cache: true
+    - name: Check the installed Qt version
+      if: inputs.qt == 'true'
+      shell: bash
+      run: test "$(qmake -query QT_VERSION)" = "$WAM_QT_VERSION"
+    - name: Install source build tools
+      if: inputs.media-closure == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        brew update --quiet
+        brew install --quiet cmake ninja pkg-config meson nasm autoconf automake libtool
+    # actions/cache entries saved on a tag or pull-request ref are invisible to
+    # other refs; media-closure-cache.yml seeds both caches from main.
+    - name: Restore the pinned media closure
+      if: inputs.media-closure == 'true'
+      id: media-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: third_party/media-closure
+        key: media-closure-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/pins.env', 'scripts/build_media_closure.sh', 'scripts/media-patches/*', 'src/playback/mpv/mpv_api.cpp', 'third_party/media-source/SHA256SUMS') }}
+    - name: Build the pinned media closure (sources fetched and hash-verified)
+      if: inputs.media-closure == 'true' && steps.media-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: scripts/build_media_closure.sh
+    - name: Verify the media closure receipt
+      if: inputs.media-closure == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -s third_party/media-closure/share/wam-media/build-receipt.txt
+        [[ "$(lipo -archs third_party/media-closure/lib/libmpv.2.dylib)" == arm64 ]]
+        [[ "$(lipo -archs third_party/media-closure/bin/ffmpeg)" == arm64 ]]
+    - name: Restore the native LGPL decoder SDK
+      if: inputs.ffmpeg-lgpl == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: third_party/ffmpeg-lgpl
+        key: ffmpeg-lgpl-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/pins.env', 'scripts/build_ffmpeg_lgpl.sh', 'scripts/apply_ffmpeg_memory_reservation.py', 'third_party/ffmpeg-patches/wam_memory_reservation.inc', 'third_party/ffmpeg-source/*.tar.xz') }}
+    - name: Build the native LGPL decoder SDK
+      if: inputs.ffmpeg-lgpl == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ ! -f "third_party/ffmpeg-lgpl/lib/$WAM_NATIVE_AVCODEC_DYLIB" ]]; then
+          scripts/build_ffmpeg_lgpl.sh "third_party/ffmpeg-source/ffmpeg-$WAM_FFMPEG_VERSION.tar.xz"
+        fi
+        [[ "$(lipo -archs "third_party/ffmpeg-lgpl/lib/$WAM_NATIVE_AVCODEC_DYLIB")" == arm64 ]]

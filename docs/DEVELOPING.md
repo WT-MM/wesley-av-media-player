@@ -71,6 +71,12 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
+Tests carry labels for what they need from the machine: `gui` (launches the
+app's windows), `gpu` (accelerated OpenGL display), `hardware` (hardware video
+decode), `fixtures-local` (media supplied at configure time) and `avcodec` (the
+default-off libavcodec stage). Exclude what a machine cannot provide, for
+example `ctest --test-dir build -LE 'gui|gpu'` on a headless runner.
+
 The development app is `build/WAM.app`. Build the local caption runtime, install
 Qt into a staging app, then add WAM's media dependencies:
 
@@ -93,8 +99,7 @@ hundred dangling links and no QML plugin code at all. The script materializes
 them, lets `macdeployqt` finish the deployment those real files then require,
 and normalizes any remaining absolute Homebrew reference onto the copy inside
 the bundle. It is idempotent and a no-op on a Qt installation whose QML tree is
-regular files, which is why `release-macos.yml`'s checksum-pinned Qt SDK never
-needed it.
+regular files, such as Qt's own installer SDK.
 
 The two whisper scripts are all `build/WAM.app` needs for captions:
 
@@ -137,19 +142,12 @@ release notes carry the first-launch instruction (right-click → Open, or
 `xattr -d com.apple.quarantine`) and `spctl --assess` rejects the app by
 design.
 
-`.github/workflows/release-macos.yml` remains the aspirational path:
-a protected `macos-release` environment, checksum-pinned dependencies built for
-macOS 13.3, Developer ID signing, Apple notarization, ticket stapling, and a
-Gatekeeper assessment. None of the secrets it needs exist yet, so it is
-dormant. When a Developer ID certificate and notary key are available it
-supersedes `release.yml`; until then it should not be expected to run.
-
-The protected environment supplies checksum-pinned per-architecture Qt SDK and
-media closure archives, the full Developer ID Application authority and team
-ID, the base64 PKCS#12 certificate and password, App Store Connect notary key ID
-and issuer ID, and the base64 notary API key. Release credentials are imported
-into an ephemeral CI keychain and removed in an unconditional cleanup step;
-they must not be placed in the repository or local build files.
+Developer ID signing and notarization are not wired into CI: no signing
+secrets exist yet. `scripts/release_macos_notarize.zsh` (covered by the
+`macos_release_notarize_transaction` test) is the notarize, staple and assess
+step a signed release would add to `release.yml` once a Developer ID
+certificate and notary key are available. Release credentials must never be
+placed in the repository or local build files.
 
 ## macOS release media closure
 
@@ -191,9 +189,10 @@ cmake --build build --parallel
 
 The separate `third_party/ffmpeg-lgpl` SDK is still needed for the native demux
 stage: it has WAM's allocation patch and `-wamnative` library names. Do not
-replace it with the general-purpose media closure. Existing test fixture
-builders also need a development FFmpeg with GPL encoders; that executable
-must not become `WAM_DEV_FFMPEG_EXECUTABLE` in a release.
+replace it with the general-purpose media closure. Test fixture builders
+need a development FFmpeg with GPL encoders (`WAM_TEST_FFMPEG`, found on the
+host); that executable must not become `WAM_DEV_FFMPEG_EXECUTABLE` in a
+release.
 
 After installing/repairing Qt and supplying the caption runtime, bundle with:
 
@@ -216,9 +215,9 @@ it does not link libmpv into WAM.
 The closure includes `libopus` and `libvpx-vp9`. Both macOS H.264 encoder
 preferences use `h264_videotoolbox -allow_sw 1`; libx264 remains confined to
 the non-Apple export path. For export proofs against the closure while keeping
-GPL fixture generation on the development tool, configure
-`WAM_EXPORT_FFMPEG_EXECUTABLE` and `WAM_EXPORT_FFPROBE_EXECUTABLE` to the
-closure's tools. CTest's `export_presets` checks every macOS export preset;
+GPL fixture generation on the development tool, set
+`WAM_DEV_FFMPEG_EXECUTABLE` to the closure's ffmpeg as above: the export tests
+run the same FFmpeg the development app stages. CTest's `export_presets` checks every macOS export preset;
 `jobs` guards both H.264 preferences against requesting libx264.
 See [the local qualification report](MEDIA_CLOSURE_13_3.md) for measured
 results and remaining macOS 13.3 and fallback telemetry qualification.

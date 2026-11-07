@@ -9,7 +9,7 @@ namespace wam::macos {
 namespace {
 
 constexpr std::uint32_t kChannels =
-    static_cast<std::uint32_t>(NativePcmRing::kChannels);
+    static_cast<std::uint32_t>(media::NativePcmRing::kChannels);
 
 // Non-interleaved packed float is the only client format AUNewTimePitch
 // accepts; interleaved is rejected with kAudioUnitErr_FormatNotSupported.
@@ -192,8 +192,8 @@ bool NativeAudioStretchUnit::measureLatencyModel() noexcept {
   return set(1.0);
 }
 
-NativeAudioStretchStage NativeAudioStretchUnit::stage() noexcept {
-  NativeAudioStretchStage stage;
+media::NativeAudioStretchStage NativeAudioStretchUnit::stage() noexcept {
+  media::NativeAudioStretchStage stage;
   stage.context = this;
   stage.configure = &NativeAudioStretchUnit::stageConfigure;
   stage.setRate = &NativeAudioStretchUnit::stageSetRate;
@@ -204,7 +204,7 @@ NativeAudioStretchStage NativeAudioStretchUnit::stage() noexcept {
 }
 
 bool NativeAudioStretchUnit::stageConfigure(
-    void *context, NativeAudioStretchPull pull, void *pullContext) noexcept {
+    void *context, media::NativeAudioStretchPull pull, void *pullContext) noexcept {
   auto *self = static_cast<NativeAudioStretchUnit *>(context);
   if (self == nullptr || pull == nullptr || self->unit_ == nullptr) {
     return false;
@@ -340,7 +340,7 @@ bool NativeAudioStretchUnit::stageRender(void *context,
   std::uint32_t previousBudget = 0;
   for (std::uint32_t offset = 0; offset < outputFrames;) {
     const auto frames = std::min<std::uint32_t>(
-        NativeAudioStretchStage::kSliceOutputFrames, outputFrames - offset);
+        media::NativeAudioStretchStage::kSliceOutputFrames, outputFrames - offset);
     const auto endBudget = static_cast<std::uint32_t>(
         static_cast<std::uint64_t>(offset + frames) * budget / outputFrames);
     const auto sliceBudget = endBudget - previousBudget;

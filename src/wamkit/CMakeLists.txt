@@ -1,6 +1,3 @@
-set(WAMKIT_TEST_FIXTURE_DIR "${PROJECT_SOURCE_DIR}/test-media/wamkit"
-  CACHE PATH "Generated WAMKit test corpus")
-
 if(NOT APPLE)
   message(FATAL_ERROR "WAMKit requires macOS")
 endif()
@@ -20,7 +17,8 @@ set_target_properties(WAMKit PROPERTIES FRAMEWORK TRUE FRAMEWORK_VERSION A
   INSTALL_NAME_DIR "@rpath" BUILD_WITH_INSTALL_NAME_DIR YES)
 target_include_directories(WAMKit PRIVATE "${PROJECT_SOURCE_DIR}/src" include)
 target_compile_options(WAMKit PRIVATE -fobjc-arc -Wall -Wextra)
-target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system wamkit_public_layer "-framework AppKit")
+target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system wamkit_public_layer
+  wam_caption_runtime "-framework AppKit")
 target_link_options(WAMKit PRIVATE "LINKER:-u,_wam_caption_create_v1" "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.txt")
 set_property(TARGET WAMKit APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/exports.txt" "${PROJECT_SOURCE_DIR}/scripts/package_wamkit.py")
 add_custom_command(TARGET WAMKit POST_BUILD
@@ -28,7 +26,6 @@ add_custom_command(TARGET WAMKit POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/module.modulemap" "$<TARGET_BUNDLE_DIR:WAMKit>/Versions/A/Modules/module.modulemap")
 install(TARGETS WAMKit FRAMEWORK DESTINATION Library/Frameworks COMPONENT WAMKit)
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_custom_command(TARGET WAMKit POST_BUILD
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/package_wamkit.py"
     --framework "$<TARGET_BUNDLE_DIR:WAMKit>" --source "${PROJECT_SOURCE_DIR}" --ffmpeg "${WAM_FFMPEG_LGPL_ROOT}")
@@ -50,21 +47,6 @@ endif()
 option(WAMKIT_BUILD_HOST "Build the non-Qt AppKit embedding example" ${APPLE})
 if(WAMKIT_BUILD_HOST)
   add_subdirectory("${PROJECT_SOURCE_DIR}/examples/WAMKitHost" "${PROJECT_BINARY_DIR}/examples/WAMKitHost")
-endif()
-
-if(BUILD_TESTING AND WAMKIT_BUILD_HOST)
-  find_program(WAMKIT_FIXTURE_FFMPEG ffmpeg REQUIRED)
-  add_custom_command(OUTPUT "${WAMKIT_TEST_FIXTURE_DIR}/manifest.json"
-    BYPRODUCTS "${WAMKIT_TEST_FIXTURE_DIR}/av.mp4" "${WAMKIT_TEST_FIXTURE_DIR}/av.mkv" "${WAMKIT_TEST_FIXTURE_DIR}/refused.m4a"
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/generate_wamkit_fixtures.py"
-      --ffmpeg "${WAMKIT_FIXTURE_FFMPEG}" --output "${WAMKIT_TEST_FIXTURE_DIR}"
-    DEPENDS "${PROJECT_SOURCE_DIR}/scripts/generate_wamkit_fixtures.py")
-  add_custom_target(wamkit_fixtures DEPENDS "${WAMKIT_TEST_FIXTURE_DIR}/manifest.json")
-  add_dependencies(WAMKitHost wamkit_fixtures)
-  # The AVFoundation reader-cancellation test opens av.mp4 too.
-  if(TARGET wam_avfoundation_media_source_test)
-    add_dependencies(wam_avfoundation_media_source_test wamkit_fixtures)
-  endif()
 endif()
 
 if(BUILD_TESTING AND WAMKIT_BUILD_HOST AND WAMKIT_ENABLE_TEST_SUPPORT)
@@ -89,8 +71,9 @@ if(BUILD_TESTING AND WAMKIT_BUILD_HOST AND WAMKIT_ENABLE_TEST_SUPPORT)
     endif()
     add_test(NAME wamkit_host_${kind} COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wamkit_embedding_test.py"
       --host "$<TARGET_FILE:WAMKitHost>" --asset "${asset}"
-      --output "/private/tmp/wam-wamkit-scratch/ctest-host-${kind}" --unique ${arguments})
-    set_tests_properties(wamkit_host_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30)
+      --output "${PROJECT_BINARY_DIR}/wamkit-test-scratch/ctest-host-${kind}" --unique ${arguments})
+    set_tests_properties(wamkit_host_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30 LABELS gui
+      FIXTURES_REQUIRED wamkit_media)
   endforeach()
 endif()
 
@@ -107,11 +90,13 @@ if(WAMKIT_SWIFT AND WAMKIT_XCODEBUILD AND WAMKIT_XCODE_STATUS EQUAL 0 AND WAMKIT
   add_custom_target(WAMKitSwiftHost
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/build_wamkit_swift.py"
       --framework "$<TARGET_BUNDLE_DIR:WAMKit>" --build "${PROJECT_BINARY_DIR}"
+      --stage-package "${PROJECT_BINARY_DIR}/wamkit-swift-package"
     DEPENDS WAMKit USES_TERMINAL)
   if(BUILD_TESTING)
     add_test(NAME wamkit_swift_build COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/scripts/build_wamkit_swift.py"
-      --framework "$<TARGET_BUNDLE_DIR:WAMKit>" --build "${PROJECT_BINARY_DIR}")
+      --framework "$<TARGET_BUNDLE_DIR:WAMKit>" --build "${PROJECT_BINARY_DIR}"
+      --stage-package "${PROJECT_BINARY_DIR}/wamkit-swift-package")
     set_tests_properties(wamkit_swift_build PROPERTIES RUN_SERIAL TRUE TIMEOUT 300 FIXTURES_SETUP wamkit_swift)
     if(WAMKIT_ENABLE_TEST_SUPPORT)
       foreach(kind IN ITEMS mp4 mkv refusal)
@@ -124,8 +109,8 @@ if(WAMKIT_SWIFT AND WAMKIT_XCODEBUILD AND WAMKIT_XCODE_STATUS EQUAL 0 AND WAMKIT
         add_test(NAME wamkit_swift_${kind} COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/wamkit_embedding_test.py"
           --host "${PROJECT_BINARY_DIR}/examples/WAMKitSwiftHost/WAMKitSwiftHost.app/Contents/MacOS/WAMKitSwiftHost"
-          --asset "${asset}" --output "/private/tmp/wam-wamkit-scratch/swift-${kind}" --unique ${arguments})
-        set_tests_properties(wamkit_swift_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30 FIXTURES_REQUIRED wamkit_swift)
+          --asset "${asset}" --output "${PROJECT_BINARY_DIR}/wamkit-test-scratch/swift-${kind}" --unique ${arguments})
+        set_tests_properties(wamkit_swift_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30 FIXTURES_REQUIRED "wamkit_swift;wamkit_media" LABELS gui)
       endforeach()
     endif()
   endif()

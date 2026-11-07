@@ -19,7 +19,10 @@ RESOURCES="$APP_PATH/Contents/Resources"
 TOOLS="$APP_PATH/Contents/Resources/tools"
 MODELS="$APP_PATH/Contents/Resources/models"
 MEDIA_MANIFEST="$RESOURCES/wam-media-libraries.manifest"
-MPV_FALLBACK_NAME="WAMMpvFallback.dylib"
+wam_pin() {
+  sed -n "s/^$1=//p" "$WAM_BUNDLE_MACOS_LIBRARY_DIRECTORY/../packaging/pins.env"
+}
+MPV_FALLBACK_NAME="$(wam_pin WAM_MPV_FALLBACK_DYLIB)"
 MPV_FALLBACK_SONAME_MAJOR="2"
 RELEASE_FLOOR="${WAM_MACOS_RELEASE_FLOOR:-}"
 CODESIGN_IDENTITY="${WAM_MACOS_CODESIGN_IDENTITY:-}"
@@ -1587,9 +1590,9 @@ fi
 # package after every dependency rewrite and before any signature can bless it.
 validate_final_mpv_fallback || return 1
 if (( WAM_NATIVE_AVCODEC_PRESENT )); then
-  local -a native_libraries=(libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib)
+  local -a native_libraries=("$(wam_pin WAM_NATIVE_AVCODEC_DYLIB)" "$(wam_pin WAM_NATIVE_AVUTIL_DYLIB)")
   if [[ -f "$RESOURCES/native-ffmpeg/demux-stage-built" ]]; then
-    native_libraries+=(libavformat-wamnative.63.dylib)
+    native_libraries+=("$(wam_pin WAM_NATIVE_AVFORMAT_DYLIB)")
   fi
   for native_library in "${native_libraries[@]}"; do
     [[ -f "$FRAMEWORKS/$native_library" ]] || {

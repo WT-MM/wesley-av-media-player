@@ -13,7 +13,7 @@
 #include "subtitle_sources.hpp"
 
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-#include "native_playback_owner.hpp"
+#include "qt/native_playback_owner.hpp"
 #endif
 
 #include <QByteArray>

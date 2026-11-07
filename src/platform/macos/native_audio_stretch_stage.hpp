@@ -1,6 +1,6 @@
 #pragma once
 
-#include "native_audio_render_core.hpp"
+#include "media/native_audio_render_core.hpp"
 
 #include <AudioToolbox/AudioToolbox.h>
 
@@ -49,7 +49,7 @@ class NativeAudioStretchUnit final {
   // ring slab of client frames. Internally, 1024-frame slices bound a 4x
   // input pull to one ring consume.
   static constexpr std::uint32_t kMaximumOutputFrames =
-      static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab);
+      static_cast<std::uint32_t>(media::NativePcmRing::kFramesPerSlab);
 
   [[nodiscard]] static std::unique_ptr<NativeAudioStretchUnit> create(
       std::uint32_t sampleRate) noexcept;
@@ -60,7 +60,7 @@ class NativeAudioStretchUnit final {
   NativeAudioStretchUnit(NativeAudioStretchUnit &&) = delete;
   NativeAudioStretchUnit &operator=(NativeAudioStretchUnit &&) = delete;
 
-  [[nodiscard]] NativeAudioStretchStage stage() noexcept;
+  [[nodiscard]] media::NativeAudioStretchStage stage() noexcept;
 
   // The unit's pitch parameter is in cents and is limited to +/- 2400, which
   // is exactly the 0.25x..4x window expressed as 1200 * log2(rate).
@@ -80,7 +80,7 @@ class NativeAudioStretchUnit final {
   [[nodiscard]] bool measureLatencyModel() noexcept;
   [[nodiscard]] std::uint32_t declaredLatencyFrames() noexcept;
 
-  static bool stageConfigure(void *context, NativeAudioStretchPull pull,
+  static bool stageConfigure(void *context, media::NativeAudioStretchPull pull,
                              void *pullContext) noexcept;
   static bool stageSetRate(void *context, std::uint32_t numerator,
                            std::uint32_t denominator,
@@ -100,7 +100,7 @@ class NativeAudioStretchUnit final {
   bool initialized_{false};
   const std::uint32_t sample_rate_;
 
-  NativeAudioStretchPull pull_{nullptr};
+  media::NativeAudioStretchPull pull_{nullptr};
   void *pull_context_{nullptr};
 
   // Fixed workspaces, sized once here and never touched by the render path

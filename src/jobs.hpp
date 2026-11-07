@@ -10,6 +10,10 @@
 #include <thread>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <sys/types.h>
+#endif
+
 namespace wam {
 
 // Export presets, not a codec zoo. Each one names a container AND the codec
@@ -96,6 +100,37 @@ struct ProcessCommand {
   std::vector<std::string> arguments;
 };
 
+// Child-process primitives shared by the export and caption runners.
+namespace detail {
+
+// UTF-8 on every platform, so the result can be passed as an argument.
+std::string pathArgument(const std::filesystem::path& path);
+
+#ifdef _WIN32
+// Invalid UTF-8 falls back to byte widening when `reject_invalid` is set and
+// to U+FFFD replacement otherwise.
+std::wstring widenUtf8(const std::string& value, bool reject_invalid = false);
+// CommandLineToArgvW quoting for one argument.
+std::wstring quoteWindowsArgument(const std::wstring& value);
+#else
+// The shell convention: the exit status, or 128 + the terminating signal.
+int normalizedExitCode(int status);
+// Makes `child` its own process-group leader. True only once the group is
+// verified to be the child's, which is what makes kill(-child) safe.
+bool establishProcessGroup(pid_t child, int* error);
+void signalVerifiedProcessGroup(pid_t group, int signal);
+bool reapPosixChild(pid_t child, int* status, int* error);
+
+enum class ChildObservation { Running, Exited, Error };
+// Observes without reaping (WNOWAIT), so the PID keeps reserving the group.
+ChildObservation observePosixChild(pid_t child, int* error);
+// SIGKILLs and reaps a child that never got its own group; returns `error`,
+// or 1 when it is zero.
+int terminateUnisolatedChild(pid_t child, int error);
+#endif
+
+}  // namespace detail
+
 std::string quoteArg(const std::string& value);
 std::string atempoFilter(double speed);
 std::string varispeedFilter(double speed);
@@ -121,7 +156,6 @@ class BackgroundJob {
   BackgroundJob(const BackgroundJob&) = delete;
   BackgroundJob& operator=(const BackgroundJob&) = delete;
 
-  bool start(std::string label, std::string command);
   bool start(std::string label, ProcessCommand command);
   bool running() const { return running_.load(); }
   bool succeeded() const { return finished_.load() && exit_code_.load() == 0; }

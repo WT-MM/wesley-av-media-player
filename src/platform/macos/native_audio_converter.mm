@@ -339,7 +339,7 @@ struct ChannelLayoutIdentity {
 } // namespace
 
 struct NativeAudioConverter::Impl {
-  Impl(NativePcmRing &target,
+  Impl(media::NativePcmRing &target,
        std::unique_ptr<NativeAudioConverterBackend> injected,
        NativeAudioBackendWake wake)
       : instance_identity(std::make_shared<const std::byte>(std::byte{})),
@@ -1029,7 +1029,7 @@ struct NativeAudioConverter::Impl {
   // here first. Before an append the staging holds fewer than the floor, and an
   // append is at most one pump's block, so it always fits.
   std::array<float, 2 * NativeAudioConverter::kFramesPerPump *
-                        NativePcmRing::kChannels>
+                        media::NativePcmRing::kChannels>
       staged{};
   std::uint64_t staged_frames{0};
   // Generation-local frame of staged[0]. Staged frames are contiguous: each
@@ -1040,11 +1040,11 @@ struct NativeAudioConverter::Impl {
     if (staged_frames == 0) {
       staged_start = start;
     }
-    float *destination = staged.data() + staged_frames * NativePcmRing::kChannels;
+    float *destination = staged.data() + staged_frames * media::NativePcmRing::kChannels;
     if (frames == nullptr) {
-      std::fill_n(destination, count * NativePcmRing::kChannels, 0.0f);
+      std::fill_n(destination, count * media::NativePcmRing::kChannels, 0.0f);
     } else {
-      std::copy_n(frames, count * NativePcmRing::kChannels, destination);
+      std::copy_n(frames, count * media::NativePcmRing::kChannels, destination);
     }
     staged_frames += count;
   }
@@ -1055,24 +1055,24 @@ struct NativeAudioConverter::Impl {
   [[nodiscard]] std::optional<NativeAudioPumpResult>
   publishStaged(bool final, std::string *error) noexcept {
     if (staged_frames == 0 ||
-        (!final && staged_frames < NativePcmRing::kMinimumFramesPerPublishedSlab)) {
+        (!final && staged_frames < media::NativePcmRing::kMinimumFramesPerPublishedSlab)) {
       return std::nullopt;
     }
-    if (ring.queuedSlabs() >= NativePcmRing::kSlabCount) {
+    if (ring.queuedSlabs() >= media::NativePcmRing::kSlabCount) {
       saturatingAdd(statistics.ringBackpressure, 1);
       return NativeAudioPumpResult::Backpressure;
     }
     const std::uint64_t frames =
-        std::min<std::uint64_t>(staged_frames, NativePcmRing::kFramesPerSlab);
+        std::min<std::uint64_t>(staged_frames, media::NativePcmRing::kFramesPerSlab);
     const auto published = ring.publish(
         statistics.generation,
-        std::span<const float>(staged.data(), frames * NativePcmRing::kChannels),
+        std::span<const float>(staged.data(), frames * media::NativePcmRing::kChannels),
         frames);
-    if (published == NativePcmRing::PublishResult::StaleGeneration) {
+    if (published == media::NativePcmRing::PublishResult::StaleGeneration) {
       return NativeAudioPumpResult::StaleGeneration;
     }
-    if (published != NativePcmRing::PublishResult::Published) {
-      failPump(error, published == NativePcmRing::PublishResult::Full
+    if (published != media::NativePcmRing::PublishResult::Published) {
+      failPump(error, published == media::NativePcmRing::PublishResult::Full
                           ? "ring became full after converter preflight"
                           : "native PCM ring rejected decoded audio");
       return NativeAudioPumpResult::Failed;
@@ -1083,8 +1083,8 @@ struct NativeAudioConverter::Impl {
     }
     saturatingAdd(statistics.publishedPcmFrames, frames);
     saturatingAdd(statistics.publishedSlabs, 1);
-    std::copy(staged.begin() + static_cast<std::ptrdiff_t>(frames * NativePcmRing::kChannels),
-              staged.begin() + static_cast<std::ptrdiff_t>(staged_frames * NativePcmRing::kChannels),
+    std::copy(staged.begin() + static_cast<std::ptrdiff_t>(frames * media::NativePcmRing::kChannels),
+              staged.begin() + static_cast<std::ptrdiff_t>(staged_frames * media::NativePcmRing::kChannels),
               staged.begin());
     staged_frames -= frames;
     staged_start += static_cast<std::int64_t>(frames);
@@ -1157,7 +1157,7 @@ struct NativeAudioConverter::Impl {
               silence ? nullptr
                       : pcm.data() + (aac.pendingOffset +
                                       static_cast<std::size_t>(low - start)) *
-                                         NativePcmRing::kChannels,
+                                         media::NativePcmRing::kChannels,
               count);
         if (silence) {
           saturatingAdd(statistics.insertedSilenceFrames, count);
@@ -1174,7 +1174,7 @@ struct NativeAudioConverter::Impl {
   }
 
   std::shared_ptr<const void> instance_identity;
-  NativePcmRing &ring;
+  media::NativePcmRing &ring;
   const bool injected_backend;
   const NativeAudioBackendWake backend_wake;
   // Empty until the first configure() of a converter without an injected
@@ -1260,7 +1260,7 @@ struct NativeAudioConverter::Impl {
 };
 
 NativeAudioConverter::NativeAudioConverter(
-    NativePcmRing &ring, std::unique_ptr<NativeAudioConverterBackend> backend,
+    media::NativePcmRing &ring, std::unique_ptr<NativeAudioConverterBackend> backend,
     NativeAudioBackendWake wake)
     : impl_(std::make_unique<Impl>(ring, std::move(backend), wake)) {}
 
@@ -1358,7 +1358,7 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
         error, refusal ? refusal : "native audio backend configuration failed");
   }
   if (state.capabilities.channelRolesAtConfigure &&
-      track.audio->channels > NativePcmRing::kChannels &&
+      track.audio->channels > media::NativePcmRing::kChannels &&
       !state.buildDownmix(track.audio->channels)) {
     return state.failConfigure(
         error, "multichannel audio layout is outside native converter v1");
@@ -1654,7 +1654,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     return NativeAudioPumpResult::Drained;
   }
   if (!state.nextBlockIsAllPreroll() &&
-      state.ring.queuedSlabs() >= NativePcmRing::kSlabCount) {
+      state.ring.queuedSlabs() >= media::NativePcmRing::kSlabCount) {
     saturatingAdd(state.statistics.ringBackpressure, 1);
     return NativeAudioPumpResult::Backpressure;
   }
@@ -1719,7 +1719,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
   }
   if (converted.producedFrames != 0) {
     if (!state.capabilities.channelRolesAtConfigure &&
-        state.audio.channels > NativePcmRing::kChannels &&
+        state.audio.channels > media::NativePcmRing::kChannels &&
         !state.downmix.admitted()) {
       if (!state.buildDownmix(state.audio.channels)) {
         state.failPump(error, "SoftwareAudioDecodedChannelLayoutUnqualified");
@@ -1764,7 +1764,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     }
     if (publishFrames != 0) {
       state.stage(plan.publishStart,
-                  state.pcm.data() + discarded * NativePcmRing::kChannels,
+                  state.pcm.data() + discarded * media::NativePcmRing::kChannels,
                   publishFrames);
     }
     if (converted.drained && !state.sealDrain(decodedAfter, error)) {

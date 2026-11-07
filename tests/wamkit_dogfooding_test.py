@@ -6,8 +6,9 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED = {'native_playback_owner.hpp', 'native_open_preflight.hpp', 'native_embedding_support.hpp'}
-# The Qt scenegraph item is a presentation adapter, with no native session ownership.
-PRESENTATION = {('mpv_video_item.cpp', 'qt_gl_video_item.hpp')}
+# src/qt/macos holds the Qt presentation adapters over the native video
+# outputs; they own no native session, so they may include the output headers.
+PRESENTATION = 'src/qt/macos'
 BYPASS = re.compile(r'\b(nativeSession_|observationBridge_|NativeMediaSession|NativeAudioSession|NativeAudioOutput|NativeMediaDispatcher|createNativeMediaSessionSystem)\b')
 
 def code(text):
@@ -24,7 +25,8 @@ def audit(root):
             native = (root/'src/platform/macos').resolve()
             for resolved in choices:
                 if not resolved.is_relative_to(native): continue
-                if resolved.parent != native or (resolved.name not in SHARED and (path.name, resolved.name) not in PRESENTATION):
+                if path.parent == root / PRESENTATION: break
+                if resolved.parent != native or resolved.name not in SHARED:
                     errors.append(f'{path.relative_to(root)}: unexposed native include {name}')
                 break
         if BYPASS.search(source): errors.append(f'{path.relative_to(root)}: bypasses the shared native owner')

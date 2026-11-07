@@ -1,4 +1,4 @@
-#include "platform/macos/native_media_clock.hpp"
+#include "media/native_media_clock.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -18,16 +18,16 @@
 
 namespace {
 
-using wam::macos::NativeMediaClock;
+using wam::media::NativeMediaClock;
 using wam::media::MediaTime;
 using Rate = NativeMediaClock::PlaybackRate;
-using wam::macos::NativeMediaClockSnapshot;
-using wam::macos::NativeMediaHostClock;
-using wam::macos::NativeMediaSegment;
-using wam::macos::NativeMediaSegmentAdmission;
-using wam::macos::NativeMediaSegmentContinuity;
-using wam::macos::NativeMediaSegmentReservation;
-using wam::macos::nativeMediaSegmentAccepted;
+using wam::media::NativeMediaClockSnapshot;
+using wam::media::NativeMediaHostClock;
+using wam::media::NativeMediaSegment;
+using wam::media::NativeMediaSegmentAdmission;
+using wam::media::NativeMediaSegmentContinuity;
+using wam::media::NativeMediaSegmentReservation;
+using wam::media::nativeMediaSegmentAccepted;
 
 static_assert(std::is_trivially_copyable_v<NativeMediaClockSnapshot>);
 static_assert(std::is_trivially_copyable_v<NativeMediaSegmentReservation>);

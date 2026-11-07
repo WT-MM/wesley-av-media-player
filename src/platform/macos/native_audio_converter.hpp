@@ -2,7 +2,7 @@
 
 #include "media/audio_downmix.hpp"
 #include "media/native_media_source.hpp"
-#include "native_pcm_ring.hpp"
+#include "media/native_pcm_ring.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -296,12 +296,12 @@ public:
       media::MediaSourceLimits::kHardMaximumAudioSampleBytes;
   static constexpr std::size_t kMaximumPackets =
       media::MediaSourceLimits::kHardMaximumAudioSampleCount;
-  static constexpr std::size_t kFramesPerPump = NativePcmRing::kFramesPerSlab;
+  static constexpr std::size_t kFramesPerPump = media::NativePcmRing::kFramesPerSlab;
 
   // Without an injected backend, configure() builds the production backend
   // for the track's codec and hands it the wake.
   explicit NativeAudioConverter(
-      NativePcmRing &ring,
+      media::NativePcmRing &ring,
       std::unique_ptr<NativeAudioConverterBackend> backend = {},
       NativeAudioBackendWake wake = {});
   ~NativeAudioConverter();

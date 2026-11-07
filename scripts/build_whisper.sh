@@ -60,7 +60,8 @@ case "$(uname -s)" in
       echo "conflicting macOS deployment floors" >&2
       exit 64
     fi
-    MACOS_DEPLOYMENT_FLOOR="${WAM_MACOS_RELEASE_FLOOR:-${WAM_MACOS_DEPLOYMENT_TARGET:-13.3}}"
+    pinned_floor=$(sed -n 's/^WAM_MACOS_DEPLOYMENT_TARGET=//p' "$(dirname "$0")/../packaging/pins.env")
+    MACOS_DEPLOYMENT_FLOOR="${WAM_MACOS_RELEASE_FLOOR:-${WAM_MACOS_DEPLOYMENT_TARGET:-$pinned_floor}}"
     if ! printf '%s\n' "$MACOS_DEPLOYMENT_FLOOR" | awk -F. '
         NF < 2 || NF > 3 ||
         $1 !~ /^(0|[1-9][0-9]*)$/ ||

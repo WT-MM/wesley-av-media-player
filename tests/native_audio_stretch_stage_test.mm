@@ -26,7 +26,7 @@
 
 namespace {
 
-using wam::macos::NativeAudioStretchStage;
+using wam::media::NativeAudioStretchStage;
 using wam::macos::NativeAudioStretchUnit;
 
 constexpr std::uint32_t kSampleRate = 48000;

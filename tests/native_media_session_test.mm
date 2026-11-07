@@ -843,9 +843,9 @@ NativeAudioSessionProgress audioStop(void* context) noexcept {
   return NativeAudioSessionProgress::Done;
 }
 
-NativeMediaClockSnapshot testClock(void* context) noexcept {
+media::NativeMediaClockSnapshot testClock(void* context) noexcept {
   auto& state = *static_cast<GraphState*>(context);
-  NativeMediaClockSnapshot result;
+  media::NativeMediaClockSnapshot result;
   result.publicationSerial =
       state.clockPublication.load(std::memory_order_acquire);
   result.generation =
@@ -958,14 +958,14 @@ class FakeClockAuthority final : public SessionClockAuthority {
   NativeAudioSessionProgress setMuted(bool muted) noexcept override {
     return audioMuted(state_, muted);
   }
-  NativeAudioSessionProgress setRate(NativePlaybackRate,
+  NativeAudioSessionProgress setRate(media::NativePlaybackRate,
                                      bool) noexcept override {
     return NativeAudioSessionProgress::Done;
   }
   NativeAudioSessionProgress stop() noexcept override {
     return audioStop(state_);
   }
-  NativeMediaClockSnapshot visibleClock() const noexcept override {
+  media::NativeMediaClockSnapshot visibleClock() const noexcept override {
     return testClock(state_);
   }
   media::MediaGeneration highestExposedGeneration() const noexcept override {

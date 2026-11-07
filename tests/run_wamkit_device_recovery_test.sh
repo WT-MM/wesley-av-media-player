@@ -22,13 +22,13 @@ clang++ $common_flags $include_flags -c \
   "$repo_dir/src/media/audio_downmix.cpp" \
   -o "$build_dir/audio_downmix.o"
 clang++ $common_flags $include_flags -c \
-  "$repo_dir/src/platform/macos/native_pcm_ring.cpp" \
+  "$repo_dir/src/media/native_pcm_ring.cpp" \
   -o "$build_dir/native_pcm_ring.o"
 clang++ $common_flags $include_flags -c \
-  "$repo_dir/src/platform/macos/native_media_clock.cpp" \
+  "$repo_dir/src/media/native_media_clock.cpp" \
   -o "$build_dir/native_media_clock.o"
 clang++ $common_flags $include_flags $test_define -c \
-  "$repo_dir/src/platform/macos/native_audio_render_core.cpp" \
+  "$repo_dir/src/media/native_audio_render_core.cpp" \
   -o "$build_dir/native_audio_render_core.o"
 clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
   "$repo_dir/src/platform/macos/native_audio_converter.mm" \

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace wam::macos {
+namespace wam::media {
 
 NativePcmRing::NativePcmRing(std::uint64_t initialGeneration) noexcept
     : generation_(initialGeneration == 0 ? 1 : initialGeneration) {}
@@ -312,4 +312,4 @@ bool NativePcmRing::resetUnreadPcmByteHighWater(
   return true;
 }
 
-} // namespace wam::macos
+} // namespace wam::media
