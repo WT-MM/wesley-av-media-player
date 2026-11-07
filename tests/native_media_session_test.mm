@@ -3042,6 +3042,40 @@ void testMetricsReportRequestedRate() {
   static_cast<void>(waitFact<protocol::Stopped>(*session, "metrics Stopped"));
 }
 
+// A metrics read has no side effect, and the seek watchdog's reason keeps
+// publication running after a host stream turns its own reason off.
+void testMetricsReasonsAreIndependent() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  static_cast<void>(session->metrics());
+  expect(prepare(*session, prepareCommand()) == NativeMediaSessionCommandStatus::Accepted,
+         "metrics-reason fixture prepares");
+  static_cast<void>(waitFact<protocol::Prepared>(*session, "metrics-reason Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) == NativeMediaSessionCommandStatus::Accepted,
+         "metrics-reason fixture starts");
+  static_cast<void>(waitFact<protocol::Started>(*session, "metrics-reason Started"));
+  expect(session->setRunState({{{1}, {3}}, {7}, true, 1.0}) == NativeMediaSessionCommandStatus::Accepted,
+         "metrics-reason run state accepted");
+  waitUntil([&] { return state->clockCurrent.load(); }, "metrics-reason run state applies");
+  for (int pass = 0; pass < 20; ++pass) {
+    wake->video().signal(wake->video().context);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(!session->metrics().clockValid,
+         "reading metrics never arms worker publication");
+  session->setMetricsEnabled(true);
+  session->setSeekMetricsEnabled(true);
+  session->setMetricsEnabled(false);
+  wake->video().signal(wake->video().context);
+  waitUntil([&] { return session->metrics().clockValid; },
+            "the seek reason keeps publication armed after the host turns metrics off");
+  expect(session->stop(stopCommand(4)) == NativeMediaSessionCommandStatus::Accepted,
+         "metrics-reason fixture stops");
+  static_cast<void>(waitFact<protocol::Stopped>(*session, "metrics-reason Stopped"));
+}
+
 void testGainMuteAndExactProofObservations() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -3894,6 +3928,7 @@ int main(int argc, char** argv) {
   testVideoDeadlineDoesNotWaitForAudioCallback();
   testWakeClearBeforeDrainPreservesLateRun();
   testMetricsReportRequestedRate();
+  testMetricsReasonsAreIndependent();
   testGainMuteAndExactProofObservations();
   testExhaustionStopsAudioBeforeOneEnded();
   testNearEndCommitHoldsEndingUntilItsRunStateLands();

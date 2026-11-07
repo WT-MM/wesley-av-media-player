@@ -156,6 +156,7 @@ void NativePlaybackOwner::startPlaybackMetrics() {
   if (!metrics.enabled()) {
     return;
   }
+  setNativeMetricsEnabled(true);
   metricsTimer_ = std::make_unique<QTimer>();
   metricsTimer_->setTimerType(Qt::CoarseTimer);
   metricsTimer_->setInterval(

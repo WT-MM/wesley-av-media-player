@@ -2937,8 +2937,8 @@ if (result != NativeAudioSessionProgress::Done) {
     static_cast<void>(publishEnded(clock.mediaSeconds));
   }
 
-  // Out-of-band diagnostic publication. Runs only after a metrics() caller has
-  // armed it, so a build with no metrics stream attached pays exactly one
+  // Out-of-band diagnostic publication. Runs only while a host metrics stream
+  // or the owner's seek watchdog has armed it, so a build with no metrics stream attached pays exactly one
   // relaxed atomic load per worker pass and never samples a child at all.
   //
   // Every counter it publishes is worker-confined at its source: the video
@@ -2950,7 +2950,8 @@ if (result != NativeAudioSessionProgress::Done) {
   // previous one. That is deliberate and harmless for a rate metric whose
   // window is orders of magnitude longer than a worker pass.
   void publishMetrics() noexcept {
-    if (!metricsArmed.load(std::memory_order_relaxed)) {
+    if (!metricsHostArmed.load(std::memory_order_relaxed) &&
+        !metricsSeekArmed.load(std::memory_order_relaxed)) {
       return;
     }
     if (const auto sampled = videoPort ? videoPort->metrics() : std::nullopt) {
@@ -3389,10 +3390,14 @@ if (result != NativeAudioSessionProgress::Done) {
   // metrics() is the only reader and may run on any thread. These deliberately
   // sit outside `mutex` so an idle metrics sampler never contends with command
   // admission, and outside the worker's unsynchronised owner fields so no
-  // single-threaded invariant is weakened. metricsArmed is written
-  // only by metrics(); until it is set the worker skips publishMetrics()
-  // entirely, which is what keeps a metrics-free run bit-for-bit unchanged.
-  std::atomic<bool> metricsArmed{false};
+  // single-threaded invariant is weakened. Two independent reasons arm
+  // publication: a host metrics stream (setMetricsEnabled) and the owner's
+  // seek watchdog (setSeekMetricsEnabled), so a host that turns its stream
+  // off cannot starve the watchdog's progress counter. Until either is set
+  // the worker skips publishMetrics() entirely, which is what keeps a
+  // metrics-free run bit-for-bit unchanged.
+  std::atomic<bool> metricsHostArmed{false};
+  std::atomic<bool> metricsSeekArmed{false};
   std::atomic<bool> metricsVideoValid{false};
   std::atomic<bool> metricsAudioValid{false};
   std::atomic<bool> metricsClockValid{false};
@@ -4060,7 +4065,10 @@ NativeMediaSession::takeObservations() noexcept {
 
 
 void NativeMediaSession::setMetricsEnabled(bool enabled) noexcept {
-  if (impl_) impl_->metricsArmed.store(enabled, std::memory_order_relaxed);
+  if (impl_) impl_->metricsHostArmed.store(enabled, std::memory_order_relaxed);
+}
+void NativeMediaSession::setSeekMetricsEnabled(bool enabled) noexcept {
+  if (impl_) impl_->metricsSeekArmed.store(enabled, std::memory_order_relaxed);
 }
 std::shared_ptr<const media::MediaSourceDescriptor> NativeMediaSession::descriptor() const noexcept {
   if (!impl_) return {};
@@ -4073,13 +4081,9 @@ NativeMediaSessionMetrics NativeMediaSession::metrics() const noexcept {
   if (impl_ == nullptr) {
     return result;
   }
-  // Arming is idempotent and deliberately performed by the reader: the session
-  // has no knowledge of whether a metrics stream exists, and this keeps the
-  // worker's sampling cost strictly opt-in. The first call after arming can
-  // therefore legitimately report every group as unavailable.
-  impl_->metricsArmed.store(true, std::memory_order_relaxed);
-  // Always reported, even on that first unavailable-everything call: it names
-  // the epoch the counters will belong to, not a counter of its own.
+  // Reading never arms publication; until an armed worker pass has run, every
+  // group legitimately reports unavailable. The epoch is always reported: it
+  // names the epoch the counters will belong to, not a counter of its own.
   result.sessionEpoch = impl_->sessionEpoch;
   result.videoValid = impl_->metricsVideoValid.load(std::memory_order_relaxed);
   if (result.videoValid) {
