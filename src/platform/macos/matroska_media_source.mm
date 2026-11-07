@@ -52,23 +52,6 @@ constexpr std::size_t kMaximumLaceFrames{
 
 // ---- Traits ---------------------------------------------------------------
 
-std::shared_ptr<const MatroskaAssetContext> MatroskaSourceTraits::adoptContext(
-    const std::filesystem::path& path,
-    const media::MediaSourceOpenOptions& options,
-    std::shared_ptr<const PreparedAsset> asset) noexcept {
-  return adoptPreparedMatroskaAssetContext(path, options, std::move(asset));
-}
-
-void MatroskaSourceTraits::noteCursorCreationAttempt(
-    const MatroskaAssetContext& context) noexcept {
-  noteMatroskaAssetContextCursorCreationAttempt(context);
-}
-
-void MatroskaSourceTraits::noteCursorStarted(
-    const MatroskaAssetContext& context) noexcept {
-  noteMatroskaAssetContextCursorStarted(context);
-}
-
 std::optional<MediaTime> MatroskaSourceTraits::videoOrigin(
     const PreparedAsset& asset) noexcept {
   const auto cues = asset.cues();
@@ -78,11 +61,6 @@ std::optional<MediaTime> MatroskaSourceTraits::videoOrigin(
   return matroskaTickTime(
       static_cast<std::int64_t>(cues.front().timestampTick),
       asset.timestampScaleNanoseconds());
-}
-
-CMVideoFormatDescriptionRef MatroskaSourceTraits::createVideoFormatDescription(
-    const MediaTrackDescriptor& track) noexcept {
-  return macos::createVideoFormatDescription(track);
 }
 
 MediaTime MatroskaSourceTraits::mergeOrderKey(
@@ -96,30 +74,11 @@ MediaTime MatroskaSourceTraits::mergeOrderKey(
 
 struct MatroskaMediaSource::Impl final
     : NativeCustomSourceCore<Impl, MatroskaSourceTraits> {
-  using Base = NativeCustomSourceCore<Impl, MatroskaSourceTraits>;
-  using Base::rejectedAudio;
   MatroskaSourceTraits::PrepareOutcome prepareAsset(
       const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
       MatroskaSourceTraits::CancellationToken token) noexcept {
     return media::matroska::prepareMatroskaLocalFile(path, options, token, rejectedAudio);
   }
-  using typename Base::StagedSample;
-  using Base::assetContext;
-  using Base::audioDecodeStart;
-  using Base::audioFormat;
-  using Base::audioFramesPerPacket;
-  using Base::audioHead;
-  using Base::audioProofCeiling;
-  using Base::audioSampleRate;
-  using Base::cancellation;
-  using Base::descriptor;
-  using Base::generation;
-  using Base::limits;
-  using Base::publishCancellation;
-  using Base::resetAudioFacts;
-  using Base::sealSample;
-  using Base::stateAudioPlayoutProofOnce;
-  using Base::videoFormat;
 
   [[nodiscard]] std::optional<StagedSample> makeHead(
       const MatroskaCompressedSample& raw, bool video, std::string* error) {

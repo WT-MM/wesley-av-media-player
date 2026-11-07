@@ -512,38 +512,6 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
   return media::nativeVideoTrackAdmitted(*track.video, codecFacts);
 }
 
-[[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample,
-                                    bool* keyFrame) noexcept {
-  if (sample == nullptr || keyFrame == nullptr) {
-    return false;
-  }
-  CFArrayRef attachments =
-      CMSampleBufferGetSampleAttachmentsArray(sample, false);
-  if (attachments == nullptr || CFArrayGetCount(attachments) == 0) {
-    *keyFrame = true;
-    return true;
-  }
-  if (CFArrayGetCount(attachments) != 1) {
-    return false;
-  }
-  CFTypeRef first = CFArrayGetValueAtIndex(attachments, 0);
-  if (first == nullptr || CFGetTypeID(first) != CFDictionaryGetTypeID()) {
-    return false;
-  }
-  CFTypeRef notSync = CFDictionaryGetValue(
-      static_cast<CFDictionaryRef>(first),
-      kCMSampleAttachmentKey_NotSync);
-  if (notSync == nullptr) {
-    *keyFrame = true;
-    return true;
-  }
-  if (CFGetTypeID(notSync) != CFBooleanGetTypeID()) {
-    return false;
-  }
-  *keyFrame = !CFBooleanGetValue(static_cast<CFBooleanRef>(notSync));
-  return true;
-}
-
 [[nodiscard]] bool sampleTimingMatches(
     CMSampleBufferRef nativeSample,
     const media::MediaSample& sample) noexcept {

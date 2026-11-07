@@ -36,6 +36,39 @@ namespace wam::macos {
          lhs.flags == rhs.flags && lhs.epoch == rhs.epoch;
 }
 
+// The container's sync attachment; false when the attachments are malformed.
+// No attachment array, or no NotSync key, means a sync sample.
+[[nodiscard]] inline bool sampleIsKeyFrame(CMSampleBufferRef sample,
+                                           bool* keyFrame) noexcept {
+  if (sample == nullptr || keyFrame == nullptr) {
+    return false;
+  }
+  CFArrayRef attachments =
+      CMSampleBufferGetSampleAttachmentsArray(sample, false);
+  if (attachments == nullptr || CFArrayGetCount(attachments) == 0) {
+    *keyFrame = true;
+    return true;
+  }
+  if (CFArrayGetCount(attachments) != 1) {
+    return false;
+  }
+  CFTypeRef value = CFArrayGetValueAtIndex(attachments, 0);
+  if (value == nullptr || CFGetTypeID(value) != CFDictionaryGetTypeID()) {
+    return false;
+  }
+  CFTypeRef notSync = CFDictionaryGetValue(
+      static_cast<CFDictionaryRef>(value), kCMSampleAttachmentKey_NotSync);
+  if (notSync == nullptr) {
+    *keyFrame = true;
+    return true;
+  }
+  if (CFGetTypeID(notSync) != CFBooleanGetTypeID()) {
+    return false;
+  }
+  *keyFrame = !CFBooleanGetValue(static_cast<CFBooleanRef>(notSync));
+  return true;
+}
+
 // Identifies a decode generation. Incrementing the generation on seek or load
 // lets every asynchronous stage reject frames from the previous timeline.
 struct FrameTiming {
