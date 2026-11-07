@@ -813,12 +813,14 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
       if (file.gcount() != size)
         return refuse("AdpcmWaveBoundsInvalid");
       const auto &f = *track.audio;
-      const auto parsed = media::matroska::appleAudioPacketFormat(
-          "A_MS/ACM", std::span(bytes).first(size),
-          static_cast<std::uint32_t>(f.sampleRate), f.channels, 4);
-      if (parsed.codec != track.codec ||
-          parsed.format.bytesPerPacket != f.bytesPerPacket ||
-          parsed.blockFrames != f.framesPerPacket)
+      const auto parsed = media::parseAdpcmWaveFormat(
+          std::span(bytes).first(size),
+          static_cast<std::uint32_t>(f.sampleRate), f.channels);
+      if (!parsed ||
+          (parsed->tag == 17 ? media::MediaCodec::AdpcmIma
+                             : media::MediaCodec::AdpcmMs) != track.codec ||
+          parsed->blockBytes != f.bytesPerPacket ||
+          parsed->blockFrames != f.framesPerPacket)
         return refuse("AdpcmWaveFormatMismatch");
       const media::AdpcmFormat format{
           static_cast<std::uint16_t>(f.formatTag & 0xffffU), f.channels,

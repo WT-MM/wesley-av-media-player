@@ -110,6 +110,18 @@ int main() {
   for (unsigned n=0;n<24;++n)
     check(matroska::appleAudioPacketFormat("A_ALAC", std::span(cookie).first(n),48000,2,24).codec==MediaCodec::Unknown,
           "truncated ALAC private refuses");
+  // Stereo IMA payloads come in eight-byte groups; the demuxer must refuse
+  // the geometry the ADPCM decoder refuses.
+  const auto imaWave = [](unsigned blockAlign, unsigned frames) {
+    const unsigned raw[]{17,0, 2,0, 0x80,0xbb,0,0, 0,0,0,0, blockAlign,0, 4,0, 2,0, frames,0};
+    std::array<std::byte,20> out{};
+    for (unsigned i=0;i<20;++i) out[i]=static_cast<std::byte>(raw[i]);
+    return out;
+  };
+  check(matroska::appleAudioPacketFormat("A_MS/ACM", imaWave(24,17),48000,2,0).codec==MediaCodec::AdpcmIma,
+        "stereo IMA with whole eight-byte groups is admitted");
+  check(matroska::appleAudioPacketFormat("A_MS/ACM", imaWave(20,13),48000,2,0).codec==MediaCodec::Unknown,
+        "stereo IMA with a partial eight-byte group refuses");
   const std::array<std::byte,7> alacTail{std::byte{0x20},std::byte{0},std::byte{0x14},std::byte{0},std::byte{0},std::byte{0x1c},std::byte{0}};
   check(matroska::alacPacketFrames(alacTail,4096)==3584,"ALAC explicit tail count is exact");
   check(!isSlowVideoSeek({12,1},{0,1}) && isSlowVideoSeek({577,48},{0,1}) &&
