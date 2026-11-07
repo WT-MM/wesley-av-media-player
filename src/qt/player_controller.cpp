@@ -204,7 +204,6 @@ PlayerController::PlayerController(QObject *parent)
 PlayerController::~PlayerController() {
   if (scroll_settle_timer_)
     scroll_settle_timer_->stop();
-  scroll_sweep_target_.reset();
   if (work_timer_)
     work_timer_->stop();
   export_job_.cancel();
@@ -284,6 +283,9 @@ void PlayerController::setSource(const QUrl &source) {
 bool PlayerController::open(const QUrl &source) {
   if (source.isEmpty())
     return false;
+  // A live scroll sweep belongs to the media being replaced; its settle must
+  // not seek the next file to the old target.
+  cancelScrollGesture();
   if (native_) {
     // Burn pointer/preview completion ownership before the owner drains any
     // observations from the retiring source. A late exact presentation from
@@ -454,16 +456,7 @@ bool PlayerController::atEndForReplay(double frame_duration) const noexcept {
 void PlayerController::togglePlayPause() { playing() ? pause() : play(); }
 
 void PlayerController::stop() {
-  // A live scroll sweep owns an open scrub gesture; drop it before the
-  // transport goes away rather than committing a seek into a dead session.
-  if (scroll_settle_timer_)
-    scroll_settle_timer_->stop();
-  scroll_model_.reset();
-  scroll_sweep_target_.reset();
-  if (scroll_gesture_active_) {
-    scroll_gesture_active_ = false;
-    emit scrollGestureActiveChanged();
-  }
+  cancelScrollGesture();
   mpv_.invalidateScrubGesture();
   invalidateNativeSeekIntents();
   if (native_) {
@@ -1434,16 +1427,13 @@ int PlayerController::scrollGesture(double pixelDeltaX, double pixelDeltaY,
   // once the deltas actually stop arriving.
   if (scroll_settle_timer_)
     scroll_settle_timer_->start(kScrollSettleMs);
-  if (!scroll_gesture_active_) {
-    scroll_gesture_active_ = true;
-    emit scrollGestureActiveChanged();
-  }
+  if (std::holds_alternative<ScrollIdle>(scroll_))
+    setScrollState(ScrollActive{});
 
   if (step.axis == ScrollAxis::Vertical) {
-    // A vertical gesture cancels any sweep the previous gesture left open,
+    // A vertical gesture commits any sweep the previous gesture left open,
     // rather than interleaving a volume change into a live scrub.
-    if (scroll_sweep_target_)
-      commitScrollSweep();
+    commitScrollSweep();
     if (step.volumeDelta == 0.0)
       return ScrollGestureVolume;
     setVolume(scroll_model_.volumeWithDetent(volume_, step.volumeDelta,
@@ -1454,27 +1444,30 @@ int PlayerController::scrollGesture(double pixelDeltaX, double pixelDeltaY,
   if (step.seekSeconds == 0.0)
     return ScrollGestureSeek;
 
-  if (!scroll_sweep_target_) {
+  auto *sweep = std::get_if<ScrollSweep>(&scroll_);
+  if (sweep == nullptr) {
     // Open exactly one scrub gesture for the whole sweep. beginScrub is the
     // same entry point the timeline's pointer drag uses, so the sweep gets
     // the native preview handoff, the captured logical pause intent and the
     // depth-1 latest-wins preview coalescing for free -- and previews are
     // never queued behind one another.
     beginScrub();
-    scroll_sweep_target_ = position_;
+    scroll_ = ScrollSweep{position_};
+    sweep = &std::get<ScrollSweep>(scroll_);
   }
-  const double maximum = duration_ > 0.0 ? duration_ : *scroll_sweep_target_;
-  scroll_sweep_target_ = std::clamp(*scroll_sweep_target_ + step.seekSeconds,
-                                    0.0, std::max(0.0, maximum));
-  previewSeekTo(*scroll_sweep_target_);
+  const double maximum = duration_ > 0.0 ? duration_ : sweep->target;
+  sweep->target = std::clamp(sweep->target + step.seekSeconds, 0.0,
+                             std::max(0.0, maximum));
+  previewSeekTo(sweep->target);
   return ScrollGestureSeek;
 }
 
 void PlayerController::commitScrollSweep() {
-  if (!scroll_sweep_target_)
+  const auto *sweep = std::get_if<ScrollSweep>(&scroll_);
+  if (sweep == nullptr)
     return;
-  const double target = *scroll_sweep_target_;
-  scroll_sweep_target_.reset();
+  const double target = sweep->target;
+  scroll_ = ScrollActive{};
   endScrub(target);
 }
 
@@ -1483,10 +1476,22 @@ void PlayerController::settleScrollGesture() {
     scroll_settle_timer_->stop();
   scroll_model_.reset();
   commitScrollSweep();
-  if (scroll_gesture_active_) {
-    scroll_gesture_active_ = false;
+  setScrollState(ScrollIdle{});
+}
+
+void PlayerController::cancelScrollGesture() {
+  if (scroll_settle_timer_)
+    scroll_settle_timer_->stop();
+  scroll_model_.reset();
+  setScrollState(ScrollIdle{});
+}
+
+void PlayerController::setScrollState(
+    std::variant<ScrollIdle, ScrollActive, ScrollSweep> state) {
+  const bool was_active = scrollGestureActive();
+  scroll_ = state;
+  if (was_active != scrollGestureActive())
     emit scrollGestureActiveChanged();
-  }
 }
 
 void PlayerController::setRate(double rate) {

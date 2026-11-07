@@ -234,7 +234,7 @@ public:
   // The ceiling setVolume clamps to, applied from AppSettings::maximumVolume.
   [[nodiscard]] double maximumVolume() const { return maximum_volume_; }
   [[nodiscard]] bool scrollGestureActive() const {
-    return scroll_gesture_active_;
+    return !std::holds_alternative<ScrollIdle>(scroll_);
   }
   [[nodiscard]] bool muted() const { return muted_; }
   [[nodiscard]] double rate() const { return rate_; }
@@ -789,9 +789,18 @@ private:
   // only honest gesture boundary.
   QTimer *scroll_settle_timer_ = nullptr;
   ScrollGestureModel scroll_model_;
-  // Live timeline sweep: the scrub gesture is open and this is the latest
-  // target the user has swept to. Empty when no sweep is in flight.
-  std::optional<double> scroll_sweep_target_;
+  // The scroll gesture: idle, active until it settles, or a live timeline
+  // sweep (one open scrub gesture and the latest target swept to).
+  struct ScrollIdle {};
+  struct ScrollActive {};
+  struct ScrollSweep {
+    double target = 0.0;
+  };
+  std::variant<ScrollIdle, ScrollActive, ScrollSweep> scroll_;
+  // Ends the gesture without committing a sweep: the media it was sweeping
+  // is going away.
+  void cancelScrollGesture();
+  void setScrollState(std::variant<ScrollIdle, ScrollActive, ScrollSweep> state);
 
   ::wam::BackgroundJob export_job_;
   std::shared_ptr<::wam::CaptionService> caption_service_ = std::make_shared<::wam::CaptionService>();
@@ -847,7 +856,6 @@ private:
   bool idle_ = true;
   bool eof_reached_ = false;
   bool muted_ = false;
-  bool scroll_gesture_active_ = false;
   bool captions_visible_ = true;
   bool preserve_pitch_ = true;
   double position_ = 0.0;

@@ -1,4 +1,5 @@
 #include "fakes/mpv_runtime/injected_mpv_runtime.hpp"
+#include "qt/app_settings.hpp"
 #include "qt/player_controller.hpp"
 #include "qt/player_core_p.hpp"
 #include "qt/subtitle_sources.hpp"
@@ -40,6 +41,9 @@ class PlayerControllerTestAccess final {
     controller.updateVideoFacts(size.width, size.height, hdr);
   }
   static void resetTimeline(PlayerController& controller) { controller.resetTimeline(); }
+  static void setSource(PlayerController &controller, const QUrl &source) {
+    controller.updateSource(source);
+  }
 
   static std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime() {
     static const auto injected =
@@ -1231,6 +1235,22 @@ int main(int argc, char **argv) {
     expect(notifications==0, "caption worker cannot call UI directly");
     QCoreApplication::processEvents();
     expect(notifications==1 && bool(bridge.latest), "caption event queue is coalesced");
+  }
+  {
+    // A timeline sweep belongs to the media it was sweeping: opening another
+    // file ends it, so its settle cannot seek the new file to the old target.
+    QTemporaryDir dir;
+    wam::StateStore store(std::filesystem::path(dir.path().toStdString()) / "state.tsv");
+    wam::qt::AppSettings settings(store);
+    wam::qt::PlayerController controller;
+    controller.bindSettings(settings);
+    wam::qt::PlayerControllerTestAccess::setSource(
+        controller, QUrl::fromLocalFile(dir.path() + QStringLiteral("/a.mp4")));
+    expect(controller.scrollGesture(-200.0, 0.0, 0.0, 0.0, false, 2) == 2 &&
+               controller.scrollGestureActive(),
+           "a horizontal scroll opens a timeline sweep");
+    static_cast<void>(controller.open(QUrl::fromLocalFile(dir.path() + QStringLiteral("/b.mp4"))));
+    expect(!controller.scrollGestureActive(), "opening another file ends the sweep");
   }
   {
     // A track load superseded by an inline source (a sidecar file) must not
