@@ -365,21 +365,13 @@ struct NativePreviewFrameLane::Impl final {
     generationStartPresentation.reset();
   }
 
-  // Mirrors the playback route's rule in native_video_consumer.mm. Every
-  // preview epoch starts its own decode at the full-sync sample preceding the
-  // target, and an open-GOP random-access point delivers its leading pictures
-  // after it in decode order. Those pictures reference material this decode
-  // never saw, so VideoToolbox answers kVTVideoDecoderReferenceMissingErr, and
-  // they present before the target the lane is rendering. Retire them here
-  // instead of submitting an access unit that cannot decode.
+  // The playback route's rule (video_decode_lane.hpp): every preview epoch
+  // starts its own decode at the full-sync sample preceding the target, so an
+  // open-GOP point's leading pictures cannot decode and are retired here.
   [[nodiscard]] bool leadingPictureBeforeDecodeStart(
       const MediaSample& sample) const noexcept {
-    if (sample.keyFrame || !generationStartPresentation) {
-      return false;
-    }
-    const auto order = media::compareMediaTime(sample.presentationTime,
-                                               *generationStartPresentation);
-    return order && *order == MediaTimeOrder::Less;
+    return leadingPictureBeforeGenerationStart(
+        sample.presentationTime, sample.keyFrame, generationStartPresentation);
   }
 
   void latchFailure(const char* message) noexcept {

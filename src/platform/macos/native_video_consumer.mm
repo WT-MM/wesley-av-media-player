@@ -535,30 +535,6 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
          keyFrame == sample.keyFrame;
 }
 
-// Random access into an open-GOP stream begins on a picture whose *leading*
-// pictures follow it in decode order but present before it. HEVC calls them
-// RASL/RADL; x265 emits them at every CRA, while closed-GOP H.264 streams
-// never produce the shape. When the
-// random-access point itself starts the decode, VideoToolbox has none of the
-// pictures those leading pictures reference and answers
-// kVTVideoDecoderReferenceMissingErr, which the decoder correctly reports as a
-// hard callback failure. The stream is not broken: HEVC states that leading
-// pictures associated with a random-access point that begins the bitstream are
-// not output and need not be decodable, and no later picture may reference
-// them. They also present strictly before that random-access point, which the
-// source located at or before the generation's presentation floor, so they can
-// never become a visible frame. Recognize them from timing alone and drop them
-// as compressed preroll rather than submitting an undecodable access unit.
-[[nodiscard]] bool leadingPictureBeforeGenerationStart(
-    MediaTime presentation, bool keyFrame,
-    const std::optional<MediaTime>& generationStart) noexcept {
-  if (keyFrame || !generationStart) {
-    return false;
-  }
-  const auto order = media::compareMediaTime(presentation, *generationStart);
-  return order && *order == MediaTimeOrder::Less;
-}
-
 enum class Lifecycle : std::uint8_t {
   None,
   Flush,
