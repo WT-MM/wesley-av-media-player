@@ -136,11 +136,13 @@ enum class NativeTrackedVideoEventKind : std::uint8_t {
 };
 
 // One exact terminal observation. eventSequence is output-owned, nonzero, and
-// strictly increasing without wrap. FrameDrawn means the matching frame was
-// accepted by the current generation and its real Qt render pass completed a
-// successful draw plus covering-fence publication. It is not inferred from a
-// stats delta or GUI submission. FrameSuperseded is the only non-failure way
-// an accepted tracked delivery can terminate without a draw.
+// strictly increasing without wrap. FrameDrawn means the presenter
+// irrevocably took the matching frame for display in the current generation:
+// on the GL route a render pass drew it and published its covering fence; on
+// the layer route the renderer accepted the enqueue (see
+// native_layer_video_output.hpp, "DRAW PROOF CLASS"). Neither claims photons,
+// and neither is inferred from a stats delta. FrameSuperseded is the only
+// non-failure way an accepted tracked delivery can terminate without a draw.
 //
 // Frame events carry a nonzero frameSequence and the exact immutable timing
 // submitted for that identity. Lifecycle events carry a zero frameSequence;
@@ -153,11 +155,35 @@ struct NativeTrackedVideoEvent {
   FrameTiming timing{};
 };
 
+struct NativeTrackedVideoOutputFacts {
+  std::uint64_t generation{0};
+  NativeTrackedFrameSequence admittedFrame{};
+  std::uint64_t submittedFrames{0};
+  std::uint64_t drawnFrames{0};
+  std::uint64_t supersededFrames{0};
+  // Highest output-owned event identity already published, including an event
+  // still pending in the output mailbox. This makes Start baseline sampling
+  // linearizable with a concurrent render publication.
+  std::uint64_t lastEventSequence{0};
+  // The capacity-one credit: 1 while a frame is admitted and its terminal
+  // event has not been taken, else 0. Surface leases a presenter keeps past
+  // that (a renderer still displaying the predecessor) are not counted here;
+  // NativeSurfaceBudget accounts for them.
+  std::size_t retainedFrames{0};
+  bool eventPending{false};
+  bool invalidationPending{false};
+  bool closed{false};
+  bool fatal{false};
+};
+
 // The tracked-output protocol state every presenter shares: the capacity-one
 // frame mailbox, its event sequence, and the flush/close lifecycle. A
 // presenter holds it under its own lock and supplies only the renderer side
 // (starting a renderer flush and observing that it took effect), so the
 // contract's transitions are stated once.
+//
+// `usable` is the presenter's own verdict: false once it has latched a failure
+// or closed its renderer.
 struct NativeTrackedOutputProtocol {
   // The admitted frame awaiting its terminal event, and that event once
   // published. The consumer takes the event; the frame identity clears with it.
@@ -168,6 +194,13 @@ struct NativeTrackedOutputProtocol {
   std::uint64_t lastEventSequence{0};
   std::uint64_t drawnFrames{0};
   std::uint64_t supersededFrames{0};
+  // The newest identity ever admitted; identities must strictly increase.
+  NativeTrackedFrameSequence lastFrame{};
+  std::uint64_t submittedFrames{0};
+
+  // Set once at creation; detachWake() clears it after the gate drains.
+  NativeTrackedVideoOutputWakeSeam wake{};
+  NativeTrackedWakeGate wakeGate;
 
   bool flushPending{false};
   bool flushDone{false};
@@ -183,11 +216,35 @@ struct NativeTrackedOutputProtocol {
     return frame.valid() || event.has_value();
   }
 
+  // `current`: the presenter accepts this generation now. submit() answers
+  // with the same verdict before it checks the frame itself.
+  [[nodiscard]] NativeTrackedVideoCapacity capacity(
+      std::uint64_t generation, bool current, bool usable) const noexcept {
+    if (!usable || closePending) {
+      return NativeTrackedVideoCapacity::Failed;
+    }
+    if (generation == 0 || !current) {
+      return NativeTrackedVideoCapacity::StaleGeneration;
+    }
+    return frameOutstanding() || flushPending
+               ? NativeTrackedVideoCapacity::Backpressure
+               : NativeTrackedVideoCapacity::Available;
+  }
+
+  // A repeated or regressed identity is a caller contract violation, which
+  // the presenter latches as fatal.
+  [[nodiscard]] bool advances(NativeTrackedFrameSequence sequence) const
+      noexcept {
+    return !lastFrame.valid() || sequence.value > lastFrame.value;
+  }
+
   void admit(NativeTrackedFrameSequence sequence,
              const FrameTiming& timing) noexcept {
     frame = sequence;
     frameTiming = timing;
     frameGeneration = timing.generation;
+    lastFrame = sequence;
+    ++submittedFrames;
   }
 
   void clearFrame() noexcept {
@@ -237,9 +294,9 @@ struct NativeTrackedOutputProtocol {
     Continuing,  // already started: the presenter re-checks completion
   };
 
-  [[nodiscard]] Step beginFlush(std::uint64_t retired,
-                                std::uint64_t next) noexcept {
-    if (next == 0 || next <= retired) {
+  [[nodiscard]] Step beginFlush(std::uint64_t retired, std::uint64_t next,
+                                bool usable) noexcept {
+    if (!usable || closePending || next == 0 || next <= retired) {
       return Step::Failed;
     }
     if (flushDone && flushRetired == retired && flushNext == next) {
@@ -294,27 +351,52 @@ struct NativeTrackedOutputProtocol {
     closePending = false;
     closeDone = true;
   }
-};
 
-struct NativeTrackedVideoOutputFacts {
-  std::uint64_t generation{0};
-  NativeTrackedFrameSequence admittedFrame{};
-  std::uint64_t submittedFrames{0};
-  std::uint64_t drawnFrames{0};
-  std::uint64_t supersededFrames{0};
-  // Highest output-owned event identity already published, including an event
-  // still pending in the output mailbox. This makes Start baseline sampling
-  // linearizable with a concurrent render publication.
-  std::uint64_t lastEventSequence{0};
-  // The capacity-one credit: 1 while a frame is admitted and its terminal
-  // event has not been taken, else 0. Surface leases a presenter keeps past
-  // that (a renderer still displaying the predecessor) are not counted here;
-  // NativeSurfaceBudget accounts for them.
-  std::size_t retainedFrames{0};
-  bool eventPending{false};
-  bool invalidationPending{false};
-  bool closed{false};
-  bool fatal{false};
+  // The outcome of a flush/close Step that needs no renderer work, or nullopt
+  // for Started/Continuing.
+  [[nodiscard]] static std::optional<NativeTrackedVideoOutputProgress>
+  settled(Step step) noexcept {
+    switch (step) {
+    case Step::Failed:
+      return NativeTrackedVideoOutputProgress::Failed;
+    case Step::Stale:
+      return NativeTrackedVideoOutputProgress::StaleGeneration;
+    case Step::Done:
+      return NativeTrackedVideoOutputProgress::Done;
+    case Step::Started:
+    case Step::Continuing:
+      break;
+    }
+    return std::nullopt;
+  }
+
+  // Closes the wake gate; true once no signal is in flight and the seam is
+  // detached. closeProgress() reports Done only after this succeeds.
+  [[nodiscard]] bool detachWake() noexcept {
+    wakeGate.close();
+    if (!wakeGate.drained()) {
+      return false;
+    }
+    wake = {};
+    return true;
+  }
+
+  [[nodiscard]] NativeTrackedVideoOutputFacts facts(
+      std::uint64_t generation, bool closed, bool fatal) const noexcept {
+    NativeTrackedVideoOutputFacts result;
+    result.generation = generation;
+    result.admittedFrame = frame;
+    result.submittedFrames = submittedFrames;
+    result.drawnFrames = drawnFrames;
+    result.supersededFrames = supersededFrames;
+    result.lastEventSequence = lastEventSequence;
+    result.retainedFrames = frame.valid() ? 1U : 0U;
+    result.eventPending = event.has_value();
+    result.invalidationPending = flushPending || closePending;
+    result.closed = closed;
+    result.fatal = fatal;
+    return result;
+  }
 };
 
 // Capacity-one boundary from WAM's owner-thread video scheduler to an
