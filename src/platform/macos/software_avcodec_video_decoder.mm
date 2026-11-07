@@ -88,11 +88,10 @@ struct SoftwareAvcodecVideoDecoder::Impl {
        (frame.colorspace!=AVCOL_SPC_UNSPECIFIED && !matrix)) {
       CVPixelBufferRelease(destination); s.fail("AvcodecFrameColorUnsupported"); return FrameResult::Failed;
     }
-    attach(kCVImageBufferColorPrimariesKey,primaries?primaries:
-       (untaggedSurfaceIsStandardDefinition(frame.width,frame.height)?kCVImageBufferColorPrimaries_SMPTE_C:kCVImageBufferColorPrimaries_ITU_R_709_2));
-    attach(kCVImageBufferTransferFunctionKey,transfer?transfer:kCVImageBufferTransferFunction_ITU_R_709_2);
-    attach(kCVImageBufferYCbCrMatrixKey,matrix?matrix:
-       (untaggedSurfaceIsStandardDefinition(frame.width,frame.height)?kCVImageBufferYCbCrMatrix_ITU_R_601_4:kCVImageBufferYCbCrMatrix_ITU_R_709_2));
+    const UntaggedSurfaceTags untagged=untaggedSurfaceTags(frame.width,frame.height);
+    attach(kCVImageBufferColorPrimariesKey,primaries?primaries:untagged.primaries);
+    attach(kCVImageBufferTransferFunctionKey,transfer?transfer:untagged.transfer);
+    attach(kCVImageBufferYCbCrMatrixKey,matrix?matrix:untagged.matrix);
     CFStringRef location=nullptr;
     switch(frame.chroma_location) {
     case AVCHROMA_LOC_UNSPECIFIED: break;
@@ -157,8 +156,7 @@ bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& conf
   }
   s.chroma422=media::mediaSampleFormatIs422(facts.facts->sampleFormat);
   s.fullRange=configuration.fullRangeVideo.value_or(facts.facts->color.fullRange);
-  s.pixelFormat=s.chroma422?(s.depth==10?kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange):
-    (s.depth==10?kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
+  s.pixelFormat=biplanarVideoRangeFormat(s.chroma422,s.depth==10);
   if(s.fullRange) s.pixelFormat=fullRangeCounterpartFormat(s.pixelFormat);
   s.eos=false; s.notified=false; s.suspended=false; s.awaitingKeyFrame=true; s.error.store(nullptr);
   s.reported=nullptr;

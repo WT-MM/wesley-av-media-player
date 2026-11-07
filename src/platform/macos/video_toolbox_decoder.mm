@@ -1489,15 +1489,10 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   }
   const bool is422 =
       parsed && media::mediaSampleFormatIs422(parsed->sampleFormat);
-  if (is422) {
-    return codedDepthIsTenBit(configuration)
-        ? kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
-        : kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange;
-  }
-  return (codedDepthIsTenBit(configuration) ||
-          configuration.highDynamicRangeTransfer)
-             ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+  // A 4:2:2 surface keeps its coded depth; 4:2:0 widens for an HDR transfer.
+  return biplanarVideoRangeFormat(
+      is422, codedDepthIsTenBit(configuration) ||
+                 (!is422 && configuration.highDynamicRangeTransfer));
 }
 
 struct DirectCompressedSampleMetadata {
