@@ -3335,20 +3335,15 @@ void testExhaustionStopsAudioBeforeOneEnded() {
       waitFact<protocol::Stopped>(*session, "Ended fixture Stopped"));
 }
 
-// D6. A commit that lands inside the last frame's presentation interval used
-// to retire the whole native route. latchEnding() suppressed end of stream
-// only while publicCommitPending was set, but publishCommitReady clears that
-// flag at publication -- so media exhaustion arriving between CommitReady and
-// the Router's promised post-commit SetRunState let Ended latch inside the
-// handshake. Ended then carried the stale CommitSeek stamp (dropped by
-// endedMatches), and the promised run command was answered Ignored, which the
-// owner escalates to a Protocol failure and an mpv fallback.
-//
-// The fix is the commitRunStatePending latch: ending is held until the run
-// command the commit protocol guarantees actually lands. This fixture pins
-// exactly that window. Pre-fix it fails three ways at once -- ending latches
-// early, the run command is refused, and the lifecycle fact that arrives is
-// not the Ended this test waits for.
+// A commit that lands inside the last frame's presentation interval. Media
+// exhaustion arriving between CommitReady and the Router's promised
+// post-commit SetRunState must not latch Ended inside the handshake: Ended
+// would carry the stale CommitSeek stamp (dropped by endedMatches), and the
+// promised run command would be answered Ignored, which the owner escalates to
+// a Protocol failure and an mpv fallback. The public commit handshake holds
+// ReadyAwaitingRun until that run command lands. If ending latched early, this
+// fails three ways at once -- ending latches, the run command is refused, and
+// the lifecycle fact that arrives is not the Ended this test waits for.
 void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();

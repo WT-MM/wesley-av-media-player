@@ -917,7 +917,7 @@ struct NativeMediaSession::Impl final {
     {
       std::lock_guard lock(mutex);
       if (publishedStop.has_value() || published.ending || published.ended ||
-          published.liveFailed || !publicCommitPending ||
+          published.liveFailed || !commitPendingLocked() ||
           generationHighWater != command.targetGeneration.value ||
           commitReadySlot.has_value()) {
         return false;
@@ -930,8 +930,7 @@ struct NativeMediaSession::Impl final {
       publicAppliedRunStamp = command.stamp;
       appliedPaused = true;
       published.appliedPaused = true;
-      publicCommitPending = false;
-      commitRunStatePending = true;
+      publicCommit = PublicCommit::ReadyAwaitingRun;
       publishedStart.reset();
       startPending = false;
       publicStartAccepted = true;
@@ -972,7 +971,7 @@ struct NativeMediaSession::Impl final {
 
   [[nodiscard]] bool commitPublished() const noexcept {
     std::lock_guard lock(mutex);
-    return publicCommitPending;
+    return commitPendingLocked();
   }
 
   // Linearization permit for every live child mutation. Public Stop and the
@@ -996,7 +995,7 @@ struct NativeMediaSession::Impl final {
     std::lock_guard lock(mutex);
     if (liveIssueActive || exitRequested || publishedStop.has_value() ||
         liveFailed || (!allowEnding && (published.ending || published.ended)) ||
-        (publicCommitPending && !allowCommit)) {
+        (commitPendingLocked() && !allowCommit)) {
       return false;
     }
     liveIssueActive = true;
@@ -1044,10 +1043,9 @@ struct NativeMediaSession::Impl final {
     publicPreviewHandoffReady = false;
     publicPreviewHandoffFailed = false;
     publicPreviewPending = false;
-    publicCommitPending = false;
     // A terminal state supersedes an open commit handshake; nothing will
     // answer it, and ending must not stay suppressed behind it.
-    commitRunStatePending = false;
+    publicCommit = PublicCommit::Idle;
   }
 
   void clearForLiveFailureLocked() noexcept {
@@ -1400,7 +1398,7 @@ struct NativeMediaSession::Impl final {
         (published.ending || published.ended) &&
         !(allowPublishedEnded && published.ended);
     return exitRequested || publishedStop.has_value() ||
-           publicCommitPending || published.liveFailed || endingIsTerminal;
+           commitPendingLocked() || published.liveFailed || endingIsTerminal;
   }
 
   // Caller owns mutex. Preview child completion and its public result must be
@@ -2058,7 +2056,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
     {
       std::lock_guard lock(mutex);
       if (!publishedStop.has_value() && !published.liveFailed &&
-          !publicCommitPending &&
+          !commitPendingLocked() &&
           !factMailbox.has_value()) {
         activeGeneration = reservedGeneration;
         preparedPublished = true;
@@ -2146,7 +2144,7 @@ if (result != NativeAudioSessionProgress::Done) {
     {
       std::lock_guard lock(mutex);
       if (!publishedStop.has_value() && !published.liveFailed &&
-          !publicCommitPending &&
+          !commitPendingLocked() &&
           !factMailbox.has_value()) {
         startedDrawBaseline = drawBaseline;
         publicLastOutputEventSequence = drawBaseline;
@@ -2334,7 +2332,8 @@ if (result != NativeAudioSessionProgress::Done) {
       // primed output running silently until its mandatory SetRunState arrives.
       // Include the accepted mailbox command: it may not yet be in runPending.
       // The live-issue permit orders a later command after this suspension.
-      if (commitRunStatePending || publishedRun.has_value()) {
+      if (publicCommit == PublicCommit::ReadyAwaitingRun ||
+          publishedRun.has_value()) {
         liveIssueActive = false;
         return;
       }
@@ -2878,8 +2877,8 @@ if (result != NativeAudioSessionProgress::Done) {
   [[nodiscard]] bool latchEnding() noexcept {
     std::lock_guard lock(mutex);
     if (!dispatcherExhausted || endingLatched || endedPublished ||
-        liveFailed || publishedStop.has_value() || publicCommitPending ||
-        commitRunStatePending || !startedPublished ||
+        liveFailed || publishedStop.has_value() || 
+        publicCommit != PublicCommit::Idle || !startedPublished ||
         !protocol::validLive(latestAcceptedStamp)) {
       return endingLatched;
     }
@@ -3328,19 +3327,20 @@ if (result != NativeAudioSessionProgress::Done) {
   protocol::Stamp publicRequestedRunStamp{};
   protocol::Stamp publicIssuedRunStamp{};
   protocol::Stamp publicAppliedRunStamp{};
-  bool publicCommitPending{false};
-  // A CommitReady has been published and the promoted generation's
-  // authoritative SetRunState has not arrived yet. The commit protocol
-  // guarantees that command -- the Router issues it synchronously from
-  // onNativeCommitReady -- and setRunState() already refuses a run command
-  // that arrives before the CommitReady is taken, so the handshake is not
-  // complete when publicCommitPending clears; it is complete when the run
-  // command lands. Ending must not latch inside that window: it would capture
-  // the CommitSeek stamp as endingStamp while the Router has already reserved
-  // a newer serial for the run command, so the Ended fact would be dropped by
-  // endedMatches, and the run command itself would be refused with Ignored and
-  // retire the whole native route.
-  bool commitRunStatePending{false};
+  // The public half of the commit handshake; the worker half is commitPhase.
+  // ReadyAwaitingRun: CommitReady is published and the promoted generation's
+  // authoritative SetRunState has not arrived yet. The Router issues that
+  // command synchronously from onNativeCommitReady, so the handshake is
+  // complete only when it lands. Ending must not latch inside that window: it
+  // would capture the CommitSeek stamp as endingStamp while the Router has
+  // already reserved a newer serial for the run command, so the Ended fact
+  // would be dropped by endedMatches, and the run command itself would be
+  // refused with Ignored and retire the whole native route.
+  enum class PublicCommit : std::uint8_t { Idle, Pending, ReadyAwaitingRun };
+  PublicCommit publicCommit{PublicCommit::Idle};
+  [[nodiscard]] bool commitPendingLocked() const noexcept {
+    return publicCommit == PublicCommit::Pending;
+  }
   bool publicPreviewHandoffPending{false};
   bool publicPreviewHandoffReady{false};
   bool publicPreviewHandoffFailed{false};
@@ -3594,7 +3594,7 @@ NativeMediaSession::preflightPreviewTarget(double seconds) noexcept {
     return std::nullopt;
   }
   std::lock_guard lock(impl_->mutex);
-  if (!impl_->seekAdmissibleLocked() || impl_->publicCommitPending ||
+  if (!impl_->seekAdmissibleLocked() || impl_->commitPendingLocked() ||
       impl_->publicPreviewHandoffFailed ||
       !(seconds < impl_->publicSeekCeilingSeconds)) {
     return std::nullopt;
@@ -3680,7 +3680,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::start(
     // NativeStarting to NativeSeeking before its already-created Start action
     // returns to the owner. Admit that exact older Start as a subordinate
     // physical-start request without rolling back the accepted commit stamp.
-    if (impl_->publicCommitPending && impl_->publishedPrepare.has_value() &&
+    if (impl_->commitPendingLocked() && impl_->publishedPrepare.has_value() &&
         command.preparedGeneration ==
             impl_->publishedPrepare->command.reservedGeneration &&
         protocol::sameAttempt(command.stamp, impl_->latestAcceptedStamp) &&
@@ -3721,7 +3721,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
     if (impl_->published.liveFailed || impl_->published.ended) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
-    if (impl_->publicCommitPending || impl_->commitReadySlot.has_value()) {
+    if (impl_->commitPendingLocked() || impl_->commitReadySlot.has_value()) {
       return NativeMediaSessionCommandStatus::Invalid;
     }
     if (impl_->published.ending) {
@@ -3738,7 +3738,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
       impl_->latestAcceptedStamp = command.stamp;
       impl_->endingStamp = command.stamp;
       impl_->publicRequestedRunStamp = command.stamp;
-      impl_->commitRunStatePending = false;
+      impl_->publicCommit = Impl::PublicCommit::Idle;
       return NativeMediaSessionCommandStatus::Accepted;
     }
     // A child issue that already owns the live permit linearized before this
@@ -3763,7 +3763,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
     impl_->latestAcceptedStamp = command.stamp;
     // The commit handshake is complete: endingStamp captured from here on is
     // the stamp the Router is actually waiting on.
-    impl_->commitRunStatePending = false;
+    impl_->publicCommit = Impl::PublicCommit::Idle;
   }
   if (command.paused) {
     impl_->dependencies.wake->publishVideoDueHostTicks(0);
@@ -3784,7 +3784,7 @@ NativeMediaSession::preparePreviewHandoff() noexcept {
     }
     if (impl_->publishedStop.has_value() || impl_->published.liveFailed ||
         (impl_->published.ending && !impl_->published.ended) ||
-        impl_->publicCommitPending) {
+        impl_->commitPendingLocked()) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
     if (!impl_->published.prepared || impl_->publicActiveGeneration == 0 ||
@@ -3852,7 +3852,8 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
         command, targetToken.exact(), targetToken.drawBaseline(),
         reviveFromEnded};
     impl_->generationHighWater = command.targetGeneration.value;
-    impl_->publicCommitPending = true;
+    // A newer commit supersedes any handshake the previous one left open.
+    impl_->publicCommit = Impl::PublicCommit::Pending;
     impl_->publishedPreviewHandoff.reset();
     impl_->publicPreviewHandoffPending = false;
     impl_->publicPreviewHandoffReady = false;
@@ -3870,8 +3871,6 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
     impl_->audioClockSlot.reset();
     impl_->videoDrawSlot.reset();
     impl_->commitReadySlot.reset();
-    // A newer commit supersedes any handshake the previous one left open.
-    impl_->commitRunStatePending = false;
     impl_->observationRetryWakeUsed = false;
     impl_->latestAcceptedStamp = command.stamp;
   }
@@ -3896,7 +3895,7 @@ NativePreviewFrameRequestStatus NativeMediaSession::previewFrame(
     }
     if (impl_->publishedStop.has_value() || impl_->published.liveFailed ||
         (impl_->published.ending && !impl_->published.ended) ||
-        impl_->publicCommitPending) {
+        impl_->commitPendingLocked()) {
       return NativePreviewFrameRequestStatus::Closed;
     }
     if (impl_->publicPreviewHandoffFailed) {
@@ -4163,7 +4162,8 @@ NativeMediaSessionFacts NativeMediaSessionTestAccess::facts(
   result.previewPending = impl_->publicPreviewPending;
   result.previewPresentedPending = impl_->previewPresentedSlot.has_value();
   result.previewFailedPending = impl_->previewFailedSlot.has_value();
-  result.commitPending = impl_->publicCommitPending;
+  result.commitPending =
+      impl_->commitPendingLocked();
   result.commitReadyPending = impl_->commitReadySlot.has_value();
   result.requestedRunStateStamp = impl_->publicRequestedRunStamp;
   result.issuedRunStateStamp = impl_->publicIssuedRunStamp;
