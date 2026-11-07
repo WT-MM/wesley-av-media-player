@@ -137,6 +137,15 @@ elif case == 'truncated':
     _, reports, _ = run(case, root/'truncated.mp4', 'report@2400')
     check(any('incomplete' in n['error'] for n in notices(reports)), 'Specific file damage must survive fallback failure')
     check(windows(reports)[-1]['media']==0, 'Damaged file must empty the player')
+elif case == 'fill':
+    # A second Fill Screen toggle during the first one's zoom animation is
+    # refused; the window must then still un-fill on the next toggle.
+    _, reports, _ = run(case, media, 'report@1600,action:0:fillScreenPadded@50,action:0:fillScreenPadded@20,'
+                        'report@800,action:0:fillScreenPadded@50,report@800',
+                        WAM_TEST_GEOMETRY='480x270+120+160')
+    rows = windows(reports)
+    check(rows[1]['padded']==1 and rows[1]['geom']!=rows[0]['geom'], 'A refused un-fill keeps the window filled')
+    check(rows[-1]['padded']==0 and rows[-1]['geom']==rows[0]['geom'], 'The next toggle restores the pre-fill frame')
 elif case == 'menu':
     _, reports, _ = run(case, media, 'seekstep:1@1600,menu@50,seekstep:5@50,menu@50')
     items = menu_items(reports)

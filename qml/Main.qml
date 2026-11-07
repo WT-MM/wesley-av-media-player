@@ -76,8 +76,9 @@ ApplicationWindow {
     // videoBackdrop below is already "#000000" whenever media is open. So
     // nothing is drawn for this mode that was not already being drawn, and a
     // padded window with its chrome hidden costs exactly what an unpadded one
-    // does.
-    property bool fillScreenPadded: false
+    // does. The mode itself lives on the chrome bridge, which changes it only
+    // when the frame change was really issued.
+    readonly property bool fillScreenPadded: root.windowChrome ? root.windowChrome.fillScreenPadded : false
 
     // --- Vivid boost and Theater dim -------------------------------------
     //
@@ -536,7 +537,6 @@ ApplicationWindow {
             return false;
         if (!root.windowChrome.setFillScreenPadded(!root.fillScreenPadded))
             return false;
-        root.fillScreenPadded = !root.fillScreenPadded;
         root.revealControls();
         return true;
     }
@@ -575,18 +575,6 @@ ApplicationWindow {
         root.applyViewingModes();
         root.revealControls();
         return true;
-    }
-
-    // The remembered pre-fill frame is stale the moment the user issues a
-    // different, deliberate geometry command (Actual Size, Fit to Screen):
-    // after one of those, "put it back" no longer means anything they asked
-    // for. Drop the memory and the mode together rather than leaving a toggle
-    // armed on a rectangle that is no longer the answer to any question.
-    function forgetFillScreenPadded() {
-        if (!root.windowChrome)
-            return;
-        root.windowChrome.clearFillScreenPadded();
-        root.fillScreenPadded = false;
     }
 
     function showQuickEdit() {
@@ -656,7 +644,6 @@ ApplicationWindow {
             return false;
         if (root.videoNaturalSize.width <= 0 || root.videoNaturalSize.height <= 0)
             return false;
-        root.forgetFillScreenPadded();
         root.windowChrome.resizeToActualSize(root.videoNaturalSize.width, root.videoNaturalSize.height);
         return true;
     }
@@ -672,7 +659,6 @@ ApplicationWindow {
             return false;
         if (visibility === Window.FullScreen)
             return false;
-        root.forgetFillScreenPadded();
         root.windowChrome.resizeToFitScreen(root.videoNaturalSize.width, root.videoNaturalSize.height);
         return true;
     }

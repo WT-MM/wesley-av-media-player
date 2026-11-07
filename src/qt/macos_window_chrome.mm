@@ -271,85 +271,6 @@ void ensureAspectLockMonitor() {
                                    }];
 }
 
-// Zoom-toggle memory for resizeToFitScreen: the frame the window had before
-// it was fitted to the screen, so a second double-click can put it back.
-struct FitToScreenState {
-  // Weak for the same reason as InteractiveAspectLock's: it is only ever
-  // compared for identity, never messaged through.
-  __weak NSWindow *window = nil;
-  NSRect fitted = NSZeroRect;
-  NSRect restore = NSZeroRect;
-  bool valid = false;
-};
-
-// One row per window, for the same reason the aspect ratios are a table: the
-// zoom toggle's "put it back where it was" memory belongs to the window that
-// was zoomed. A single shared row would let fitting a second window throw
-// away the first window's restore frame.
-std::array<FitToScreenState, wam::macos::NativeEmbeddingSupport::maximumWindows> &
-fitStates() {
-  static std::array<FitToScreenState,
-                    wam::macos::NativeEmbeddingSupport::maximumWindows>
-      states;
-  return states;
-}
-
-// The row for `nsWindow`, reusing its existing row, else the first row that is
-// free (unused, released, or invalidated). Never null: past the cap -- which
-// the table is sized to make unreachable -- the last row is reused.
-FitToScreenState &fitState(NSWindow *nsWindow) {
-  auto &states = fitStates();
-  FitToScreenState *free_row = nullptr;
-  for (FitToScreenState &state : states) {
-    if (state.window == nsWindow)
-      return state;
-    if (free_row == nullptr && (state.window == nil || !state.valid))
-      free_row = &state;
-  }
-  FitToScreenState &row = free_row != nullptr ? *free_row : states.back();
-  row = FitToScreenState{};
-  return row;
-}
-
-// "Fill Screen (Padded)" memory: the exact frame the window had before it was
-// blown up to the screen's visible frame, so toggling back puts it there to
-// the point. Deliberately a SEPARATE table from fitStates() above rather than
-// a reuse of it: the double-click zoom toggle and the padded fill are two
-// independent gestures a user can interleave, and sharing one row would let
-// either one silently eat the other's restore frame.
-struct PaddedFillState {
-  // Weak for the same reason every other window reference in this file is:
-  // identity comparison only, never messaged through, and a closed window
-  // must nil itself out rather than dangle.
-  __weak NSWindow *window = nil;
-  NSRect restore = NSZeroRect;
-  bool valid = false;
-};
-
-std::array<PaddedFillState, wam::macos::NativeEmbeddingSupport::maximumWindows> &
-paddedFillStates() {
-  static std::array<PaddedFillState,
-                    wam::macos::NativeEmbeddingSupport::maximumWindows>
-      states;
-  return states;
-}
-
-// The row for `nsWindow`, reusing its existing row, else the first free one.
-// Never null; see fitState() above, which this mirrors exactly.
-PaddedFillState &paddedFillState(NSWindow *nsWindow) {
-  auto &states = paddedFillStates();
-  PaddedFillState *free_row = nullptr;
-  for (PaddedFillState &state : states) {
-    if (state.window == nsWindow)
-      return state;
-    if (free_row == nullptr && (state.window == nil || !state.valid))
-      free_row = &state;
-  }
-  PaddedFillState &row = free_row != nullptr ? *free_row : states.back();
-  row = PaddedFillState{};
-  return row;
-}
-
 bool framesMatch(NSRect lhs, NSRect rhs) {
   // AppKit rounds frames to whole points on some paths; a 1pt tolerance
   // keeps the toggle from missing its own fitted frame.
@@ -365,13 +286,6 @@ NSScreen *screenFor(NSWindow *nsWindow) {
     return screen;
   return NSScreen.mainScreen;
 }
-
-// Shared by both appliers below (instant and animated) so an animation in
-// flight blocks a nested instant -setFrame: exactly as an instant one blocks a
-// nested instant one -- see the re-entrancy note above applyWindowFrame.
-// Cleared from the animated path's completion handler, so the guard spans the
-// animation's full duration, not just the call that starts it.
-bool frame_change_in_flight = false;
 
 // Validates and rounds a caller's proposed frame the same way for both
 // appliers below. AppKit lays windows out in whole points, and a non-finite
@@ -403,22 +317,24 @@ std::optional<NSRect> normalizedFrame(NSRect frame) {
 // from inside an in-flight one -- particularly inside an accessibility
 // resize transaction, where AppKit is midway through its own frame
 // bookkeeping -- is exactly the shape of thing that crashes AppKit, so
-// anything arriving while a frame change is in flight is dropped.
+// anything arriving while a frame change is in flight is dropped. The flag
+// is per window (MacWindowChrome owns it): the nested call comes from the
+// same window's scene, and another window's animation must not drop it.
 //
 // This is the only path accessibility/AppleScript resizes and
 // snapToVideoAspectRatio use, and it is what the benchmark harness's exact,
 // immediate `set size of window 1` depends on -- never route those through
 // the animated applier below.
-bool applyWindowFrame(NSWindow *nsWindow, NSRect frame) {
-  if (!nsWindow || frame_change_in_flight)
+bool applyWindowFrame(NSWindow *nsWindow, NSRect frame, bool &inFlight) {
+  if (!nsWindow || inFlight)
     return false;
   const std::optional<NSRect> normalized = normalizedFrame(frame);
   if (!normalized)
     return false;
 
-  frame_change_in_flight = true;
+  inFlight = true;
   [nsWindow setFrame:*normalized display:YES animate:NO];
-  frame_change_in_flight = false;
+  inFlight = false;
   return true;
 }
 
@@ -445,30 +361,29 @@ bool applyWindowFrame(NSWindow *nsWindow, NSRect frame) {
 // empirically (screen-captured mid-transition frames show intermediate window
 // sizes), not from AppKit's private implementation.
 //
-// completion runs after the animation's final frame commits, on the main
-// thread; it may be nil.
+// `inFlight` stays set until the animation's final frame commits; it is
+// shared so the completion can clear it after the window's MacWindowChrome
+// is gone.
 bool applyWindowFrameAnimated(NSWindow *nsWindow, NSRect frame,
-                              NSTimeInterval duration,
-                              void (^completion)(void)) {
-  if (!nsWindow || frame_change_in_flight)
+                              const std::shared_ptr<bool> &inFlight) {
+  if (!nsWindow || *inFlight)
     return false;
   const std::optional<NSRect> normalized = normalizedFrame(frame);
   if (!normalized)
     return false;
 
-  frame_change_in_flight = true;
+  *inFlight = true;
+  const std::shared_ptr<bool> flag = inFlight;
   const NSRect target = *normalized;
   [NSAnimationContext
       runAnimationGroup:^(NSAnimationContext *context) {
-        context.duration = duration;
+        context.duration = kZoomAnimationDuration;
         context.timingFunction = easeInEaseOutTimingFunction();
         context.allowsImplicitAnimation = YES;
         [nsWindow.animator setFrame:target display:YES];
       }
       completionHandler:^{
-        frame_change_in_flight = false;
-        if (completion != nil)
-          completion();
+        *flag = false;
       }];
   return true;
 }
@@ -700,234 +615,6 @@ bool interactiveResizeActive(QWindow *window) {
     return false;
   InteractiveAspectLock &lock = aspectLock();
   return lock.armed && lock.window == nsWindow;
-}
-
-void resizeToActualSize(QWindow *window, const media::MediaDisplaySize &exact,
-                        qreal videoPixelWidth, qreal videoPixelHeight) {
-  if (!exact.empty()) {
-    videoPixelWidth = media::displayPhysicalPixels(exact.width);
-    videoPixelHeight = media::displayPhysicalPixels(exact.height);
-  }
-
-  NSWindow *nsWindow = nsWindowFor(window);
-  if (!nsWindow || videoPixelWidth <= 0 || videoPixelHeight <= 0)
-    return;
-  // This runs from a double-click, so the button may still be down and the
-  // interactive aspect lock armed; drop it so this frame lands verbatim.
-  disarmAspectLock();
-
-  NSScreen *screen = screenFor(nsWindow);
-  if (!screen)
-    return;
-
-  CGFloat scale = screen.backingScaleFactor;
-  if (scale <= 0)
-    scale = 1.0;
-
-  // Full-size content view means the content rect equals the frame rect, so
-  // the logical window size is simply the video's pixel size divided by the
-  // screen's backing scale factor -- no titlebar-height offset to add back.
-  const NSRect visible = screen.visibleFrame;
-  const CGFloat target_width = std::min(
-      static_cast<CGFloat>(videoPixelWidth / scale), visible.size.width);
-  const CGFloat target_height = std::min(
-      static_cast<CGFloat>(videoPixelHeight / scale), visible.size.height);
-
-  NSRect target;
-  target.size = NSMakeSize(target_width, target_height);
-  target.origin.x = NSMidX(visible) - target_width / 2.0;
-  target.origin.y = NSMidY(visible) - target_height / 2.0;
-
-  if (applyWindowFrameAnimated(nsWindow, target, kZoomAnimationDuration, nil))
-    fitState(nsWindow).valid = false;
-}
-
-void resizeToFitScreen(QWindow *window, const media::MediaDisplaySize &exact,
-                       qreal videoWidth, qreal videoHeight) {
-  NSWindow *nsWindow = nsWindowFor(window);
-  if (!nsWindow)
-    return;
-  NSScreen *screen = screenFor(nsWindow);
-  if (!screen)
-    return;
-  // Same reason as resizeToActualSize: a double-click can still be holding
-  // the mouse button, and this frame is computed here, not by AppKit.
-  disarmAspectLock();
-
-  const NSRect visible = screen.visibleFrame;
-  if (NSWidth(visible) <= 0 || NSHeight(visible) <= 0)
-    return;
-
-  FitToScreenState &state = fitState(nsWindow);
-  const NSRect current = nsWindow.frame;
-  // Second double-click on an already-fitted window: AppKit's zoom toggle,
-  // back to whatever the window was before the fit.
-  if (state.valid && state.window == nsWindow &&
-      framesMatch(current, state.fitted)) {
-    const NSRect restore = state.restore;
-    state.valid = false;
-    applyWindowFrameAnimated(nsWindow, restore, kZoomAnimationDuration, nil);
-    return;
-  }
-
-  CGFloat target_width = NSWidth(visible);
-  CGFloat target_height = NSHeight(visible);
-  if (!exact.empty()) {
-    const auto fit = media::displayFit(exact,
-        static_cast<std::uint32_t>(std::llround(NSWidth(visible) * screen.backingScaleFactor)),
-        static_cast<std::uint32_t>(std::llround(NSHeight(visible) * screen.backingScaleFactor)));
-    videoWidth = media::displayPhysicalPixels(fit.width);
-    videoHeight = media::displayPhysicalPixels(fit.height);
-  }
-
-  if (videoWidth > 0 && videoHeight > 0) {
-    const CGFloat aspect = static_cast<CGFloat>(videoWidth / videoHeight);
-    target_height = target_width / aspect;
-    if (target_height > NSHeight(visible)) {
-      target_height = NSHeight(visible);
-      target_width = target_height * aspect;
-    }
-  }
-
-  NSRect target;
-  target.size = NSMakeSize(target_width, target_height);
-  target.origin.x = NSMidX(visible) - target_width / 2.0;
-  target.origin.y = NSMidY(visible) - target_height / 2.0;
-
-  if (!applyWindowFrameAnimated(nsWindow, target, kZoomAnimationDuration, nil))
-    return;
-  // Remember where the window came from so a second double-click can put it
-  // back. state.fitted has to be the frame that was *requested*, not a
-  // read-back of nsWindow.frame: with the animated applier that read would
-  // land mid-transition (animator.frame does not reach `target` until the
-  // animation's last frame commits), which would make framesMatch() above
-  // miss the very frame this call is fitting to. normalizedFrame() rounds
-  // `target` exactly the way applyWindowFrameAnimated will, and framesMatch's
-  // 1pt tolerance absorbs anything short of that.
-  state.window = nsWindow;
-  state.restore = current;
-  state.fitted = normalizedFrame(target).value_or(target);
-  state.valid = true;
-}
-
-bool setFillScreenPadded(QWindow *window, bool filled) {
-  NSWindow *nsWindow = nsWindowFor(window);
-  if (!nsWindow)
-    return false;
-  // Fullscreen owns the frame outright; a padded fill underneath it would be
-  // both invisible and a frame AppKit would fight on the way out.
-  if (nsWindow.styleMask & NSWindowStyleMaskFullScreen)
-    return false;
-
-  PaddedFillState &state = paddedFillState(nsWindow);
-
-  if (!filled) {
-    if (!state.valid || state.window != nsWindow)
-      return false;
-    const NSRect restore = state.restore;
-    state.valid = false;
-    state.window = nil;
-    // The restore frame was captured straight out of nsWindow.frame, which
-    // AppKit keeps on the whole-point grid, so normalizedFrame() inside the
-    // applier is the identity here and the window lands on exactly the
-    // rectangle it left.
-    return applyWindowFrameAnimated(nsWindow, restore, kZoomAnimationDuration,
-                                    nil);
-  }
-
-  NSScreen *screen = screenFor(nsWindow);
-  if (!screen)
-    return false;
-  const NSRect visible = screen.visibleFrame;
-  if (NSWidth(visible) <= 0 || NSHeight(visible) <= 0)
-    return false;
-
-  // A drag may still be holding the interactive aspect lock; this frame is
-  // computed here, not by AppKit, and must land verbatim.
-  disarmAspectLock();
-
-  const NSRect current = nsWindow.frame;
-  if (!applyWindowFrameAnimated(nsWindow, visible, kZoomAnimationDuration,
-                                nil))
-    return false;
-  // Only remember the pre-fill frame the first time: a second fill request
-  // while already filled (a re-fill after the screen changed, say) must not
-  // overwrite the user's real window with the filled one.
-  if (!state.valid || state.window != nsWindow) {
-    state.window = nsWindow;
-    state.restore = current;
-    state.valid = true;
-  }
-  // The padded fill is a deliberate, exact frame; the zoom toggle's memory of
-  // a *different* frame is stale from here on, exactly as it is after any
-  // other explicit geometry command in this file.
-  fitState(nsWindow).valid = false;
-  return true;
-}
-
-void clearFillScreenPadded(QWindow *window) {
-  NSWindow *nsWindow = nsWindowFor(window);
-  if (!nsWindow)
-    return;
-  PaddedFillState &state = paddedFillState(nsWindow);
-  if (state.window != nsWindow)
-    return;
-  state.valid = false;
-  state.window = nil;
-}
-
-void snapToVideoAspectRatio(QWindow *window, const media::MediaDisplaySize &exact,
-                            qreal videoWidth, qreal videoHeight) {
-  if (!exact.empty()) {
-    const auto aspect = media::displayAspect(exact);
-    videoWidth = aspect.numerator; videoHeight = aspect.denominator;
-  }
-  NSWindow *nsWindow = nsWindowFor(window);
-  if (!nsWindow || videoWidth <= 0 || videoHeight <= 0)
-    return;
-
-  NSScreen *screen = screenFor(nsWindow);
-  if (!screen)
-    return;
-
-  const CGFloat aspect = static_cast<CGFloat>(videoWidth / videoHeight);
-  if (aspect <= 0)
-    return;
-
-  const NSRect visible = screen.visibleFrame;
-  const NSRect current = nsWindow.frame;
-
-  // QuickTime's own snap-to-aspect: keep the window's current width and
-  // derive the height that removes letterboxing, then fall back to fitting
-  // within the screen's visible frame (aspect preserved) if that would run
-  // off screen -- the same clamp-to-visibleFrame contract resizeToActualSize
-  // above uses, just sized from the current window instead of native pixels.
-  CGFloat target_width = current.size.width;
-  CGFloat target_height = target_width / aspect;
-
-  if (target_height > visible.size.height) {
-    target_height = visible.size.height;
-    target_width = target_height * aspect;
-  }
-  if (target_width > visible.size.width) {
-    target_width = visible.size.width;
-    target_height = target_width / aspect;
-  }
-
-  NSRect target;
-  target.size = NSMakeSize(target_width, target_height);
-  // Preserve the window's current center (QuickTime does not recenter on
-  // the screen for this), then clamp so the resized frame stays fully
-  // within the visible frame.
-  target.origin.x = NSMidX(current) - target_width / 2.0;
-  target.origin.y = NSMidY(current) - target_height / 2.0;
-  target.origin.x = std::max(
-      visible.origin.x, std::min(target.origin.x, NSMaxX(visible) - target_width));
-  target.origin.y = std::max(
-      visible.origin.y, std::min(target.origin.y, NSMaxY(visible) - target_height));
-
-  if (applyWindowFrame(nsWindow, target))
-    fitState(nsWindow).valid = false;
 }
 
 void adoptBackgroundLaunchPolicy() {
@@ -1555,29 +1242,232 @@ bool MacWindowChrome::interactiveResizeActive() const {
   return wam::macos_window_chrome::interactiveResizeActive(window_);
 }
 
+namespace {
+
+QRectF toQRect(NSRect rect) { return QRectF::fromCGRect(NSRectToCGRect(rect)); }
+NSRect toNSRect(const QRectF &rect) { return NSRectFromCGRect(rect.toCGRect()); }
+
+} // namespace
+
+void MacWindowChrome::setFrameMode(FrameMode mode) {
+  const bool wasPadded = fillScreenPadded();
+  frameMode_ = mode;
+  if (fillScreenPadded() != wasPadded)
+    emit fillScreenPaddedChanged();
+}
+
 void MacWindowChrome::resizeToActualSize(qreal videoPixelWidth,
                                          qreal videoPixelHeight) {
-  wam::macos_window_chrome::resizeToActualSize(window_, exactDisplaySize_,
-                                               videoPixelWidth, videoPixelHeight);
+  namespace chrome = wam::macos_window_chrome;
+  if (!exactDisplaySize_.empty()) {
+    videoPixelWidth = media::displayPhysicalPixels(exactDisplaySize_.width);
+    videoPixelHeight = media::displayPhysicalPixels(exactDisplaySize_.height);
+  }
+
+  NSWindow *nsWindow = chrome::nsWindowFor(window_);
+  if (!nsWindow || videoPixelWidth <= 0 || videoPixelHeight <= 0)
+    return;
+  // This runs from a double-click, so the button may still be down and the
+  // interactive aspect lock armed; drop it so this frame lands verbatim.
+  chrome::disarmAspectLock();
+
+  NSScreen *screen = chrome::screenFor(nsWindow);
+  if (!screen)
+    return;
+
+  CGFloat scale = screen.backingScaleFactor;
+  if (scale <= 0)
+    scale = 1.0;
+
+  // Full-size content view means the content rect equals the frame rect, so
+  // the logical window size is simply the video's pixel size divided by the
+  // screen's backing scale factor -- no titlebar-height offset to add back.
+  const NSRect visible = screen.visibleFrame;
+  const CGFloat target_width = std::min(
+      static_cast<CGFloat>(videoPixelWidth / scale), visible.size.width);
+  const CGFloat target_height = std::min(
+      static_cast<CGFloat>(videoPixelHeight / scale), visible.size.height);
+
+  NSRect target;
+  target.size = NSMakeSize(target_width, target_height);
+  target.origin.x = NSMidX(visible) - target_width / 2.0;
+  target.origin.y = NSMidY(visible) - target_height / 2.0;
+
+  // A deliberate geometry command: neither toggle's "put it back" means
+  // anything after it.
+  if (chrome::applyWindowFrameAnimated(nsWindow, target, frameChangeInFlight_))
+    setFrameMode(FrameFree{});
 }
 
 void MacWindowChrome::resizeToFitScreen(qreal videoWidth, qreal videoHeight) {
-  wam::macos_window_chrome::resizeToFitScreen(window_, exactDisplaySize_, videoWidth,
-                                              videoHeight);
+  namespace chrome = wam::macos_window_chrome;
+  NSWindow *nsWindow = chrome::nsWindowFor(window_);
+  if (!nsWindow)
+    return;
+  NSScreen *screen = chrome::screenFor(nsWindow);
+  if (!screen)
+    return;
+  // Same reason as resizeToActualSize: a double-click can still be holding
+  // the mouse button, and this frame is computed here, not by AppKit.
+  chrome::disarmAspectLock();
+
+  const NSRect visible = screen.visibleFrame;
+  if (NSWidth(visible) <= 0 || NSHeight(visible) <= 0)
+    return;
+
+  const NSRect current = nsWindow.frame;
+  // Second double-click on an already-fitted window: AppKit's zoom toggle,
+  // back to whatever the window was before the fit.
+  if (const auto *fitted = std::get_if<FrameFitted>(&frameMode_);
+      fitted != nullptr && chrome::framesMatch(current, toNSRect(fitted->fitted))) {
+    if (chrome::applyWindowFrameAnimated(nsWindow, toNSRect(fitted->restore),
+                                         frameChangeInFlight_))
+      setFrameMode(FrameFree{});
+    return;
+  }
+
+  CGFloat target_width = NSWidth(visible);
+  CGFloat target_height = NSHeight(visible);
+  if (!exactDisplaySize_.empty()) {
+    const auto fit = media::displayFit(exactDisplaySize_,
+        static_cast<std::uint32_t>(std::llround(NSWidth(visible) * screen.backingScaleFactor)),
+        static_cast<std::uint32_t>(std::llround(NSHeight(visible) * screen.backingScaleFactor)));
+    videoWidth = media::displayPhysicalPixels(fit.width);
+    videoHeight = media::displayPhysicalPixels(fit.height);
+  }
+
+  if (videoWidth > 0 && videoHeight > 0) {
+    const CGFloat aspect = static_cast<CGFloat>(videoWidth / videoHeight);
+    target_height = target_width / aspect;
+    if (target_height > NSHeight(visible)) {
+      target_height = NSHeight(visible);
+      target_width = target_height * aspect;
+    }
+  }
+
+  NSRect target;
+  target.size = NSMakeSize(target_width, target_height);
+  target.origin.x = NSMidX(visible) - target_width / 2.0;
+  target.origin.y = NSMidY(visible) - target_height / 2.0;
+
+  if (!chrome::applyWindowFrameAnimated(nsWindow, target, frameChangeInFlight_))
+    return;
+  // `fitted` has to be the frame that was *requested*, not a read-back of
+  // nsWindow.frame: with the animated applier that read would land
+  // mid-transition (animator.frame does not reach `target` until the
+  // animation's last frame commits), which would make framesMatch() above
+  // miss the very frame this call is fitting to. normalizedFrame() rounds
+  // `target` exactly the way the applier does, and framesMatch's 1pt
+  // tolerance absorbs anything short of that. A padded fill this replaces is
+  // forgotten with it.
+  setFrameMode(FrameFitted{
+      toQRect(current),
+      toQRect(chrome::normalizedFrame(target).value_or(target))});
 }
 
 bool MacWindowChrome::setFillScreenPadded(bool filled) {
-  return wam::macos_window_chrome::setFillScreenPadded(window_, filled);
-}
+  namespace chrome = wam::macos_window_chrome;
+  NSWindow *nsWindow = chrome::nsWindowFor(window_);
+  if (!nsWindow)
+    return false;
+  // Fullscreen owns the frame outright; a padded fill underneath it would be
+  // both invisible and a frame AppKit would fight on the way out.
+  if (nsWindow.styleMask & NSWindowStyleMaskFullScreen)
+    return false;
 
-void MacWindowChrome::clearFillScreenPadded() {
-  wam::macos_window_chrome::clearFillScreenPadded(window_);
+  const auto *padded = std::get_if<FramePaddedFill>(&frameMode_);
+  if (!filled) {
+    if (padded == nullptr)
+      return false;
+    // The restore frame was captured straight out of nsWindow.frame, which
+    // AppKit keeps on the whole-point grid, so normalizedFrame() inside the
+    // applier is the identity here and the window lands on exactly the
+    // rectangle it left. The mode changes only once the applier accepted:
+    // a refused restore (another frame change in flight) keeps it, so the
+    // next toggle can still put the window back.
+    if (!chrome::applyWindowFrameAnimated(nsWindow, toNSRect(padded->restore),
+                                          frameChangeInFlight_))
+      return false;
+    setFrameMode(FrameFree{});
+    return true;
+  }
+
+  NSScreen *screen = chrome::screenFor(nsWindow);
+  if (!screen)
+    return false;
+  const NSRect visible = screen.visibleFrame;
+  if (NSWidth(visible) <= 0 || NSHeight(visible) <= 0)
+    return false;
+
+  // A drag may still be holding the interactive aspect lock; this frame is
+  // computed here, not by AppKit, and must land verbatim.
+  chrome::disarmAspectLock();
+
+  const NSRect current = nsWindow.frame;
+  // A second fill while already filled (a re-fill after the screen changed,
+  // say) keeps the first restore frame rather than remembering the filled
+  // one. Any zoom-toggle memory is dropped: the fill is a deliberate frame.
+  const QRectF restore = padded != nullptr ? padded->restore : toQRect(current);
+  if (!chrome::applyWindowFrameAnimated(nsWindow, visible, frameChangeInFlight_))
+    return false;
+  setFrameMode(FramePaddedFill{restore});
+  return true;
 }
 
 void MacWindowChrome::snapToVideoAspectRatio(qreal videoWidth,
                                              qreal videoHeight) {
-  wam::macos_window_chrome::snapToVideoAspectRatio(window_, exactDisplaySize_,
-                                                    videoWidth, videoHeight);
+  namespace chrome = wam::macos_window_chrome;
+  if (!exactDisplaySize_.empty()) {
+    const auto aspect = media::displayAspect(exactDisplaySize_);
+    videoWidth = aspect.numerator; videoHeight = aspect.denominator;
+  }
+  NSWindow *nsWindow = chrome::nsWindowFor(window_);
+  if (!nsWindow || videoWidth <= 0 || videoHeight <= 0)
+    return;
+
+  NSScreen *screen = chrome::screenFor(nsWindow);
+  if (!screen)
+    return;
+
+  const CGFloat aspect = static_cast<CGFloat>(videoWidth / videoHeight);
+  if (aspect <= 0)
+    return;
+
+  const NSRect visible = screen.visibleFrame;
+  const NSRect current = nsWindow.frame;
+
+  // QuickTime's own snap-to-aspect: keep the window's current width and
+  // derive the height that removes letterboxing, then fall back to fitting
+  // within the screen's visible frame (aspect preserved) if that would run
+  // off screen -- the same clamp-to-visibleFrame contract resizeToActualSize
+  // above uses, just sized from the current window instead of native pixels.
+  CGFloat target_width = current.size.width;
+  CGFloat target_height = target_width / aspect;
+
+  if (target_height > visible.size.height) {
+    target_height = visible.size.height;
+    target_width = target_height * aspect;
+  }
+  if (target_width > visible.size.width) {
+    target_width = visible.size.width;
+    target_height = target_width / aspect;
+  }
+
+  NSRect target;
+  target.size = NSMakeSize(target_width, target_height);
+  // Preserve the window's current center (QuickTime does not recenter on
+  // the screen for this), then clamp so the resized frame stays fully
+  // within the visible frame.
+  target.origin.x = NSMidX(current) - target_width / 2.0;
+  target.origin.y = NSMidY(current) - target_height / 2.0;
+  target.origin.x = std::max(
+      visible.origin.x, std::min(target.origin.x, NSMaxX(visible) - target_width));
+  target.origin.y = std::max(
+      visible.origin.y, std::min(target.origin.y, NSMaxY(visible) - target_height));
+
+  if (chrome::applyWindowFrame(nsWindow, target, *frameChangeInFlight_) &&
+      std::holds_alternative<FrameFitted>(frameMode_))
+    setFrameMode(FrameFree{});
 }
 
 qreal MacWindowChrome::titlebarHeight() const {
