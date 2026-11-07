@@ -420,11 +420,12 @@ int main(int argc, char** argv) {
   {
     wam::BackgroundJob job;
 #ifdef _WIN32
-    const std::string long_command = "ping -n 30 127.0.0.1 >NUL";
+    const wam::ProcessCommand long_command{"ping", {"-n", "30", "127.0.0.1"}};
 #else
     // Exercise the force-kill deadline as well as graceful SIGTERM: both the
     // shell and sleep inherit an ignored TERM disposition.
-    const std::string long_command = "trap '' TERM; sleep 30";
+    const wam::ProcessCommand long_command{"/bin/sh",
+                                           {"-c", "trap '' TERM; sleep 30"}};
 #endif
     const auto started_at = std::chrono::steady_clock::now();
     expect(job.start("cancellation test", long_command), "background job starts");
@@ -545,9 +546,9 @@ int main(int argc, char** argv) {
     {
       wam::BackgroundJob job;
 #ifdef _WIN32
-      expect(job.start("destructor test", "ping -n 30 127.0.0.1 >NUL"),
+      expect(job.start("destructor test", {"ping", {"-n", "30", "127.0.0.1"}}),
 #else
-      expect(job.start("destructor test", "sleep 30"),
+      expect(job.start("destructor test", {"sleep", {"30"}}),
 #endif
              "destructor test job starts");
       std::this_thread::sleep_for(std::chrono::milliseconds(60));
