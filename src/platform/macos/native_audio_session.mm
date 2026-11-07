@@ -732,6 +732,41 @@ void publishFailureText(NativeAudioSessionControl& control,
   }
 }
 
+[[nodiscard]] const char* outputStateName(
+    NativeAudioOutputState state) noexcept {
+  switch (state) {
+  case NativeAudioOutputState::Closed: return "Closed";
+  case NativeAudioOutputState::Configuring: return "Configuring";
+  case NativeAudioOutputState::Stopped: return "Stopped";
+  case NativeAudioOutputState::Starting: return "Starting";
+  case NativeAudioOutputState::Started: return "Started";
+  case NativeAudioOutputState::Stopping: return "Stopping";
+  case NativeAudioOutputState::Detaching: return "Detaching";
+  }
+  return "Unknown";
+}
+
+// An output refusal (Invalid) latches no output failure, so
+// publishFailureText() alone would name only the session's generic Output
+// latch. Name the output state and any pending device notification instead:
+// those are the two facts that say why the transition was refused.
+void publishOutputRefusalText(NativeAudioSessionControl& control) noexcept {
+  try {
+    if (control.output == nullptr ||
+        control.output->facts().failure != NativeAudioOutputFailure::None) {
+      publishFailureText(control, nullptr);
+      return;
+    }
+    const NativeAudioOutputFacts facts = control.output->facts();
+    control.failureText =
+        std::string("audio output refused the transition in state ") +
+        outputStateName(facts.state) +
+        (facts.deviceChangePending ? " with a device notification pending"
+                                   : "");
+  } catch (...) {
+  }
+}
+
 [[nodiscard]] bool outputFailed(NativeAudioSessionControl& control) noexcept {
   if (control.output != nullptr && control.output->facts().fatal) {
     control.latch(NativeAudioSessionFailure::Output);
@@ -924,12 +959,15 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
     return NativeAudioSessionProgress::Quiescing;
   case NativeAudioOutputProgress::Invalid:
     control.latch(failure);
+    publishOutputRefusalText(control);
     return NativeAudioSessionProgress::Invalid;
   case NativeAudioOutputProgress::Failed:
     control.latch(failure);
+    publishFailureText(control, nullptr);
     return NativeAudioSessionProgress::Failed;
   }
   control.latch(failure);
+  publishFailureText(control, nullptr);
   return NativeAudioSessionProgress::Failed;
 }
 
@@ -1064,6 +1102,30 @@ enum class DeviceReconcile : std::uint8_t {
                static_cast<unsigned long long>(control.deviceChangeRecoveries));
   std::fflush(stderr);
   return DeviceReconcile::Progressed;
+}
+
+// drain() is where a StreamFormat notification is normally decided, but one
+// can land after the last drain() pass -- between a seek's activation and the
+// commit's start, or inside the output's own start. Its revoked admission
+// makes the output refuse to start, so an owner start decides it first.
+// nullopt: no notification is outstanding and the caller starts the output.
+[[nodiscard]] std::optional<NativeAudioSessionProgress>
+reconcileBeforeOutputStart(NativeAudioSessionControl& control) noexcept {
+  switch (reconcileOutputDeviceChange(control)) {
+  case DeviceReconcile::Idle:
+    return std::nullopt;
+  case DeviceReconcile::Progressed:
+    if (control.state == NativeAudioSessionState::Started) {
+      return NativeAudioSessionProgress::Done;
+    }
+    if (control.output->facts().deviceChangePending) {
+      return NativeAudioSessionProgress::Quiescing;
+    }
+    return std::nullopt;
+  case DeviceReconcile::Failed:
+    return NativeAudioSessionProgress::Failed;
+  }
+  return NativeAudioSessionProgress::Failed;
 }
 
 // close() progress in the session's own vocabulary, for stop().
@@ -1740,6 +1802,9 @@ NativeAudioSessionProgress NativeAudioSession::start() noexcept {
       control.output == nullptr) {
     return NativeAudioSessionProgress::Invalid;
   }
+  if (const auto decided = reconcileBeforeOutputStart(control)) {
+    return *decided;
+  }
   if (outputFailed(control)) {
     return NativeAudioSessionProgress::Failed;
   }
@@ -1797,6 +1862,9 @@ NativeAudioSession::setPaused(bool paused) noexcept {
     if (control.output == nullptr) {
       control.latch(NativeAudioSessionFailure::Output);
       return NativeAudioSessionProgress::Failed;
+    }
+    if (const auto decided = reconcileBeforeOutputStart(control)) {
+      return *decided;
     }
     // The suspend never flushed the ring, so this holds immediately for any
     // pause that did not empty it.

@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 namespace wam::macos {
 
@@ -43,6 +44,11 @@ class SessionClockAuthority {
   }
   [[nodiscard]] virtual NativeAudioSessionProgress suspendForPause() noexcept {
     return NativeAudioSessionProgress::Invalid;
+  }
+  // The reason its last refused or failed transition latched; empty when it
+  // has none to give.
+  [[nodiscard]] virtual std::string_view failureText() const noexcept {
+    return {};
   }
   // Diagnostic counters; empty when the authority has no render callback.
   [[nodiscard]] virtual std::optional<media::NativeAudioRenderStats> renderStats()

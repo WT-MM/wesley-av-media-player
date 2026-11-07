@@ -469,6 +469,7 @@ class NativeAudioOutput final
       bool bridgeAdmissionOpen,
       std::uint32_t *wakeReasons) noexcept;
   [[nodiscard]] NativeAudioOutputProgress quiescing() noexcept;
+  [[nodiscard]] NativeAudioOutputProgress startOvertakenByDeviceChange() noexcept;
 
   // Which facts, beyond the device rate itself, a device revalidation must
   // also refuse on. See revalidateDevice().

@@ -1256,13 +1256,16 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
     return NativeAudioOutputProgress::Failed;
   }
 
-  if (const NativeAudioOutputFailure device = revalidateDevice(
-          kDeviceSerialMoved | kDeviceFailureLatched, deviceSerial, &status);
+  if (const NativeAudioOutputFailure device =
+          revalidateDevice(kDeviceFailureLatched, 0, &status);
       device != NativeAudioOutputFailure::None) {
     started_.store(false, std::memory_order_release);
     latchFailure(device, status);
     setState(NativeAudioOutputState::Stopping);
     return NativeAudioOutputProgress::Failed;
+  }
+  if (device_change_serial_.load(std::memory_order_acquire) != deviceSerial) {
+    return startOvertakenByDeviceChange();
   }
 
   WAM_NATIVE_TEST_HOOK(before_start_commit_hook_);
@@ -1275,14 +1278,13 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
   if (!admission_gate_.compare_exchange_strong(
           expectedAdmission, 0, std::memory_order_acq_rel,
           std::memory_order_acquire)) {
+    if ((expectedAdmission & kAdmissionDeviceInvalid) != 0) {
+      return startOvertakenByDeviceChange();
+    }
     render_core_.setAccepting(false);
     started_.store(false, std::memory_order_release);
     setState(NativeAudioOutputState::Stopping);
-    latchFailure(
-        (expectedAdmission & kAdmissionDeviceInvalid) != 0
-            ? NativeAudioOutputFailure::DeviceRateMismatch
-            : NativeAudioOutputFailure::StartFailed,
-        kAudio_ParamError);
+    latchFailure(NativeAudioOutputFailure::StartFailed, kAudio_ParamError);
     return NativeAudioOutputProgress::Failed;
   }
   renderBridge.gate.fetch_and(~kBridgePaused, std::memory_order_acq_rel);
@@ -1292,12 +1294,36 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
       failure_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
     admission_gate_.fetch_or(kAdmissionClosed, std::memory_order_acq_rel);
-    render_core_.setAccepting(false);
-    started_.store(false, std::memory_order_release);
-    setState(NativeAudioOutputState::Stopping);
-    return NativeAudioOutputProgress::Failed;
+    return startOvertakenByDeviceChange();
   }
   return NativeAudioOutputProgress::Done;
+}
+
+// A StreamFormat notification landed while start() was running. The listener
+// has already revoked admission and armed the invalidation; whether the device
+// actually moved is the same question reconcileDeviceChange() answers for a
+// notification at any other time, so answer it the same way: a moved rate (or
+// a failure latched meanwhile) is fatal, an unchanged one leaves this start
+// incomplete for the owner to reconcile and retry. Treating every overlap as
+// fatal ended native playback on the built-in speaker's routine format
+// republish whenever it coincided with a seek's paused start.
+NativeAudioOutputProgress
+NativeAudioOutput::startOvertakenByDeviceChange() noexcept {
+  render_core_.setAccepting(false);
+  started_.store(false, std::memory_order_release);
+  setState(NativeAudioOutputState::Stopping);
+  if (failure_.load(std::memory_order_acquire) !=
+      static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
+    return NativeAudioOutputProgress::Failed;
+  }
+  OSStatus status = noErr;
+  if (const NativeAudioOutputFailure device =
+          revalidateDevice(kDeviceRateOnly, 0, &status);
+      device != NativeAudioOutputFailure::None) {
+    latchFailure(device, status);
+    return NativeAudioOutputProgress::Failed;
+  }
+  return quiescing();
 }
 
 NativeAudioOutputProgress NativeAudioOutput::stop() noexcept {

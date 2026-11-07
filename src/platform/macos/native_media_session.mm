@@ -83,7 +83,8 @@ enum class ChildStep : std::uint8_t { Done, Retry, Failed };
 // directly rather than Qt logging because this layer owns no Qt dependency,
 // and a plain stderr capture of the process is exactly where it must appear.
 void logNativeFailure(const char* stage, protocol::FailureReason reason,
-                      const media::NativeMediaDispatcher* dispatcher) noexcept {
+                      const media::NativeMediaDispatcher* dispatcher,
+                      std::string_view clockFailure) noexcept {
   try {
     const char* failureClass = "NoDispatcher";
     std::string message;
@@ -105,6 +106,10 @@ void logNativeFailure(const char* stage, protocol::FailureReason reason,
     if (message.empty()) {
       if (dispatcher == nullptr) {
         message = "no dispatcher was created for this session";
+      } else if (!dispatcherFailed && !clockFailure.empty()) {
+        // The session failed on a direct child call (the commit walk's
+        // transport steps, run state, gain): name that child's reason.
+        message = clockFailure;
       } else if (!dispatcherFailed) {
         message =
             "the session failed while the dispatcher reported no failure";
@@ -788,7 +793,9 @@ struct NativeMediaSession::Impl final {
   [[nodiscard]] bool publishFailure(
       protocol::FailureReason reason, const char* stage,
       std::optional<protocol::Stamp> exactStamp = std::nullopt) noexcept {
-    logNativeFailure(stage, reason, dispatcher.get());
+    logNativeFailure(stage, reason, dispatcher.get(),
+                     authority != nullptr ? authority->failureText()
+                                          : std::string_view{});
     NativeMediaSessionDiagnostic diagnostic;
     diagnostic.reason = reason;
     if (dispatcher) diagnostic.refusal = dispatcher->stats().refusal;
@@ -2431,7 +2438,12 @@ if (result != NativeAudioSessionProgress::Done) {
       return false;
     }
     if (progress != NativeAudioSessionProgress::Done) {
-      failCommitSeek(stage);
+      char named[96];
+      std::snprintf(named, sizeof named, "%s %s", stage,
+                    progress == NativeAudioSessionProgress::Invalid
+                        ? "refused"
+                        : "failed");
+      failCommitSeek(named);
       return false;
     }
     return true;
