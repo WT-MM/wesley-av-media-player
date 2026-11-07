@@ -22,15 +22,10 @@
 #include <mutex>
 #include <optional>
 #include <utility>
+#include <variant>
 
 namespace wam::macos {
 namespace {
-
-enum class SessionLifecycle : std::uint8_t {
-  None,
-  Flush,
-  Cancel,
-};
 
 enum class FlushStage : std::uint8_t {
   Stop,
@@ -79,6 +74,7 @@ enum class OutputSuspension : std::uint8_t {
 // installs it whole once the flush is Done.
 struct TimelinePlan {
   media::NativeMediaGenerationTimeline timeline{};
+
   // Codec fact fixed at configure() and carried into every later flush, which
   // does not see the track descriptor again (as are converter's ceiling facts).
   bool audioMayPrecedeStreamOrigin{false};
@@ -105,6 +101,23 @@ struct TimelinePlan {
   // Zero unless presentationEndFrame is stated too.
   std::int64_t audioEndFrame{0};
 };
+
+// A reversible seek flush in progress: its exact retired/target pair, the
+// plan it activates, and how far it has got.
+struct FlushLifecycle {
+  FlushStage stage{FlushStage::Stop};
+  media::MediaGeneration retired{0};
+  media::MediaGeneration target{0};
+  TimelinePlan plan{};
+};
+
+struct CancelLifecycle {
+  media::MediaGeneration target{0};
+};
+
+// The reversible lifecycle operation that owns the graph, if any.
+using SessionLifecycle =
+    std::variant<std::monostate, FlushLifecycle, CancelLifecycle>;
 
 // Guards the session-envelope registry below: gRetainedSessions and every
 // quarantine slot. Taken only on create(), on the Done-close release, on a
@@ -486,19 +499,15 @@ struct NativeAudioSessionControl final {
 
   NativeAudioSessionState state{NativeAudioSessionState::Fresh};
   NativeAudioSessionFailure failure{NativeAudioSessionFailure::None};
-  SessionLifecycle lifecycle{SessionLifecycle::None};
-  FlushStage flushStage{FlushStage::Stop};
+  SessionLifecycle lifecycle;
   OutputSuspension outputSuspension{OutputSuspension::None};
   media::MediaGeneration generation{0};
   media::MediaGeneration highestExposedGeneration{0};
-  media::MediaGeneration lifecycleRetired{0};
-  media::MediaGeneration lifecycleTarget{0};
   media::MediaGeneration cancelledGeneration{0};
   media::MediaGeneration completedFlushRetired{0};
   media::MediaGeneration completedFlushTarget{0};
   media::MediaTrackId track{0};
   TimelinePlan active{};
-  TimelinePlan lifecyclePlan{};
   // Set when a StreamFormat notification froze a graph that was running, so
   // the reconciliation knows to start the output again once the device proves
   // unchanged. Cleared as soon as that restart is Done, or when the owner
@@ -591,12 +600,9 @@ bool NativeAudioSessionTestAccess::stageFlushAfterStop(
   if (!plan) {
     return false;
   }
-  control.lifecycle = SessionLifecycle::Flush;
-  control.flushStage = FlushStage::Reset;
-  control.lifecycleRetired = retiredGeneration;
-  control.lifecycleTarget = nextGeneration;
+  control.lifecycle = FlushLifecycle{FlushStage::Reset, retiredGeneration,
+                                     nextGeneration, *plan};
   control.highestExposedGeneration = nextGeneration;
-  control.lifecyclePlan = *plan;
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
   control.state = NativeAudioSessionState::Flushing;
@@ -1036,7 +1042,7 @@ enum class DeviceReconcile : std::uint8_t {
   // Teardown owns the output outright once any of these is in flight, and a
   // retiring/closing session has no interest in resuming a device.
   if (control.retirement.has_value() || control.closeDone ||
-      control.lifecycle != SessionLifecycle::None ||
+      !std::holds_alternative<std::monostate>(control.lifecycle) ||
       control.terminalOverride.has_value() ||
       (control.state != NativeAudioSessionState::Started &&
        control.state != NativeAudioSessionState::Ready)) {
@@ -1241,7 +1247,12 @@ beginRetire(NativeAudioSessionControl& control,
   highestInstalled = std::max(highestInstalled, converter.generation);
   highestInstalled = std::max(highestInstalled, output.generation);
   highestInstalled = std::max(highestInstalled, clock.generation);
-  highestInstalled = std::max(highestInstalled, control.lifecycleTarget);
+  if (const auto* flush = std::get_if<FlushLifecycle>(&control.lifecycle)) {
+    highestInstalled = std::max(highestInstalled, flush->target);
+  } else if (const auto* cancel =
+                 std::get_if<CancelLifecycle>(&control.lifecycle)) {
+    highestInstalled = std::max(highestInstalled, cancel->target);
+  }
   if (invalidationGeneration == 0 ||
       invalidationGeneration <= retiredGeneration ||
       invalidationGeneration <= highestInstalled) {
@@ -1249,9 +1260,7 @@ beginRetire(NativeAudioSessionControl& control,
   }
   control.retirement = Retirement{retiredGeneration, invalidationGeneration,
                                   RetireStage::StopOutput};
-  control.lifecycle = SessionLifecycle::None;
-  control.lifecycleRetired = 0;
-  control.lifecycleTarget = 0;
+  control.lifecycle = std::monostate{};
   control.terminalOverride.reset();
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
@@ -1901,7 +1910,7 @@ NativeAudioSession::suspendOutputForPause() noexcept {
   }
   if (control.output == nullptr || !control.requestedPaused ||
       control.retirement.has_value() ||
-      control.lifecycle != SessionLifecycle::None ||
+      !std::holds_alternative<std::monostate>(control.lifecycle) ||
       control.terminalOverride.has_value() ||
       control.state != NativeAudioSessionState::Started) {
     return NativeAudioSessionProgress::Invalid;
@@ -2004,7 +2013,7 @@ NativeAudioSessionProgress NativeAudioSession::stop() noexcept {
   }
   // state Flushing is only ever written together with lifecycle Flush, and
   // latch() may overwrite it with Failed, so the lifecycle is the fact.
-  if (control.lifecycle == SessionLifecycle::Flush) {
+  if (std::holds_alternative<FlushLifecycle>(control.lifecycle)) {
     control.terminalOverride =
         TerminalOverride{TerminalOverride::Kind::Stop, control.generation};
     return sessionProgress(close());
@@ -2065,14 +2074,14 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
       control.generation == nextGeneration) {
     return media::NativeMediaConsumerProgress::Done;
   }
-  if (control.lifecycle == SessionLifecycle::Flush) {
-    if (control.lifecycleRetired != retiredGeneration ||
-        control.lifecycleTarget != nextGeneration ||
-        control.lifecyclePlan.timeline != timeline) {
+  if (const auto* pending = std::get_if<FlushLifecycle>(&control.lifecycle)) {
+    if (pending->retired != retiredGeneration ||
+        pending->target != nextGeneration ||
+        pending->plan.timeline != timeline) {
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
   } else {
-    if (control.lifecycle != SessionLifecycle::None ||
+    if (!std::holds_alternative<std::monostate>(control.lifecycle) ||
         !control.configured ||
         control.state == NativeAudioSessionState::Failed ||
         retiredGeneration != control.generation || nextGeneration == 0 ||
@@ -2090,11 +2099,8 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
       control.latch(NativeAudioSessionFailure::ClockTransition);
       return media::NativeMediaConsumerProgress::Failed;
     }
-    control.lifecyclePlan = *plan;
-    control.lifecycle = SessionLifecycle::Flush;
-    control.flushStage = FlushStage::Stop;
-    control.lifecycleRetired = retiredGeneration;
-    control.lifecycleTarget = nextGeneration;
+    control.lifecycle = FlushLifecycle{FlushStage::Stop, retiredGeneration,
+                                       nextGeneration, *plan};
     control.firstAudioSampleAccepted = false;
     control.requestedPaused = true;
     control.renderCore.setPaused(true);
@@ -2105,59 +2111,58 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
     control.state = NativeAudioSessionState::Flushing;
   }
 
-  if (control.flushStage == FlushStage::Stop) {
+  FlushLifecycle& flush = std::get<FlushLifecycle>(control.lifecycle);
+  if (flush.stage == FlushStage::Stop) {
     const NativeAudioSessionProgress stopped = mapOutputProgress(
         control, control.output->quiesceForSeek(), NativeAudioSessionFailure::Output);
     if (stopped != NativeAudioSessionProgress::Done) {
       return mapLifecycleProgress(stopped);
     }
-    if (!settleStopped(control, control.lifecycleRetired)) {
+    if (!settleStopped(control, flush.retired)) {
       return media::NativeMediaConsumerProgress::Failed;
     }
-    control.flushStage = FlushStage::Reset;
+    flush.stage = FlushStage::Reset;
   }
 
-  if (control.flushStage == FlushStage::Reset) {
-    if (!control.ring.flush(control.lifecycleTarget)) {
+  if (flush.stage == FlushStage::Reset) {
+    if (!control.ring.flush(flush.target)) {
       control.latch(NativeAudioSessionFailure::RingTransition);
       return media::NativeMediaConsumerProgress::Failed;
     }
-    if (!control.clock.seek(control.lifecycleRetired,
-                            control.lifecycleTarget,
-                            control.lifecyclePlan.clockPosition)) {
+    if (!control.clock.seek(flush.retired,
+                            flush.target,
+                            flush.plan.clockPosition)) {
       control.latch(NativeAudioSessionFailure::ClockTransition);
       return media::NativeMediaConsumerProgress::Failed;
     }
-    if (!control.converter.flush(control.lifecycleTarget,
-                                 control.lifecyclePlan.converter)) {
+    if (!control.converter.flush(flush.target,
+                                 flush.plan.converter)) {
       control.latch(NativeAudioSessionFailure::Converter);
       return media::NativeMediaConsumerProgress::Failed;
     }
     control.renderCore.setPaused(true);
-    control.flushStage = FlushStage::Activate;
+    flush.stage = FlushStage::Activate;
   }
 
   const NativeAudioSessionProgress activated = mapOutputProgress(
       control,
-      control.output->activate(control.lifecycleTarget, 0,
-                               control.lifecyclePlan.mediaOrigin,
-                               control.lifecyclePlan.clockPosition,
-                               control.lifecyclePlan.declaredSilence),
+      control.output->activate(flush.target, 0,
+                               flush.plan.mediaOrigin,
+                               flush.plan.clockPosition,
+                               flush.plan.declaredSilence),
       NativeAudioSessionFailure::OutputActivation);
   if (activated != NativeAudioSessionProgress::Done) {
     return mapLifecycleProgress(activated);
   }
 
-  control.completedFlushRetired = control.lifecycleRetired;
-  control.completedFlushTarget = control.lifecycleTarget;
-  control.generation = control.lifecycleTarget;
-  control.active = control.lifecyclePlan;
+  control.completedFlushRetired = flush.retired;
+  control.completedFlushTarget = flush.target;
+  control.generation = flush.target;
+  control.active = flush.plan;
   control.firstAudioSampleAccepted = false;
   control.endOfStreamRequested = false;
   control.terminalPublished = false;
-  control.lifecycle = SessionLifecycle::None;
-  control.lifecycleRetired = 0;
-  control.lifecycleTarget = 0;
+  control.lifecycle = std::monostate{};
   control.state = NativeAudioSessionState::Ready;
   return media::NativeMediaConsumerProgress::Done;
 }
@@ -2182,7 +2187,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::cancel(
     }
     return close();
   }
-  if (control.lifecycle == SessionLifecycle::Flush) {
+  if (std::holds_alternative<FlushLifecycle>(control.lifecycle)) {
     // A terminal cancellation supersedes a reversible seek flush. The graph
     // may already be split across retired/target generations, so the only
     // exact result is fail-closed teardown, never resuming Reset/Activate.
@@ -2194,8 +2199,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::cancel(
       control.cancelledGeneration == generation) {
     return media::NativeMediaConsumerProgress::Done;
   }
-  if (control.lifecycle != SessionLifecycle::None &&
-      control.lifecycle != SessionLifecycle::Cancel) {
+  if (std::holds_alternative<FlushLifecycle>(control.lifecycle)) {
     return media::NativeMediaConsumerProgress::Failed;
   }
   if (control.state == NativeAudioSessionState::Failed ||
@@ -2203,8 +2207,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::cancel(
       control.state == NativeAudioSessionState::Closed) {
     return media::NativeMediaConsumerProgress::Failed;
   }
-  control.lifecycle = SessionLifecycle::Cancel;
-  control.lifecycleTarget = generation;
+  control.lifecycle = CancelLifecycle{generation};
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
   control.outputSuspension = OutputSuspension::None;
@@ -2225,7 +2228,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::cancel(
     control.firstAudioSampleAccepted = false;
     control.active.decodeStart = {};
     control.cancelledGeneration = generation;
-    control.lifecycle = SessionLifecycle::None;
+    control.lifecycle = std::monostate{};
     control.state = NativeAudioSessionState::Cancelled;
     return media::NativeMediaConsumerProgress::Done;
   }
@@ -2305,9 +2308,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
   control.state = NativeAudioSessionState::Closing;
   // Close has absolute precedence over every reversible operation. An older
   // quiescing flush/cancel can never resume Reset/Activate after this point.
-  control.lifecycle = SessionLifecycle::None;
-  control.lifecycleRetired = 0;
-  control.lifecycleTarget = 0;
+  control.lifecycle = std::monostate{};
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
   control.outputSuspension = OutputSuspension::None;
@@ -2333,7 +2334,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
   control.firstAudioSampleAccepted = false;
   control.active.decodeStart = {};
   control.closeDone = true;
-  control.lifecycle = SessionLifecycle::None;
+  control.lifecycle = std::monostate{};
   control.state = NativeAudioSessionState::Closed;
   releaseClaim(control);
   return media::NativeMediaConsumerProgress::Done;
