@@ -1444,7 +1444,9 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
       FIXTURES_REQUIRED avformat_media TIMEOUT 30)
   endforeach()
 
-  add_executable(wam_libavformat_mixed_audio_probe libavformat_mixed_audio_probe.mm)
+  add_executable(wam_libavformat_mixed_audio_probe native_coverage_audio_probe.mm)
+  target_compile_definitions(wam_libavformat_mixed_audio_probe PRIVATE
+    WAM_AUDIO_PROBE_LIBAVFORMAT_ONLY=1)
   target_link_libraries(wam_libavformat_mixed_audio_probe PRIVATE wam_macos_native_backend)
 
   add_executable(wam_libavformat_mixed_decode_test libavformat_mixed_decode_test.mm)

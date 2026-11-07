@@ -1,4 +1,5 @@
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
+#include "platform/macos/libavformat_media_source.hpp"
 #include "platform/macos/routed_media_source.hpp"
 #endif
 #include "platform/macos/avfoundation_media_source.hpp"
@@ -44,7 +45,10 @@ int main(int argc, char **argv) {
   using namespace wam::macos;
   const std::filesystem::path path(argv[1]);
   std::unique_ptr<MediaSource> source;
-#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+#if defined(WAM_AUDIO_PROBE_LIBAVFORMAT_ONLY)
+  // wam_libavformat_mixed_audio_probe: libavformat without the router.
+  source = std::make_unique<LibavformatMediaSource>();
+#elif defined(WAM_ENABLE_AVFORMAT_STAGE)
   source=createRoutedMediaSource();
 #else
   if (path.extension() == ".webm" || path.extension() == ".mka" ||
