@@ -1,5 +1,3 @@
-#define WAM_MPV_RUNTIME_TESTING 1
-
 #include "fakes/mpv_runtime/injected_mpv_runtime.hpp"
 #include "qt/player_controller.hpp"
 #include "qt/player_core_p.hpp"

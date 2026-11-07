@@ -1,4 +1,4 @@
-#include "playback/mpv/mpv_runtime.hpp"
+#include "fakes/mpv_runtime/mpv_runtime_test_access.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -16,18 +16,6 @@
 #include <vector>
 
 #include <unistd.h>
-
-namespace wam::playback::mpv {
-
-class MpvRuntimeTestAccess final {
- public:
-  [[nodiscard]] static MpvRuntimeLoadResult load(
-      const QString& applicationDirectory) {
-    return MpvRuntime::load(applicationDirectory);
-  }
-};
-
-}  // namespace wam::playback::mpv
 
 namespace {
 

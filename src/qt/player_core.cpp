@@ -445,7 +445,7 @@ bool PlayerCore::renderContextBusy() const noexcept {
           kRenderContextBusy) != 0;
 }
 
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
 bool PlayerCore::renderNotificationAllowsCreationForTesting() noexcept {
   queueRenderNotificationDrain();
   return !hasPendingRenderInvalidation();
@@ -459,7 +459,7 @@ void PlayerCore::clearRenderContextBusy() noexcept {
 }
 
 QOpenGLContext *PlayerCore::currentOpenGlContext() const noexcept {
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   if (has_current_opengl_context_for_testing_) {
     try {
       if (!has_current_opengl_context_for_testing_())
@@ -492,7 +492,7 @@ void PlayerCore::setRenderContextUpdateCallback(
     void *callback_context) noexcept {
   if (!context)
     return;
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   if (render_context_set_update_callback_for_testing_) {
     try {
       render_context_set_update_callback_for_testing_(
@@ -510,7 +510,7 @@ void PlayerCore::setRenderContextUpdateCallback(
 void PlayerCore::freeRenderContext(mpv_render_context *context) noexcept {
   if (!context)
     return;
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   render_context_free_count_for_testing_.fetch_add(
       1, std::memory_order_relaxed);
   if (render_context_free_for_testing_) {
@@ -528,7 +528,7 @@ void PlayerCore::freeRenderContext(mpv_render_context *context) noexcept {
 void PlayerCore::terminateMpvHandle(mpv_handle *handle) noexcept {
   if (!handle)
     return;
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   if (before_terminate_destroy_for_testing_) {
     try {
       before_terminate_destroy_for_testing_(handle);
@@ -688,7 +688,7 @@ bool PlayerCore::ensureRenderContext() {
   render_context_owner_ = creating_context;
   render_context_callback_installed_ = false;
 
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   if (before_render_context_create_for_testing_)
     before_render_context_create_for_testing_();
 #endif
@@ -731,7 +731,7 @@ bool PlayerCore::ensureRenderContext() {
   mpv_render_context *candidate = nullptr;
   render_context_create_count_.fetch_add(1, std::memory_order_relaxed);
   int result = 0;
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   if (render_context_create_for_testing_) {
     try {
       result = render_context_create_for_testing_(&candidate, handle_,
@@ -746,7 +746,7 @@ bool PlayerCore::ensureRenderContext() {
     result = api().mpv_render_context_create(&candidate, handle_, parameters);
   }
 
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   if (after_render_context_api_for_testing_)
     after_render_context_api_for_testing_();
   if (result >= 0 && candidate &&
@@ -925,7 +925,7 @@ void PlayerCore::queueEventDrain() noexcept {
       return;
     PlayerController *owner = owner_;
     bool queued = false;
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
     if (queue_event_drain_for_testing_) {
       queued = queue_event_drain_for_testing_();
     } else
@@ -953,7 +953,7 @@ void PlayerCore::queueEventDrain() noexcept {
               // those locks in opposite orders and deadlock. This functor is
               // context-bound to `owner`, so Qt guarantees the QObject remains
               // alive for the duration of the call.
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
               if (keepalive->drain_events_for_testing_) {
                 keepalive->drain_events_for_testing_();
               } else
@@ -988,7 +988,7 @@ void PlayerCore::queueVideoUpdate() noexcept {
       return;
     PlayerController *owner = owner_;
     bool queued = false;
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
     if (queue_video_update_for_testing_) {
       queued = queue_video_update_for_testing_();
     } else
@@ -1010,7 +1010,7 @@ void PlayerCore::queueVideoUpdate() noexcept {
                   return;
                 }
               }
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
               if (keepalive->request_video_update_for_testing_) {
                 keepalive->request_video_update_for_testing_();
               } else
@@ -1036,7 +1036,7 @@ void PlayerCore::queueVideoUpdate() noexcept {
 }
 
 void PlayerCore::notifyRenderingReady(RenderTicket ticket) noexcept {
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   render_context_ready_notify_count_for_testing_.fetch_add(
       1, std::memory_order_relaxed);
 #endif
@@ -1053,7 +1053,7 @@ void PlayerCore::notifyRenderingReady(RenderTicket ticket) noexcept {
 }
 
 void PlayerCore::notifyRenderInvalidated(RenderTicket retired_ticket) noexcept {
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   render_context_invalidation_notify_count_for_testing_.fetch_add(
       1, std::memory_order_relaxed);
 #endif
@@ -1105,7 +1105,7 @@ void PlayerCore::queueRenderNotificationDrain() noexcept {
 
       bool has_owner = false;
       bool queued = false;
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
       std::function<bool()> queue_seam;
       bool use_qt_queue = true;
 #endif
@@ -1117,12 +1117,12 @@ void PlayerCore::queueRenderNotificationDrain() noexcept {
         PlayerController *const owner = owner_;
         if (owner) {
           has_owner = true;
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
           queue_seam = queue_render_notification_for_testing_;
           use_qt_queue = !queue_seam;
 #endif
           if (
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
               use_qt_queue
 #else
               true
@@ -1141,7 +1141,7 @@ void PlayerCore::queueRenderNotificationDrain() noexcept {
         }
       }
 
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
       // Test/user work is deliberately outside owner_mutex_. The production
       // QMetaObject queue call stays under it solely to linearize QObject
       // lifetime with detachOwner().
@@ -1219,14 +1219,14 @@ void PlayerCore::drainRenderNotifications(
       // cannot race this GUI-thread work. Do not hold either internal mutex
       // across controller code: it may synchronously request another frame.
       if (invalidation) {
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
         if (render_invalidation_work_for_testing_)
           render_invalidation_work_for_testing_(stamp);
         else
 #endif
           expected_owner->handleRenderInvalidated(stamp);
       } else {
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
         if (render_ready_work_for_testing_)
           render_ready_work_for_testing_(stamp);
         else
@@ -1283,7 +1283,7 @@ void PlayerCore::postRenderInitializationErrorBestEffort(
     int result, bool missing_opengl_context,
     RenderTicket ticket) noexcept {
   try {
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
     if (before_render_context_error_diagnostic_for_testing_)
       before_render_context_error_diagnostic_for_testing_();
 #endif
@@ -1313,7 +1313,7 @@ void PlayerCore::postRenderInitializationErrorBestEffort(
 
 void PlayerCore::postInitializationError(const QString &error,
                                          RenderTicket ticket) noexcept {
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   render_context_error_notify_count_for_testing_.fetch_add(
       1, std::memory_order_relaxed);
 #endif

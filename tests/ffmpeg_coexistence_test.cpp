@@ -1,7 +1,7 @@
 #include "media/avcodec/api.hpp"
 #include "media/avcodec/closure.hpp"
 #include "media/avcodec/runtime.hpp"
-#include "playback/mpv/mpv_runtime.hpp"
+#include "fakes/mpv_runtime/mpv_runtime_test_access.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -9,12 +9,6 @@
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstring>
-namespace wam::playback::mpv {
-class MpvRuntimeTestAccess final {
-public:
-  static MpvRuntimeLoadResult load(const QString& directory) {return MpvRuntime::load(directory);}
-};
-}
 #define CHECK(x) do { if(!(x)) {std::fprintf(stderr,"line %d: %s\n",__LINE__,#x);return 1;} } while(0)
 int main(int argc,char** argv) {
   QCoreApplication app(argc,argv);

@@ -437,104 +437,38 @@ target_compile_options(wam_scroll_gesture_test PRIVATE
   -Wall -Wextra -Wpedantic)
 add_test(NAME scroll_gesture COMMAND wam_scroll_gesture_test)
 
-add_executable(wam_player_controller_lazy_test
-  player_controller_lazy_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/playback/mpv/mpv_api.cpp
-  ${PROJECT_SOURCE_DIR}/src/playback/mpv/mpv_runtime_common.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/player_controller.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/player_controller.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/app_settings.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/app_settings.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/mpv_engine.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/mpv_engine.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/subtitle_sources.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/subtitle_sources.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/subtitle_bitmap_provider.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/subtitle_bitmap_provider.hpp
-  ${PROJECT_SOURCE_DIR}/src/media/subtitle_text.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/matroska_subtitles.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/tx3g_text.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/mp4_subtitles.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/h264_caption_sei.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/cea608_decoder.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/live_caption_feed.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/subtitle_bitmap.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/subtitle_pgs.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/subtitle_vobsub.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/byte_source.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/matroska_ebml.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/player_core.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/player_core_p.hpp
-  ${PROJECT_SOURCE_DIR}/src/jobs.cpp
-  ${PROJECT_SOURCE_DIR}/src/jobs.hpp
-  ${PROJECT_SOURCE_DIR}/src/caption_service.cpp
-  ${PROJECT_SOURCE_DIR}/src/caption_service.hpp)
-target_link_libraries(wam_player_controller_lazy_test PRIVATE wam_caption_runtime $<TARGET_NAME_IF_EXISTS:wam_caption_prompt>)
-target_include_directories(wam_player_controller_lazy_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_compile_definitions(wam_player_controller_lazy_test PRIVATE
-  WAM_MPV_RUNTIME_TESTING=1)
-target_link_libraries(wam_player_controller_lazy_test PRIVATE
+# The app's sources once, with the Qt-side test seams (WAM_QT_TEST_SEAMS) and
+# without the macOS native playback owner, which these controller and core
+# tests replace with injected mpv and preview seams. The window manager needs
+# the app's platform window chrome, which no test here drives.
+list(TRANSFORM WAM_APP_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
+list(FILTER WAM_APP_SOURCES EXCLUDE REGEX "/window_manager\\.(cpp|hpp)$")
+add_library(wam_app_test_seams STATIC EXCLUDE_FROM_ALL ${WAM_APP_SOURCES})
+target_include_directories(wam_app_test_seams PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(wam_app_test_seams PUBLIC WAM_QT_TEST_SEAMS=1)
+target_compile_options(wam_app_test_seams PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(wam_app_test_seams PUBLIC
   Qt6::Core
   Qt6::Gui
+  Qt6::Qml
   Qt6::Quick
   Qt6::OpenGL
-  ${WAM_MPV_INTEGRATION_TEST_TARGET}
-  wam_mpv_runtime)
+  wam_mpv_runtime
+  wam_native_core
+  wam_caption_runtime
+  $<TARGET_NAME_IF_EXISTS:wam_caption_prompt>
+  $<TARGET_NAME_IF_EXISTS:wam_macos_native_qt_tracked>)
+
+add_executable(wam_player_controller_lazy_test player_controller_lazy_test.cpp)
+target_link_libraries(wam_player_controller_lazy_test PRIVATE
+  wam_app_test_seams ${WAM_MPV_INTEGRATION_TEST_TARGET})
 add_test(NAME player_controller_lazy COMMAND wam_player_controller_lazy_test)
 set_tests_properties(player_controller_lazy PROPERTIES TIMEOUT 20)
 
 add_executable(wam_player_core_render_context_permission_test
-  player_core_render_context_permission_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/playback/mpv/mpv_api.cpp
-  ${PROJECT_SOURCE_DIR}/src/playback/mpv/mpv_runtime_common.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/player_controller.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/player_controller.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/app_settings.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/app_settings.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/mpv_engine.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/mpv_engine.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/subtitle_sources.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/subtitle_sources.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/subtitle_bitmap_provider.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/subtitle_bitmap_provider.hpp
-  ${PROJECT_SOURCE_DIR}/src/media/subtitle_text.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/matroska_subtitles.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/tx3g_text.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/mp4_subtitles.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/h264_caption_sei.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/cea608_decoder.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/live_caption_feed.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/subtitle_bitmap.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/subtitle_pgs.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/subtitle_vobsub.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/byte_source.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/matroska_ebml.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/player_core.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/player_core_p.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/render_lifecycle.hpp
-  ${PROJECT_SOURCE_DIR}/src/qt/mpv_render_context_policy.hpp
-  ${PROJECT_SOURCE_DIR}/src/jobs.cpp
-  ${PROJECT_SOURCE_DIR}/src/jobs.hpp
-  ${PROJECT_SOURCE_DIR}/src/caption_service.cpp
-  ${PROJECT_SOURCE_DIR}/src/caption_service.hpp)
-target_link_libraries(wam_player_core_render_context_permission_test PRIVATE wam_caption_runtime $<TARGET_NAME_IF_EXISTS:wam_caption_prompt>)
-target_include_directories(
-  wam_player_core_render_context_permission_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_compile_definitions(
-  wam_player_core_render_context_permission_test PRIVATE
-  WAM_MPV_RUNTIME_TESTING=1
-  WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING=1)
+  player_core_render_context_permission_test.cpp)
 target_link_libraries(wam_player_core_render_context_permission_test PRIVATE
-  Qt6::Core
-  Qt6::Gui
-  Qt6::Quick
-  Qt6::OpenGL
-  ${WAM_MPV_INTEGRATION_TEST_TARGET}
-  wam_mpv_runtime)
+  wam_app_test_seams ${WAM_MPV_INTEGRATION_TEST_TARGET})
 add_test(NAME player_core_render_context_permission
   COMMAND wam_player_core_render_context_permission_test)
 set_tests_properties(player_core_render_context_permission PROPERTIES
@@ -572,60 +506,13 @@ if(APPLE)
       "minos ${WAM_MACOS_DEPLOYMENT_TARGET_REGEX}")
 
   # Structural, unshown-window gate for the one native child owned by the
-  # macOS stage. Compile the same controller/core closure as production so
-  # MpvVideoItem is never tested against placeholder method definitions.
+  # macOS stage, against the same controller/core closure as production.
   add_executable(wam_mpv_video_item_native_host_test
-    mpv_video_item_native_host_test.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/mpv_video_item.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/mpv_video_item.hpp
-    ${PROJECT_SOURCE_DIR}/src/qt/player_controller.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/player_controller.hpp
-    ${PROJECT_SOURCE_DIR}/src/qt/app_settings.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/app_settings.hpp
-    ${PROJECT_SOURCE_DIR}/src/qt/mpv_engine.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/mpv_engine.hpp
-    ${PROJECT_SOURCE_DIR}/src/qt/subtitle_sources.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/subtitle_sources.hpp
-    ${PROJECT_SOURCE_DIR}/src/qt/subtitle_bitmap_provider.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/subtitle_bitmap_provider.hpp
-    ${PROJECT_SOURCE_DIR}/src/media/subtitle_text.cpp
-    ${PROJECT_SOURCE_DIR}/src/media/matroska_subtitles.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/tx3g_text.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/mp4_subtitles.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/h264_caption_sei.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/cea608_decoder.cpp
-  ${PROJECT_SOURCE_DIR}/src/media/live_caption_feed.cpp
-    ${PROJECT_SOURCE_DIR}/src/media/subtitle_bitmap.cpp
-    ${PROJECT_SOURCE_DIR}/src/media/subtitle_pgs.cpp
-    ${PROJECT_SOURCE_DIR}/src/media/subtitle_vobsub.cpp
-    ${PROJECT_SOURCE_DIR}/src/media/byte_source.cpp
-    ${PROJECT_SOURCE_DIR}/src/media/matroska_ebml.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.hpp
-    ${PROJECT_SOURCE_DIR}/src/qt/player_core.cpp
-    ${PROJECT_SOURCE_DIR}/src/qt/player_core_p.hpp
-    ${PROJECT_SOURCE_DIR}/src/jobs.cpp
-    ${PROJECT_SOURCE_DIR}/src/jobs.hpp
-    ${PROJECT_SOURCE_DIR}/src/caption_service.cpp
-    ${PROJECT_SOURCE_DIR}/src/caption_service.hpp)
-  target_link_libraries(wam_mpv_video_item_native_host_test PRIVATE wam_caption_runtime wam_caption_prompt)
-  target_include_directories(wam_mpv_video_item_native_host_test PRIVATE
-    ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/qt)
-  target_compile_features(wam_mpv_video_item_native_host_test PRIVATE
-    cxx_std_20)
+    mpv_video_item_native_host_test.cpp)
+  target_link_libraries(wam_mpv_video_item_native_host_test PRIVATE
+    wam_app_test_seams)
   target_compile_options(wam_mpv_video_item_native_host_test PRIVATE
     -Wall -Wextra -Wpedantic)
-  target_link_libraries(wam_mpv_video_item_native_host_test PRIVATE
-    wam_mpv_runtime
-    wam_macos_native_qt_tracked
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Qml
-    Qt6::Quick
-    Qt6::OpenGL)
-  set_target_properties(wam_mpv_video_item_native_host_test PROPERTIES
-    AUTOMOC ON
-    LINKER_LANGUAGE OBJCXX)
   add_test(NAME macos_mpv_video_item_native_host
     COMMAND wam_mpv_video_item_native_host_test)
   set_tests_properties(macos_mpv_video_item_native_host PROPERTIES
@@ -1208,6 +1095,47 @@ add_test(NAME mpv_frame_counters COMMAND wam_mpv_frame_counters_test)
 if(APPLE)
   add_test(NAME native_stage_defaults COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tests/native_stage_defaults_test.py")
+endif()
+
+if(APPLE)
+  # The fallback loader's bundle checks -- path, permissions, post-load vnode
+  # identity, API version, missing symbols, and a preloaded image with the same
+  # install name -- against five fake libmpv builds, each named exactly as the
+  # bundled fallback.
+  set(wam_fake_mpv_paths "")
+  foreach(variant_and_definition IN ITEMS
+      valid:WAM_FAKE_MPV_NEWER_MINOR
+      missing:WAM_FAKE_MPV_OMIT_WAIT_EVENT
+      wrong-major:WAM_FAKE_MPV_WRONG_MAJOR
+      old-minor:WAM_FAKE_MPV_OLD_MINOR
+      collision:WAM_FAKE_MPV_COLLISION)
+    string(REPLACE ":" ";" variant_and_definition "${variant_and_definition}")
+    list(POP_FRONT variant_and_definition variant)
+    set(fake wam_fake_mpv_${variant})
+    add_library(${fake} SHARED fakes/mpv_runtime/fake_mpv.cpp)
+    target_compile_definitions(${fake} PRIVATE ${variant_and_definition}=1)
+    target_link_libraries(${fake} PRIVATE wam_mpv_headers)
+    set_target_properties(${fake} PROPERTIES
+      PREFIX "" SUFFIX "" OUTPUT_NAME ${WAM_MPV_FALLBACK_DYLIB} AUTOMOC OFF
+      LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/fake-mpv/${variant}"
+      CXX_VISIBILITY_PRESET hidden
+      INSTALL_NAME_DIR "@rpath" BUILD_WITH_INSTALL_NAME_DIR ON)
+    list(APPEND wam_fake_mpv_paths "$<TARGET_FILE:${fake}>")
+  endforeach()
+  add_executable(wam_mpv_runtime_test mpv_runtime_test.cpp)
+  target_link_libraries(wam_mpv_runtime_test PRIVATE wam_mpv_runtime)
+  add_test(NAME mpv_runtime COMMAND wam_mpv_runtime_test ${wam_fake_mpv_paths})
+  set_tests_properties(mpv_runtime PROPERTIES TIMEOUT 60)
+  # The macOS runtime resolves libmpv only at run time: neither it nor this
+  # test may import an mpv symbol.
+  add_test(NAME mpv_runtime_no_libmpv_import COMMAND /bin/sh -c
+    "symbols=$(/usr/bin/nm -u \"$0\") && ! printf '%s\\n' \"$symbols\" | grep -qE '(^|[[:space:]])_mpv_'"
+    "$<TARGET_FILE:wam_mpv_runtime_test>")
+else()
+  # Non-Apple builds link libmpv directly through the linked runtime factory.
+  add_executable(wam_mpv_runtime_linked_test mpv_runtime_linked_test.cpp)
+  target_link_libraries(wam_mpv_runtime_linked_test PRIVATE wam_mpv_runtime)
+  add_test(NAME mpv_runtime_linked COMMAND wam_mpv_runtime_linked_test)
 endif()
 
 if(APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
