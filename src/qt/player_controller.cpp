@@ -5,16 +5,15 @@
 
 #include "app_settings.hpp"
 #include "mpv_video_item.hpp"
+#include "media/native_playback_contract.hpp"
 #include "playback_policy.hpp"
+#include "test_seams.hpp"
 #include "player_core_p.hpp"
 #include "subtitle_bitmap_provider.hpp"
 #include "subtitle_sources.hpp"
 
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "qt/native_playback_owner.hpp"
-#endif
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-#include "platform/macos/native_embedding_support.hpp"
 #endif
 
 #include <QByteArray>
@@ -50,8 +49,9 @@ namespace {
 
 using ::wam::playback::mpv::MpvApi;
 
-constexpr double kMinimumRate = 0.25;
-constexpr double kMaximumRate = 4.0;
+using media::native_playback::kMaximumNativeRate;
+using media::native_playback::kMinimumNativeRate;
+using media::native_playback::kNativeRateGrid;
 constexpr double kScrubConvergenceToleranceSeconds = 0.050;
 constexpr int kScrubSeekTimeoutMs = 750;
 
@@ -713,9 +713,8 @@ bool PlayerController::initializePlaybackEngine() {
   double engine_volume = volume_ * 100.0;
   double engine_rate = rate_;
   int engine_muted = muted_ ? 1 : 0;
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (macos::NativeEmbeddingSupport::testMuted()) engine_muted = 1;
-#endif
+  if (const TestSeams *seams = testSeams(); seams != nullptr && seams->muted)
+    engine_muted = 1;
   int engine_preserve_pitch = preserve_pitch_ ? 1 : 0;
   setCoreProperty(mpv_.core.get(), "volume", MPV_FORMAT_DOUBLE, &engine_volume);
   setCoreProperty(mpv_.core.get(), "speed", MPV_FORMAT_DOUBLE, &engine_rate);
@@ -774,8 +773,6 @@ void PlayerController::setSource(const QUrl &source) {
   }
   open(source);
 }
-
-void PlayerController::openFileDialog() { emit openFileDialogRequested(); }
 
 bool PlayerController::open(const QUrl &source) {
   if (source.isEmpty())
@@ -2349,7 +2346,7 @@ void PlayerController::settleScrollGesture() {
 void PlayerController::setRate(double rate) {
   if (!std::isfinite(rate))
     return;
-  const double bounded = std::round(std::clamp(rate, kMinimumRate, kMaximumRate) * 64.0) / 64.0;
+  const double bounded = std::round(std::clamp(rate, kMinimumNativeRate, kMaximumNativeRate) * kNativeRateGrid) / kNativeRateGrid;
   if (nativeRouteActive()) {
     if (!native_->setRate(bounded)) {
       setLastNotice(
@@ -2743,10 +2740,6 @@ void PlayerController::selectSubtitleTrack(int id) {
   updateSubtitleForPosition();
 }
 
-void PlayerController::openSubtitleFileDialog() {
-  emit openSubtitleFileDialogRequested();
-}
-
 bool PlayerController::loadSubtitleFile(const QUrl &file) {
   const auto path = localPath(file);
   if (!path) {
@@ -2799,8 +2792,6 @@ bool PlayerController::attachSubtitleSource(const std::filesystem::path &path,
   selectSubtitleTrack(id);
   return true;
 }
-
-void PlayerController::toggleFullscreen() { emit fullscreenToggleRequested(); }
 
 void PlayerController::setPreservePitch(bool preserve) {
   if (nativeRouteActive()) {
@@ -3127,8 +3118,9 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   request.output_srt = *output;
   request.tools = ::wam::findCaptionTools(nullptr);
   request.options.overwrite = true;
-  if (qEnvironmentVariableIsSet("WAM_TEST_CAPTION_METRICS") &&
-      qgetenv("WAM_TEST_CAPTION_ENGINE") == "whisper") request.options.prefer_apple = false;
+  const TestSeams *const seams = testSeams();
+  if (seams != nullptr && seams->captionMetrics && seams->captionEngineWhisper)
+    request.options.prefer_apple = false;
   auto bridge = std::shared_ptr<CaptionLiveBridge>(new CaptionLiveBridge,
       [](CaptionLiveBridge* p) { p->deleteLater(); });
   caption_live_bridge_ = bridge;
@@ -3156,7 +3148,7 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
     caption_track_committed_ = snapshot->committed;
     emit subtitleTracksChanged();
     updateSubtitleForPosition();
-    if (snapshot->committed && qEnvironmentVariableIsSet("WAM_TEST_CAPTION_METRICS"))
+    if (snapshot->committed && testSeams() != nullptr && testSeams()->captionMetrics)
       qInfo() << "caption-track: committed";
   }, Qt::QueuedConnection);
   request.live_segments = [bridge](std::vector<::wam::CaptionSegment> segments) {

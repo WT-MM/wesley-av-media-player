@@ -16,8 +16,11 @@ import re
 import signal
 import subprocess
 import tempfile
+import sys
 import time
-import uuid
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "support"))
+import wam_launch  # noqa: E402
 
 SERVICE = "com.apple.coremedia.videodecoder"
 EXE = "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
@@ -59,15 +62,7 @@ def stop(process):
 
 
 def events(log):
-    result = []
-    for line in log.read_text(errors="replace").splitlines():
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        if record.get("record") == "event":
-            result.append(record["event"])
-    return result
+    return [r["event"] for r in wam_launch.records(log.read_text(errors="replace")) if r.get("record") == "event"]
 
 
 def run_case(app, root, media, name, extra, sentinel):
@@ -77,14 +72,8 @@ def run_case(app, root, media, name, extra, sentinel):
     before = services()
     started = time.time()
     owned = {}
-    env = dict(os.environ, HOME=str(dest), LC_ALL="C",
-               WAM_NATIVE_BENCHMARK_TELEMETRY="1",
-               WAM_NATIVE_BENCHMARK_RUN_ID=str(uuid.uuid4()),
-               WAM_NATIVE_BENCHMARK_ASSET_SHA256="0" * 64,
-               WAM_NATIVE_BENCHMARK_CANDIDATE_ID="1" * 64,
-               WAM_TEST_BACKGROUND="1", WAM_TEST_MUTED="1",
-               QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM="1",
-               WAM_TEST_GEOMETRY="480x270+2400+1000", WAM_TEST_QUIT_AFTER_MS="4000")
+    env = wam_launch.seam_env(dest, LC_ALL="C", QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM="1",
+                              WAM_TEST_QUIT_AFTER_MS="4000")
     env.pop("QT_QPA_PLATFORM", None)
     env.update(extra)
     command = [str(app / "Contents/MacOS/WAM")] + ([str(media)] if media else [])

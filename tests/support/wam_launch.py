@@ -1,0 +1,55 @@
+"""Launches WAM with its test seams armed and reads back what it reported.
+
+The seams (WAM_TEST_*, src/qt/test_seams.hpp) exist only in a telemetry build
+and only when WAM_NATIVE_BENCHMARK_TELEMETRY carries a valid run identity;
+without it every seam is silently off. seam_env() is the one place that
+identity is spelled.
+"""
+import contextlib
+import json
+import os
+import subprocess
+import uuid
+from pathlib import Path
+
+
+def seam_env(home, **extra):
+    """The environment for a quiet, parked, muted seam launch with HOME=home."""
+    env = dict(os.environ, HOME=str(home),
+               WAM_NATIVE_BENCHMARK_TELEMETRY='1',
+               WAM_NATIVE_BENCHMARK_RUN_ID=str(uuid.uuid4()),
+               WAM_NATIVE_BENCHMARK_ASSET_SHA256='0' * 64,
+               WAM_NATIVE_BENCHMARK_CANDIDATE_ID='1' * 64,
+               WAM_TEST_BACKGROUND='1', WAM_TEST_MUTED='1',
+               WAM_TEST_GEOMETRY='480x270+2400+1000')
+    env.update({key: str(value) for key, value in extra.items()})
+    return env
+
+
+def records(text):
+    """Every JSON object line in text (test reports, notices, telemetry)."""
+    result = []
+    for line in text.splitlines():
+        # Other diagnostics share stderr; a brace-led line that is not JSON is
+        # one of them, not a report.
+        if line.startswith('{'):
+            with contextlib.suppress(ValueError):
+                result.append(json.loads(line))
+    return result
+
+
+def run(executable, args, env, log, timeout):
+    """Runs WAM to completion with stdout/stderr in log. Returns (code, text).
+
+    Kills only its own child on timeout and raises."""
+    log = Path(log)
+    with log.open('w') as sink:
+        child = subprocess.Popen([str(executable)] + [str(a) for a in args], env=env,
+                                 stdout=sink, stderr=sink)
+        try:
+            code = child.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+            raise AssertionError('Own child timed out; log: ' + str(log))
+    return code, log.read_text(errors='replace')
