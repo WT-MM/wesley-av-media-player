@@ -1507,6 +1507,16 @@ foreach(label_and_tests IN ITEMS
   foreach(test IN LISTS label_and_tests)
     if(TEST ${test})
       set_property(TEST ${test} APPEND PROPERTY LABELS ${label})
+    else()
+      # Some tests register only on some platforms or with local fixtures,
+      # but every name here must still be one this file registers: a
+      # renamed test must not silently lose its label.
+      file(READ "${CMAKE_CURRENT_LIST_FILE}" wam_tests_list_file)
+      string(FIND "${wam_tests_list_file}" "add_test(NAME ${test}\n" at_newline)
+      string(FIND "${wam_tests_list_file}" "add_test(NAME ${test} " at_space)
+      if(at_newline EQUAL -1 AND at_space EQUAL -1)
+        message(FATAL_ERROR "Test label table names unknown test '${test}'")
+      endif()
     endif()
   endforeach()
 endforeach()
