@@ -32,9 +32,14 @@ Item {
     // the card is invisible, which is exactly the cost this component
     // promises not to have.
     property string text: ""
-    // Raised to show the card; it lowers itself again `holdMs` after the last
+    // Which client raised the card ("volume", "position"), or "" while it
+    // is down: one transient card, two clients, so the volume's live-rewrite
+    // handlers in Main.qml cannot stamp a level over a timecode that is still
+    // on screen (press "." and nudge the volume, and the frame readout would
+    // silently become "45%"). The card lowers itself `holdMs` after the last
     // show() call.
-    property bool shown: false
+    property string owner: ""
+    readonly property bool shown: owner !== ""
     // How long the card stays up after the last change. ~1s is the VLC feel:
     // long enough to read a two-digit number without thinking about it, short
     // enough that it is gone before it becomes furniture.
@@ -49,9 +54,9 @@ Item {
     // Shows (or re-shows) the card with `line`. Every call restarts the hold,
     // so a continuous scroll or slider drag keeps one card up and updates the
     // number inside it instead of flickering a new one per delta.
-    function show(line) {
+    function show(line, client) {
         osd.text = line;
-        osd.shown = true;
+        osd.owner = client;
         hideTimer.restart();
     }
 
@@ -77,7 +82,7 @@ Item {
         id: hideTimer
         interval: osd.holdMs
         repeat: false
-        onTriggered: osd.shown = false
+        onTriggered: osd.owner = ""
     }
 
     // Bare white text, VLC-style -- no card, no scrim. A hairline of dark text shadow is the whole legibility budget:

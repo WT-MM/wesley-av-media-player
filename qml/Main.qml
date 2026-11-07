@@ -457,15 +457,8 @@ ApplicationWindow {
     function showVolumeOsd() {
         if (!root.controller.hasMedia)
             return;
-        root.osdOwner = "volume";
-        volumeOsd.show(root.volumeOsdLine());
+        volumeOsd.show(root.volumeOsdLine(), "volume");
     }
-
-    // One transient card, two clients. `osdOwner` names which one last raised
-    // it so the volume's live-rewrite handlers below cannot stamp a level over
-    // a timecode that is still on screen (press "." and nudge the volume, and
-    // without this the frame readout silently becomes "45%").
-    property string osdOwner: ""
 
     // Millisecond resolution, not the transport's seconds: a frame step moves
     // the playhead by ~17-42 ms, and a seconds-only readout would sit
@@ -489,8 +482,7 @@ ApplicationWindow {
     function showPositionOsd() {
         if (!root.controller.hasMedia)
             return;
-        root.osdOwner = "position";
-        volumeOsd.show(root.positionOsdLine());
+        volumeOsd.show(root.positionOsdLine(), "position");
     }
 
     // ---------------------------------------------------------------------
@@ -1790,12 +1782,12 @@ ApplicationWindow {
         // no layout, no frame) whenever the card is down, which is almost
         // always.
         function onVolumeChanged() {
-            if (volumeOsd.shown && root.osdOwner === "volume")
+            if (volumeOsd.owner === "volume")
                 volumeOsd.text = root.volumeOsdLine();
         }
 
         function onMutedChanged() {
-            if (volumeOsd.shown && root.osdOwner === "volume")
+            if (volumeOsd.owner === "volume")
                 volumeOsd.text = root.volumeOsdLine();
         }
 
@@ -1806,7 +1798,7 @@ ApplicationWindow {
         // number land on the frame you actually stepped to rather than the one
         // you left. Same early-out: nothing happens while the card is down.
         function onPositionChanged() {
-            if (volumeOsd.shown && root.osdOwner === "position")
+            if (volumeOsd.owner === "position")
                 volumeOsd.text = root.positionOsdLine();
         }
 
