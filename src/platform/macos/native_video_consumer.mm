@@ -194,7 +194,7 @@ struct ConsumerTrace {
         static_cast<__uint128_t>(record.sinceSeekLanding) <
             static_cast<__uint128_t>(owner.clock.ticksPerSecond) * 2;
     record.late = late;
-    record.awaitingOutput = owner.awaitingDraw.valid();
+    record.awaitingOutput = owner.awaitingDraw.has_value();
     // Only late retirements and their preceding submission reach the GUI ring.
     if (late) {
       if (previousSubmission.commit &&
@@ -844,7 +844,7 @@ struct NativeVideoConsumer::Impl {
 
   [[nodiscard]] bool endOfStreamDrained() const noexcept {
     return decoderEndOfStreamDone() && sink.ended() && !heldFrame &&
-           !awaitingDraw.valid();
+           !awaitingDraw;
   }
 
   // The highest generation any stage of this graph has been shown: the one
@@ -870,7 +870,7 @@ struct NativeVideoConsumer::Impl {
     if ((closed && outputFault == OutputFault::Protocol) ||
         !outputSettledAt(facts, provedGeneration, closed,
                          closed && outputFault == OutputFault::MatchedFrame) ||
-        awaitingDraw.valid()) {
+        awaitingDraw) {
       latch(NativeVideoConsumerFailure::Output, failureText);
       return std::nullopt;
     }
@@ -913,9 +913,7 @@ struct NativeVideoConsumer::Impl {
   ConsumerTrace trace;
 
   void clearDueHint() noexcept {
-    nextDueMediaTime = {};
-    nextDueHostTicks = 0;
-    nextDueKnown = false;
+    nextDue.reset();
   }
 
   void setDueHint(MediaTime presentation) noexcept {
@@ -955,10 +953,16 @@ struct NativeVideoConsumer::Impl {
                     currentClock->sampledHostTicks) {
       return;
     }
-    nextDueMediaTime = presentation;
-    nextDueHostTicks = currentClock->sampledHostTicks + delta;
-    nextDueKnown = true;
-    trace.noteDeadline(nextDueHostTicks);
+    nextDue = DueHint{presentation, currentClock->sampledHostTicks + delta};
+    trace.noteDeadline(nextDue->hostTicks);
+  }
+
+  // The event names exactly the frame whose terminal event is owed.
+  [[nodiscard]] bool awaitsEvent(const NativeTrackedVideoEvent& event) const
+      noexcept {
+    return awaitingDraw && event.frameSequence == awaitingDraw->sequence &&
+           event.generation == awaitingDraw->timing.generation &&
+           sameFrameTiming(event.timing, awaitingDraw->timing);
   }
 
   [[nodiscard]] PumpStatus consumeOutputEvent() noexcept {
@@ -983,9 +987,7 @@ struct NativeVideoConsumer::Impl {
     switch (event->kind) {
     case NativeTrackedVideoEventKind::FrameDrawn:
     case NativeTrackedVideoEventKind::FrameSuperseded:
-      if (!awaitingDraw.valid() || event->frameSequence != awaitingDraw ||
-          event->generation != awaitingTiming.generation ||
-          !sameFrameTiming(event->timing, awaitingTiming) ||
+      if (!awaitsEvent(*event) ||
           (event->kind == NativeTrackedVideoEventKind::FrameSuperseded &&
            !invalidating())) {
         return protocolFailure(
@@ -995,22 +997,18 @@ struct NativeVideoConsumer::Impl {
         if (drawnFrames == 0) firstDrawPts = {event->timing.presentationTime.value, event->timing.presentationTime.timescale};
         ++drawnFrames;
       }
-      awaitingDraw = {};
-      awaitingTiming = {};
+      awaitingDraw.reset();
       lastTerminalEvent = event;
       return PumpStatus::Progress;
     case NativeTrackedVideoEventKind::Failed:
-      if (!awaitingDraw.valid() || event->frameSequence != awaitingDraw ||
-          event->generation != awaitingTiming.generation ||
-          !sameFrameTiming(event->timing, awaitingTiming)) {
+      if (!awaitsEvent(*event)) {
         return protocolFailure(
             "tracked video output failed a frame this route never submitted");
       }
       // Failed is an exact terminal frame event. The output has released its
       // lease, so retire the matching compositor credit even though the route
       // remains fail-closed and will require terminal retirement/quarantine.
-      awaitingDraw = {};
-      awaitingTiming = {};
+      awaitingDraw.reset();
       lastTerminalEvent = event;
       matchedFrameFailed();
       latch(NativeVideoConsumerFailure::Output,
@@ -1033,7 +1031,7 @@ struct NativeVideoConsumer::Impl {
     // let the scheduler self-drain at real time. When compositing returns, the
     // real terminal event retires the credit and the next due frame is
     // submitted immediately.
-    const bool submissionBlocked = awaitingDraw.valid();
+    const bool submissionBlocked = awaitingDraw.has_value();
     if (!heldFrame) {
       if (submissionBlocked && sink.size() == 0) {
         return PumpStatus::Blocked;
@@ -1185,8 +1183,7 @@ struct NativeVideoConsumer::Impl {
     }
     trace.submitted(*this);
     captions.notePresented(timing.presentationTime);
-    awaitingDraw = submittedSequence;
-    awaitingTiming = timing;
+    awaitingDraw = AwaitingDraw{submittedSequence, timing};
     heldFrame.reset();
     ++submittedFrames;
     nextFrameSequence =
@@ -1300,10 +1297,18 @@ struct NativeVideoConsumer::Impl {
   std::optional<NativeTrackedVideoOutputFacts> retiredOutputFacts;
   std::optional<media::NativeMediaClockSnapshot> currentClock;
   NativeTrackedFrameSequence nextFrameSequence{1};
-  NativeTrackedFrameSequence awaitingDraw{};
-  FrameTiming awaitingTiming{};
-  MediaTime nextDueMediaTime{};
-  std::uint64_t nextDueHostTicks{0};
+  // The submitted frame whose terminal output event is still owed.
+  struct AwaitingDraw {
+    NativeTrackedFrameSequence sequence;
+    FrameTiming timing;
+  };
+  std::optional<AwaitingDraw> awaitingDraw;
+  // When the held frame falls due, if the clock can say.
+  struct DueHint {
+    MediaTime mediaTime;
+    std::uint64_t hostTicks;
+  };
+  std::optional<DueHint> nextDue;
   std::uint64_t lastOutputEventSequence{0};
   std::uint64_t submittedFrames{0};
   std::uint64_t drawnFrames{0};
@@ -1316,7 +1321,6 @@ struct NativeVideoConsumer::Impl {
   // operation that empties VideoToolbox: configure, seek flush, and the
   // same-generation preview quiesce.
   std::optional<MediaTime> generationStartPresentation;
-  bool nextDueKnown{false};
 #if defined(WAM_NATIVE_TEST_SEAMS)
   // Fixture-free scheduler tests do not create a real codec configuration.
   // This proves only that the public handoff state machine treats their
@@ -1630,9 +1634,9 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
     return NativeVideoConsumerPreviewProgress::Failed;
   }
 
-  if (impl.awaitingDraw.valid()) {
+  if (impl.awaitingDraw) {
     if (outputFacts.retainedFrames != 1 ||
-        outputFacts.admittedFrame != impl.awaitingDraw) {
+        outputFacts.admittedFrame != impl.awaitingDraw->sequence) {
       impl.latch(NativeVideoConsumerFailure::Output,
                  "tracked video output does not retain the awaited preview "
                  "frame");
@@ -2490,7 +2494,7 @@ NativeVideoConsumer::takeOutputEvent() noexcept {
 std::uint64_t NativeVideoConsumer::nextDueHostTicks() const noexcept {
   return impl_ == nullptr
              ? 0
-             : (impl_->nextDueKnown ? impl_->nextDueHostTicks : 0);
+             : (impl_->nextDue ? impl_->nextDue->hostTicks : 0);
 }
 
 NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
@@ -2503,15 +2507,19 @@ NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
   result.generation = impl.generation;
   result.armedGeneration = impl.armGeneration;
   result.nextFrameSequence = impl.nextFrameSequence;
-  result.awaitingDraw = impl.awaitingDraw;
+  result.awaitingDraw =
+      impl.awaitingDraw ? impl.awaitingDraw->sequence
+                        : NativeTrackedFrameSequence{};
   result.submittedFrames = impl.submittedFrames;
   result.drawnFrames = impl.drawnFrames;
   result.firstDrawPts = impl.firstDrawPts;
   result.discardedPrerollFrames = impl.discardedPrerollFrames;
   result.discardedLateFrames = impl.discardedLateFrames;
   result.discardedLeadingPictures = impl.discardedLeadingPictures;
-  result.nextDueMediaTime = impl.nextDueMediaTime;
-  result.nextDueHostTicks = impl.nextDueHostTicks;
+  if (impl.nextDue) {
+    result.nextDueMediaTime = impl.nextDue->mediaTime;
+    result.nextDueHostTicks = impl.nextDue->hostTicks;
+  }
   result.decodedQueueDepth = impl.sink.size();
   const route::Running* running = impl.running();
   result.configured = running != nullptr ||
@@ -2523,8 +2531,8 @@ NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
       running != nullptr &&
       running->endOfStream == route::Running::EndOfStream::Done;
   result.heldFrame = impl.heldFrame.has_value();
-  result.outputBlocked = impl.awaitingDraw.valid() || impl.heldFrame;
-  result.nextDueKnown = impl.nextDueKnown;
+  result.outputBlocked = impl.awaitingDraw || impl.heldFrame;
+  result.nextDueKnown = impl.nextDue.has_value();
   result.previewQuiesceStarted = impl.previewAdmissionGated();
   result.previewQuiesceGeneration =
       result.previewQuiesceStarted ? impl.generation : 0;
