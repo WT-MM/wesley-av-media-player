@@ -57,7 +57,7 @@ namespace wam::macos_window_chrome {
 // before any window is shown, so nothing ever gets the chance to activate.
 // Pair it with QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM, which is what
 // suppresses the Qt cocoa plugin's own launch-time
-// -[NSApplication activateIgnoringOtherApps:] -- see main.cpp.
+// -[NSApplication activateIgnoringOtherApps:] -- see test_seams.cpp.
 void adoptBackgroundLaunchPolicy();
 
 // Test-only, and the other half of WAM_TEST_BACKGROUND: makes `window` visible
@@ -289,20 +289,18 @@ void snapToVideoAspectRatio(QWindow *window, qreal videoWidth,
 
 namespace wam::qt {
 
-// Thin QML-invokable adapter over the free functions above. main.cpp installs
-// one instance as the "windowChrome" context property once the root QML
-// window exists; qml/Main.qml drives it from the same signals that already
-// show/hide FloatingControls.
+// Thin QML-invokable adapter over the free functions above. WindowManager
+// sets one instance as each window's `windowChrome` property once the root
+// QML window exists; qml/Main.qml drives it from the same signals that
+// already show/hide FloatingControls.
 class MacWindowChrome final : public QObject {
   Q_OBJECT
 
   media::MediaDisplaySize exactDisplaySize_;
   QUrl exactDisplaySource_;
 
-  // True when the process was launched by the benchmark harness:
-  // nativeBenchmarkTelemetryArmed(), i.e. WAM_NATIVE_BENCHMARK_TELEMETRY alone.
-  // Unlike the telemetry stream, this does not also require a valid run
-  // identity. The harness positions the window itself and its validity checks reject any
+  // True when the test seams are admitted (testSeams(), test_seams.hpp). The
+  // harness positions the window itself and its validity checks reject any
   // bounds change it did not make, so QML suppresses the QuickTime aspect
   // snap for these runs.
   Q_PROPERTY(bool benchmarkMode READ benchmarkMode CONSTANT)

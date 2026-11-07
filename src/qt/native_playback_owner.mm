@@ -7,6 +7,7 @@
 #include "native_media_session_adapter.hpp"
 #include "platform/macos/native_embedding_support.hpp"
 #include "player_controller.hpp"
+#include "test_seams.hpp"
 
 #import <Foundation/Foundation.h>
 
@@ -80,14 +81,11 @@ void setMacosPlaybackActivityHeld(bool held) noexcept {
 NativePlaybackOwner::NativePlaybackOwner(PlayerController &controller)
     : controller_(controller),
       openPreflight_([this](NativeOpenPreflightResult result) {
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
-        const int delay = telemetry_ ? qEnvironmentVariableIntValue("WAM_TEST_OPEN_DELAY_MS") : 0;
-        if (delay > 0) {
-          QTimer::singleShot(std::min(delay, 15000), &controller_,
+        if (const TestSeams *seams = testSeams(); seams != nullptr && seams->openDelayMilliseconds > 0) {
+          QTimer::singleShot(seams->openDelayMilliseconds, &controller_,
               [this, result = std::move(result)]() mutable { completeOpenPreflight(std::move(result)); });
           return;
         }
-#endif
         completeOpenPreflight(std::move(result));
       }) {
   Q_ASSERT(QThread::currentThread() == controller_.thread());

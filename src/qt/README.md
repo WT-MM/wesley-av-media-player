@@ -54,9 +54,8 @@ allocation, and the additional texture-composition pass imposed by
 clipped video tiles, add a separate FBO-backed item for that specialized mode
 instead of slowing the primary player path.
 
-The QML window owns dialogs and fullscreen state. Connect
-`openFileDialogRequested` to a `QtQuick.Dialogs.FileDialog` and
-`fullscreenToggleRequested` to the root window. For macOS's borderless native
+The QML window owns its dialogs and fullscreen state and opens them itself;
+the controller only takes the chosen URL. For macOS's borderless native
 chrome, the root can use `Qt.ExpandedClientAreaHint` and
 `Qt.NoTitleBarBackgroundHint`; keep controls inside `SafeArea.margins` while
 letting the video extend edge-to-edge.

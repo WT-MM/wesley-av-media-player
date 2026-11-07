@@ -5,6 +5,8 @@ FocusScope {
     id: root
 
     required property var player
+    // The window's PlayerActions; every button triggers one of its commands.
+    required property var actions
     property bool revealed: true
     property bool suppressed: false
     property bool instantHide: false
@@ -64,14 +66,6 @@ FocusScope {
         volumeFeedback = true;
         volumeFeedbackTimer.restart();
     }
-    // The speed panel's window, and the exact grid the native engine admits.
-    // src/media/native_playback_contract.hpp snaps every requested rate onto
-    // a multiple of 1/64 inside [0.25, 4] before it reaches the clock, so the
-    // slider snaps to the same grid here -- otherwise the label would show a
-    // number the engine is not actually playing.
-    readonly property real minimumRate: 0.25
-    readonly property real maximumRate: 4
-    readonly property int rateGrid: 64
     readonly property bool hovered: panelHover.hovered
     // A pointer merely resting on the transport (no button down) counts as
     // "active" too -- otherwise the idle timer in Main.qml can fade the
@@ -101,9 +95,6 @@ FocusScope {
         || theaterButton.down
         || fullscreenButton.down
     readonly property int elapsedWholeSeconds: Math.floor(timeline.displayPosition)
-    signal editRequested
-    signal vividToggleRequested
-    signal theaterToggleRequested
     signal interaction
     signal moveRequested(real targetX, real targetY)
     // A control on this bar changed the level (either slider, or the mute
@@ -112,34 +103,6 @@ FocusScope {
     // give identical feedback. Emitted per move, so a drag updates the card
     // that is already up rather than flickering a new one.
     signal volumeOsdRequested
-
-    function formatStepSeconds(seconds) {
-        // seekStepSeconds is always a whole number in practice (the
-        // Preferences window only ever writes integers), but it is stored as
-        // a double to match seekRelative's signature -- drop a stray ".0".
-        return Number(seconds).toFixed(seconds % 1 === 0 ? 0 : 1);
-    }
-
-    // Rate <-> slider travel. Logarithmic: t = 0 is 0.25x, t = 1 is 4x, and
-    // every doubling costs the same travel, so 0.25-1 and 1-4 get exactly
-    // half the track each and 1.0 falls on the midpoint.
-    function rateForTravel(travel) {
-        return snapRate(Math.pow(2, travel * 4 - 2));
-    }
-
-    function travelForRate(rate) {
-        const bounded = Math.min(maximumRate, Math.max(minimumRate, rate));
-        return (Math.log(bounded) / Math.LN2 + 2) / 4;
-    }
-
-    function snapRate(rate) {
-        const bounded = Math.min(maximumRate, Math.max(minimumRate, rate));
-        return Math.round(bounded * rateGrid) / rateGrid;
-    }
-
-    function applyRate(rate) {
-        root.player.setRate(snapRate(rate));
-    }
 
     // "2x" for the whole rates the presets use, "1.36x" for a grid step in
     // between -- the same rule the speed button uses.
@@ -355,8 +318,7 @@ FocusScope {
             // says as much as the tip does once it is up.
             toolTip: root.volumePopupOpen ? "" : accessibleName
             onClicked: {
-                root.player.toggleMute();
-                root.volumeOsdRequested();
+                root.actions.mute.trigger();
                 root.interaction();
             }
         }
@@ -600,10 +562,10 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             iconName: "backward5"
-            accessibleName: "Back " + root.formatStepSeconds(appSettings.seekStepSeconds) + " seconds"
-            toolTip: accessibleName + " (Left Arrow)"
+            accessibleName: "Back " + root.actions.formatSeconds(appSettings.seekStepSeconds) + " seconds"
+            toolTip: accessibleName + " (" + root.actions.skipBack.keyName + ")"
             onClicked: {
-                root.player.skipBackward();
+                root.actions.skipBack.trigger();
                 root.interaction();
             }
         }
@@ -616,9 +578,9 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             accessibleName: root.player.playing ? "Pause" : "Play"
-            toolTip: accessibleName + " (Space)"
+            toolTip: accessibleName + " (" + root.actions.playPause.keyName + ")"
             onClicked: {
-                root.player.togglePlayPause();
+                root.actions.playPause.trigger();
                 root.interaction();
             }
         }
@@ -629,10 +591,10 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             iconName: "forward5"
-            accessibleName: "Forward " + root.formatStepSeconds(appSettings.seekStepSeconds) + " seconds"
-            toolTip: accessibleName + " (Right Arrow)"
+            accessibleName: "Forward " + root.actions.formatSeconds(appSettings.seekStepSeconds) + " seconds"
+            toolTip: accessibleName + " (" + root.actions.skipForward.keyName + ")"
             onClicked: {
-                root.player.skipForward();
+                root.actions.skipForward.trigger();
                 root.interaction();
             }
         }
@@ -765,60 +727,22 @@ FocusScope {
                         }
                     }
 
-                    Slider {
+                    RateSlider {
                         id: speedSlider
                         width: parent.width
                         height: 26
-                        from: 0
-                        to: 1
-                        hoverEnabled: true
-                        focusPolicy: Qt.TabFocus
                         Accessible.name: "Playback speed"
-                        Accessible.role: Accessible.Slider
+                        rate: root.player.rate
+                        trackColor: "#70ffffff"
+                        fillColor: "#d8ffffff"
                         // Live-apply. PlayerController::setRate is a
                         // pitch-preserved, glitch-free change on the native
                         // route and already expects a slider emitting on
                         // every motion event, so the picture and the label
                         // follow the thumb instead of waiting for release.
-                        onMoved: {
-                            const rate = root.rateForTravel(value);
-                            if (rate === 1)
-                                value = 0.5; // magnetic detent at 1x
-                            root.applyRate(rate);
+                        onRateMoved: rate => {
+                            root.player.setRate(rate);
                             root.interaction();
-                        }
-
-                        Binding {
-                            target: speedSlider
-                            property: "value"
-                            value: root.travelForRate(root.player.rate)
-                            when: !speedSlider.pressed
-                            restoreMode: Binding.RestoreNone
-                        }
-
-                        background: Item {
-                            x: speedSlider.leftPadding
-                            y: speedSlider.topPadding + speedSlider.availableHeight / 2 - 1
-                            width: speedSlider.availableWidth
-                            height: 2
-
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: 2
-                                color: "#70ffffff"
-                            }
-
-                            // Filled from the 1x detent rather than from the
-                            // left end: the track then reads as "how far from
-                            // normal speed", and the midpoint needs no
-                            // separate tick mark to be findable.
-                            Rectangle {
-                                x: Math.min(0.5, speedSlider.visualPosition) * parent.width
-                                width: Math.abs(speedSlider.visualPosition - 0.5) * parent.width
-                                height: parent.height
-                                radius: 2
-                                color: "#d8ffffff"
-                            }
                         }
 
                         handle: Rectangle {
@@ -851,7 +775,7 @@ FocusScope {
                                 selectedColor: "#f5f5f6"
                                 selectedForeground: "#17191e"
                                 onClicked: {
-                                    root.applyRate(modelData);
+                                    root.player.setRate(modelData);
                                     root.interaction();
                                 }
                             }
@@ -867,10 +791,10 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             iconName: "captions"
-            accessibleName: root.player.captionsVisible ? "Hide captions" : "Show captions"
+            accessibleName: root.actions.captions.text
             toolTip: accessibleName
             onClicked: {
-                root.player.toggleCaptions();
+                root.actions.captions.trigger();
                 root.interaction();
             }
         }
@@ -881,10 +805,10 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             iconName: "edit"
-            accessibleName: "Quick Edit"
-            toolTip: "Open Quick Edit (E)"
+            accessibleName: root.actions.quickEdit.text
+            toolTip: "Open Quick Edit (" + root.actions.quickEdit.keyName + ")"
             onClicked: {
-                root.editRequested();
+                root.actions.quickEdit.trigger();
                 root.interaction();
             }
         }
@@ -907,10 +831,10 @@ FocusScope {
             toolTip: !root.vividAvailable
                 ? "Vivid boost \u2014 not needed, this source is already HDR"
                 : root.vividActive
-                    ? "Vivid boost on, " + root.vividBoost.toFixed(1) + "x (V)"
-                    : "Vivid boost \u2014 brighten the video past the desktop (V)"
+                    ? "Vivid boost on, " + root.vividBoost.toFixed(1) + "x (" + root.actions.vivid.keyName + ")"
+                    : "Vivid boost \u2014 brighten the video past the desktop (" + root.actions.vivid.keyName + ")"
             onClicked: {
-                root.vividToggleRequested();
+                root.actions.vivid.trigger();
                 root.interaction();
             }
         }
@@ -925,10 +849,10 @@ FocusScope {
             selected: root.theaterActive
             accessibleName: root.theaterActive ? "Turn off Theater dim" : "Turn on Theater dim"
             toolTip: root.theaterActive
-                ? "Theater dim on (T)"
-                : "Theater dim \u2014 darken everything around the player (T)"
+                ? "Theater dim on (" + root.actions.theater.keyName + ")"
+                : "Theater dim \u2014 darken everything around the player (" + root.actions.theater.keyName + ")"
             onClicked: {
-                root.theaterToggleRequested();
+                root.actions.theater.trigger();
                 root.interaction();
             }
         }
@@ -940,9 +864,9 @@ FocusScope {
             toolTipClearItem: glass
             iconName: "fullscreen"
             accessibleName: "Enter full screen"
-            toolTip: "Full screen (F)"
+            toolTip: "Full screen (" + root.actions.fullScreenToggle.keyName + ")"
             onClicked: {
-                root.player.toggleFullscreen();
+                root.actions.fullScreenToggle.trigger();
                 root.interaction();
             }
         }

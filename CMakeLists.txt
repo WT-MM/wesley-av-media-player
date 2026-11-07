@@ -239,7 +239,10 @@ qt_add_qml_module(wam
     qml/PreferencesWindow.qml
     qml/Scrubber.qml
     qml/AppMenuBar.qml
-    qml/AppMenu.qml)
+    qml/AppMenu.qml
+    qml/PlayerActions.qml
+    qml/ActionMenuItem.qml
+    qml/RateSlider.qml)
 
 target_include_directories(wam PRIVATE src src/qt)
 target_compile_definitions(wam PRIVATE WAM_VERSION="${PROJECT_VERSION}")
@@ -480,6 +483,12 @@ if(APPLE)
       src/platform/macos/qt_native_presentation_adapter.mm)
     target_compile_definitions(wam PRIVATE
       WAM_HAS_MACOS_NATIVE_PLAYBACK=1)
+    if(WAM_NATIVE_BENCHMARK_TELEMETRY)
+      target_sources(wam PRIVATE src/qt/test_seams.hpp src/qt/test_seams.cpp)
+      # The windowkey verb drives the shortcut map through QWindowSystemInterface.
+      find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+      target_link_libraries(wam PRIVATE Qt6::GuiPrivate)
+    endif()
     target_compile_options(wam PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
     target_link_libraries(wam PRIVATE
@@ -2646,7 +2655,7 @@ endif()
 if(BUILD_TESTING AND APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   find_program(WAM_UI_FFMPEG ffmpeg REQUIRED)
-  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics gapseek)
+  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics gapseek badscript)
     add_test(NAME ui_${ui_case}
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/ui_regression_test.py"
         --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_UI_FFMPEG}" --case "${ui_case}"

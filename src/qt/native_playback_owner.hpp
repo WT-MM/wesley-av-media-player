@@ -24,7 +24,9 @@ class MpvVideoItem;
 class NativeBenchmarkTelemetry;
 class PlayerController;
 class PlayerCore;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
 struct NativePlaybackOwnerTestAccess;
+#endif
 
 namespace playback_router = ::wam::media::playback_router;
 namespace native_protocol = ::wam::media::native_playback;
@@ -212,7 +214,10 @@ private:
   // Constructed only when the opt-in playback metrics stream is enabled.
   std::unique_ptr<QTimer> metricsTimer_;
 
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  // test_seams.cpp's `nativefail` verb injects a refusal through the router.
   friend struct NativePlaybackOwnerTestAccess;
+#endif
 };
 
 } // namespace wam::qt
