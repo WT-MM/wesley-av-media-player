@@ -16,6 +16,23 @@ find_program(WAM_TEST_FFMPEG NAMES ffmpeg
   HINTS /opt/homebrew/bin /usr/local/bin /opt/local/bin)
 find_program(WAM_TEST_FFPROBE NAMES ffprobe
   HINTS /opt/homebrew/bin /usr/local/bin /opt/local/bin)
+if(NOT WAM_TEST_FFMPEG AND (APPLE OR WAM_BUILD_APP))
+  message(FATAL_ERROR "The tests generate their media with FFmpeg; install it "
+    "(brew install ffmpeg) or set WAM_TEST_FFMPEG")
+endif()
+
+# Generated media lives in the build tree, so parallel build trees never share
+# or clobber one corpus.
+set(WAMKIT_TEST_FIXTURE_DIR "${PROJECT_BINARY_DIR}/test-media/wamkit"
+  CACHE PATH "Generated WAMKit test corpus")
+if(APPLE)
+  # Short A/V clips for the AVFoundation reader test and the WAMKit hosts.
+  add_test(NAME wamkit_fixtures COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/scripts/generate_wamkit_fixtures.py"
+    --ffmpeg "${WAM_TEST_FFMPEG}" --output "${WAMKIT_TEST_FIXTURE_DIR}")
+  set_tests_properties(wamkit_fixtures PROPERTIES
+    FIXTURES_SETUP wamkit_media TIMEOUT 60)
+endif()
 
 add_executable(wam_caption_test
   caption_service_test.cpp
@@ -50,10 +67,6 @@ if(NOT WAM_BUILD_APP)
   return()
 endif()
 
-if(NOT WAM_TEST_FFMPEG)
-  message(FATAL_ERROR "The tests generate their media with FFmpeg; install it "
-    "(brew install ffmpeg) or set WAM_TEST_FFMPEG")
-endif()
 if((WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE) AND NOT WAM_TEST_FFPROBE)
   message(FATAL_ERROR "The native FFmpeg stage tests need ffprobe; set WAM_TEST_FFPROBE")
 endif()
@@ -61,10 +74,6 @@ endif()
 # Source lists shared with the production targets are relative to the root.
 list(TRANSFORM WAM_QUICKLOOK_FRAME_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
 list(TRANSFORM WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
-
-set(WAM_NATIVE_READER_TEST_FIXTURE
-  "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4" CACHE FILEPATH
-  "Fixture for the AVFoundation cancellation test")
 
 if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
   set(WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES
@@ -668,8 +677,9 @@ if(APPLE)
       "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
     add_test(NAME macos_avfoundation_reader_cancellation
       COMMAND wam_avfoundation_media_source_test --cancel-only
-        "${WAM_NATIVE_READER_TEST_FIXTURE}")
-    set_tests_properties(macos_avfoundation_reader_cancellation PROPERTIES TIMEOUT 15)
+        "${WAMKIT_TEST_FIXTURE_DIR}/av.mp4")
+    set_tests_properties(macos_avfoundation_reader_cancellation PROPERTIES
+      TIMEOUT 15 FIXTURES_REQUIRED wamkit_media)
     add_test(NAME macos_avfoundation_media_source
       COMMAND wam_avfoundation_media_source_test)
     set_tests_properties(macos_avfoundation_media_source PROPERTIES
@@ -1715,7 +1725,7 @@ if(WAM_ENABLE_AVCODEC_STAGE)
       set(codec h264)
     endif()
     add_test(NAME avcodec_worker_${specimen} COMMAND wam_avcodec_worker_test
-      "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.packets" "${codec}")
+      "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/${specimen}.packets" "${codec}")
     set_tests_properties(avcodec_worker_${specimen} PROPERTIES TIMEOUT 30)
   endforeach()
 
@@ -1723,13 +1733,13 @@ if(WAM_ENABLE_AVCODEC_STAGE)
   target_link_libraries(wam_software_avcodec_video_test PRIVATE wam_macos_native_video_core)
   foreach(specimen IN ITEMS hi10p h264422 asp vp9 vp9p2)
     add_test(NAME software_avcodec_video_${specimen} COMMAND wam_software_avcodec_video_test
-      "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.packets" "${specimen}")
+      "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/${specimen}.packets" "${specimen}")
     set_tests_properties(software_avcodec_video_${specimen} PROPERTIES TIMEOUT 30)
   endforeach()
 
   add_test(NAME avcodec_fixtures COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tests/native_avcodec_fixtures.py"
-    --output "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2"
+    --output "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2"
     --ffmpeg "${WAM_TEST_FFMPEG}" --ffprobe "${WAM_TEST_FFPROBE}")
   set_tests_properties(avcodec_fixtures PROPERTIES
     FIXTURES_SETUP avcodec_media RUN_SERIAL TRUE RESOURCE_LOCK avcodec_fixture_generation TIMEOUT 120)
@@ -1748,8 +1758,8 @@ if(WAM_ENABLE_AVCODEC_STAGE)
   target_sources(wam_software_avcodec_audio_test PRIVATE ${PROJECT_SOURCE_DIR}/src/media/audio_downmix.cpp)
   foreach(specimen IN ITEMS dts truehd mlp)
     add_test(NAME software_avcodec_audio_${specimen} COMMAND wam_software_avcodec_audio_test
-      "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.audio-packets"
-      "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.f32" "${specimen}")
+      "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/${specimen}.audio-packets"
+      "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/${specimen}.f32" "${specimen}")
     set_tests_properties(software_avcodec_audio_${specimen} PROPERTIES FIXTURES_REQUIRED avcodec_media TIMEOUT 30)
   endforeach()
 
@@ -1783,9 +1793,9 @@ if(WAM_ENABLE_AVCODEC_STAGE)
 
   foreach(specimen IN ITEMS dts51 truehd51)
     add_test(NAME software_avcodec_audio_${specimen} COMMAND wam_software_avcodec_audio_test
-      "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.audio-packets"
-      "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.f32" "${specimen}" 6
-      "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.stereo.f32")
+      "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/${specimen}.audio-packets"
+      "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/${specimen}.f32" "${specimen}" 6
+      "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/${specimen}.stereo.f32")
     set_tests_properties(software_avcodec_audio_${specimen} PROPERTIES FIXTURES_REQUIRED avcodec_media TIMEOUT 30)
   endforeach()
 
@@ -1795,7 +1805,7 @@ if(WAM_ENABLE_AVCODEC_STAGE)
   add_test(NAME avcodec_allocation_attribution COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tests/avcodec_allocation_attribution_test.py"
     "$<TARGET_FILE:wam_avcodec_video_allocation_test>"
-    "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/asp.packets" asp)
+    "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/asp.packets" asp)
   set_tests_properties(avcodec_allocation_attribution PROPERTIES FIXTURES_REQUIRED avcodec_media TIMEOUT 45)
 
   add_executable(wam_avcodec_worker_budget_test avcodec_worker_budget_test.cpp)
@@ -1811,14 +1821,14 @@ if(WAM_ENABLE_AVCODEC_STAGE)
     wam_macos_native_video_core)
   add_test(NAME software_avcodec_surface_contention
     COMMAND wam_software_avcodec_surface_contention_test
-      "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2/asp.packets")
+      "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/asp.packets")
   set_tests_properties(software_avcodec_surface_contention PROPERTIES
     FIXTURES_REQUIRED avcodec_media TIMEOUT 30)
 
   add_test(NAME software_audio_production COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tests/software_audio_production_proof.py"
     --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
-    --fixtures "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2"
+    --fixtures "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2"
     --ffmpeg "${WAM_TEST_FFMPEG}"
     --output "${PROJECT_BINARY_DIR}/software-audio-production.json")
   set_tests_properties(software_audio_production PROPERTIES FIXTURES_REQUIRED avcodec_media TIMEOUT 120)
@@ -1843,9 +1853,9 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
   add_test(NAME libavformat_mpeg4_full_range COMMAND wam_libavformat_source_test
     "${PROJECT_SOURCE_DIR}/tests/fixtures/software-color/asp-full.mkv"
     "ready")
-  set(WAM_AVFORMAT_FIXTURES "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase3"
+  set(WAM_AVFORMAT_FIXTURES "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase3"
     CACHE PATH "Generated libavformat test corpus")
-  set(WAM_MIXED_FIXTURES "${PROJECT_SOURCE_DIR}/test-media/native-coverage/phase2e"
+  set(WAM_MIXED_FIXTURES "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2e"
     CACHE PATH "Generated mixed-container test corpus")
   add_test(NAME libavformat_fixtures COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tests/libavformat_fixtures.py" --root "${WAM_AVFORMAT_FIXTURES}"
