@@ -4,11 +4,14 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -134,27 +137,41 @@ int terminateUnisolatedChild(pid_t child, int error);
 bool reapKilledChild(pid_t child, int* status,
                      std::chrono::milliseconds bound);
 
-struct SupervisedChild {
-  // `status` holds the leader's wait status.
-  bool exited{false};
-  int status{0};
-  // The group was signalled because of cancellation or `stopRequested`.
-  bool terminated{false};
-  bool cancelled{false};
-  bool stopped{false};
-  // False when no verified process group could be established.
-  bool isolated{true};
-  // Nonzero when the child could not be isolated, observed or reaped.
-  int error{0};
+// How a supervised child ended. Wait statuses are raw; callers normalize.
+struct ChildExited {
+  int status;
 };
+// The group was signalled because of cancellation or `stopRequested`.
+struct ChildTerminated {
+  enum class Reason { Cancelled, Stopped } reason;
+  // Absent when the killed leader could not be reaped within the bound.
+  std::optional<int> status;
+};
+// No verified process group could be established, so the child was never
+// group-signalled. `status` is present when it had already exited and was
+// reaped; otherwise it was killed and `error` says why isolation failed.
+struct ChildUnisolated {
+  int error;
+  std::optional<int> status;
+};
+// The isolated child could not be observed or reaped. `killedStatus` is the
+// leader's status when an observation failure was followed by a group kill.
+struct ChildLost {
+  int error;
+  std::optional<int> killedStatus;
+};
+using ChildOutcome =
+    std::variant<ChildExited, ChildTerminated, ChildUnisolated, ChildLost>;
+
 // The one wait loop for a forked child that called setpgid(0, 0): isolates
 // its group, polls every 20 ms, and on cancellation (or when `stopRequested`,
 // called once per poll, returns true) sends the group SIGTERM, then SIGKILL
-// after `grace`, then reaps with a bound. `stopRequested` may be empty.
-SupervisedChild superviseChildGroup(pid_t child,
-                                    const CancellationFlag& cancellation,
-                                    std::chrono::milliseconds grace,
-                                    const std::function<bool()>& stopRequested);
+// once the leader exits or `grace` passes, then reaps with a bound.
+// `stopRequested` may be empty.
+ChildOutcome superviseChildGroup(pid_t child,
+                                 const CancellationFlag& cancellation,
+                                 std::chrono::milliseconds grace,
+                                 const std::function<bool()>& stopRequested);
 #endif
 
 }  // namespace detail
@@ -182,9 +199,10 @@ class BackgroundJob {
   BackgroundJob& operator=(const BackgroundJob&) = delete;
 
   bool start(std::string label, ProcessCommand command);
-  bool running() const { return running_.load(); }
-  bool succeeded() const { return finished_.load() && exit_code_.load() == 0; }
-  bool finished() const { return finished_.load(); }
+  bool running() const { return state_.load() == State::Running; }
+  bool succeeded() const { return finished() && exit_code_.load() == 0; }
+  bool finished() const { return state_.load() == State::Finished; }
+  // -1 until finished, and when the worker could not be started.
   int exitCode() const { return exit_code_.load(); }
   std::string label() const;
   void cancel() noexcept;
@@ -199,8 +217,11 @@ class BackgroundJob {
   std::thread worker_;
   detail::CancellationFlag cancellation_;
   mutable std::mutex worker_mutex_;
-  std::atomic<bool> running_{false};
-  std::atomic<bool> finished_{false};
+  // Idle -> Running (start) -> Finished (worker, after storing exit_code_)
+  // -> Idle (reset). Only start() and reset() leave Idle/Finished, under
+  // worker_mutex_.
+  enum class State : std::uint8_t { Idle, Running, Finished };
+  std::atomic<State> state_{State::Idle};
   std::atomic<int> exit_code_{-1};
   mutable std::mutex label_mutex_;
   std::string label_;

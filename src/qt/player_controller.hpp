@@ -65,6 +65,10 @@ public:
   std::mutex mutex;
   std::shared_ptr<const Snapshot> latest;
   std::atomic<bool> queued{false};
+  // GUI thread only: the generated track was auto-selected once, and the
+  // committed SRT replaced the live cues.
+  bool selected = false;
+  bool committed = false;
   void publish(std::shared_ptr<const Snapshot> value) {
     { std::lock_guard lock(mutex); latest = std::move(value); }
     if (!queued.exchange(true)) emit available();
@@ -274,11 +278,16 @@ public:
   [[nodiscard]] bool exportPreservePitch() const {
     return export_preserve_pitch_;
   }
-  [[nodiscard]] bool exporting() const { return exporting_; }
+  [[nodiscard]] bool exporting() const { return export_.has_value(); }
   [[nodiscard]] QString exportStatus() const { return export_status_; }
-  [[nodiscard]] bool captionTranscribing() const { return caption_service_->transcribing(); }
-  [[nodiscard]] bool captionTrackCommitted() const { return caption_track_committed_; }
-  [[nodiscard]] bool captioning() const { return captioning_; }
+  [[nodiscard]] bool captionTranscribing() const {
+    const auto status = caption_service_->tryStatus();
+    return status && status->stage == ::wam::CaptionStage::Transcribing;
+  }
+  [[nodiscard]] bool captionTrackCommitted() const {
+    return caption_live_bridge_ && caption_live_bridge_->committed;
+  }
+  [[nodiscard]] bool captioning() const { return caption_job_.has_value(); }
   [[nodiscard]] QString captionStatus() const { return caption_status_; }
   [[nodiscard]] QString lastError() const { return last_error_; }
   [[nodiscard]] QString lastNotice() const { return last_notice_; }
@@ -379,9 +388,6 @@ public:
   // announcement of it stops.
   void beginTeardown() noexcept { tearing_down_ = true; }
 
-  // Job/caption adapters can drive these while remaining independent of QML.
-  void setExporting(bool exporting);
-  void setCaptioning(bool captioning);
   void setCaptionStatus(const QString &status);
 
 signals:
@@ -753,7 +759,8 @@ private:
   void updateSource(const QUrl &source) override;
   void updateMediaTitle(const QString &title) override;
   void resetTimeline() override;
-  void cancelCaptionsForMediaChange();
+  // Cancels a caption job unless `incoming` is the file it is captioning.
+  void cancelCaptionsForMediaChange(const QUrl &incoming);
   // The engines' error report. During Opening an error IS the open failing
   // (failOpen); otherwise it is only shown.
   void setLastError(const QString &error) override;
@@ -771,7 +778,12 @@ private:
   // be pure interruption. QML surfaces this as a transient toast.
   void setLastNotice(const QString &notice) override;
   void setExportStatus(const QString &status);
-  void cleanupExportStaging() noexcept;
+  void beginExportJob(std::filesystem::path output,
+                      std::filesystem::path staging);
+  // Ends the export job, removing its staging file unless it was committed.
+  void endExportJob() noexcept;
+  void beginCaptionJob(std::filesystem::path input);
+  void endCaptionJob();
   void startWorkPolling();
   void pollBackgroundWork();
 
@@ -804,10 +816,9 @@ private:
 
   ::wam::BackgroundJob export_job_;
   std::shared_ptr<::wam::CaptionService> caption_service_ = std::make_shared<::wam::CaptionService>();
-  bool caption_download_prompted_ = false;
+  // The live generated track of the latest caption request. It outlives the
+  // job on success, so the committed cues keep arriving after it ends.
   std::shared_ptr<CaptionLiveBridge> caption_live_bridge_;
-  bool caption_live_selected_ = false;
-  bool caption_track_committed_ = false;
   std::unique_ptr<SubtitleSources> subtitles_;
   // The live closed-caption tap the native video consumer feeds for this
   // window. Owned here so it outlives any one session; handed to the session
@@ -851,10 +862,7 @@ private:
   QString last_notice_;
   QString export_status_;
   QString caption_status_;
-  QString caption_cancel_reason_;
-  std::filesystem::path export_output_;
-  std::filesystem::path export_staging_;
-  std::filesystem::path caption_input_;
+
   bool paused_ = true;
   bool idle_ = true;
   bool eof_reached_ = false;
@@ -878,11 +886,22 @@ private:
   // Per window, and reset on every media change: a rectangle drawn over one
   // shot means nothing over the next file's framing.
   ::wam::CropRect crop_{};
-  bool exporting_ = false;
-  bool captioning_ = false;
-  bool export_cancel_requested_ = false;
-  bool export_completion_pending_ = false;
-  bool caption_completion_pending_ = false;
+  // A running export: where it lands, the reserved staging file it encodes
+  // into, and whether the user cancelled it.
+  struct ExportJob {
+    std::filesystem::path output;
+    std::filesystem::path staging;
+    bool cancel_requested = false;
+  };
+  std::optional<ExportJob> export_;
+  // A running caption request: its input, why it is being cancelled (empty
+  // until cancelled), and whether its download prompt was already shown.
+  struct CaptionJob {
+    std::filesystem::path input;
+    QString cancel_reason;
+    bool download_prompted = false;
+  };
+  std::optional<CaptionJob> caption_job_;
   // See beginTeardown(): silences user-facing errors once this controller's
   // window is on its way out.
   bool tearing_down_ = false;

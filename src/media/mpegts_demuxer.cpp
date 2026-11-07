@@ -102,7 +102,15 @@ struct StreamWalk {
   ContinuityTracker continuity;
   std::array<std::byte, kMpegTsAccessUnitProbeBytes> probe{};
   std::uint64_t firstPacketOffset{0};
-  std::int64_t ptsTick{0};
+  // Idle until a unit start; AwaitingHeader until its PES header is decoded;
+  // then Collecting until the next unit start finishes it.
+  enum class Phase : std::uint8_t { Idle, AwaitingHeader, Collecting };
+  Phase phase{Phase::Idle};
+  // The unit's presentation tick, when its PES header carries one.
+  std::optional<std::int64_t> ptsTick;
+  // The decode tick of the latest header with a timestamp (the PTS when no
+  // DTS is present). Not reset per unit: a unit without a timestamp keeps the
+  // previous one.
   std::int64_t dtsTick{0};
   std::uint32_t rawBytes{0};
   std::uint32_t probeFilled{0};
@@ -111,13 +119,7 @@ struct StreamWalk {
   std::uint16_t pid{kNullPid};
   MediaCodec codec{MediaCodec::Unknown};
   bool video{false};
-  bool collecting{false};
-  bool pendingHeader{false};
-  bool hasPts{false};
-  bool hasDts{false};
   bool randomAccess{false};
-  bool discontinuity{false};
-  bool continuityGap{false};
   // Sticky across units, deliberately: it is a property of the STREAM's
   // prologue size, not of any one access unit, and the only consumer is a
   // refusal message that wants to know whether the scan ever ran out of probe
@@ -131,18 +133,15 @@ struct StreamWalk {
     probeFilled = 0;
     headerSkipBytes = 0;
     packetCount = 0;
-    collecting = true;
-    pendingHeader = true;
-    hasPts = false;
-    hasDts = false;
+    phase = Phase::AwaitingHeader;
+    ptsTick.reset();
     randomAccess = false;
-    discontinuity = false;
-    continuityGap = false;
   }
 
+  [[nodiscard]] bool collecting() const noexcept { return phase != Phase::Idle; }
+
   void discardUnit() noexcept {
-    collecting = false;
-    pendingHeader = false;
+    phase = Phase::Idle;
     rawBytes = 0;
     probeFilled = 0;
   }
@@ -167,9 +166,9 @@ struct StreamWalk {
 
   // Attempts to complete the PES header from what the probe holds. Returns
   // false only when the bytes present are positively not a PES header; a
-  // still-incomplete header leaves pendingHeader set.
+  // still-incomplete header stays AwaitingHeader.
   [[nodiscard]] bool tryHeader() noexcept {
-    if (!pendingHeader) {
+    if (phase != Phase::AwaitingHeader) {
       return true;
     }
     PesHeader header{};
@@ -184,19 +183,16 @@ struct StreamWalk {
     headerSkipBytes = header.headerBytes;
     if (header.hasPts) {
       ptsTick = pts.extend(header.pts);
-      hasPts = true;
     }
     if (header.hasDts) {
       dtsTick = dts.extend(header.dts);
-      hasDts = true;
     } else if (header.hasPts) {
       // Without an explicit DTS the decode time IS the presentation time; the
       // unwrapper is fed so its epoch tracks the stream even for streams that
       // only ever carry PTS.
       dtsTick = dts.extend(header.pts);
-      hasDts = false;
     }
-    pendingHeader = false;
+    phase = Phase::Collecting;
     return true;
   }
 };
@@ -712,7 +708,7 @@ namespace {
 [[nodiscard]] std::optional<MpegTsCompressedSample>
 finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
            std::uint64_t scanEnd) noexcept {
-  if (!walk.collecting || walk.pendingHeader ||
+  if (walk.phase != StreamWalk::Phase::Collecting ||
       walk.rawBytes <= walk.headerSkipBytes) {
     walk.discardUnit();
     return std::nullopt;
@@ -726,12 +722,10 @@ finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
   sample.pid = walk.pid;
   sample.kind = walk.video ? MediaSampleKind::EncodedVideo
                            : MediaSampleKind::EncodedAudio;
-  sample.discontinuity = walk.discontinuity;
-  sample.continuityGap = walk.continuityGap;
 
-  if (walk.hasPts) {
+  if (walk.ptsTick) {
     const std::optional<MediaTime> presentation =
-        rebasedTime(walk.ptsTick, state.originTick);
+        rebasedTime(*walk.ptsTick, state.originTick);
     if (!presentation) {
       walk.discardUnit();
       return std::nullopt;
@@ -828,12 +822,6 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
       }
       return MpegTsCursorEnd{};
     }
-    if (status == WalkStatus::Resynchronized && walk.collecting) {
-      // Bytes were lost inside the unit under construction. Note it on the
-      // sample rather than dropping the unit: a decoder handles a damaged
-      // access unit far better than the pipeline handles a hole.
-      walk.continuityGap = true;
-    }
 
     TsPacketHeader header{};
     if (decodeTsPacket(packet, header) != TsPacketStatus::Ok) {
@@ -843,7 +831,6 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
       continue;
     }
     if (header.transportError) {
-      walk.continuityGap = true;
       continue;
     }
     const ContinuityVerdict verdict = walk.continuity.observe(header);
@@ -852,10 +839,8 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
     }
     if (verdict == ContinuityVerdict::Gap) {
       ++impl_->continuityGaps;
-      walk.continuityGap = true;
     }
     if (verdict == ContinuityVerdict::Discontinuous) {
-      walk.discontinuity = true;
       walk.pts.resynchronize();
       walk.dts.resynchronize();
     }
@@ -873,7 +858,7 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
     // unit-start packet makes the count exact.
     if (header.payloadUnitStart) {
       std::optional<MpegTsCompressedSample> completed;
-      if (walk.collecting) {
+      if (walk.collecting()) {
         completed = finishUnit(state, walk, walk.pid, packetOffset);
       }
       const bool wasRandomAccess = header.randomAccess;
@@ -896,7 +881,7 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
       continue;
     }
 
-    if (!walk.collecting) {
+    if (!walk.collecting()) {
       continue;  // payload before the first unit start: not ours to keep
     }
     if (walk.packetCount >= kMaximumMpegTsAccessUnitPackets) {
@@ -1207,7 +1192,7 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
           }
           // Same unit-start-only rule as readNext; see the note there.
           if (!header.payloadUnitStart) {
-            if (walk.collecting) {
+            if (walk.collecting()) {
               walk.appendPayload(
                   packet.subspan(header.payloadOffset, header.payloadSize));
               if (!walk.tryHeader()) {
@@ -1218,7 +1203,7 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
           }
 
           bool done = false;
-          if (walk.collecting) {
+          if (walk.collecting()) {
             const std::optional<MpegTsCompressedSample> unit =
                 finishUnit(state, walk, walk.pid, packetOffset);
             const auto unitTicks =
@@ -1684,7 +1669,7 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
       continue;
     }
     if (header.payloadUnitStart) {
-      if (walk->collecting && !walk->pendingHeader &&
+      if (walk->phase == StreamWalk::Phase::Collecting &&
           walk->rawBytes > walk->headerSkipBytes) {
         const std::size_t length = walk->probeFilled > walk->headerSkipBytes
                                        ? walk->probeFilled -
@@ -1693,12 +1678,12 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
         const std::span<const std::byte> unit(
             walk->probe.data() + walk->headerSkipBytes, length);
         if (walk->video) {
-          if (!facts.hasVideoPts && walk->hasPts) {
-            facts.firstVideoPts = walk->ptsTick;
+          if (!facts.hasVideoPts && walk->ptsTick) {
+            facts.firstVideoPts = *walk->ptsTick;
             facts.hasVideoPts = true;
             facts.firstVideoPacket = walk->firstPacketOffset;
           }
-          if (walk->hasPts &&
+          if (walk->ptsTick &&
               facts.videoDecodeTickCount < kMpegTsTimingUnits) {
             facts.videoDecodeTicks[facts.videoDecodeTickCount] = walk->dtsTick;
             ++facts.videoDecodeTickCount;
@@ -1716,8 +1701,8 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
             }
           }
         } else {
-          if (!facts.hasAudioPts && walk->hasPts) {
-            facts.firstAudioPts = walk->ptsTick;
+          if (!facts.hasAudioPts && walk->ptsTick) {
+            facts.firstAudioPts = *walk->ptsTick;
             facts.hasAudioPts = true;
           }
           if (!facts.hasAudioHeader && unit.size() >= 4) {
@@ -1754,7 +1739,7 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
       }
       walk->beginUnit(packetOffset);
     }
-    if (walk->collecting) {
+    if (walk->collecting()) {
       walk->appendPayload(
           packet.subspan(header.payloadOffset, header.payloadSize));
       if (!walk->tryHeader()) {

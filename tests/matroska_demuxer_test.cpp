@@ -4784,6 +4784,60 @@ void testVariableFrameRateDurationLookahead() {
          "the VFR lookahead keeps cursor reads structural");
 }
 
+// A read cancelled while the lookahead is parsing the successor must not lose
+// the frame it was holding: the cursor resumes with it, exactly as a cancelled
+// read without lookahead resumes at the same Block.
+void testVariableFrameRateLookaheadSurvivesCancellation() {
+  FixtureSpec spec;
+  spec.videoVariableFrameRate = true;
+  spec.videoDefaultDuration = false;
+  spec.includeAudioTrack = false;
+  spec.includeSubtitleTrack = false;
+  const std::int64_t ticks[] = {0,   33,  100,  133,  200,
+                                500, 533, 600,  633,  700,
+                                1000, 1033, 1100, 1133, 1200};
+  bool sawCancellation = false;
+  for (std::size_t at = 1; at <= 64; ++at) {
+    const PreparedFixture prepared = prepareFixture(spec);
+    if (prepared.outcome.asset == nullptr) {
+      expect(false, "the VFR fixture prepares");
+      return;
+    }
+    const MatroskaPlanOutcome plan = prepared.asset().planGeneration(
+        MediaTime{0, 1}, MediaSeekMode::KeyFrame);
+    auto cursor =
+        plan.plan ? prepared.asset().makeVideoCursor(*plan.plan) : nullptr;
+    if (cursor == nullptr) {
+      expect(false, "the VFR fixture makes a video cursor");
+      return;
+    }
+    std::atomic<bool> cancelled{false};
+    prepared.reader->cancellation = &cancelled;
+    prepared.reader->cancelAtRead = prepared.reader->reads + at;
+    std::vector<MediaTime> presented;
+    MatroskaCursorReadResult result =
+        cursor->readNext({&cancelled, atomicCancellation});
+    prepared.reader->cancelAtRead = 0;
+    prepared.reader->cancellation = nullptr;
+    sawCancellation = sawCancellation ||
+                      std::holds_alternative<MatroskaCursorCancelled>(result);
+    for (;;) {
+      if (const MatroskaCompressedSample* sample = sampleOf(result)) {
+        presented.push_back(sample->presentationTime);
+      } else if (!std::holds_alternative<MatroskaCursorCancelled>(result)) {
+        break;
+      }
+      result = cursor->readNext();
+    }
+    bool complete = presented.size() == std::size(ticks);
+    for (std::size_t index = 0; complete && index < presented.size(); ++index)
+      complete = presented[index] == tickTime(ticks[index]);
+    expect(complete,
+           "a cancelled lookahead neither skips nor repeats a VFR frame");
+  }
+  expect(sawCancellation, "the sweep cancels at least one cursor read");
+}
+
 int main() {
   {
     constexpr std::array<std::uint8_t,52> avcc{0x01,0xf4,0x00,0x1e,0xff,0xe1,0x00,0x1e,0x67,0xf4,0x00,0x1e,0x91,0x9b,0x28,0x14,0x05,0xff,0x13,0x80,0xb5,0x01,0x01,0x01,0x40,0x00,0x00,0x03,0x00,0x40,0x00,0x00,0x0c,0x83,0xc5,0x8b,0x65,0x80,0x01,0x00,0x07,0x68,0xeb,0xe0,0x43,0x11,0x21,0x10,0xff,0xf8,0xf8,0x00};
@@ -4845,6 +4899,7 @@ int main() {
   }
   testCompleteDocumentPreparation();
   testVariableFrameRateDurationLookahead();
+  testVariableFrameRateLookaheadSurvivesCancellation();
   testContainerColourMapping();
   testHdrMetadataPresenceIsModelledNotRefused();
   testAdmittedPreparationDoesNotWalkClusterTails();

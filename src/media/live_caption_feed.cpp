@@ -35,30 +35,40 @@ void LiveCaptionFeed::notePresentedPicture(
 
 void LiveCaptionFeed::applyUpdatesLocked() {
   for (const Cea608Update& update : decoder_.takeUpdates()) {
-    if (openCue_) {
-      if (update.timeNanoseconds > openCueStart_) {
-        if (cues_.size() >= kMaximumLiveCues) {
-          cues_.erase(cues_.begin());
-        }
-        cues_.push_back(subtitles::Cue{openCueStart_, update.timeNanoseconds,
-                                       openCueText_});
-      }
-      openCue_ = false;
-    }
-    if (!update.text.empty()) {
-      openCue_ = true;
-      openCueStart_ = update.timeNanoseconds;
-      openCueText_ = update.text;
-    }
+    if (open_ && update.timeNanoseconds > open_->start)
+      closeCueLocked(subtitles::Cue{open_->start, update.timeNanoseconds,
+                                    std::move(open_->text)});
+    open_.reset();
+    if (!update.text.empty()) open_ = OpenCue{update.timeNanoseconds, update.text};
     ++revision_;
   }
+}
+
+void LiveCaptionFeed::closeCueLocked(subtitles::Cue cue) {
+  const auto at = std::upper_bound(
+      cues_.begin(), cues_.end(), cue.startNanoseconds,
+      [](std::int64_t t, const subtitles::Cue& c) {
+        return t < c.startNanoseconds;
+      });
+  // Already read before a backward seek.
+  for (auto same = at; same != cues_.begin() &&
+                       (same - 1)->startNanoseconds == cue.startNanoseconds;
+       --same) {
+    const subtitles::Cue& existing = *(same - 1);
+    if (existing.endNanoseconds == cue.endNanoseconds &&
+        existing.text == cue.text)
+      return;
+  }
+  const auto index = at - cues_.begin();
+  cues_.insert(cues_.begin() + index, std::move(cue));
+  if (cues_.size() > kMaximumLiveCues) cues_.erase(cues_.begin());
 }
 
 void LiveCaptionFeed::resetForSeek() {
   std::lock_guard lock(mutex_);
   stash_.clear();
   decoder_.reset();
-  openCue_ = false;
+  open_.reset();
   ++revision_;
 }
 
@@ -67,7 +77,7 @@ void LiveCaptionFeed::clear() {
   stash_.clear();
   decoder_ = Cea608Decoder{};
   cues_.clear();
-  openCue_ = false;
+  open_.reset();
   ++revision_;
 }
 
@@ -79,8 +89,8 @@ bool LiveCaptionFeed::sawCaptions() const {
 std::string LiveCaptionFeed::textAt(
     std::int64_t presentationNanoseconds) const {
   std::lock_guard lock(mutex_);
-  if (openCue_ && presentationNanoseconds >= openCueStart_) {
-    return openCueText_;
+  if (open_ && presentationNanoseconds >= open_->start) {
+    return open_->text;
   }
   const auto it = std::upper_bound(
       cues_.begin(), cues_.end(), presentationNanoseconds,

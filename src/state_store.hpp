@@ -26,6 +26,16 @@ enum class AppearanceTheme {
   System = 2,
 };
 
+// A remembered resume position. `used` orders entries by recency (larger is
+// newer) so a full cache evicts the least recently remembered entry; the file
+// stores entries oldest first and load() renumbers them in that order.
+struct ResumePosition {
+  double seconds = 0.0;
+  std::uint64_t used = 0;
+
+  bool operator==(const ResumePosition&) const = default;
+};
+
 struct PersistentState {
   int volume = 100;
   int performance_profile = 1;
@@ -59,7 +69,7 @@ struct PersistentState {
   // 100 disables amplification entirely and 400 is the native gain stage's
   // own kMaximumGain (+12 dB), which nothing may exceed.
   int maximum_volume = 200;
-  std::unordered_map<std::string, double> positions;
+  std::unordered_map<std::string, ResumePosition> positions;
 
   bool operator==(const PersistentState&) const = default;
 };
@@ -168,6 +178,7 @@ class StateStore {
   PersistentState state_;
   mutable PersistentState persisted_state_;
   mutable bool rewrite_required_ = false;
+  std::uint64_t next_use_ = 1;
 };
 
 }  // namespace wam

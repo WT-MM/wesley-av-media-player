@@ -59,7 +59,8 @@ class CaptionBackend {
 public:
   virtual ~CaptionBackend() = default;
   virtual CaptionCapabilities capabilities(const std::string& locale) = 0;
-  virtual std::future<CaptionBackendResult> prepare(bool consent) = 0;
+  virtual std::future<CaptionBackendResult> prepare(bool consent,
+                                                    CaptionBackendEvents events) = 0;
   virtual std::future<CaptionBackendResult> start(
       const std::filesystem::path& pcm16kMonoWav,
       const std::filesystem::path& stagingSrt, CaptionBackendEvents events) = 0;

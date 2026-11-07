@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -68,14 +69,19 @@ class LiveCaptionFeed {
 
  private:
   void applyUpdatesLocked();
+  void closeCueLocked(subtitles::Cue cue);
 
   mutable std::mutex mutex_;
   Cea608Decoder decoder_;
   std::map<std::int64_t, std::vector<CcTriplet>> stash_;
+  // Closed cues, ordered by start. A seek back re-reads cues already here.
   std::vector<subtitles::Cue> cues_;
-  bool openCue_{false};
-  std::int64_t openCueStart_{0};
-  std::string openCueText_;
+  // The caption on screen now; its end is not known yet.
+  struct OpenCue {
+    std::int64_t start;
+    std::string text;
+  };
+  std::optional<OpenCue> open_;
   std::uint64_t revision_{0};
   std::vector<CcTriplet> scratch_;
 };

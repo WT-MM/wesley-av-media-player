@@ -200,7 +200,7 @@ wam::CaptionRequest requestFor(const fs::path &directory,
 void waitForStage(wam::CaptionService &service, wam::CaptionStage stage) {
   if (!waitUntil([&] {
         const auto status = service.status();
-        return status.stage == stage || status.finished;
+        return status.stage == stage || status.finished();
       }, 3s))
     throw std::runtime_error("caption service did not reach expected stage");
 }
@@ -314,7 +314,7 @@ int main(int argc, char **argv) {
       wam::CaptionService service;
       request.live_segments = [&](auto segments) {
         offMain &= std::this_thread::get_id() != caller;
-        expect(service.transcribing(),"segment must arrive during backend transcription");
+        expect(service.status().stage == wam::CaptionStage::Transcribing,"segment must arrive during backend transcription");
         beforeCommit |= !fs::exists(request.output_srt);
         delivered = std::move(segments);
       };
@@ -344,7 +344,7 @@ int main(int argc, char **argv) {
       const auto status = service.status();
       expect(status.stage == wam::CaptionStage::Completed,
             "valid caption pipeline should complete");
-      expect(status.succeeded && status.finished && !status.running,
+      expect(status.succeeded() && status.finished() && !status.running(),
             "successful status flags are inconsistent");
       expect(status.progress == 1.0f, "successful progress must reach one");
       expect(status.output_srt.extension() == ".srt",
@@ -368,7 +368,7 @@ int main(int argc, char **argv) {
       expect(service.start(request), "no-overwrite request should start");
       service.wait();
       const auto status = service.status();
-      expect(status.stage == wam::CaptionStage::Completed && status.succeeded,
+      expect(status.stage == wam::CaptionStage::Completed && status.succeeded(),
             "no-overwrite request should commit to a free destination");
       expect(readFile(request.output_srt).find("Hello from WAM") !=
                 std::string::npos,
@@ -388,7 +388,7 @@ int main(int argc, char **argv) {
             "existing no-overwrite request should validate asynchronously");
       service.wait();
       const auto status = service.status();
-      expect(status.stage == wam::CaptionStage::Failed && !status.succeeded,
+      expect(status.stage == wam::CaptionStage::Failed && !status.succeeded(),
             "no-overwrite request must fail for an existing destination");
       expect(readFile(request.output_srt) == "keep existing captions",
             "no-overwrite request modified an existing destination");
@@ -405,7 +405,7 @@ int main(int argc, char **argv) {
       expect(service.start(request), "empty-output request should start");
       service.wait();
       const auto status = service.status();
-      expect(status.stage == wam::CaptionStage::Failed && !status.succeeded,
+      expect(status.stage == wam::CaptionStage::Failed && !status.succeeded(),
             "empty SRT must fail even when whisper exits zero");
       expect(status.error.find("non-empty SRT") != std::string::npos,
             "empty SRT failure should be actionable");
@@ -444,7 +444,7 @@ int main(int argc, char **argv) {
       service.wait();
       const auto elapsed = std::chrono::steady_clock::now() - started;
       const auto status = service.status();
-      expect(status.stage == wam::CaptionStage::Cancelled && status.cancelled,
+      expect(status.stage == wam::CaptionStage::Cancelled && status.cancelled(),
             "cancelled request should have terminal cancelled state");
       expect(elapsed < 2s, "cancelling a caption subprocess took too long");
       expect(readFile(request.output_srt) ==
@@ -463,7 +463,7 @@ int main(int argc, char **argv) {
       service.wait();
       const auto retry_status = service.status();
       expect(retry_status.stage == wam::CaptionStage::Completed &&
-                retry_status.succeeded,
+                retry_status.succeeded(),
             "caption reuse must clear the previous cancellation request");
       expect(readFile(retry.output_srt).find("Hello from WAM") !=
                 std::string::npos,
@@ -501,7 +501,7 @@ int main(int argc, char **argv) {
       if (!descendant_gone)
         kill(descendant, SIGKILL);
 
-      expect(status.stage == wam::CaptionStage::Cancelled && status.cancelled,
+      expect(status.stage == wam::CaptionStage::Cancelled && status.cancelled(),
             "descendant caption request should finish as cancelled");
       expect(descendant_gone,
             "caption cancellation must kill a TERM-ignoring descendant");
@@ -532,7 +532,7 @@ int main(int argc, char **argv) {
         expect(service.start(request), "dataless request should validate");
         service.wait();
         const auto status = service.status();
-        expect(status.stage == wam::CaptionStage::Failed && !status.succeeded,
+        expect(status.stage == wam::CaptionStage::Failed && !status.succeeded(),
               "dataless media must fail before extraction");
         expect(status.error.find("not downloaded") != std::string::npos,
               "dataless error should tell the user to download the media");
