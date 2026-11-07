@@ -53,10 +53,12 @@ struct Retirement {
   RetireStage stage{RetireStage::StopOutput};
 };
 
-enum class TerminalOverride : std::uint8_t {
-  None,
-  Stop,
-  Cancel,
+// A terminal stop or cancel that superseded a reversible seek flush, for the
+// generation it was issued against. Only that terminal may be retried.
+struct TerminalOverride {
+  enum class Kind : std::uint8_t { Stop, Cancel };
+  Kind kind{Kind::Stop};
+  media::MediaGeneration generation{0};
 };
 
 // Pause-driven idling of the output AudioUnit. Stopping is not instantaneous:
@@ -521,8 +523,7 @@ struct NativeAudioSessionControl final {
   bool clockActivated{false};
   std::optional<Retirement> retirement;
   bool closeDone{false};
-  TerminalOverride terminalOverride{TerminalOverride::None};
-  media::MediaGeneration terminalOverrideGeneration{0};
+  std::optional<TerminalOverride> terminalOverride;
 #if defined(WAM_NATIVE_TEST_SEAMS)
   bool forceCloseQuiescing{false};
 #endif
@@ -1036,7 +1037,7 @@ enum class DeviceReconcile : std::uint8_t {
   // retiring/closing session has no interest in resuming a device.
   if (control.retirement.has_value() || control.closeDone ||
       control.lifecycle != SessionLifecycle::None ||
-      control.terminalOverride != TerminalOverride::None ||
+      control.terminalOverride.has_value() ||
       (control.state != NativeAudioSessionState::Started &&
        control.state != NativeAudioSessionState::Ready)) {
     control.deviceChangeResumePending = false;
@@ -1251,8 +1252,7 @@ beginRetire(NativeAudioSessionControl& control,
   control.lifecycle = SessionLifecycle::None;
   control.lifecycleRetired = 0;
   control.lifecycleTarget = 0;
-  control.terminalOverride = TerminalOverride::None;
-  control.terminalOverrideGeneration = 0;
+  control.terminalOverride.reset();
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
   control.outputSuspension = OutputSuspension::None;
@@ -1902,7 +1902,7 @@ NativeAudioSession::suspendOutputForPause() noexcept {
   if (control.output == nullptr || !control.requestedPaused ||
       control.retirement.has_value() ||
       control.lifecycle != SessionLifecycle::None ||
-      control.terminalOverride != TerminalOverride::None ||
+      control.terminalOverride.has_value() ||
       control.state != NativeAudioSessionState::Started) {
     return NativeAudioSessionProgress::Invalid;
   }
@@ -1992,8 +1992,9 @@ NativeAudioSessionProgress NativeAudioSession::stop() noexcept {
   if (control.retirement.has_value()) {
     return NativeAudioSessionProgress::Invalid;
   }
-  if (control.terminalOverride == TerminalOverride::Stop) {
-    if (control.terminalOverrideGeneration != control.generation) {
+  if (control.terminalOverride &&
+      control.terminalOverride->kind == TerminalOverride::Kind::Stop) {
+    if (control.terminalOverride->generation != control.generation) {
       return NativeAudioSessionProgress::Invalid;
     }
     if (control.closeDone || control.state == NativeAudioSessionState::Closed) {
@@ -2001,10 +2002,11 @@ NativeAudioSessionProgress NativeAudioSession::stop() noexcept {
     }
     return sessionProgress(close());
   }
-  if (control.lifecycle == SessionLifecycle::Flush ||
-      control.state == NativeAudioSessionState::Flushing) {
-    control.terminalOverride = TerminalOverride::Stop;
-    control.terminalOverrideGeneration = control.generation;
+  // state Flushing is only ever written together with lifecycle Flush, and
+  // latch() may overwrite it with Failed, so the lifecycle is the fact.
+  if (control.lifecycle == SessionLifecycle::Flush) {
+    control.terminalOverride =
+        TerminalOverride{TerminalOverride::Kind::Stop, control.generation};
     return sessionProgress(close());
   }
   if (control.state == NativeAudioSessionState::Cancelled) {
@@ -2173,19 +2175,19 @@ media::NativeMediaConsumerProgress NativeAudioSession::cancel(
   if (generation != control.generation) {
     return media::NativeMediaConsumerProgress::StaleGeneration;
   }
-  if (control.terminalOverride == TerminalOverride::Cancel) {
-    if (generation != control.terminalOverrideGeneration) {
+  if (control.terminalOverride &&
+      control.terminalOverride->kind == TerminalOverride::Kind::Cancel) {
+    if (generation != control.terminalOverride->generation) {
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
     return close();
   }
-  if (control.lifecycle == SessionLifecycle::Flush ||
-      control.state == NativeAudioSessionState::Flushing) {
+  if (control.lifecycle == SessionLifecycle::Flush) {
     // A terminal cancellation supersedes a reversible seek flush. The graph
     // may already be split across retired/target generations, so the only
     // exact result is fail-closed teardown, never resuming Reset/Activate.
-    control.terminalOverride = TerminalOverride::Cancel;
-    control.terminalOverrideGeneration = generation;
+    control.terminalOverride =
+        TerminalOverride{TerminalOverride::Kind::Cancel, generation};
     return close();
   }
   if (control.state == NativeAudioSessionState::Cancelled &&
