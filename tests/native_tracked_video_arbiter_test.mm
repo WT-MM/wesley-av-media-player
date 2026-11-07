@@ -53,19 +53,6 @@ void expect(bool condition, const char* message) {
   std::cerr << "FAIL: " << message << '\n';
 }
 
-[[nodiscard]] bool sameTime(CMTime lhs, CMTime rhs) noexcept {
-  return lhs.value == rhs.value && lhs.timescale == rhs.timescale &&
-         lhs.flags == rhs.flags && lhs.epoch == rhs.epoch;
-}
-
-[[nodiscard]] bool sameTiming(const FrameTiming& lhs,
-                              const FrameTiming& rhs) noexcept {
-  return lhs.generation == rhs.generation &&
-         lhs.keyFrame == rhs.keyFrame &&
-         sameTime(lhs.presentationTime, rhs.presentationTime) &&
-         sameTime(lhs.duration, rhs.duration);
-}
-
 FrameLease makeFrame(std::uint64_t generation, std::int64_t value) {
   CVPixelBufferRef pixelBuffer = nullptr;
   const CVReturn created = CVPixelBufferCreate(
@@ -87,8 +74,16 @@ FrameLease makeFrame(std::uint64_t generation, std::int64_t value) {
 class FakeTrackedOutput final : public NativeTrackedVideoOutput {
  public:
   wam::media::MediaDisplaySize displaySize;
-  bool setPresentationDisplaySize(wam::media::MediaDisplaySize size) noexcept override {
-    displaySize = size; return true;
+  int quarterTurn{0};
+  wam::macos::NativePresentationCapabilities presentationCapabilities()
+      const noexcept override {
+    return {.rationalDisplaySize = true, .quarterTurns = true};
+  }
+  bool applyPresentationGeometry(wam::media::MediaDisplaySize size,
+                                 int quarterTurnDegrees) noexcept override {
+    displaySize = size;
+    quarterTurn = quarterTurnDegrees;
+    return true;
   }
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
   [[nodiscard]] wam::macos::late_display_trace::Snapshot diagnosticDisplayPhase() const noexcept override {
@@ -347,7 +342,7 @@ void previewEventNeverAppearsAsMain() {
   expect(event && event->kind ==
                       NativeTrackedVideoPreviewEventKind::FrameDrawn &&
              event->frameSequence == submitted.sequence &&
-             event->generation == 7 && sameTiming(event->timing, timing),
+             event->generation == 7 && sameFrameTiming(event->timing, timing),
          "preview receives its exact translated draw fact");
   expect(!fixture.main->takeEvent() &&
              fixture.main->capacity(7) ==
@@ -372,7 +367,7 @@ void mainEventNeverAppearsAsPreview() {
   expect(event && event->kind == NativeTrackedVideoEventKind::FrameDrawn &&
              event->frameSequence == NativeTrackedFrameSequence{41} &&
              event->eventSequence == 1 &&
-             sameTiming(event->timing, timing),
+             sameFrameTiming(event->timing, timing),
          "main receives exact caller identity in its own event sequence domain");
   expect(!fixture.preview->takeEvent(),
          "main draw never enters typed preview lane");
@@ -481,9 +476,11 @@ int main() {
     auto output = std::make_shared<FakeTrackedOutput>(7);
     auto arbiter = NativeTrackedVideoArbiter::create(output);
     const wam::media::MediaDisplaySize exact{{615240,307},{1080,1}};
-    expect(arbiter && arbiter->mainOutput()->setPresentationDisplaySize(exact) &&
-               output->displaySize == exact,
-           "the arbiter forwards the exact rational geometry to the actual presenter");
+    expect(arbiter && arbiter->mainOutput()->applyPresentationGeometry(exact, 90) &&
+               output->displaySize == exact && output->quarterTurn == 90 &&
+               arbiter->mainOutput()->presentationCapabilities().quarterTurns,
+           "the arbiter forwards capabilities and the exact rational geometry "
+           "to the actual presenter");
   }
 
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY

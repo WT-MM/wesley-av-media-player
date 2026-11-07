@@ -112,10 +112,11 @@ struct MediaCodecFacts {
 
   // True where the scrub-preview lane can decode this codec. A preview decodes
   // from a key frame forward and shows the first frame it gets, so what it
-  // needs is a codec whose VideoToolbox decoder is available unconditionally on
-  // this machine. AV1, VP9, VP8 and ProRes 4444 are the false video rows: AV1
-  // and VP9 are gated on a decode block the preview lane has no fallback for,
-  // and VP8's software stage is not wired into that lane at all.
+  // needs is a codec whose decoder is available unconditionally on this
+  // machine; the lane selects decoders exactly as main playback does, so VP8
+  // previews through the software stage. AV1, VP9 and ProRes 4444 are the false
+  // video rows: AV1 and VP9 are gated on a decode block the preview lane has no
+  // fallback for.
   //
   // The preview SOURCE and the preview LANE both read this field. A codec one
   // admits and the other refuses turns a scrub into a latched failure.
@@ -276,7 +277,8 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
     {.codec = MediaCodec::Vp8, .kind = MediaCodecKind::Video,
      .coreMediaType = 0x76703038U /* 'vp08' */,
      .configurationKind = MediaCodecConfigurationKind::VpcC,
-     .carriesConfigurationRecord = true, .statesCodedSampleFormat = true},
+     .carriesConfigurationRecord = true, .statesCodedSampleFormat = true,
+     .previewScrubAdmitted = true},
     // AC-3 and E-AC-3 state a 256-frame CodecDelay -- the decoder delay
     // Apple's decoder also swallows -- so access unit 0 presents 256 frames
     // early.

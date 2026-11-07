@@ -125,21 +125,6 @@ void pumpFor(int durationMs) {
   }
 }
 
-// Exact CMTime identity, not CMTimeCompare equivalence. The contract's timing
-// echo claim is bit-for-bit restatement, so a rescaled-but-equal time is a
-// failure, not a pass.
-[[nodiscard]] bool sameCMTime(CMTime left, CMTime right) noexcept {
-  return left.value == right.value && left.timescale == right.timescale &&
-         left.flags == right.flags && left.epoch == right.epoch;
-}
-
-[[nodiscard]] bool sameTiming(const FrameTiming& left,
-                              const FrameTiming& right) noexcept {
-  return sameCMTime(left.presentationTime, right.presentationTime) &&
-         sameCMTime(left.duration, right.duration) &&
-         left.generation == right.generation && left.keyFrame == right.keyFrame;
-}
-
 CVPixelBufferRef createSolidNv12(std::uint8_t luma) {
   CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
       kCFAllocatorDefault, 2, &kCFTypeDictionaryKeyCallBacks,
@@ -227,6 +212,14 @@ std::shared_ptr<NativeLayerVideoOutput> createDetached(
   return output;
 }
 
+// Arms the first generation the way production does: a flush from 0.
+void armFirstGeneration(NativeLayerVideoOutput& output) {
+  WAM_CHECK(spinUntil([&] {
+    return output.flushProgress(0, 1) ==
+           NativeTrackedVideoOutputProgress::Done;
+  }));
+}
+
 // Terminal teardown shared by every case, so no test can leave the
 // process-global presentation flag or the surface budget dirty for the next
 // one. finalGeneration must be strictly newer than the accepted generation.
@@ -273,7 +266,7 @@ void verifyDetachedConstructionAndActivation() {
   WAM_CHECK(initialHealth.metricsLoads == 0);
   WAM_CHECK(initialHealth.peakRetainedLeases == 0);
 
-  // Zero is never a generation, and nothing is accepted before startGeneration.
+  // Zero is never a generation, and nothing is accepted before the first arm.
   WAM_CHECK(output->capacity(0) ==
             NativeTrackedVideoCapacity::StaleGeneration);
   WAM_CHECK(output->capacity(1) ==
@@ -288,11 +281,14 @@ void verifyDetachedConstructionAndActivation() {
   }
 
   std::string error;
-  WAM_CHECK(!output->startGeneration(0, &error));
-  WAM_CHECK(!error.empty());
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
-  // Repeating a generation is a controller defect, not an idempotent no-op.
-  WAM_CHECK(!output->startGeneration(1, &error));
+  WAM_CHECK(output->flushProgress(0, 0) ==
+            NativeTrackedVideoOutputProgress::Failed);
+  armFirstGeneration(*output);
+  // The arm is repeatable for its exact pair only.
+  WAM_CHECK(output->flushProgress(0, 1) ==
+            NativeTrackedVideoOutputProgress::Done);
+  WAM_CHECK(output->flushProgress(0, 2) ==
+            NativeTrackedVideoOutputProgress::StaleGeneration);
   WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
   WAM_CHECK(output->capacity(2) ==
             NativeTrackedVideoCapacity::StaleGeneration);
@@ -311,12 +307,12 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
   WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   const FrameTiming firstTiming = makeTiming(1, 0);
   auto first = makeFrame(1, 0, 160);
-  WAM_CHECK(sameTiming(first.timing(), firstTiming));
+  WAM_CHECK(sameFrameTiming(first.timing(), firstTiming));
   WAM_CHECK(output->submit(first, NativeTrackedFrameSequence{1}, &error) ==
             NativeTrackedVideoSubmitStatus::Accepted);
   WAM_CHECK(error.empty());
@@ -350,7 +346,7 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   WAM_CHECK(drawn->frameSequence.value == 1);
   WAM_CHECK(drawn->generation == 1);
   // Bit-for-bit, not merely CMTimeCompare-equal.
-  WAM_CHECK(sameTiming(drawn->timing, firstTiming));
+  WAM_CHECK(sameFrameTiming(drawn->timing, firstTiming));
   WAM_CHECK(CMTimeCompare(drawn->timing.presentationTime,
                           first.timing().presentationTime) == 0);
 
@@ -361,9 +357,10 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   WAM_CHECK(!consumed.eventPending);
   WAM_CHECK(consumed.drawnFrames == 1);
   WAM_CHECK(consumed.supersededFrames == 0);
-  // The admitted lease outlives its own terminal event by design; it is retired
-  // one enqueue later, while the renderer may still be displaying it.
-  WAM_CHECK(consumed.retainedFrames == 1);
+  // The capacity credit returns with the terminal event. The lease itself
+  // outlives it by design and is retired one enqueue later, while the renderer
+  // may still be displaying it (case 8 proves that against the budget).
+  WAM_CHECK(consumed.retainedFrames == 0);
   WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   const FrameTiming secondTiming = makeTiming(1, 1);
@@ -377,9 +374,9 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   // identity is echoed exactly as the caller minted it.
   WAM_CHECK(secondDrawn->eventSequence == drawn->eventSequence + 1);
   WAM_CHECK(secondDrawn->frameSequence.value == 2);
-  WAM_CHECK(sameTiming(secondDrawn->timing, secondTiming));
-  WAM_CHECK(!sameCMTime(secondTiming.presentationTime,
-                        firstTiming.presentationTime));
+  WAM_CHECK(sameFrameTiming(secondDrawn->timing, secondTiming));
+  WAM_CHECK(!sameExactCMTime(secondTiming.presentationTime,
+                             firstTiming.presentationTime));
 
   // A malformed submission is refused without disturbing the admission state.
   {
@@ -415,7 +412,7 @@ void verifySequenceRegressionIsFatalAndStillCloses() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   {
     auto first = makeFrame(1, 0, 150);
@@ -445,7 +442,6 @@ void verifySequenceRegressionIsFatalAndStillCloses() {
   }
   WAM_CHECK(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Failed);
-  WAM_CHECK(!output->startGeneration(2, &error));
 
   // Terminal teardown is the one lifecycle operation a latched failure must not
   // block; otherwise a failed route could never be released.
@@ -461,7 +457,7 @@ void verifyFlushProgressRetiresGeneration() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   {
     auto admitted = makeFrame(1, 0, 190);
@@ -524,7 +520,7 @@ void verifyFlushProgressRetiresGeneration() {
   WAM_CHECK(terminal->kind == NativeTrackedVideoEventKind::FrameDrawn);
   WAM_CHECK(terminal->frameSequence.value == 1);
   WAM_CHECK(terminal->generation == 1);
-  WAM_CHECK(sameTiming(terminal->timing, makeTiming(1, 0)));
+  WAM_CHECK(sameFrameTiming(terminal->timing, makeTiming(1, 0)));
 
   WAM_CHECK(spinUntil([&] {
     return output->flushProgress(1, 2) ==
@@ -538,7 +534,7 @@ void verifyFlushProgressRetiresGeneration() {
   // are released rather than waiting for a successor enqueue.
   WAM_CHECK(flushed.retainedFrames == 0);
   WAM_CHECK(!flushed.fatal);
-  WAM_CHECK(output->health().flushes == 1);
+  WAM_CHECK(output->health().flushes == 2);
   WAM_CHECK(wakes.load(std::memory_order_acquire) > wakesBeforeFlush);
 
   // Done is repeatable for the exact pair, and only for that pair.
@@ -586,7 +582,7 @@ void verifyCloseProgressIsTerminal() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   // Zero is never a final generation, and a final generation must be strictly
   // newer than the accepted one.
@@ -624,7 +620,8 @@ void verifyCloseProgressIsTerminal() {
   }
   WAM_CHECK(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Failed);
-  WAM_CHECK(!output->startGeneration(3, &error));
+  WAM_CHECK(output->flushProgress(2, 3) ==
+            NativeTrackedVideoOutputProgress::Failed);
   // Close is repeatable for one exact final generation, and only that one.
   WAM_CHECK(output->closeProgress(3) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
@@ -641,7 +638,7 @@ void verifyCloseProgressIsTerminal() {
   WAM_CHECK(pending->kind == NativeTrackedVideoEventKind::FrameDrawn);
   WAM_CHECK(pending->frameSequence.value == 1);
   WAM_CHECK(pending->generation == 1);
-  WAM_CHECK(sameTiming(pending->timing, makeTiming(1, 0)));
+  WAM_CHECK(sameFrameTiming(pending->timing, makeTiming(1, 0)));
 
   WAM_CHECK(spinUntil([&] {
     return output->closeProgress(2) == NativeTrackedVideoOutputProgress::Done;
@@ -717,7 +714,7 @@ void verifyCloseSupersedesPendingFlush() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   {
     auto admitted = makeFrame(1, 0, 210);
@@ -759,14 +756,13 @@ void verifyCloseSupersedesPendingFlush() {
 // The presenter holds at most kRetainedFrameLeaseCeiling leases in steady
 // state, and those leases are really released, not merely uncounted. The
 // surface budget is the independent witness: it charges one unique IOSurface
-// per live lease process-wide, so its count is a fact about retention that
-// facts().retainedFrames cannot fake.
+// per live lease process-wide, so its count is the fact about retention.
 void verifyRetainedLeaseCeilingAndRelease() {
   const auto baseline = NativeSurfaceBudget::stats();
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   std::uint64_t previousEventSequence = 0;
   constexpr std::uint64_t kFrames = 5;
@@ -795,14 +791,13 @@ void verifyRetainedLeaseCeilingAndRelease() {
     const auto facts = output->facts();
     WAM_CHECK(facts.submittedFrames == index);
     WAM_CHECK(facts.drawnFrames + facts.supersededFrames == index);
-    // One lease for the admitted frame, one for the predecessor the renderer
+    // One lease for the latest frame, one for the predecessor the renderer
     // may still be displaying. Never a third.
-    WAM_CHECK(facts.retainedFrames <=
-              NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
-    WAM_CHECK(facts.retainedFrames == (index == 1 ? std::size_t{1}
-                                                  : std::size_t{2}));
+    const std::size_t leases = index == 1 ? 1U : 2U;
+    WAM_CHECK(leases <= NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
+    WAM_CHECK(facts.retainedFrames == 0);
     WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
-              baseline.currentSurfaces + facts.retainedFrames);
+              baseline.currentSurfaces + leases);
   }
   WAM_CHECK(output->health().peakRetainedLeases ==
             NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
@@ -827,7 +822,7 @@ void verifyRetainedLeaseCeilingAndRelease() {
               NativeTrackedVideoSubmitStatus::Accepted);
   }
   WAM_CHECK(output->takeEvent().has_value());
-  WAM_CHECK(output->facts().retainedFrames == 1);
+  WAM_CHECK(output->facts().retainedFrames == 0);
   WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
             baseline.currentSurfaces + 1);
 
@@ -838,7 +833,6 @@ void verifyRetainedLeaseCeilingAndRelease() {
             baseline.currentSurfaces +
                 NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
 }
-
 
 // A frame that BEGINS before the movie origin but ENDS after it is the frame
 // visible at time zero, and this route must present it.
@@ -860,7 +854,7 @@ void verifyStraddlingFrameIsPresentedAndEchoedExactly() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
   WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   // Ends exactly at the origin: never visible, still refused.

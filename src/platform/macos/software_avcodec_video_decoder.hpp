@@ -1,10 +1,10 @@
 #pragma once
-#include "video_toolbox_decoder.hpp"
+#include "video_decoder_contract.hpp"
 #include <memory>
 namespace wam::macos {
 class SoftwareAvcodecVideoDecoder final {
 public:
-  explicit SoftwareAvcodecVideoDecoder(VideoToolboxDecoderOptions options={});
+  explicit SoftwareAvcodecVideoDecoder(VideoDecoderOptions options={});
   ~SoftwareAvcodecVideoDecoder();
   bool configure(const VideoStreamConfiguration&,DecodedFrameSink&,std::string*);
   VideoDecodeSubmitResult submitCMSampleBuffer(CMSampleBufferRef,std::uint64_t,std::string*);
@@ -16,8 +16,8 @@ public:
   bool resumeAfterPreview() noexcept;
   VideoDecoderRetireProgress retire(std::uint64_t,std::uint64_t) noexcept;
   void close() noexcept;
-  VideoToolboxDecoderStats stats() const noexcept;
-  VideoToolboxDecoderMemoryFacts memoryFacts() const noexcept;
+  VideoDecoderStats stats() const noexcept;
+  VideoDecoderMemoryFacts memoryFacts() const noexcept;
   std::optional<std::string> takeLastError();
 private:
   struct Impl;

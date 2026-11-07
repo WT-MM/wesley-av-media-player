@@ -112,9 +112,9 @@ int main(int argc,char** argv) {
   sink.reference.resize(static_cast<std::size_t>(rawSize));raw.seekg(0);raw.read(reinterpret_cast<char*>(sink.reference.data()),rawSize);CHECK(raw.good());
   TestDecoder decoder{true};
   VideoStreamConfiguration config;config.codec=asp?'mp4v':vp9?'vp09':'avc1';config.codedSize={320,180};config.codecConfiguration=extra;config.generation=1;
-  const auto plan=nativeVideoDecodePlan(config,true,true,false);
+  const auto plan=nativeVideoDecodePlan(config,true,false);
   CHECK(plan.implementation==wam::media::DecodeImplementation::Libavcodec);
-  const auto hardware=nativeVideoDecodePlan(config,true,true,true);
+  const auto hardware=nativeVideoDecodePlan(config,true,true);
   if (!asp) CHECK(hardware.implementation==wam::media::DecodeImplementation::VideoToolboxHardware);
   std::string error;
   if (!decoder.configure(config,sink,&error)) { std::fprintf(stderr,"configure: %s\n",error.c_str()); CHECK(false); }
@@ -142,6 +142,8 @@ int main(int argc,char** argv) {
     }
     sink.blocked=false;
     CHECK(decoder.beginEndOfStream(generation,&error)!=VideoDecodeDrainProgress::Failed);
+    // Idempotent: a repeated begin reports progress without restarting EOS.
+    CHECK(decoder.beginEndOfStream(generation,&error)!=VideoDecodeDrainProgress::Failed);
     while(!sink.ended) {
       CHECK(std::chrono::steady_clock::now()<deadline);
       if(decoder.drainEndOfStream(generation,&error)==VideoDecodeDrainProgress::Failed) {std::fprintf(stderr,"%s\n",error.c_str());CHECK(false);}
@@ -151,5 +153,7 @@ int main(int argc,char** argv) {
     sink.blocked=true;
   }
   CHECK(decoder.retire(2,3)==VideoDecoderRetireProgress::Done);
+  CHECK(decoder.retire(2,3)==VideoDecoderRetireProgress::Done);
+  CHECK(decoder.retire(2,4)==VideoDecoderRetireProgress::StaleGeneration);
   std::puts("video adapter packet/EOS/flush/backpressure and surface format passed");
 }

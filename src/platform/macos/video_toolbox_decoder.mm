@@ -75,17 +75,12 @@ std::string statusError(const char *operation, OSStatus status) {
          std::to_string(status);
 }
 
-// The decoder asks one question of a parameter set -- the presentation-reorder
-// depth -- and for AVC and HEVC alike the neutral parser answers it together
-// with the authority behind the answer, so no parameter-set reader lives
-// here. (HEVC always states sps_max_num_reorder_pics, so its depth is always
-// Declared; the parser's inferred flag stays false for it.) Colour is
-// admitted at its widest: it is the source's question, settled before any
-// stream reaches this decoder under limits at least this strict. A record the
-// parser refuses here (P3 primaries) is refused by the AVFoundation source
-// before any decoder sees it.
+// Every per-codec question about a configuration record (reorder depth, coded
+// depth, chroma) is answered by the neutral parser, so no record reader lives
+// here. Colour is admitted at its widest: it is the source's question, settled
+// before any stream reaches this decoder under limits at least this strict.
 [[nodiscard]] media::VideoCodecConfigurationLimits
-reorderDepthLimits() noexcept {
+recordLimits() noexcept {
   media::VideoCodecConfigurationLimits limits;
   limits.admitHighDynamicRangeColor = true;
   limits.admitHardwareH264Profiles = true;
@@ -95,67 +90,41 @@ reorderDepthLimits() noexcept {
   return limits;
 }
 
-std::optional<CodecReorderDepth>
-recordCodecReorderDepth(media::MediaCodec codec,
-                        media::MediaCodecConfigurationKind kind,
-                        std::span<const std::byte> record) {
-  const auto inspection = media::inspectVideoCodecConfiguration(
-      codec, kind, record, reorderDepthLimits());
+[[nodiscard]] constexpr bool
+recordParsed(media::MediaCodecConfigurationKind kind) noexcept {
+  return kind == media::MediaCodecConfigurationKind::AvcC ||
+         kind == media::MediaCodecConfigurationKind::HvcC ||
+         kind == media::MediaCodecConfigurationKind::Av1C ||
+         kind == media::MediaCodecConfigurationKind::VpcC;
+}
+
+// The parsed record of an AVC, HEVC, AV1 or VP9 stream; empty for a codec
+// without one of those records or for a record the parser refuses.
+[[nodiscard]] std::optional<media::VideoCodecConfigurationFacts>
+parsedRecordFacts(const VideoStreamConfiguration &configuration) noexcept {
+  const media::MediaCodec codec = media::mediaCodecForCoreMediaType(
+      static_cast<std::uint32_t>(configuration.codec));
+  const auto kind = media::mediaCodecFacts(codec).configurationKind;
+  if (codec == media::MediaCodec::Vp8 || !recordParsed(kind)) {
+    return std::nullopt;
+  }
+  auto inspection = media::inspectVideoCodecConfiguration(
+      codec, kind, configuration.codecConfiguration, recordLimits());
   if (!inspection.admitted()) {
     return std::nullopt;
   }
-  return CodecReorderDepth{inspection.facts->maximumReorderFrames,
-                           inspection.facts->maximumReorderFramesInferred
-                               ? CodecReorderDepthOrigin::Inferred
-                               : CodecReorderDepthOrigin::Declared};
+  return inspection.facts;
 }
 
+// AVC and HEVC depths come with the parser's authority (stated or inferred).
+// AV1's is the av1C initial presentation delay, deliberately NOT rounded up
+// "to be safe": the ordered drain holds delivery until more than this many
+// frames are retained, so every extra unit is a frame of added latency and one
+// more retained IOSurface, and a value above maxPendingPresentationFrames
+// hard-fails configure() as the intended clean fallback. Every other codec's
+// depth is intrinsic (the facts table). VP8 never reaches VideoToolbox.
 std::optional<CodecReorderDepth>
 deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
-  const auto bytes = std::span<const std::uint8_t>(
-      reinterpret_cast<const std::uint8_t *>(
-          configuration.codecConfiguration.data()),
-      configuration.codecConfiguration.size());
-  if (configuration.codec == kCMVideoCodecType_H264) {
-    return recordCodecReorderDepth(media::MediaCodec::H264,
-                                   media::MediaCodecConfigurationKind::AvcC,
-                                   configuration.codecConfiguration);
-  }
-  if (configuration.codec == kCMVideoCodecType_HEVC) {
-    return recordCodecReorderDepth(media::MediaCodec::Hevc,
-                                   media::MediaCodecConfigurationKind::HvcC,
-                                   configuration.codecConfiguration);
-  }
-  if (configuration.codec == kCMVideoCodecType_AV1) {
-    // AV1 shares VP9's output model (show_existing_frame, no composition
-    // offsets), so its intrinsic reorder depth is also zero. The one signal a
-    // stream can carry is the av1C initial presentation delay, which is the
-    // number of frames a conforming decoder may buffer before its first
-    // output; honour it as an upper bound when present.
-    //
-    // This value is deliberately NOT rounded up "to be safe". The pipeline
-    // treats it as a delivery hold floor, not merely a memory bound: the
-    // ordered drain refuses to emit a frame until more than this many frames
-    // are retained (see the presentable/moreFrames predicates), so every extra
-    // unit is a frame of added presentation latency and one more retained
-    // IOSurface. A value above maxPendingPresentationFrames also hard-fails
-    // configure(), which is the intended clean fallback rather than a silent
-    // over-allocation.
-    //
-    // av1C byte 3: reserved(3) | initial_presentation_delay_present(1) |
-    //              initial_presentation_delay_minus_one(4)
-    if (bytes.size() < 4 || (bytes[0] & 0x7fU) != 1U ||
-        (bytes[0] & 0x80U) == 0U) {
-      return std::nullopt;
-    }
-    if ((bytes[3] & 0x10U) == 0U) {
-      return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
-    }
-    return CodecReorderDepth{static_cast<std::size_t>(bytes[3] & 0x0fU) + 1U,
-                             CodecReorderDepthOrigin::Declared};
-  }
-  // Every other codec's depth is intrinsic (see intrinsicReorderDepth). VP8
-  // never reaches VideoToolbox.
   const media::MediaCodec codec = media::mediaCodecForCoreMediaType(
       static_cast<std::uint32_t>(configuration.codec));
   const media::MediaCodecFacts &facts = media::mediaCodecFacts(codec);
@@ -163,12 +132,17 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
       codec == media::MediaCodec::Vp8) {
     return std::nullopt;
   }
-  // A codec with no configuration record must present none, and one with a
-  // record must present it.
-  if (bytes.empty() == facts.carriesConfigurationRecord) {
-    return std::nullopt;
+  if (const auto parsed = parsedRecordFacts(configuration)) {
+    return CodecReorderDepth{parsed->maximumReorderFrames,
+                             parsed->maximumReorderFramesInferred
+                                 ? CodecReorderDepthOrigin::Inferred
+                                 : CodecReorderDepthOrigin::Declared};
   }
-  if (codec == media::MediaCodec::Vp9 && (bytes.size() < 12 || bytes[0] != 1)) {
+  // A parsed-record codec whose record was refused, a codec with no record
+  // that presents one, or one with a record that presents none.
+  if (recordParsed(facts.configurationKind) ||
+      configuration.codecConfiguration.empty() ==
+          facts.carriesConfigurationRecord) {
     return std::nullopt;
   }
   return CodecReorderDepth{facts.intrinsicReorderDepth,
@@ -192,7 +166,7 @@ struct AsyncDecodeState {
   };
 
   explicit AsyncDecodeState(
-      VideoToolboxDecoderProgressHandler progress,
+      VideoDecoderProgressHandler progress,
       std::size_t maxInFlightFrames)
       : frameRefConSlots(maxInFlightFrames), progressHandler(progress) {}
 
@@ -242,7 +216,6 @@ struct AsyncDecodeState {
   std::uint64_t delivered{0};
   std::uint64_t dropped{0};
   std::uint64_t backpressuredSubmissions{0};
-  std::uint64_t sinkBackpressureDrops{0};
   std::uint64_t sinkBackpressureRetries{0};
   std::uint64_t endOfStreamBackpressureRetries{0};
   std::uint64_t surfaceBudgetRejections{0};
@@ -260,7 +233,7 @@ struct AsyncDecodeState {
   std::vector<FrameRefConSlot> frameRefConSlots;
   std::vector<CompletedDecode> completedDecodes;
   std::vector<FrameLease> pendingPresentationFrames;
-  VideoToolboxOutputInterop outputInterop{VideoToolboxOutputInterop::Metal};
+  VideoDecoderOutputInterop outputInterop{VideoDecoderOutputInterop::Metal};
   OSType expectedOutputPixelFormat{0};
   OSType actualOutputPixelFormat{0};
   CMVideoDimensions expectedCodedDimensions{0, 0};
@@ -268,7 +241,7 @@ struct AsyncDecodeState {
   bool discarding{false};
   bool callbackFailedClosed{false};
   AsyncError lastError;
-  const VideoToolboxDecoderProgressHandler progressHandler;
+  const VideoDecoderProgressHandler progressHandler;
 #if defined(WAM_NATIVE_VIDEO_TESTING)
   std::optional<VideoToolboxDecoderTestAllocationPoint>
       failNextAllocationPoint;
@@ -293,6 +266,16 @@ void incrementSaturated(std::uint64_t &value) noexcept {
   return right > std::numeric_limits<std::uint64_t>::max() - left
              ? std::numeric_limits<std::uint64_t>::max()
              : left + right;
+}
+
+// The one admission bound: decode credit, retained presentation frames, and
+// the two together against the retained ceiling.
+[[nodiscard]] bool admissionSaturatedLocked(const AsyncDecodeState &state,
+                                            std::size_t maxInFlight) noexcept {
+  const std::size_t retained = state.pendingPresentationFrames.size();
+  return state.inFlight >= maxInFlight ||
+         retained >= state.maxRetainedFrames ||
+         state.inFlight >= state.maxRetainedFrames - retained;
 }
 
 void updatePeak(std::uint64_t &peak, std::uint64_t current) noexcept {
@@ -322,7 +305,7 @@ void retireCompressedChargeLocked(
 }
 
 void notifyProgress(const std::shared_ptr<AsyncDecodeState> &state) noexcept {
-  const VideoToolboxDecoderProgressHandler handler = state->progressHandler;
+  const VideoDecoderProgressHandler handler = state->progressHandler;
   if (handler.function != nullptr) {
     handler.function(handler.context);
   }
@@ -339,11 +322,7 @@ void releaseReservedDecodeCapacity(
         *state, "VideoToolbox reserved decode capacity is inconsistent");
     return;
   }
-  slot->state = AsyncDecodeState::FrameRefConSlotState::Available;
-  slot->submissionSequence = 0;
-  slot->timing = {};
-  slot->compressedBytes = 0;
-  slot->directCompressedStorage = false;
+  *slot = {};
   --state->inFlight;
   state->completion.notify_all();
 }
@@ -418,8 +397,8 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
     }
     if (timeBefore(completed.frame->timing().presentationTime,
                    state.lastDeliveredPresentationTime)) {
-      ++state.dropped;
-      ++state.outOfOrderDrops;
+      incrementSaturated(state.dropped);
+      incrementSaturated(state.outOfOrderDrops);
       assignAsyncErrorLocked(
           state,
           "decoded stream exceeded its admitted presentation-reorder depth");
@@ -432,7 +411,7 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
       completed.frame.reset();
       state.callbackFailedClosed = true;
       state.discarding = true;
-      ++state.dropped;
+      incrementSaturated(state.dropped);
       assignAsyncErrorLocked(
           state, "decoded-frame retention exceeded its bounded admission");
       continue;
@@ -468,11 +447,7 @@ void resetPresentationState(
     state->nextCompletionSequence = 0;
     for (AsyncDecodeState::FrameRefConSlot &slot :
          state->frameRefConSlots) {
-      slot.state = AsyncDecodeState::FrameRefConSlotState::Available;
-      slot.submissionSequence = 0;
-      slot.timing = {};
-      slot.compressedBytes = 0;
-      slot.directCompressedStorage = false;
+      slot = {};
     }
     state->currentDirectCompressedBytes = 0;
     state->currentCopiedCompressedBytes = 0;
@@ -552,8 +527,8 @@ biPlanarSurfaceLayout(OSType pixelFormat) noexcept {
 
 // Display-layer counterparts must preserve depth, chroma and range.
 bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
-                             VideoToolboxOutputInterop outputInterop) noexcept {
-  if (outputInterop != VideoToolboxOutputInterop::DisplayLayer &&
+                             VideoDecoderOutputInterop outputInterop) noexcept {
+  if (outputInterop != VideoDecoderOutputInterop::DisplayLayer &&
       (expectedPixelFormat == kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange ||
        expectedPixelFormat == kCVPixelFormatType_30RGBLEPackedWideGamut ||
        expectedPixelFormat == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange ||
@@ -563,7 +538,7 @@ bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
   if (pixelFormat == expectedPixelFormat) {
     return true;
   }
-  if (outputInterop != VideoToolboxOutputInterop::DisplayLayer) {
+  if (outputInterop != VideoDecoderOutputInterop::DisplayLayer) {
     return false;
   }
   // Only the display layer widens, and for the same reason in both directions:
@@ -587,7 +562,7 @@ bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
 
 bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
                                    OSType expectedPixelFormat,
-                                   VideoToolboxOutputInterop outputInterop,
+                                   VideoDecoderOutputInterop outputInterop,
                                    std::string *error) {
   if (pixelBuffer == nullptr) {
     assignError(error, "VideoToolbox returned no decoded pixel buffer");
@@ -608,14 +583,14 @@ bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
     assignError(error, "VideoToolbox produced a frame without an IOSurface");
     return false;
   }
-  if (outputInterop == VideoToolboxOutputInterop::Metal ||
-      outputInterop == VideoToolboxOutputInterop::DisplayLayer) {
+  if (outputInterop == VideoDecoderOutputInterop::Metal ||
+      outputInterop == VideoDecoderOutputInterop::DisplayLayer) {
     // A display layer consumes whatever biplanar surface the decoder produced,
     // including the lossless one, so there is no plane layout to verify beyond
     // the IOSurface backing already proven above.
     return true;
   }
-  if (outputInterop != VideoToolboxOutputInterop::OpenGL) {
+  if (outputInterop != VideoDecoderOutputInterop::OpenGL) {
     assignError(error, "unsupported VideoToolbox output interop contract");
     return false;
   }
@@ -958,7 +933,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
       return;
     }
     if (state->callbackFailedClosed) {
-      ++state->dropped;
+      incrementSaturated(state->dropped);
       insertCompletionTombstoneLocked(*state, slot, submissionSequence);
       collectCompletedDecodesLocked(*state);
     } else {
@@ -966,14 +941,14 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
       if (status != noErr) {
         assignAsyncErrorLocked(
             *state, "VideoToolbox output callback reported failure");
-        ++state->dropped;
+        incrementSaturated(state->dropped);
       } else if ((infoFlags & kVTDecodeInfo_FrameDropped) != 0 ||
                  (imageBuffer == nullptr
 #if defined(WAM_NATIVE_VIDEO_TESTING)
                   && !state->permitSyntheticCallbackFrame
 #endif
                   )) {
-        ++state->dropped;
+        incrementSaturated(state->dropped);
         if (imageBuffer == nullptr &&
             (infoFlags & kVTDecodeInfo_FrameDropped) == 0) {
           assignAsyncErrorLocked(
@@ -983,7 +958,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
       } else if (state->discarding || timing.generation != state->generation) {
         // A flush advances the generation before waiting for callbacks, so an
         // old frame is released here without ever reaching the new timeline.
-        ++state->dropped;
+        incrementSaturated(state->dropped);
       } else {
         auto pixelBuffer = static_cast<CVPixelBufferRef>(imageBuffer);
 #if defined(WAM_NATIVE_VIDEO_TESTING)
@@ -997,7 +972,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
               *state,
               "VideoToolbox decoded dimensions did not match the configured "
               "coded dimensions");
-          ++state->dropped;
+          incrementSaturated(state->dropped);
         } else {
           // Runs before both contract checks: the surface's own tag is what
           // the layer and the shaders read, so it is restated at the port
@@ -1018,20 +993,20 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
             assignAsyncErrorLocked(
                 *state,
                 "VideoToolbox decoded surface violated the output contract");
-            ++state->dropped;
+            incrementSaturated(state->dropped);
           } else if (!validateDecodedSdrColorAttachments(pixelBuffer,
                                                          nullptr)) {
             assignAsyncErrorLocked(
                 *state,
                 "VideoToolbox decoded frame carried unsupported color or HDR "
                 "metadata");
-            ++state->dropped;
+            incrementSaturated(state->dropped);
           } else if (!CMTIME_IS_NUMERIC(timing.presentationTime)) {
             assignAsyncErrorLocked(
                 *state,
                 "VideoToolbox returned a decoded frame without a finite "
                 "numeric presentation timestamp");
-            ++state->dropped;
+            incrementSaturated(state->dropped);
           } else {
             const OSType pixelFormat =
                 CVPixelBufferGetPixelFormatType(pixelBuffer);
@@ -1039,7 +1014,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
             if (state->sink == nullptr) {
               assignAsyncErrorLocked(
                   *state, "decoded frame has no configured output sink");
-              ++state->dropped;
+              incrementSaturated(state->dropped);
             } else {
               // This is the first decoded-frame owner created after
               // generation, surface-layout, color, timestamp, and sink
@@ -1072,7 +1047,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
           (duplicate != state->completedDecodes.end() &&
            duplicate->submissionSequence == submissionSequence)) {
         if (decodedFrame) {
-          ++state->dropped;
+          incrementSaturated(state->dropped);
         }
         assignAsyncErrorLocked(
             *state,
@@ -1114,7 +1089,7 @@ void failDecodedFrameCallback(
       state->pendingPresentationFrames.clear();
       state->callbackFailedClosed = true;
       state->discarding = true;
-      ++state->dropped;
+      incrementSaturated(state->dropped);
       assignAsyncErrorLocked(*state, diagnostic);
       insertCompletionTombstoneLocked(*state, slot, submissionSequence);
       collectCompletedDecodesLocked(*state);
@@ -1330,20 +1305,9 @@ bool equivalentSessionCodecTypes(CMVideoCodecType configured,
 std::size_t avcCoreLength(std::span<const std::byte> record) {
   const auto inspection = media::inspectVideoCodecConfiguration(
       media::MediaCodec::H264, media::MediaCodecConfigurationKind::AvcC,
-      record, reorderDepthLimits());
-  if (!inspection.admitted()) return record.size();
-  std::size_t offset = 6;
-  auto skipSets = [&](unsigned count) {
-    for (unsigned i = 0; i < count; ++i) {
-      const auto length = (std::to_integer<unsigned>(record[offset]) << 8U) |
-                           std::to_integer<unsigned>(record[offset + 1]);
-      offset += 2 + length;
-    }
-  };
-  skipSets(std::to_integer<unsigned>(record[5]) & 31U);
-  const auto count = std::to_integer<unsigned>(record[offset++]);
-  skipSets(count);
-  return offset;
+      record, recordLimits());
+  return inspection.admitted() ? inspection.facts->avcCoreBytes
+                               : record.size();
 }
 
 bool equivalentAvcAtoms(const CodecConfigurationAtomMetadata &a,
@@ -1526,61 +1490,20 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
   return status;
 }
 
-// The stream's OWN coded depth, read from its configuration record. Kept
-// separate from requestedPixelFormat() because the requested OUTPUT depth can
-// exceed the coded depth for an HDR stream,
-// and only the difference between them justifies pinning the format on the
-// display-layer interop.
+// The stream's OWN coded depth. Kept separate from requestedPixelFormat()
+// because the requested OUTPUT depth can exceed the coded depth for an HDR
+// stream, and only the difference between them justifies pinning the format on
+// the display-layer interop. Getting VP9 Profile 2 wrong would be silent:
+// VideoToolbox happily creates an NV12 session for 10-bit VP9 and downconverts,
+// so the delivered format still matches the request. MPEG-2, MPEG-4 Part 2 and
+// Motion JPEG are 8-bit by profile; ProRes output retains at least ten bits.
 bool codedDepthIsTenBit(
     const VideoStreamConfiguration &configuration) noexcept {
-  // hvcC stores bit_depth_luma_minus8 in the low three bits of byte 17.
-  // The common H.264 High 10 profile uses profile_idc 110. Both map directly
-  // to the presenter's supported 10-bit bi-planar GPU import path.
-  const auto *bytes = reinterpret_cast<const std::uint8_t *>(
-      configuration.codecConfiguration.data());
-  bool tenBit = false;
-  if (configuration.codec == kCMVideoCodecType_HEVC &&
-      configuration.codecConfiguration.size() > 17) {
-    tenBit = (bytes[17] & 0x07U) > 0;
-  } else if (configuration.codec == kCMVideoCodecType_H264 &&
-             configuration.codecConfiguration.size() > 1) {
-    const auto parsed = media::inspectVideoCodecConfiguration(media::MediaCodec::H264,
-        media::MediaCodecConfigurationKind::AvcC, configuration.codecConfiguration, reorderDepthLimits());
-    tenBit = parsed.admitted() ? parsed.facts->bitDepth == 10U : bytes[1] == 110;
-  } else if (configuration.codec == kCMVideoCodecType_VP9 &&
-             configuration.codecConfiguration.size() >= 12 &&
-             bytes[0] == 1) {
-    // vpcC byte 6: bitDepth(4) | chromaSubsampling(3) | videoFullRangeFlag(1).
-    // VP9 Profile 2 carries 10-bit 4:2:0 and must request P010. Getting this
-    // wrong is silent: VideoToolbox happily creates an NV12 session for 10-bit
-    // VP9 and downconverts, so the delivered format still matches the request
-    // and validateOutputSurfaceContract cannot catch it. The record must
-    // therefore be well-formed here, and it is: configure() already rejected
-    // any vpcC shorter than 12 bytes or with a version other than 1 through
-    // deriveCodecReorderDepth, which runs before this call.
-    tenBit = (bytes[6] >> 4U) >= 10U;
-  } else if (configuration.codec == kCMVideoCodecType_AV1 &&
-             configuration.codecConfiguration.size() >= 4 &&
-             (bytes[0] & 0x80U) != 0U && (bytes[0] & 0x7fU) == 1U) {
-    // av1C byte 2: seq_tier_0(1) | high_bitdepth(1) | twelve_bit(1) |
-    //              monochrome(1) | subsampling_x(1) | subsampling_y(1) |
-    //              chroma_sample_position(2). AV1 Main 10 sets high_bitdepth
-    //              with twelve_bit clear. Same fail-closed reasoning as VP9:
-    //              a malformed av1C never reaches here because configure()
-    //              rejected it first.
-    tenBit = ((bytes[2] >> 6U) & 0x01U) != 0U;
-  } else if (codecIsProResFamily(configuration.codec)) {
-    // ProRes output retains at least ten bits per component.
-    tenBit = true;
+  if (codecIsProResFamily(configuration.codec)) {
+    return true;
   }
-  // MPEG-2, MPEG-4 Part 2 and Motion JPEG are deliberately absent from the
-  // chain above: all three are 8-bit by profile (MPEG-4 Part 2 Simple Profile
-  // defines 8-bit 4:2:0 and nothing else; baseline JPEG codes 8 bits per
-  // component), so the 8-bit answer below is a stated fact rather than a
-  // default they fell through to. They are also, with ProRes, the codecs whose
-  // decoders will not produce this format unless it is requested -- see
-  // codecNeedsPinnedOutputPixelFormat().
-  return tenBit;
+  const auto parsed = parsedRecordFacts(configuration);
+  return parsed && parsed->bitDepth >= 10U;
 }
 
 // The output surface this decode should produce.
@@ -1602,16 +1525,13 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   if (namedCodec(configuration.codec) == media::MediaCodec::ProRes4444) {
     return kCVPixelFormatType_30RGBLEPackedWideGamut;
   }
-  bool is422 = (configuration.codec == kCMVideoCodecType_HEVC &&
-       configuration.codecConfiguration.size() > 16 &&
-       (std::to_integer<unsigned>(configuration.codecConfiguration[16]) & 3U) == 2U);
-  if (configuration.codec == kCMVideoCodecType_H264) {
-    const auto parsed = media::inspectVideoCodecConfiguration(media::MediaCodec::H264,
-        media::MediaCodecConfigurationKind::AvcC, configuration.codecConfiguration, reorderDepthLimits());
-    if (parsed.admitted() && parsed.facts->sampleFormat == media::MediaVideoSampleFormat::Yuv444EightBit)
-      return kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange;
-    is422 = parsed.admitted() && media::mediaSampleFormatIs422(parsed.facts->sampleFormat);
+  const auto parsed = parsedRecordFacts(configuration);
+  if (parsed &&
+      parsed->sampleFormat == media::MediaVideoSampleFormat::Yuv444EightBit) {
+    return kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange;
   }
+  const bool is422 =
+      parsed && media::mediaSampleFormatIs422(parsed->sampleFormat);
   if (is422) {
     return codedDepthIsTenBit(configuration)
         ? kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
@@ -1786,13 +1706,13 @@ bool inspectDirectCompressedSample(
 } // namespace
 
 struct VideoToolboxDecoder::Impl {
-  explicit Impl(VideoToolboxDecoderOptions decoderOptions)
+  explicit Impl(VideoDecoderOptions decoderOptions)
       : options(decoderOptions),
         async(std::make_shared<AsyncDecodeState>(
             decoderOptions.progressHandler,
             decoderOptions.maxInFlightFrames)) {}
 
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   mutable std::mutex operationMutex;
   std::shared_ptr<AsyncDecodeState> async;
   CMVideoFormatDescriptionRef formatDescription{nullptr};
@@ -1957,7 +1877,7 @@ struct VideoToolboxDecoder::Impl {
                          emptyIOSurfaceProperties);
     CFDictionarySetValue(imageAttributes, kCVPixelBufferMetalCompatibilityKey,
                          kCFBooleanTrue);
-    if (options.outputInterop == VideoToolboxOutputInterop::OpenGL) {
+    if (options.outputInterop == VideoDecoderOutputInterop::OpenGL) {
       CFDictionarySetValue(
           imageAttributes,
           kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey,
@@ -1993,7 +1913,7 @@ struct VideoToolboxDecoder::Impl {
     // the 10-bit request real; VideoToolbox honours it on an 8-bit stream
     // (measured: `x420` delivered from 8-bit PQ H.264).
     const bool pinOutputPixelFormat =
-        options.outputInterop != VideoToolboxOutputInterop::DisplayLayer ||
+        options.outputInterop != VideoDecoderOutputInterop::DisplayLayer ||
         codecNeedsPinnedOutputPixelFormat(sessionCodec) ||
         outputPixelFormat == kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange ||
         outputPixelFormat == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange ||
@@ -2136,15 +2056,8 @@ struct VideoToolboxDecoder::Impl {
 
   AsyncDecodeState::FrameRefConSlot *reserveDecodeCapacityLocked() {
     std::lock_guard stateLock(async->mutex);
-    const bool retainedSaturated =
-        async->pendingPresentationFrames.size() >= async->maxRetainedFrames ||
-        async->inFlight >=
-            async->maxRetainedFrames - async->pendingPresentationFrames.size();
-    if (async->inFlight >= options.maxInFlightFrames || retainedSaturated) {
-      if (async->backpressuredSubmissions !=
-          std::numeric_limits<std::uint64_t>::max()) {
-        ++async->backpressuredSubmissions;
-      }
+    if (admissionSaturatedLocked(*async, options.maxInFlightFrames)) {
+      incrementSaturated(async->backpressuredSubmissions);
       return nullptr;
     }
     const auto available = std::find_if(
@@ -2233,34 +2146,14 @@ struct VideoToolboxDecoder::Impl {
     }
     {
       std::lock_guard stateLock(async->mutex);
-      if (async->submitted != std::numeric_limits<std::uint64_t>::max()) {
-        ++async->submitted;
-      }
-      if (storage == CompressedSubmissionStorage::DirectSampleBuffer) {
-        if (async->directSampleBufferSubmissions !=
-            std::numeric_limits<std::uint64_t>::max()) {
-          ++async->directSampleBufferSubmissions;
-        }
-        const std::uint64_t directBytes =
-            static_cast<std::uint64_t>(compressedBytes);
-        async->directSampleBufferBytes =
-            directBytes > std::numeric_limits<std::uint64_t>::max() -
-                              async->directSampleBufferBytes
-                ? std::numeric_limits<std::uint64_t>::max()
-                : async->directSampleBufferBytes + directBytes;
-      } else {
-        if (async->copiedSpanSubmissions !=
-            std::numeric_limits<std::uint64_t>::max()) {
-          ++async->copiedSpanSubmissions;
-        }
-        const std::uint64_t copied =
-            static_cast<std::uint64_t>(compressedBytes);
-        async->copiedSpanBytes =
-            copied > std::numeric_limits<std::uint64_t>::max() -
-                         async->copiedSpanBytes
-                ? std::numeric_limits<std::uint64_t>::max()
-                : async->copiedSpanBytes + copied;
-      }
+      incrementSaturated(async->submitted);
+      const bool direct =
+          storage == CompressedSubmissionStorage::DirectSampleBuffer;
+      incrementSaturated(direct ? async->directSampleBufferSubmissions
+                                : async->copiedSpanSubmissions);
+      std::uint64_t &bytes =
+          direct ? async->directSampleBufferBytes : async->copiedSpanBytes;
+      bytes = saturatedAdd(bytes, static_cast<std::uint64_t>(compressedBytes));
     }
     awaitingKeyFrame = false;
     return VideoDecodeSubmitResult::Accepted;
@@ -2279,6 +2172,51 @@ struct VideoToolboxDecoder::Impl {
     async->completion.wait(lock, [this] {
       return async->inFlight == 0 && async->activeCallbacks == 0;
     });
+  }
+
+  [[nodiscard]] std::uint64_t currentGenerationLocked() const {
+    std::lock_guard stateLock(async->mutex);
+    return async->generation;
+  }
+
+  // Moves the async state to `generation`, waits out every callback and
+  // invalidates the session, then flushes the sink. The order is load-bearing:
+  // the flush must follow the wait, or a late callback enqueues into a sink
+  // that was already flushed.
+  void invalidateGenerationLocked(std::uint64_t generation,
+                                  bool clearError) noexcept {
+    DecodedFrameSink *sink = nullptr;
+    {
+      std::lock_guard stateLock(async->mutex);
+      async->generation = generation;
+      async->discarding = true;
+      if (clearError) {
+        async->lastError.reset();
+      }
+      sink = async->sink;
+    }
+    waitAndInvalidateSessionLocked();
+    resetPresentationState(async);
+    if (sink != nullptr) {
+      sink->flush(generation);
+    }
+  }
+
+  // After invalidateGenerationLocked: forget the stream and its sink.
+  void detachLocked() noexcept {
+    if (formatDescription != nullptr) {
+      CFRelease(formatDescription);
+      formatDescription = nullptr;
+    }
+    {
+      std::lock_guard stateLock(async->mutex);
+      async->sink = nullptr;
+    }
+    configured = false;
+    resetEndOfStreamLocked();
+    awaitingKeyFrame = true;
+    usingHardware = false;
+    notifyProgress(async);
   }
 
   std::optional<std::string> takeAsyncErrorLocked() {
@@ -2462,9 +2400,7 @@ struct VideoToolboxDecoder::Impl {
         const std::size_t retained = async->pendingPresentationFrames.size();
         starved = async->inFlight != 0 &&
                   retained <= async->codecReorderFrames &&
-                  (async->inFlight >= options.maxInFlightFrames ||
-                   retained >= async->maxRetainedFrames ||
-                   async->inFlight >= async->maxRetainedFrames - retained);
+                  admissionSaturatedLocked(*async, options.maxInFlightFrames);
       }
       if (starved) {
         const OSStatus waitStatus =
@@ -2612,7 +2548,7 @@ struct VideoToolboxDecoder::Impl {
   }
 };
 
-VideoToolboxDecoder::VideoToolboxDecoder(VideoToolboxDecoderOptions options)
+VideoToolboxDecoder::VideoToolboxDecoder(VideoDecoderOptions options)
     : impl_(std::make_unique<Impl>(options)) {
   if (options.maxInFlightFrames == 0) {
     throw std::invalid_argument(
@@ -2622,9 +2558,9 @@ VideoToolboxDecoder::VideoToolboxDecoder(VideoToolboxDecoderOptions options)
     throw std::invalid_argument(
         "VideoToolbox presentation reorder bound must be greater than zero");
   }
-  if (options.outputInterop != VideoToolboxOutputInterop::Metal &&
-      options.outputInterop != VideoToolboxOutputInterop::OpenGL &&
-      options.outputInterop != VideoToolboxOutputInterop::DisplayLayer) {
+  if (options.outputInterop != VideoDecoderOutputInterop::Metal &&
+      options.outputInterop != VideoDecoderOutputInterop::OpenGL &&
+      options.outputInterop != VideoDecoderOutputInterop::DisplayLayer) {
     throw std::invalid_argument(
         "unsupported VideoToolbox output interop contract");
   }
@@ -2689,18 +2625,8 @@ bool VideoToolboxDecoder::configure(
 
   // Retire an earlier configuration before exposing the new sink/generation.
   if (impl_->configured) {
-    DecodedFrameSink *oldSink = nullptr;
-    {
-      std::lock_guard stateLock(impl_->async->mutex);
-      impl_->async->discarding = true;
-      ++impl_->async->generation;
-      oldSink = impl_->async->sink;
-    }
-    impl_->waitAndInvalidateSessionLocked();
-    resetPresentationState(impl_->async);
-    if (oldSink != nullptr) {
-      oldSink->flush(impl_->async->generation);
-    }
+    impl_->invalidateGenerationLocked(impl_->currentGenerationLocked() + 1,
+                                      false);
     notifyProgress(impl_->async);
   }
   impl_->configured = false;
@@ -2809,7 +2735,6 @@ bool VideoToolboxDecoder::configure(
     impl_->async->delivered = 0;
     impl_->async->dropped = 0;
     impl_->async->backpressuredSubmissions = 0;
-    impl_->async->sinkBackpressureDrops = 0;
     impl_->async->sinkBackpressureRetries = 0;
     impl_->async->endOfStreamBackpressureRetries = 0;
     impl_->async->surfaceBudgetRejections = 0;
@@ -2822,11 +2747,7 @@ bool VideoToolboxDecoder::configure(
     impl_->async->nextCompletionSequence = 0;
     for (AsyncDecodeState::FrameRefConSlot &slot :
          impl_->async->frameRefConSlots) {
-      slot.state = AsyncDecodeState::FrameRefConSlotState::Available;
-      slot.submissionSequence = 0;
-      slot.timing = {};
-      slot.compressedBytes = 0;
-      slot.directCompressedStorage = false;
+      slot = {};
     }
     impl_->async->completedDecodes.clear();
     impl_->async->pendingPresentationFrames.clear();
@@ -3145,19 +3066,7 @@ void VideoToolboxDecoder::flush(std::uint64_t nextGeneration) noexcept {
   if (impl_->retirementStarted) {
     return;
   }
-  DecodedFrameSink *sink = nullptr;
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->generation = nextGeneration;
-    impl_->async->discarding = true;
-    impl_->async->lastError.reset();
-    sink = impl_->async->sink;
-  }
-  impl_->waitAndInvalidateSessionLocked();
-  resetPresentationState(impl_->async);
-  if (sink != nullptr) {
-    sink->flush(nextGeneration);
-  }
+  impl_->invalidateGenerationLocked(nextGeneration, true);
   {
     std::lock_guard stateLock(impl_->async->mutex);
     impl_->async->discarding = !impl_->configured;
@@ -3198,32 +3107,9 @@ VideoDecoderRetireProgress VideoToolboxDecoder::retire(
   impl_->retirementRetiredGeneration = retiredGeneration;
   impl_->retirementInvalidationGeneration = invalidationGeneration;
 
-  DecodedFrameSink *sink = nullptr;
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->generation = invalidationGeneration;
-    impl_->async->discarding = true;
-    sink = impl_->async->sink;
-  }
-  impl_->waitAndInvalidateSessionLocked();
-  resetPresentationState(impl_->async);
-  if (sink != nullptr) {
-    sink->flush(invalidationGeneration);
-  }
-  if (impl_->formatDescription != nullptr) {
-    CFRelease(impl_->formatDescription);
-    impl_->formatDescription = nullptr;
-  }
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->sink = nullptr;
-  }
-  impl_->configured = false;
-  impl_->resetEndOfStreamLocked();
-  impl_->awaitingKeyFrame = true;
-  impl_->usingHardware = false;
+  impl_->invalidateGenerationLocked(invalidationGeneration, false);
   impl_->retirementDone = true;
-  notifyProgress(impl_->async);
+  impl_->detachLocked();
   return VideoDecoderRetireProgress::Done;
 }
 
@@ -3240,38 +3126,14 @@ void VideoToolboxDecoder::close() noexcept {
     return;
   }
 
-  DecodedFrameSink *sink = nullptr;
-  std::uint64_t retiredGeneration = 0;
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    retiredGeneration = impl_->async->generation + 1;
-    impl_->async->generation = retiredGeneration;
-    impl_->async->discarding = true;
-    sink = impl_->async->sink;
-  }
-  impl_->waitAndInvalidateSessionLocked();
-  resetPresentationState(impl_->async);
-  if (sink != nullptr) {
-    sink->flush(retiredGeneration);
-  }
-  if (impl_->formatDescription != nullptr) {
-    CFRelease(impl_->formatDescription);
-    impl_->formatDescription = nullptr;
-  }
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->sink = nullptr;
-  }
-  impl_->configured = false;
-  impl_->resetEndOfStreamLocked();
-  impl_->awaitingKeyFrame = true;
-  impl_->usingHardware = false;
-  notifyProgress(impl_->async);
+  impl_->invalidateGenerationLocked(impl_->currentGenerationLocked() + 1,
+                                    false);
+  impl_->detachLocked();
 }
 
-VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
+VideoDecoderStats VideoToolboxDecoder::stats() const noexcept {
   std::lock_guard operationLock(impl_->operationMutex);
-  VideoToolboxDecoderStats result;
+  VideoDecoderStats result;
   result.configured = impl_->configured;
   result.usingHardwareAcceleratedDecoder = impl_->usingHardware;
   result.awaitingKeyFrame = impl_->awaitingKeyFrame;
@@ -3284,12 +3146,8 @@ VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
         impl_->async->pendingPresentationFrames.size();
     result.acceptsCompressedSample =
         impl_->configured && !impl_->ended && !impl_->async->discarding &&
-        impl_->async->inFlight < impl_->options.maxInFlightFrames &&
-        impl_->async->pendingPresentationFrames.size() <
-            impl_->async->maxRetainedFrames &&
-        impl_->async->inFlight <
-            impl_->async->maxRetainedFrames -
-                impl_->async->pendingPresentationFrames.size();
+        !admissionSaturatedLocked(*impl_->async,
+                                  impl_->options.maxInFlightFrames);
     result.codecReorderFrames = impl_->async->codecReorderFrames;
     result.generation = impl_->async->generation;
     result.submittedFrames = impl_->async->submitted;
@@ -3301,7 +3159,6 @@ VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
     result.deliveredFrames = impl_->async->delivered;
     result.droppedFrames = impl_->async->dropped;
     result.backpressuredSubmissions = impl_->async->backpressuredSubmissions;
-    result.sinkBackpressureDrops = impl_->async->sinkBackpressureDrops;
     result.sinkBackpressureRetries = impl_->async->sinkBackpressureRetries;
     result.endOfStreamBackpressureRetries =
         impl_->async->endOfStreamBackpressureRetries;
@@ -3322,9 +3179,9 @@ VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
   return result;
 }
 
-VideoToolboxDecoderMemoryFacts
+VideoDecoderMemoryFacts
 VideoToolboxDecoder::memoryFacts() const noexcept {
-  VideoToolboxDecoderMemoryFacts result;
+  VideoDecoderMemoryFacts result;
   std::lock_guard operationLock(impl_->operationMutex);
   std::lock_guard stateLock(impl_->async->mutex);
   result.inFlightFrames = impl_->async->inFlight;
@@ -3473,15 +3330,6 @@ std::uint32_t VideoToolboxDecoderTestAccess::decodeFlags(
   std::lock_guard operationLock(decoder.impl_->operationMutex);
   return static_cast<std::uint32_t>(finiteAdmissionDecodeFlags(
       decoder.impl_->options.enableAsynchronousDecompression));
-}
-
-std::optional<std::size_t> VideoToolboxDecoderTestAccess::codecReorderFrames(
-    const VideoStreamConfiguration &configuration) {
-  const auto depth = deriveCodecReorderDepth(configuration);
-  if (!depth) {
-    return std::nullopt;
-  }
-  return depth->frames;
 }
 
 std::optional<CodecReorderDepth>
@@ -3681,25 +3529,9 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     return false;
   }
   if (decoder.impl_->configured) {
-    DecodedFrameSink *oldSink = nullptr;
-    std::uint64_t invalidationGeneration = 0;
-    {
-      std::lock_guard stateLock(decoder.impl_->async->mutex);
-      decoder.impl_->async->discarding = true;
-      invalidationGeneration = ++decoder.impl_->async->generation;
-      oldSink = decoder.impl_->async->sink;
-    }
-    decoder.impl_->waitAndInvalidateSessionLocked();
-    resetPresentationState(decoder.impl_->async);
-    if (oldSink != nullptr) {
-      oldSink->flush(invalidationGeneration);
-    }
-    decoder.impl_->configured = false;
-    {
-      std::lock_guard stateLock(decoder.impl_->async->mutex);
-      decoder.impl_->async->sink = nullptr;
-    }
-    notifyProgress(decoder.impl_->async);
+    decoder.impl_->invalidateGenerationLocked(
+        decoder.impl_->currentGenerationLocked() + 1, false);
+    decoder.impl_->detachLocked();
   }
   if (!reserveCallbackStorage(
           decoder.impl_->async, decoder.impl_->options.maxInFlightFrames,
@@ -3732,11 +3564,7 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     decoder.impl_->async->peakCompressedBytes = 0;
     for (AsyncDecodeState::FrameRefConSlot &slot :
          decoder.impl_->async->frameRefConSlots) {
-      slot.state = AsyncDecodeState::FrameRefConSlotState::Available;
-      slot.submissionSequence = 0;
-      slot.timing = {};
-      slot.compressedBytes = 0;
-      slot.directCompressedStorage = false;
+      slot = {};
     }
     decoder.impl_->async->completedDecodes.clear();
     decoder.impl_->async->pendingPresentationFrames.clear();
@@ -3893,7 +3721,7 @@ bool VideoToolboxDecoderTestAccess::setSurfaceBudgetRejections(
 
 bool VideoToolboxDecoderTestAccess::validateOutputSurface(
     CVPixelBufferRef pixelBuffer, OSType expectedPixelFormat,
-    VideoToolboxOutputInterop outputInterop, std::string *error) {
+    VideoDecoderOutputInterop outputInterop, std::string *error) {
   if (error != nullptr) {
     error->clear();
   }
@@ -3908,7 +3736,7 @@ OSType VideoToolboxDecoderTestAccess::requestedOutputFormat(
 
 bool VideoToolboxDecoderTestAccess::admitsDecodedOutputPixelFormat(
     OSType pixelFormat, OSType expectedPixelFormat,
-    VideoToolboxOutputInterop outputInterop) noexcept {
+    VideoDecoderOutputInterop outputInterop) noexcept {
   return admitsOutputPixelFormat(pixelFormat, expectedPixelFormat,
                                  outputInterop);
 }

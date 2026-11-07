@@ -3,7 +3,6 @@
 #include "native_video_presenter.hpp"
 
 #include <cstdint>
-#include <functional>
 #include <string>
 
 namespace wam::macos {
@@ -50,34 +49,6 @@ struct NativeScheduledFrameStartAck {
   std::uint64_t requestedGeneration{0};
   std::uint64_t acceptedGeneration{0};
   std::uint64_t acceptedRenderedFrames{0};
-};
-
-// Thread-safe boundary between the native scheduler and an externally owned
-// GUI presenter. Implementations retain at most one scheduled FrameLease and
-// must never call a GUI object from dispatch(), flush(), close(), or stats().
-// A failure handler may run on the presenter's GUI thread and therefore must
-// return promptly and must not call back into the output.
-class NativeScheduledFrameOutput {
- public:
-  using FailureHandler = std::function<void(std::string)>;
-  using StartAppliedHandler =
-      std::function<void(NativeScheduledFrameStartAck)>;
-
-  virtual ~NativeScheduledFrameOutput() = default;
-  [[nodiscard]] virtual NativeScheduledFrameDispatchResult dispatch(
-      FrameLease frame, std::string* error = nullptr) noexcept = 0;
-  // Applies the prepared generation on the GUI/presenter side and invokes the
-  // callback only after that flush has linearized against completed draws.
-  // Implementations must never invoke it while holding an output lock.
-  [[nodiscard]] virtual bool startGeneration(
-      std::uint64_t generation, StartAppliedHandler applied,
-      std::string* error = nullptr) noexcept = 0;
-  [[nodiscard]] virtual bool flush(std::uint64_t nextGeneration,
-                                   std::string* error = nullptr) noexcept = 0;
-  virtual void close(std::uint64_t finalGeneration) noexcept = 0;
-  virtual void setFailureHandler(FailureHandler handler) noexcept = 0;
-  [[nodiscard]] virtual NativeScheduledFrameOutputStats stats()
-      const noexcept = 0;
 };
 
 }  // namespace wam::macos

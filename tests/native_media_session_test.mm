@@ -538,9 +538,13 @@ class FakeConsumer : public Base {
 class NullOutput final : public NativeTrackedVideoOutput {
  public:
   explicit NullOutput(bool direct = false) : direct_(direct) {}
-  bool presentsDecodedSurfacesDirectly() const noexcept override { return direct_; }
-  bool setPresentationRotation(int degrees) noexcept override {
-    return direct_ || degrees == 0;
+  NativePresentationCapabilities presentationCapabilities()
+      const noexcept override {
+    return {direct_, direct_, direct_, direct_, direct_};
+  }
+  bool applyPresentationGeometry(wam::media::MediaDisplaySize,
+                                 int quarterTurnDegrees) noexcept override {
+    return direct_ || quarterTurnDegrees == 0;
   }
   NativeTrackedVideoCapacity capacity(std::uint64_t) const noexcept override {
     return NativeTrackedVideoCapacity::Available;
@@ -2509,7 +2513,8 @@ void testPresentationAdmissionAndFallback() {
       state->descriptor = source;
       state->directPresentation = direct;
       NullOutput output(direct);
-      const char* refusal = nativePresentationRefusal(video, output);
+      const char* refusal =
+          nativePresentationRefusal(video, output.presentationCapabilities());
       const bool refused = !direct && entry.refusal != nullptr;
       expect(refused ? refusal && std::string(refusal) == entry.refusal
                      : refusal == nullptr,

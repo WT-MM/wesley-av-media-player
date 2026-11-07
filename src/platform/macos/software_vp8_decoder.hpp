@@ -1,6 +1,6 @@
 #pragma once
 
-#include "video_toolbox_decoder.hpp"
+#include "video_decoder_contract.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -75,9 +75,8 @@ inline constexpr std::size_t kSoftwareVp8RendererRetainedSurfaces = 1;
 // + 1  the renderer's own retention, measured above
 // = 6
 //
-// native_video_consumer.hpp restates that arithmetic against its own constants
-// in a static_assert, so the two cannot drift apart silently.
-inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
+// That sum is SoftwarePresentationPool::kDepth, the one depth every software
+// route allocates from; native_video_consumer.hpp asserts it.
 
 // MEMORY, stated because these buffers are app-attributable and the surface
 // budget is a contract rather than a knob. The DEPTH above is a count and does
@@ -110,10 +109,8 @@ inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
 // renderer's one is a CoreVideo reference this process no longer leases, which
 // is exactly why it has to be provisioned here instead of accounted there.
 
-// Software VP8 decode stage. It presents exactly the surface
-// NativeVideoConsumer drives on VideoToolboxDecoder, including that class's
-// stats record, so the consumer's state machine is unchanged and the two
-// backends are interchangeable behind VideoDecodeLane.
+// Software VP8 decode stage, one implementation of the backend contract in
+// video_decoder_contract.hpp behind VideoDecodeLane.
 //
 // Every method is confined to the one dispatcher worker thread. libvpx is
 // called synchronously from submitCMSampleBuffer(), there is no callback
@@ -126,10 +123,10 @@ inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
 // ~2.5 us/frame cheaper at 1080p) because NV12 is the only 4:2:0 layout every
 // one of WAM's presentation routes can sample -- every route hard-assumes two
 // planes.
-class SoftwareVp8Decoder final : public VideoDecodeBackend {
+class SoftwareVp8Decoder final {
 public:
-  explicit SoftwareVp8Decoder(VideoToolboxDecoderOptions options = {});
-  ~SoftwareVp8Decoder() override;
+  explicit SoftwareVp8Decoder(VideoDecoderOptions options = {});
+  ~SoftwareVp8Decoder();
 
   SoftwareVp8Decoder(const SoftwareVp8Decoder &) = delete;
   SoftwareVp8Decoder &operator=(const SoftwareVp8Decoder &) = delete;
@@ -138,9 +135,7 @@ public:
 
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
                                DecodedFrameSink &sink,
-                               std::string *error) override;
-  [[nodiscard]] VideoDecodeSubmitResult
-  submit(const CompressedVideoPacket &packet, std::string *error) override;
+                               std::string *error);
   [[nodiscard]] VideoDecodeSubmitResult
   submitCMSampleBuffer(CMSampleBufferRef sample, std::uint64_t generation,
                        std::string *error);
@@ -151,14 +146,14 @@ public:
   drainPresentation(std::uint64_t generation, std::string *error);
   [[nodiscard]] VideoDecodeDrainProgress
   drainEndOfStream(std::uint64_t generation, std::string *error);
-  void flush(std::uint64_t nextGeneration) noexcept override;
+  void flush(std::uint64_t nextGeneration) noexcept;
   [[nodiscard]] VideoDecoderRetireProgress
   retire(std::uint64_t retiredGeneration,
          std::uint64_t invalidationGeneration) noexcept;
-  void close() noexcept override;
+  void close() noexcept;
 
-  [[nodiscard]] VideoToolboxDecoderStats stats() const noexcept;
-  [[nodiscard]] VideoToolboxDecoderMemoryFacts memoryFacts() const noexcept;
+  [[nodiscard]] VideoDecoderStats stats() const noexcept;
+  [[nodiscard]] VideoDecoderMemoryFacts memoryFacts() const noexcept;
   [[nodiscard]] std::optional<std::string> takeLastError();
 
   // True when this build linked libvpx. When false, configure() always fails
@@ -170,26 +165,5 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-#if defined(WAM_SOFTWARE_VP8_TESTING)
-// Fixture-free access to the two pieces that are pure functions of memory
-// layout: the bounded pool and the I420 -> NV12 conversion. Absent from
-// shipping objects.
-struct SoftwareVp8DecoderTestAccess {
-  // Creates the same bounded, IOSurface-backed NV12 pool production uses.
-  // Returns nullptr on failure; the caller owns a +1 reference.
-  [[nodiscard]] static CVPixelBufferPoolRef
-  createPool(std::int32_t width, std::int32_t height, std::size_t depth,
-             std::string *error);
-  // Exactly the production conversion, against caller-owned planar input.
-  // Returns false when the destination is not a two-plane NV12 buffer of the
-  // stated size.
-  [[nodiscard]] static bool
-  convertI420ToNv12(CVPixelBufferRef destination, const std::uint8_t *y,
-                    std::size_t yStride, const std::uint8_t *u,
-                    std::size_t uStride, const std::uint8_t *v,
-                    std::size_t vStride, std::size_t width,
-                    std::size_t height) noexcept;
-};
-#endif
 
 } // namespace wam::macos
