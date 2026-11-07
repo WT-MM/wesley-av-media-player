@@ -20,20 +20,24 @@ ApplicationWindow {
         return command !== undefined && command !== null && command.trigger !== undefined && command.trigger();
     }
     readonly property int appearance: appSettings.appearance // 0 Light (default), 1 Dark, 2 Follow system.
-    property bool quickEditOpen: false
-    // Crop mode is per WINDOW, like the sheet that turns it on. The rectangle
-    // itself lives on the controller (also per window) and is reset there on
-    // every media change.
-    property bool cropMode: false
     // The one derivation every window (and Preferences) shares.
     readonly property bool darkAppearance: appHost.darkAppearance
+    // The Quick Edit sheet: "closed", "open", or "cropping" (the crop
+    // overlay is up). Crop mode is per WINDOW and reachable only from the
+    // open sheet, so it cannot outlive it: the overlay up with its own
+    // controls gone would be a dead end. The rectangle itself lives on the
+    // controller (also per window) and is reset there on every media change.
+    property string editorState: "closed"
+    readonly property bool quickEditOpen: editorState !== "closed"
+    readonly property bool cropMode: editorState === "cropping"
     // 0 = free; otherwise the locked width/height ratio in displayed pixels.
     property real cropAspect: 0
 
     function setCropMode(enabled) {
-        if (root.cropMode === enabled)
+        const next = enabled ? "cropping" : "open";
+        if (!root.quickEditOpen || root.editorState === next)
             return;
-        root.cropMode = enabled;
+        root.editorState = next;
         // Entering crop mode on an untouched frame would show a rectangle
         // exactly on the frame edge, with every handle half outside the
         // window and nothing to grab. Open at an inset instead, so the
@@ -535,7 +539,8 @@ ApplicationWindow {
     }
 
     function showQuickEdit() {
-        quickEditOpen = true;
+        if (editorState === "closed")
+            editorState = "open";
         revealControls();
     }
 
@@ -550,13 +555,9 @@ ApplicationWindow {
     }
 
     function closeQuickEdit() {
-        quickEditOpen = false;
-        // Crop mode is only reachable from this sheet, so it must not outlive
-        // it: leaving the overlay up with its own controls gone would be a
-        // dead-end the user has no way out of. The rectangle itself survives
-        // -- closing the sheet is not "discard my crop", and reopening shows
-        // the same selection.
-        setCropMode(false);
+        // Ends crop mode too. The rectangle survives -- closing the sheet is
+        // not "discard my crop", and reopening shows the same selection.
+        editorState = "closed";
         stage.forceActiveFocus();
         revealControls();
     }
