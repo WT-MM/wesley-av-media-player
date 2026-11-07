@@ -55,7 +55,10 @@ struct LibavformatCursor::Impl {
   CancellationToken cancellation{};
   std::int64_t position{}, extent{};
   std::uint64_t ioBudget{};
-  bool ioLimit{}, changed{}, fragmented{};
+  // Why the AVIO callbacks refused the latest libav call, if they did.
+  enum class IoFault : std::uint8_t { None, FileChanged, Budget };
+  IoFault ioFault{IoFault::None};
+  bool fragmented{};
   ~Impl() {
     if (packet)
       avcodec::api().av_packet_free(&packet);
@@ -82,8 +85,9 @@ struct LibavformatCursor::Impl {
     return static_cast<Impl *>(opaque)->cancelled();
   }
   bool sameFile() noexcept {
-    changed = FileIdentity::of(fd) != identity;
-    return !changed;
+    if (FileIdentity::of(fd) == identity) return true;
+    ioFault = IoFault::FileChanged;
+    return false;
   }
   static int readBytes(void *opaque, std::uint8_t *buffer, int count) {
     auto &self = *static_cast<Impl *>(opaque);
@@ -96,7 +100,7 @@ struct LibavformatCursor::Impl {
     const auto size = std::min<std::int64_t>(
         {count, std::int64_t(kIoBytes), self.extent - self.position});
     if (std::uint64_t(size) > self.ioBudget) {
-      self.ioLimit = true;
+      self.ioFault = IoFault::Budget;
       return AVERROR(EFBIG);
     }
     self.ioBudget -= size;
@@ -308,8 +312,10 @@ bool LibavformatCursor::open(const std::filesystem::path &path,
 bool LibavformatCursor::open(const std::filesystem::path &path,
                              CancellationToken cancellation, std::string &error,
                              MediaRefusalClass *refusal) {
-  impl_ = std::make_unique<Impl>();
-  auto &s = *impl_;
+  // Opened means impl_ is set: a failed open leaves the cursor closed.
+  impl_.reset();
+  auto opening = std::make_unique<Impl>();
+  auto &s = *opening;
   s.cancellation = cancellation;
   if (s.cancelled()) {
     error = "LibavformatCancelled";
@@ -350,11 +356,18 @@ bool LibavformatCursor::open(const std::filesystem::path &path,
   s.format->max_index_size = kIndexBytes;
   s.format->max_picture_buffer = kPacketBytes;
   s.ioBudget = 4 * kProbeBytes;
+  s.ioFault = Impl::IoFault::None;
   if (s.api.avformat_open_input(&s.format, nullptr, nullptr, nullptr) < 0 ||
       s.api.avformat_find_stream_info(s.format, nullptr) < 0) {
-    error = s.cancelled() ? "LibavformatCancelled"
-            : s.ioLimit   ? "LibavformatProbeLimit"
-                          : "LibavformatProbeFailed";
+    if (s.cancelled()) {
+      error = "LibavformatCancelled";
+      return false;
+    }
+    switch (s.ioFault) {
+      case Impl::IoFault::Budget: error = "LibavformatProbeLimit"; break;
+      case Impl::IoFault::FileChanged:
+      case Impl::IoFault::None: error = "LibavformatProbeFailed"; break;
+    }
     return false;
   }
   s.packet = avcodec::api().av_packet_alloc();
@@ -362,12 +375,13 @@ bool LibavformatCursor::open(const std::filesystem::path &path,
     error = "LibavformatPacketAllocation";
     return false;
   }
+  impl_ = std::move(opening);
   return true;
 }
 LibavformatCursor::Read LibavformatCursor::read(Packet &out,
                                                 std::string &error) {
   out = {};
-  if (!impl_ || !impl_->format || !impl_->packet) {
+  if (!impl_) {
     error = "LibavformatCursorNotOpen";
     return Read::Failed;
   }
@@ -379,7 +393,7 @@ LibavformatCursor::Read LibavformatCursor::read(Packet &out,
     return Read::Failed;
   }
   s.ioBudget = kProbeBytes;
-  s.ioLimit = false;
+  s.ioFault = Impl::IoFault::None;
   avcodec::api().av_packet_unref(s.packet);
   const int rc = s.api.av_read_frame(s.format, s.packet);
   if (s.cancelled())
@@ -387,9 +401,11 @@ LibavformatCursor::Read LibavformatCursor::read(Packet &out,
   if (rc == AVERROR_EOF)
     return Read::End;
   if (rc < 0) {
-    error = s.changed   ? "LibavformatFileChanged"
-            : s.ioLimit ? "LibavformatReadBudget"
-                        : "LibavformatPacketReadFailed";
+    switch (s.ioFault) {
+      case Impl::IoFault::FileChanged: error = "LibavformatFileChanged"; break;
+      case Impl::IoFault::Budget: error = "LibavformatReadBudget"; break;
+      case Impl::IoFault::None: error = "LibavformatPacketReadFailed"; break;
+    }
     return Read::Failed;
   }
   const auto &p = *s.packet;
@@ -447,11 +463,11 @@ LibavformatCursor::Read LibavformatCursor::read(Packet &out,
   return Read::Packet;
 }
 const char* LibavformatCursor::formatName() const noexcept {
-  return impl_ && impl_->format && impl_->format->iformat ? impl_->format->iformat->name : "";
+  return impl_ && impl_->format->iformat ? impl_->format->iformat->name : "";
 }
 bool LibavformatCursor::seek(unsigned stream, MediaTime target,
                              std::string &error) {
-  if (!impl_ || !impl_->format || !impl_->packet) {
+  if (!impl_) {
     error = "LibavformatCursorNotOpen";
     return false;
   }
@@ -475,6 +491,7 @@ bool LibavformatCursor::seek(unsigned stream, MediaTime target,
     return false;
   }
   s.ioBudget = 4 * kProbeBytes;
+  s.ioFault = Impl::IoFault::None;
   avcodec::api().av_packet_unref(s.packet);
   if (s.api.av_seek_frame(s.format, stream, *tick,
                           AVSEEK_FLAG_BACKWARD) < 0) {
@@ -487,7 +504,7 @@ FileIdentity LibavformatCursor::identity() const noexcept {
   return impl_ ? impl_->identity : FileIdentity{};
 }
 unsigned LibavformatCursor::streamCount() const noexcept {
-  return impl_ && impl_->format ? impl_->format->nb_streams : 0;
+  return impl_ ? impl_->format->nb_streams : 0;
 }
 LibavformatCursor::Stream LibavformatCursor::stream(unsigned i) const noexcept {
   if (i >= streamCount())
