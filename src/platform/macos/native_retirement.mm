@@ -49,8 +49,8 @@ NativeRetirement::~NativeRetirement() {
 }
 void NativeRetirement::retire(std::shared_ptr<void> graph,
     std::shared_ptr<void> lifetime, Completion completion) noexcept {
-  assert([NSThread isMainThread] && !started_);
-  started_ = true;
+  assert([NSThread isMainThread] && !started());
+  phase_.store(Phase::Retiring, std::memory_order_release);
   graph_ = std::move(graph);
   const auto retained = shared_from_this();
   pendingDestructions.fetch_add(1, std::memory_order_release);
@@ -61,7 +61,7 @@ void NativeRetirement::retire(std::shared_ptr<void> graph,
     @autoreleasepool {
       retained->graph_.reset();
     }
-    retained->complete_.store(true, std::memory_order_release);
+    retained->phase_.store(Phase::Complete, std::memory_order_release);
     pendingDestructions.fetch_sub(1, std::memory_order_release);
     pendingDestructions.notify_all();
     dispatch_async(dispatch_get_main_queue(), ^{

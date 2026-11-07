@@ -133,8 +133,17 @@ Tick PlaybackRouter::deadline(Tick now, std::uint64_t duration) const noexcept {
   return {now.value + duration};
 }
 
+void PlaybackRouter::armDeadline(Tick now, std::uint64_t duration) noexcept {
+  // A zero duration means the phase has no deadline.
+  if (duration == 0) {
+    deadline_.reset();
+  } else {
+    deadline_ = deadline(now, duration);
+  }
+}
+
 bool PlaybackRouter::deadlineExpired(Tick now) const noexcept {
-  return deadlineArmed_ && now.value >= deadline_.value;
+  return deadline_ && now.value >= deadline_->value;
 }
 
 void PlaybackRouter::clearCurrent() noexcept {
@@ -154,8 +163,7 @@ void PlaybackRouter::clearCurrent() noexcept {
   fallbackReservationExhausted_ = false;
   initialPositionSeconds_ = 0.0;
   intendedPaused_ = true;
-  deadline_ = {};
-  deadlineArmed_ = false;
+  deadline_.reset();
 }
 
 Transition PlaybackRouter::beginFallback(PendingOpen pending) noexcept {
@@ -171,7 +179,7 @@ Transition PlaybackRouter::beginFallback(PendingOpen pending) noexcept {
     return exhausted();
   }
   state_ = State::FallbackCreating;
-  deadlineArmed_ = false;
+  deadline_.reset();
   return applied(fallbackAction(ActionKind::CreateFallback, {attempt_, serial},
                                 sourceKey_, intendedPaused_));
 }
@@ -208,8 +216,7 @@ Transition PlaybackRouter::beginOpen(PendingOpen pending, Tick now) noexcept {
     return invalid();
   }
   state_ = State::NativePreparing;
-  deadlineArmed_ = timeouts_.prepareTicks != 0;
-  deadline_ = deadline(now, timeouts_.prepareTicks);
+  armDeadline(now, timeouts_.prepareTicks);
   return applied(nativePrepareAction(prepare_));
 }
 
@@ -487,8 +494,7 @@ Transition PlaybackRouter::commitSeek(const CommitSeekRequest &request,
   commitDrawBaseline_ = request.drawBaseline;
   initialPositionSeconds_ = *targetSeconds;
   state_ = State::NativeSeeking;
-  deadlineArmed_ = timeouts_.seekTicks != 0;
-  deadline_ = deadline(now, timeouts_.seekTicks);
+  armDeadline(now, timeouts_.seekTicks);
   return applied(nativeCommitSeekAction(command));
 }
 
@@ -515,7 +521,7 @@ Transition PlaybackRouter::beginNativeStop(bool fallbackCurrent,
   native::Generation invalidation;
   if (!reserveStopGeneration(invalidation)) {
     state_ = State::NativeStopFailed;
-    deadlineArmed_ = false;
+    deadline_.reset();
     return exhausted();
   }
   stop_ = {{attempt_, native::Serial{native::kTerminalStopValue}},
@@ -524,15 +530,14 @@ Transition PlaybackRouter::beginNativeStop(bool fallbackCurrent,
   state_ = State::NativeStopping;
   // Stopped depends on a session-worker fact, so it gets the same bounded
   // deadline as Prepare, Start and CommitSeek (see TimeoutPolicy::stopTicks).
-  deadlineArmed_ = timeouts_.stopTicks != 0;
-  deadline_ = deadline(now, timeouts_.stopTicks);
+  armDeadline(now, timeouts_.stopTicks);
   return applied(nativeStopAction(stop_));
 }
 
 Transition PlaybackRouter::beginFallbackStop(Tick) noexcept {
   serial_ = native::Serial{native::kTerminalStopValue};
   state_ = State::FallbackStopping;
-  deadlineArmed_ = false;
+  deadline_.reset();
   return applied(fallbackAction(ActionKind::StopFallback, {attempt_, serial_},
                                 sourceKey_, intendedPaused_));
 }
@@ -572,7 +577,6 @@ Transition PlaybackRouter::expirePhase(Tick now) noexcept {
   if (!isBoundedNativePhase(state_)) {
     return ignored();
   }
-  deadlineArmed_ = true;
   deadline_ = now;
   return state_ == State::NativeStopping ? applied() : advance(now);
 }
@@ -596,8 +600,7 @@ Transition PlaybackRouter::onNativePrepared(const native::Prepared &event,
     return beginNativeStop(true, now);
   }
   state_ = State::NativeStarting;
-  deadlineArmed_ = timeouts_.startTicks != 0;
-  deadline_ = deadline(now, timeouts_.startTicks);
+  armDeadline(now, timeouts_.startTicks);
   return applied(nativeStartAction(start_));
 }
 
@@ -638,7 +641,7 @@ Transition PlaybackRouter::onNativeStarted(const native::Started &event,
     return beginNativeStop(true, now);
   }
   state_ = State::NativeActive;
-  deadlineArmed_ = false;
+  deadline_.reset();
   native::SetRunState command{{attempt_, serial}, generation_,
                               intendedPaused_, intendedRate_,
                               intendedPreservePitch_};
@@ -655,7 +658,7 @@ Transition PlaybackRouter::onNativeEnded(const native::Ended &event,
     return ignored();
   }
   state_ = State::NativeEnded;
-  deadlineArmed_ = false;
+  deadline_.reset();
   return applied();
 }
 

@@ -91,7 +91,7 @@ python3 /private/tmp/wam-seek-scratch/measure.py /Users/wesleymaa/Movies/hollow_
 
 The synthetic baseline records two starts for every target generation. First: SeekCommitted → start → paused proof → CommitReady. Second: the worker mistakes the proved landing for an idle user pause, stops the device, and the restored playing intent must start it again. Baseline readiness-to-real-PCM is 55.924–83.925 ms (median 67.254 ms), although callbacks span only 20 ms. Baseline underrun and late-frame counts are zero. This implicates lifecycle serialization, not starvation or decode-to-target, in the post-picture stall.
 
-The guard checks `commitRunStatePending` and `publishedRun` under the same mutex used for command acceptance, after obtaining the live child-operation permit. Stop/retirement ordering and the callback-quiescence requirements are unchanged. The output still stops for generation flush; this change removes the unnecessary **second** stop/start, not that safety barrier.
+The guard checks the public commit handshake state (`ReadyAwaitingRun`) and `publishedRun` under the same mutex used for command acceptance, after obtaining the live child-operation permit. Stop/retirement ordering and the callback-quiescence requirements are unchanged. The output still stops for generation flush; this change removes the unnecessary **second** stop/start, not that safety barrier.
 
 ## Results
 

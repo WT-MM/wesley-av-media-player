@@ -160,6 +160,9 @@ struct FakePlatform final {
   bool started{false};
   bool callbackAttached{false};
   bool listenerAttached{false};
+  // Fires the StreamFormat listener from inside AudioOutputUnitStart, the
+  // way a device republishing its format races the output's own start.
+  bool notifyFormatOnStart{false};
   bool failInitialize{false};
   int disposeFailures{0};
   std::uint32_t maximumFrames{NativeAudioOutput::kMaximumFramesPerSlice};
@@ -303,8 +306,14 @@ struct FakePlatform final {
     self(context).initialized = false;
     return noErr;
   }
-  static OSStatus start(void* context, AudioUnit) {
-    self(context).started = true;
+  static OSStatus start(void* context, AudioUnit unit) {
+    FakePlatform& fake = self(context);
+    fake.started = true;
+    if (std::exchange(fake.notifyFormatOnStart, false)) {
+      fake.listener(fake.listenerContext, unit,
+                    kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output,
+                    0);
+    }
     return noErr;
   }
   static OSStatus stop(void* context, AudioUnit) {
@@ -1790,6 +1799,42 @@ void testDeviceRecoveryAcrossSeek() {
            "seek reconciles unchanged device format before activation");
     expect(session->close() == NativeMediaConsumerProgress::Done,
            "recovery seek closes cleanly");
+  }
+  // An unchanged format republished after the seek's activation, and one
+  // republished while the output is starting, must both resolve before the
+  // commit's paused start completes; neither may fail the session.
+  for (const bool duringStart : {false, true}) {
+    auto platform = std::make_shared<FakePlatform>();
+    auto session = NativeAudioSession::create(
+        1, dependencies(platform, std::make_unique<FakeBackend>(
+                                      std::make_shared<BackendState>())));
+    expect(session->configure(audioTrack(), 1, timeline(1, 0), nullptr) ==
+               NativeMediaConsumeResult::Accepted,
+           "start-race fixture configured");
+    expect(session->flush(1, 2, timeline(2, 1602)) ==
+               NativeMediaConsumerProgress::Done,
+           "start-race seek activates the target generation");
+    if (duringStart) {
+      platform->notifyFormatOnStart = true;
+    } else {
+      platform->listener(platform->listenerContext,
+          reinterpret_cast<AudioUnit>(&platform->unitToken),
+          kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0);
+    }
+    NativeAudioSessionProgress started = NativeAudioSessionProgress::Quiescing;
+    for (int attempt = 0;
+         attempt < 4 && started == NativeAudioSessionProgress::Quiescing;
+         ++attempt) {
+      started = session->start();
+    }
+    expect(started == NativeAudioSessionProgress::Done &&
+               session->facts().failure == NativeAudioSessionFailure::None &&
+               session->facts().state == NativeAudioSessionState::Started,
+           duringStart
+               ? "a format republished during the output start is reconciled"
+               : "a format republished before the commit's start is reconciled");
+    expect(session->close() == NativeMediaConsumerProgress::Done,
+           "start-race fixture closes cleanly");
   }
   auto platform = std::make_shared<FakePlatform>();
   auto backend = std::make_shared<BackendState>();

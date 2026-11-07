@@ -2303,6 +2303,72 @@ void testCommitSeekProceedsPastFailedPreviewLane() {
       *session, "Stop after a failed-lane commit retires"));
 }
 
+// A scrub whose commit is refused before it reaches the session (for example
+// a target at or past the presentable ceiling) leaves the preview lane holding
+// main video, and only a commit or Stop gives it back. A run command that
+// would play there would run audio over a frozen picture with the dispatcher
+// gated; the session refuses it instead, and a later commit still recovers.
+void testPlayRefusedWhilePreviewHoldsMainVideo() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->blockCapacity.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  expect(prepare(*session, prepareCommand()) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "held-lane Prepare accepted");
+  static_cast<void>(
+      waitFact<protocol::Prepared>(*session, "held-lane Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "held-lane Start accepted");
+  static_cast<void>(
+      waitFact<protocol::Started>(*session, "held-lane Started"));
+  expect(session->setRunState({{{1}, {3}}, {7}, true, 1.0}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "held-lane scrub pause accepted");
+  expect(session->preparePreviewHandoff() ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "held-lane handoff accepted");
+  waitUntil(
+      [&] {
+        return NativeMediaSessionTestAccess::facts(*session)
+            .previewHandoffReady;
+      },
+      "held-lane handoff releases main video to the lane");
+  expect(!session->preflightCommitTarget(
+             secondsTime(session->seekCeilingSeconds())),
+         "a commit at the ceiling is refused before it reaches the session");
+  expect(session->setRunState({{{1}, {4}}, {7}, false, 1.0}) ==
+             NativeMediaSessionCommandStatus::Invalid,
+         "play is refused while the preview lane holds main video");
+  expect(session->setRunState({{{1}, {4}}, {7}, true, 1.0}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "pause stays admissible while the lane holds main video");
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
+  require(target.has_value(), "held-lane recovery target preflights");
+  state->beginCommitLifecycle(8);
+  expect(session->commitSeek({{{1}, {5}}, {7}, {8}, {31}, {2}, 2.0},
+                             *target) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "a later commit is still admitted");
+  waitUntil([&] { return state->sourceSeeks.load() == 1; },
+            "the commit retires the lane and seeks");
+  wake->video().signal(wake->video().context);
+  publishCommitDraw(*state, 8, 1, 2.0);
+  wake->video().signal(wake->video().context);
+  static_cast<void>(waitFact<protocol::CommitReady>(
+      *session, "the commit lands past the held lane"));
+  expect(session->setRunState({{{1}, {6}}, {8}, false, 1.0}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "play is admitted once the commit has retired the lane");
+  expect(session->stop({{{1}, {7}}, {9}}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "held-lane Stop accepted");
+  static_cast<void>(
+      waitFact<protocol::Stopped>(*session, "held-lane Stop retires"));
+}
+
 void testCommitSeekAdmittedDuringStarting() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -3335,20 +3401,15 @@ void testExhaustionStopsAudioBeforeOneEnded() {
       waitFact<protocol::Stopped>(*session, "Ended fixture Stopped"));
 }
 
-// D6. A commit that lands inside the last frame's presentation interval used
-// to retire the whole native route. latchEnding() suppressed end of stream
-// only while publicCommitPending was set, but publishCommitReady clears that
-// flag at publication -- so media exhaustion arriving between CommitReady and
-// the Router's promised post-commit SetRunState let Ended latch inside the
-// handshake. Ended then carried the stale CommitSeek stamp (dropped by
-// endedMatches), and the promised run command was answered Ignored, which the
-// owner escalates to a Protocol failure and an mpv fallback.
-//
-// The fix is the commitRunStatePending latch: ending is held until the run
-// command the commit protocol guarantees actually lands. This fixture pins
-// exactly that window. Pre-fix it fails three ways at once -- ending latches
-// early, the run command is refused, and the lifecycle fact that arrives is
-// not the Ended this test waits for.
+// A commit that lands inside the last frame's presentation interval. Media
+// exhaustion arriving between CommitReady and the Router's promised
+// post-commit SetRunState must not latch Ended inside the handshake: Ended
+// would carry the stale CommitSeek stamp (dropped by endedMatches), and the
+// promised run command would be answered Ignored, which the owner escalates to
+// a Protocol failure and an mpv fallback. The public commit handshake holds
+// ReadyAwaitingRun until that run command lands. If ending latched early, this
+// fails three ways at once -- ending latches, the run command is refused, and
+// the lifecycle fact that arrives is not the Ended this test waits for.
 void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -3911,6 +3972,7 @@ int main(int argc, char** argv) {
   testPendingSeekIsSuperseded();
   testCommitSeekPendingReadyAndStopHighWater();
   testCommitSeekProceedsPastFailedPreviewLane();
+  testPlayRefusedWhilePreviewHoldsMainVideo();
   testCommitSeekAdmittedDuringStarting();
   testExactTimeAndSequencing();
   testPresentationAdmissionAndFallback();

@@ -4,6 +4,7 @@
 #include "media/native_media_clock.hpp"
 #include "native_session_ports.hpp"
 
+#include <cstdint>
 #include <memory>
 
 namespace wam::macos {
@@ -84,9 +85,15 @@ class NativeSilentTimebase final : public SessionClockAuthority {
 
   media::NativeMediaClock clock_;
   media::MediaGeneration generation_{0};
+  // Unarmed until the first activate(); Paused and Running carry an active
+  // generation; Retired is final.
+  enum class Phase : std::uint8_t { Unarmed, Paused, Running, Retired };
+  [[nodiscard]] bool armed() const noexcept {
+    return phase_ == Phase::Paused || phase_ == Phase::Running;
+  }
+
   media::NativePlaybackRate rate_{};
-  bool running_{false};
-  bool retired_{false};
+  Phase phase_{Phase::Unarmed};
 };
 
 }  // namespace wam::macos
