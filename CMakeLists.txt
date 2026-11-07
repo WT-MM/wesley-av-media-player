@@ -118,6 +118,28 @@ add_library(wam_pins INTERFACE)
 target_include_directories(wam_pins INTERFACE "${PROJECT_BINARY_DIR}/generated")
 
 include(cmake/CaptionBackend.cmake)
+
+# The app's Qt-free core: export and caption jobs, persisted state and the
+# scroll-gesture model. The app and the tests link it (tests that need its
+# seams link the wam_app_core_test_seams twin).
+add_library(wam_app_core STATIC
+  src/jobs.cpp
+  src/jobs.hpp
+  src/caption_service.cpp
+  src/caption_service.hpp
+  src/state_store.cpp
+  src/state_store.hpp
+  src/qt/scroll_gesture.cpp
+  src/qt/scroll_gesture.hpp)
+target_include_directories(wam_app_core PUBLIC src)
+target_compile_features(wam_app_core PUBLIC cxx_std_20)
+if(MSVC)
+  target_compile_options(wam_app_core PRIVATE /W4)
+else()
+  target_compile_options(wam_app_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+target_link_libraries(wam_app_core PUBLIC wam_caption_runtime)
+
 include(cmake/NativeTargets.cmake)
 if(WAM_BUILD_APP)
   include(cmake/WamApp.cmake)

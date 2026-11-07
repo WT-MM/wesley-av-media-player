@@ -29,15 +29,8 @@ if(APPLE)
     FIXTURES_SETUP wamkit_media TIMEOUT 60)
 endif()
 
-add_executable(wam_caption_test
-  caption_service_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/caption_service.cpp
-  ${PROJECT_SOURCE_DIR}/src/caption_service.hpp
-  ${PROJECT_SOURCE_DIR}/src/jobs.cpp
-  ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
-target_link_libraries(wam_caption_test PRIVATE wam_caption_runtime)
-target_include_directories(wam_caption_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_compile_definitions(wam_caption_test PRIVATE WAM_CAPTION_SERVICE_TESTING=1)
+add_executable(wam_caption_test caption_service_test.cpp)
+target_link_libraries(wam_caption_test PRIVATE wam_app_core_test_seams)
 add_test(NAME caption_service COMMAND wam_caption_test)
 add_executable(wam_caption_backend_test caption_backend_test.cpp)
 target_link_libraries(wam_caption_backend_test PRIVATE wam_caption_runtime)
@@ -47,14 +40,12 @@ if(NOT WAM_HAS_SPEECH_ANALYZER)
   add_test(NAME caption_sdk_absent COMMAND wam_caption_backend_test --expect-unavailable)
 endif()
 if(UNIX)
-  add_executable(wam_caption_flow_test caption_flow_test.cpp ${PROJECT_SOURCE_DIR}/src/caption_service.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp)
-  target_link_libraries(wam_caption_flow_test PRIVATE wam_caption_runtime)
-  target_include_directories(wam_caption_flow_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  add_executable(wam_caption_flow_test caption_flow_test.cpp)
+  target_link_libraries(wam_caption_flow_test PRIVATE wam_app_core)
   add_test(NAME caption_flow COMMAND wam_caption_flow_test)
 endif()
-add_executable(wam_caption_proof caption_engine_proof.cpp ${PROJECT_SOURCE_DIR}/src/caption_service.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp)
-target_link_libraries(wam_caption_proof PRIVATE wam_caption_runtime)
-target_include_directories(wam_caption_proof PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_executable(wam_caption_proof caption_engine_proof.cpp)
+target_link_libraries(wam_caption_proof PRIVATE wam_app_core)
 
 if(NOT WAM_BUILD_APP)
   return()
@@ -394,10 +385,9 @@ add_executable(wam_playback_policy_test playback_policy_test.cpp)
 target_include_directories(wam_playback_policy_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME playback_policy COMMAND wam_playback_policy_test)
 
-add_executable(wam_launch_rules_test launch_rules_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/media_url.cpp ${PROJECT_SOURCE_DIR}/src/qt/media_url.hpp)
-target_include_directories(wam_launch_rules_test PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/qt)
-target_link_libraries(wam_launch_rules_test PRIVATE Qt6::Core)
+add_executable(wam_launch_rules_test launch_rules_test.cpp)
+target_include_directories(wam_launch_rules_test PRIVATE ${PROJECT_SOURCE_DIR}/src/qt)
+target_link_libraries(wam_launch_rules_test PRIVATE wam_app_test_seams)
 add_test(NAME launch_rules COMMAND wam_launch_rules_test)
 
 add_executable(wam_mpv_hwdec_interop_policy_test
@@ -407,24 +397,18 @@ target_include_directories(wam_mpv_hwdec_interop_policy_test PRIVATE ${PROJECT_S
 add_test(NAME mpv_hwdec_interop_policy
   COMMAND wam_mpv_hwdec_interop_policy_test)
 
-add_executable(wam_jobs_test jobs_test.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
-target_include_directories(wam_jobs_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_executable(wam_jobs_test jobs_test.cpp)
+target_link_libraries(wam_jobs_test PRIVATE wam_app_core)
 add_test(NAME jobs COMMAND wam_jobs_test)
 
-add_executable(wam_state_test
-  state_store_test.cpp ${PROJECT_SOURCE_DIR}/src/state_store.cpp ${PROJECT_SOURCE_DIR}/src/state_store.hpp)
-target_include_directories(wam_state_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_executable(wam_state_test state_store_test.cpp)
+target_link_libraries(wam_state_test PRIVATE wam_app_core)
 add_test(NAME state_store COMMAND wam_state_test)
 
-# The pointer-scroll gesture model links no Qt at all, which is exactly why
-# it is its own translation unit: normalization, axis lock and the 100%
-# detent are decided there and proved here without a GUI.
-add_executable(wam_scroll_gesture_test
-  scroll_gesture_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.hpp)
-target_include_directories(wam_scroll_gesture_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_compile_features(wam_scroll_gesture_test PRIVATE cxx_std_20)
+# The pointer-scroll gesture model links no Qt at all: normalization, axis
+# lock and the 100% detent are decided there and proved here without a GUI.
+add_executable(wam_scroll_gesture_test scroll_gesture_test.cpp)
+target_link_libraries(wam_scroll_gesture_test PRIVATE wam_app_core)
 target_compile_options(wam_scroll_gesture_test PRIVATE
   -Wall -Wextra -Wpedantic)
 add_test(NAME scroll_gesture COMMAND wam_scroll_gesture_test)
@@ -445,6 +429,7 @@ target_link_libraries(wam_app_test_seams PUBLIC
   Qt6::Qml
   Qt6::Quick
   Qt6::OpenGL
+  wam_app_core_test_seams
   wam_mpv_runtime_test_seams
   wam_native_core_test_seams
   wam_caption_runtime
@@ -478,8 +463,8 @@ add_test(NAME render_lifecycle COMMAND wam_render_lifecycle_test)
 
 if(WAM_DEV_FFMPEG_EXECUTABLE AND WAM_TEST_FFPROBE)
   add_executable(wam_export_integration_test
-    export_integration_test.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
-  target_include_directories(wam_export_integration_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    export_integration_test.cpp)
+  target_link_libraries(wam_export_integration_test PRIVATE wam_app_core)
   if(APPLE)
     add_test(NAME export_presets COMMAND wam_export_integration_test
       "${WAM_DEV_FFMPEG_EXECUTABLE}" "${WAM_TEST_FFPROBE}" --all-presets)

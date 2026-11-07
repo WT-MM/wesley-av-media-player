@@ -58,8 +58,6 @@ set(WAM_APP_SOURCES
   src/qt/subtitle_sources.hpp
   src/qt/subtitle_bitmap_provider.cpp
   src/qt/subtitle_bitmap_provider.hpp
-  src/qt/scroll_gesture.cpp
-  src/qt/scroll_gesture.hpp
   src/qt/player_core.cpp
   src/qt/player_core_p.hpp
   src/qt/mpv_hwdec_interop_policy.hpp
@@ -71,14 +69,10 @@ set(WAM_APP_SOURCES
   src/qt/window_manager.hpp
   src/qt/media_url.cpp
   src/qt/media_url.hpp
-  src/jobs.cpp
-  src/jobs.hpp
-  src/caption_service.cpp
-  src/caption_service.hpp
-  src/state_store.cpp
-  src/state_store.hpp)
+)
 
 qt_add_executable(wam MACOSX_BUNDLE WIN32 src/qt/main.cpp ${WAM_APP_SOURCES})
+target_link_libraries(wam PRIVATE wam_app_core)
 
 qt_add_qml_module(wam
   URI Wam
