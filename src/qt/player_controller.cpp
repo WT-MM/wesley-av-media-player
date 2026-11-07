@@ -2051,11 +2051,11 @@ void PlayerController::resetCrop() { setCrop(0.0, 0.0, 1.0, 1.0); }
 
 void PlayerController::exportSelection() {
   if (!hasMedia()) {
-    setLastError(QStringLiteral("Open media before exporting a selection."));
+    showError(QStringLiteral("Open media before exporting a selection."));
     return;
   }
   if (captioning()) {
-    setLastError(QStringLiteral(
+    showError(QStringLiteral(
         "Wait for caption generation to finish before exporting."));
     return;
   }
@@ -2068,11 +2068,11 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   if (destination.isEmpty())
     return;
   if (!hasMedia()) {
-    setLastError(QStringLiteral("Open media before exporting a selection."));
+    showError(QStringLiteral("Open media before exporting a selection."));
     return;
   }
   if (captioning()) {
-    setLastError(QStringLiteral(
+    showError(QStringLiteral(
         "Wait for caption generation to finish before exporting."));
     return;
   }
@@ -2082,12 +2082,12 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   const auto input = localPath(source_);
   auto output = localPath(destination);
   if (!input) {
-    setLastError(QStringLiteral(
+    showError(QStringLiteral(
         "Save network media locally before exporting an edited copy."));
     return;
   }
   if (!output) {
-    setLastError(QStringLiteral("Choose a local file for the video export."));
+    showError(QStringLiteral("Choose a local file for the video export."));
     return;
   }
   // The preset decides the container, so it decides the extension -- both for
@@ -2098,18 +2098,18 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
 
   std::error_code path_error;
   if (!std::filesystem::is_regular_file(*input, path_error)) {
-    setLastError(QStringLiteral(
+    showError(QStringLiteral(
         "The source media is no longer available as a readable local file."));
     return;
   }
   if (pathsReferToSameFile(*input, *output)) {
-    setLastError(QStringLiteral("Choose a different filename so the original "
+    showError(QStringLiteral("Choose a different filename so the original "
                                 "media is not overwritten."));
     return;
   }
   const QFileInfo output_info(displayPath(*output));
   if (!QDir(output_info.absolutePath()).exists()) {
-    setLastError(QStringLiteral("The selected export folder does not exist."));
+    showError(QStringLiteral("The selected export folder does not exist."));
     return;
   }
 
@@ -2139,14 +2139,14 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   const auto ffmpeg =
       ::wam::resolveTool(ffmpeg_search, ::wam::toolIsExecutable);
   if (ffmpeg.empty()) {
-    setLastError(fromUtf8(::wam::toolSearchFailure(ffmpeg_search)));
+    showError(fromUtf8(::wam::toolSearchFailure(ffmpeg_search)));
     return;
   }
 
   std::string staging_error;
   auto staging = ::wam::reserveExportStagingFile(*output, &staging_error);
   if (staging.empty()) {
-    setLastError(
+    showError(
         staging_error.empty()
             ? QStringLiteral("Could not reserve a safe temporary export file.")
             : QStringLiteral("Could not prepare the export: %1")
@@ -2161,17 +2161,17 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
         "Video export", ::wam::buildExportProcess(ffmpeg, options));
     if (!started) {
       ::wam::removeExportStagingFile(staging);
-      setLastError(QStringLiteral("Another video export is already running."));
+      showError(QStringLiteral("Another video export is already running."));
       return;
     }
   } catch (const std::exception &exception) {
     ::wam::removeExportStagingFile(staging);
-    setLastError(QStringLiteral("Could not start the video export: %1")
+    showError(QStringLiteral("Could not start the video export: %1")
                      .arg(QString::fromUtf8(exception.what())));
     return;
   }
 
-  setLastError({});
+  showError({});
   setExportStatus(QStringLiteral("Exporting in the background…"));
   beginExportJob(*output, std::move(staging));
   startWorkPolling();
@@ -2187,17 +2187,17 @@ void PlayerController::cancelExport() {
 
 void PlayerController::generateCaptions() {
   if (!hasMedia()) {
-    setLastError(
+    showError(
         QStringLiteral("Open local media before generating captions."));
     return;
   }
   if (exporting()) {
-    setLastError(QStringLiteral(
+    showError(QStringLiteral(
         "Wait for the video export to finish before captioning."));
     return;
   }
   if (captioning()) {
-    setLastError(QStringLiteral("Another caption task is already running."));
+    showError(QStringLiteral("Another caption task is already running."));
     return;
   }
   emit generateCaptionsRequested();
@@ -2207,29 +2207,29 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   if (destination.isEmpty())
     return;
   if (!hasMedia()) {
-    setLastError(
+    showError(
         QStringLiteral("Open local media before generating captions."));
     return;
   }
   if (exporting()) {
-    setLastError(QStringLiteral(
+    showError(QStringLiteral(
         "Wait for the video export to finish before captioning."));
     return;
   }
   if (captioning()) {
-    setLastError(QStringLiteral("Another caption task is already running."));
+    showError(QStringLiteral("Another caption task is already running."));
     return;
   }
 
   const auto input = localPath(source_);
   const auto output = localPath(destination);
   if (!input) {
-    setLastError(QStringLiteral(
+    showError(QStringLiteral(
         "Save network media locally before generating captions."));
     return;
   }
   if (!output) {
-    setLastError(QStringLiteral("Choose a local file for the captions."));
+    showError(QStringLiteral("Choose a local file for the captions."));
     return;
   }
 
@@ -2291,14 +2291,14 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   if (!caption_service_->start(std::move(request))) {
     const ::wam::CaptionStatus status = caption_service_->tryStatus().value_or(::wam::CaptionStatus{});
     const QString error = fromUtf8(status.error);
-    setLastError(
+    showError(
         error.isEmpty()
             ? QStringLiteral("Another caption task is already running.")
             : error);
     return;
   }
 
-  setLastError({});
+  showError({});
   setCaptionStatus(QStringLiteral("Preparing on-device captions…"));
   beginCaptionJob(*input);
   startWorkPolling();
@@ -2377,11 +2377,11 @@ void PlayerController::pollBackgroundWork() {
         setExportStatus(filename.isEmpty()
                             ? QStringLiteral("Export complete.")
                             : QStringLiteral("Saved %1").arg(filename));
-        setLastError({});
+        showError({});
       } else {
         endExportJob();
         setExportStatus(QStringLiteral("Export failed."));
-        setLastError(
+        showError(
             commit_error.empty()
                 ? QStringLiteral("The encoded video could not be safely saved. "
                                  "The existing "
@@ -2394,7 +2394,7 @@ void PlayerController::pollBackgroundWork() {
     } else {
       endExportJob();
       setExportStatus(QStringLiteral("Export failed."));
-      setLastError(
+      showError(
           QStringLiteral(
               "Video export failed (media tool exit code %1). Check that the "
               "destination is writable and the source contains playable media.")
@@ -2432,7 +2432,7 @@ void PlayerController::pollBackgroundWork() {
               "Captions saved, but not attached because the media changed."));
         } else {
           setCaptionStatus(QStringLiteral("Captions generated and enabled."));
-          setLastError({});
+          showError({});
         }
       } else if (status.cancelled()) {
         setCaptionStatus(job.cancel_reason.isEmpty()
@@ -2441,7 +2441,7 @@ void PlayerController::pollBackgroundWork() {
       } else {
         const QString error = fromUtf8(status.error);
         setCaptionStatus(QStringLiteral("Caption generation failed."));
-        setLastError(error.isEmpty()
+        showError(error.isEmpty()
                          ? QStringLiteral("Caption generation failed.")
                          : error);
       }
