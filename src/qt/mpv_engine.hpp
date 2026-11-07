@@ -645,26 +645,44 @@ private:
     VideoGamma,
   };
 
+  // The capacity-one command slot: free, one seek in flight, or an
+  // in-flight seek whose watchdog asked mpv to abort it.
+  struct ScrubSlotIdle {};
+  struct ScrubSlotInFlight {
+    // Issued, then mpv's SEEK for it, then its PLAYBACK_RESTART.
+    enum class Progress : std::uint8_t { Issued, Seeking, Restarted };
+    std::uint64_t command;
+    double target;
+    bool exact;
+    bool replied = false;
+    Progress progress = Progress::Issued;
+    // The position the restart landed on.
+    std::optional<double> landed;
+  };
+  struct ScrubSlotAborting {
+    std::uint64_t command;
+  };
+  // Dragging until the pointer is released; a release target can still wait
+  // behind an approximate preview draining from the slot.
+  enum class ScrubPhase : std::uint8_t { Dragging, Released };
+
   struct ScrubSeek {
     std::uint64_t gesture = 0;
     std::uint64_t request_serial = 0;
-    std::uint64_t command = 0;
     std::int64_t playlist_entry_id = -1;
-    double target = 0.0;
-    std::optional<double> pending_target;
-    std::optional<double> authoritative_position;
     bool intended_paused = true;
-    // final records that pointer ownership has been released. command_exact
-    // records the precision of the currently issued capacity-one command;
-    // those states intentionally differ while an approximate preview is
-    // draining after release.
-    bool final = false;
-    bool command_exact = false;
-    bool command_replied = false;
-    bool seek_started = false;
-    bool playback_restarted = false;
-    bool replacement_dispatched = false;
-    bool abort_pending = false;
+    ScrubPhase phase = ScrubPhase::Dragging;
+    // The latest target waiting for the slot.
+    std::optional<double> pending_target;
+    // A released gesture re-issues its target once after a failed command.
+    bool retry_spent = false;
+    std::variant<ScrubSlotIdle, ScrubSlotInFlight, ScrubSlotAborting> slot;
+  };
+
+  struct ScrubTimeoutKey {
+    std::uint64_t gesture = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t command = 0;
   };
 
   void overrideIntendedPause(bool paused);
@@ -672,11 +690,14 @@ private:
   void dispatchScrubSeek(double target, bool exact);
   void maybeCompleteScrubSeek();
   [[nodiscard]] static const char *scrubSeekMode(bool exact);
-  void armScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
-                       std::uint64_t command);
+  void armScrubTimeout(const ScrubTimeoutKey &key);
   void cancelScrubTimeout();
-  void handleScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
-                          std::uint64_t command);
+  void handleScrubTimeout(const ScrubTimeoutKey &key);
+  // The gesture still belongs to the current request's committed, active
+  // playlist entry.
+  [[nodiscard]] bool scrubLineageCurrent() const;
+  // The command occupying the slot (in flight or aborting), if any.
+  [[nodiscard]] std::optional<std::uint64_t> scrubCommandInFlight() const;
 
   PlayerController *owner_;
   MpvEngineHost &host_;
@@ -688,9 +709,7 @@ private:
   // Tokens for queued recovery/startup retries and completions.
   std::uint64_t next_deferred_token_ = 0;
   QTimer *scrub_timeout_timer_ = nullptr;
-  std::uint64_t scrub_timeout_gesture_ = 0;
-  std::uint64_t scrub_timeout_request_serial_ = 0;
-  std::uint64_t scrub_timeout_command_ = 0;
+  std::optional<ScrubTimeoutKey> scrub_timeout_key_;
   std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime_;
   std::shared_ptr<PlayerCore> replacement_;
 };

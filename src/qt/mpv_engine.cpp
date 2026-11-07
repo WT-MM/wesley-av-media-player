@@ -189,11 +189,10 @@ MpvEngine::MpvEngine(PlayerController *owner, MpvEngineHost &host)
   scrub_timeout_timer_->setSingleShot(true);
   scrub_timeout_timer_->setTimerType(Qt::PreciseTimer);
   QObject::connect(scrub_timeout_timer_, &QTimer::timeout, owner, [this] {
-    const std::uint64_t gesture = scrub_timeout_gesture_;
-    const std::uint64_t request_serial = scrub_timeout_request_serial_;
-    const std::uint64_t command = scrub_timeout_command_;
+    const std::optional<ScrubTimeoutKey> key = scrub_timeout_key_;
     cancelScrubTimeout();
-    handleScrubTimeout(gesture, request_serial, command);
+    if (key)
+      handleScrubTimeout(*key);
   });
 }
 
@@ -610,32 +609,32 @@ const char *MpvEngine::scrubSeekMode(bool exact) {
   return exact ? "absolute+exact" : "absolute+keyframes";
 }
 
-void MpvEngine::armScrubTimeout(std::uint64_t gesture,
-                                       std::uint64_t request_serial,
-                                       std::uint64_t command) {
+void MpvEngine::armScrubTimeout(const ScrubTimeoutKey &key) {
   if (!scrub_timeout_timer_)
     return;
   scrub_timeout_timer_->stop();
-  scrub_timeout_gesture_ = gesture;
-  scrub_timeout_request_serial_ = request_serial;
-  scrub_timeout_command_ = command;
+  scrub_timeout_key_ = key;
   scrub_timeout_timer_->start(kScrubSeekTimeoutMs);
 }
 
 void MpvEngine::cancelScrubTimeout() {
   if (scrub_timeout_timer_)
     scrub_timeout_timer_->stop();
-  scrub_timeout_gesture_ = 0;
-  scrub_timeout_request_serial_ = 0;
-  scrub_timeout_command_ = 0;
+  scrub_timeout_key_.reset();
+}
+
+bool MpvEngine::scrubLineageCurrent() const {
+  return scrub_seek_ && scrub_seek_->request_serial == host_.requestSerial() &&
+         lineage.committed_open &&
+         lineage.committed_open->request_serial == host_.requestSerial() &&
+         lineage.committed_open->playlist_entry_id == scrub_seek_->playlist_entry_id &&
+         lineage.active_event_playlist_entry_id == scrub_seek_->playlist_entry_id;
 }
 
 void MpvEngine::dispatchScrubSeek(double target, bool exact) {
-  if (!scrub_seek_ || !ready() || scrub_seek_->command != 0 ||
-      scrub_seek_->request_serial != host_.requestSerial() || !lineage.committed_open ||
-      lineage.committed_open->request_serial != host_.requestSerial() ||
-      lineage.committed_open->playlist_entry_id != scrub_seek_->playlist_entry_id ||
-      lineage.active_event_playlist_entry_id != scrub_seek_->playlist_entry_id) {
+  if (!scrub_seek_ || !ready() ||
+      !std::holds_alternative<ScrubSlotIdle>(scrub_seek_->slot) ||
+      !scrubLineageCurrent()) {
     finishScrubGesture(true);
     return;
   }
@@ -644,15 +643,9 @@ void MpvEngine::dispatchScrubSeek(double target, bool exact) {
       nextMpvReplyId(MpvReply::Scrub, next_scrub_command_id_);
   const std::uint64_t reply_userdata = mpvReplyUserdata(MpvReply::Scrub, command);
 
-  scrub_seek_->command = command;
-  scrub_seek_->target = target;
-  scrub_seek_->command_exact = exact;
-  scrub_seek_->command_replied = false;
-  scrub_seek_->seek_started = false;
-  scrub_seek_->playback_restarted = false;
-  scrub_seek_->authoritative_position.reset();
-  const std::uint64_t gesture = scrub_seek_->gesture;
-  const std::uint64_t request_serial = scrub_seek_->request_serial;
+  scrub_seek_->slot = ScrubSlotInFlight{command, target, exact};
+  const ScrubTimeoutKey key{scrub_seek_->gesture, scrub_seek_->request_serial,
+                            command};
   const int result = sendCommand({QByteArrayLiteral("seek"),
                                   QByteArray::number(target, 'g', 12),
                                   QByteArray(scrubSeekMode(exact))},
@@ -665,115 +658,100 @@ void MpvEngine::dispatchScrubSeek(double target, bool exact) {
   // Command completion alone does not mean a frame was decoded. Keep the
   // capacity-one slot until a post-issuance SEEK and playback restart identify
   // a decoded frame. Exact release commands additionally converge to 50 ms.
-  armScrubTimeout(gesture, request_serial, command);
+  armScrubTimeout(key);
 }
 
-void MpvEngine::handleScrubTimeout(std::uint64_t gesture,
-                                          std::uint64_t request_serial,
-                                          std::uint64_t command) {
-  if (!scrub_seek_ || scrub_seek_->gesture != gesture ||
-      scrub_seek_->request_serial != request_serial ||
-      scrub_seek_->command != command) {
+void MpvEngine::handleScrubTimeout(const ScrubTimeoutKey &key) {
+  if (!scrub_seek_ || scrub_seek_->gesture != key.gesture ||
+      scrub_seek_->request_serial != key.request_serial) {
     return;
   }
-  if (scrub_seek_->command_replied) {
-    scrub_seek_->command = 0;
-    scrub_seek_->command_replied = false;
-    scrub_seek_->seek_started = false;
-    scrub_seek_->playback_restarted = false;
-    scrub_seek_->authoritative_position.reset();
-    scrub_seek_->pending_target.reset();
+  auto *const in_flight = std::get_if<ScrubSlotInFlight>(&scrub_seek_->slot);
+  if (!in_flight || in_flight->command != key.command)
+    return;
+  if (in_flight->replied) {
     // The command reply proves only API execution, not decoder completion.
     // Without a matching restart, issuing the retained final target here
     // could overlap the still-decoding seek. Exit conservatively instead.
+    scrub_seek_->slot = ScrubSlotIdle{};
+    scrub_seek_->pending_target.reset();
     finishScrubGesture(true);
     return;
   }
-  if (ready() && !scrub_seek_->abort_pending) {
-    scrub_seek_->abort_pending = true;
-    abortCommand(mpvReplyUserdata(MpvReply::Scrub, command));
+  if (ready()) {
+    scrub_seek_->slot = ScrubSlotAborting{key.command};
+    abortCommand(mpvReplyUserdata(MpvReply::Scrub, key.command));
   }
 }
 
 void MpvEngine::handleScrubCommandReply(std::uint64_t command,
                                                int error) {
-  if (!scrub_seek_ || scrub_seek_->request_serial != host_.requestSerial() ||
-      scrub_seek_->command != command) {
+  if (!scrub_seek_ || scrub_seek_->request_serial != host_.requestSerial())
     return;
-  }
-  if (scrub_seek_->abort_pending) {
+  if (const auto *aborting = std::get_if<ScrubSlotAborting>(&scrub_seek_->slot)) {
     // Abort is best-effort: even its reply cannot prove the old decoder seek
     // stopped. Never launch a retained target over that unproven work.
-    finishScrubGesture(true);
+    if (aborting->command == command)
+      finishScrubGesture(true);
     return;
   }
+  auto *const in_flight = std::get_if<ScrubSlotInFlight>(&scrub_seek_->slot);
+  if (!in_flight || in_flight->command != command)
+    return;
   if (error < 0) {
     cancelScrubTimeout();
     const std::optional<double> pending = scrub_seek_->pending_target;
-    const bool final = scrub_seek_->final;
-    scrub_seek_->command = 0;
-    scrub_seek_->command_exact = false;
-    scrub_seek_->command_replied = false;
-    scrub_seek_->seek_started = false;
-    scrub_seek_->playback_restarted = false;
-    scrub_seek_->authoritative_position.reset();
+    scrub_seek_->slot = ScrubSlotIdle{};
     scrub_seek_->pending_target.reset();
-    if (final && pending && !scrub_seek_->replacement_dispatched) {
-      scrub_seek_->replacement_dispatched = true;
+    if (scrub_seek_->phase == ScrubPhase::Released && pending &&
+        !scrub_seek_->retry_spent) {
+      scrub_seek_->retry_spent = true;
       dispatchScrubSeek(*pending, true);
       return;
     }
     finishScrubGesture(true);
     return;
   }
-  scrub_seek_->command_replied = true;
+  in_flight->replied = true;
   maybeCompleteScrubSeek();
 }
 
 void MpvEngine::handleScrubPlaybackRestart() {
-  if (!scrub_seek_ || scrub_seek_->command == 0 || !scrub_seek_->seek_started ||
-      scrub_seek_->request_serial != host_.requestSerial() || !lineage.committed_open ||
-      lineage.committed_open->request_serial != host_.requestSerial() ||
-      lineage.committed_open->playlist_entry_id != scrub_seek_->playlist_entry_id ||
-      lineage.active_event_playlist_entry_id != scrub_seek_->playlist_entry_id ||
-      !ready()) {
+  if (!scrubLineageCurrent() || !ready())
     return;
-  }
-  scrub_seek_->playback_restarted = true;
+  auto *const in_flight = std::get_if<ScrubSlotInFlight>(&scrub_seek_->slot);
+  if (!in_flight || in_flight->progress == ScrubSlotInFlight::Progress::Issued)
+    return;
+  in_flight->progress = ScrubSlotInFlight::Progress::Restarted;
   const auto live_position = doubleProperty("time-pos");
   if (live_position && std::isfinite(*live_position))
-    scrub_seek_->authoritative_position = std::max(0.0, *live_position);
+    in_flight->landed = std::max(0.0, *live_position);
   maybeCompleteScrubSeek();
 }
 
 void MpvEngine::maybeCompleteScrubSeek() {
-  if (!scrub_seek_ || !scrub_seek_->command_replied ||
-      !scrub_seek_->playback_restarted) {
+  if (!scrub_seek_)
+    return;
+  const auto *const in_flight = std::get_if<ScrubSlotInFlight>(&scrub_seek_->slot);
+  if (!in_flight || !in_flight->replied ||
+      in_flight->progress != ScrubSlotInFlight::Progress::Restarted ||
+      !in_flight->landed || !std::isfinite(*in_flight->landed)) {
     return;
   }
-  if (!scrub_seek_->authoritative_position ||
-      !std::isfinite(*scrub_seek_->authoritative_position)) {
-    return;
-  }
-  if (scrub_seek_->command_exact &&
-      std::abs(*scrub_seek_->authoritative_position - scrub_seek_->target) >
+  if (in_flight->exact &&
+      std::abs(*in_flight->landed - in_flight->target) >
           kScrubConvergenceToleranceSeconds) {
     return;
   }
 
-  const bool released = scrub_seek_->final;
-  const bool completed_exact = scrub_seek_->command_exact;
-  const double completed_target = scrub_seek_->target;
+  const bool completed_exact = in_flight->exact;
+  const double completed_target = in_flight->target;
   const std::optional<double> pending = scrub_seek_->pending_target;
   cancelScrubTimeout();
-  scrub_seek_->command = 0;
-  scrub_seek_->command_exact = false;
-  scrub_seek_->command_replied = false;
-  scrub_seek_->seek_started = false;
-  scrub_seek_->playback_restarted = false;
-  scrub_seek_->authoritative_position.reset();
+  scrub_seek_->slot = ScrubSlotIdle{};
   scrub_seek_->pending_target.reset();
-  if (released) {
+  switch (scrub_seek_->phase) {
+  case ScrubPhase::Released: {
     const double final_target = pending.value_or(completed_target);
     // An approximate preview that drains after pointer release never counts
     // as the release seek, even if its keyframe happens to equal the target.
@@ -784,8 +762,24 @@ void MpvEngine::maybeCompleteScrubSeek() {
     finishScrubGesture(true);
     return;
   }
-  if (pending)
-    dispatchScrubSeek(*pending, false);
+  case ScrubPhase::Dragging:
+    if (pending)
+      dispatchScrubSeek(*pending, false);
+    return;
+  }
+}
+
+std::optional<std::uint64_t> MpvEngine::scrubCommandInFlight() const {
+  if (!scrub_seek_)
+    return std::nullopt;
+  return std::visit(
+      [](const auto &slot) -> std::optional<std::uint64_t> {
+        if constexpr (std::is_same_v<std::decay_t<decltype(slot)>, ScrubSlotIdle>)
+          return std::nullopt;
+        else
+          return slot.command;
+      },
+      scrub_seek_->slot);
 }
 
 void MpvEngine::finishScrubGesture(bool restore_transport) {
@@ -793,15 +787,10 @@ void MpvEngine::finishScrubGesture(bool restore_transport) {
     return;
   cancelScrubTimeout();
   const bool intended_paused = scrub_seek_->intended_paused;
-  const std::uint64_t active_command = scrub_seek_->command;
-  const bool matching_lineage =
-      scrub_seek_->request_serial == host_.requestSerial() && lineage.committed_open &&
-      lineage.committed_open->request_serial == host_.requestSerial() &&
-      lineage.committed_open->playlist_entry_id == scrub_seek_->playlist_entry_id &&
-      lineage.active_event_playlist_entry_id == scrub_seek_->playlist_entry_id;
-  if (active_command != 0 && ready()) {
-    abortCommand(mpvReplyUserdata(MpvReply::Scrub, active_command));
-  }
+  const std::optional<std::uint64_t> active_command = scrubCommandInFlight();
+  const bool matching_lineage = scrubLineageCurrent();
+  if (active_command && ready())
+    abortCommand(mpvReplyUserdata(MpvReply::Scrub, *active_command));
   scrub_seek_.reset();
   if (!restore_transport || !matching_lineage || !ready())
     return;
@@ -821,7 +810,7 @@ bool MpvEngine::acceptsPlaybackObservation() const {
          lineage.active_event_playlist_entry_id == lineage.committed_open->playlist_entry_id;
 }
 
-void MpvEngine::beginScrub(double position) {
+void MpvEngine::beginScrub(double /*position*/) {
   if (!ready() || scrub_seek_ || lineage.render_recovery ||
       lineage.startup_playback_sync || !acceptsPlaybackObservation()) {
     return;
@@ -830,17 +819,12 @@ void MpvEngine::beginScrub(double position) {
   const std::optional<bool> live_paused = flagProperty("pause");
   if (!live_paused)
     return;
-  ++next_scrub_gesture_id_;
-  if (next_scrub_gesture_id_ == 0)
-    ++next_scrub_gesture_id_;
-  scrub_seek_ = ScrubSeek{next_scrub_gesture_id_,
-                          host_.requestSerial(),
-                          0,
-                          lineage.committed_open->playlist_entry_id,
-                          position,
-                          std::nullopt,
-                          std::nullopt,
-                          *live_paused};
+  ScrubSeek scrub;
+  scrub.gesture = nextToken(next_scrub_gesture_id_);
+  scrub.request_serial = host_.requestSerial();
+  scrub.playlist_entry_id = lineage.committed_open->playlist_entry_id;
+  scrub.intended_paused = *live_paused;
+  scrub_seek_ = scrub;
 
   if (!setPausedNow(true)) {
     scrub_seek_.reset();
@@ -861,7 +845,7 @@ void MpvEngine::previewScrub(double target) {
     invalidateScrubGesture();
     return;
   }
-  if (scrub_seek_->command != 0) {
+  if (scrubCommandInFlight()) {
     scrub_seek_->pending_target = target;
   } else {
     dispatchScrubSeek(target, false);
@@ -877,9 +861,10 @@ bool MpvEngine::endScrub(double target, bool valid) {
     finishScrubGesture(true);
     return true;
   }
-  scrub_seek_->final = true;
-  scrub_seek_->pending_target = target;
-  if (scrub_seek_->command == 0) {
+  scrub_seek_->phase = ScrubPhase::Released;
+  if (scrubCommandInFlight()) {
+    scrub_seek_->pending_target = target;
+  } else {
     scrub_seek_->pending_target.reset();
     dispatchScrubSeek(target, true);
   }
@@ -888,15 +873,19 @@ bool MpvEngine::endScrub(double target, bool valid) {
 }
 
 void MpvEngine::noteSeekStarted() {
-  if (scrub_seek_ && scrub_seek_->command != 0)
-    scrub_seek_->seek_started = true;
+  if (!scrub_seek_)
+    return;
+  if (auto *const in_flight = std::get_if<ScrubSlotInFlight>(&scrub_seek_->slot);
+      in_flight && in_flight->progress == ScrubSlotInFlight::Progress::Issued)
+    in_flight->progress = ScrubSlotInFlight::Progress::Seeking;
 }
 
 bool MpvEngine::observeScrubPosition(double position) {
   if (!scrub_seek_)
     return false;
-  if (scrub_seek_->playback_restarted)
-    scrub_seek_->authoritative_position = position;
+  if (auto *const in_flight = std::get_if<ScrubSlotInFlight>(&scrub_seek_->slot);
+      in_flight && in_flight->progress == ScrubSlotInFlight::Progress::Restarted)
+    in_flight->landed = position;
   maybeCompleteScrubSeek();
   return true;
 }

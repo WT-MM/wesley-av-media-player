@@ -462,12 +462,21 @@ class PlayerControllerTestAccess final {
     return controller.mpv_.scrub_seek_.has_value();
   }
 
+  static const MpvEngine::ScrubSlotInFlight *
+  scrubInFlight(const PlayerController &controller) {
+    return controller.mpv_.scrub_seek_
+               ? std::get_if<MpvEngine::ScrubSlotInFlight>(
+                     &controller.mpv_.scrub_seek_->slot)
+               : nullptr;
+  }
+
   static std::uint64_t scrubCommand(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ ? controller.mpv_.scrub_seek_->command : 0;
+    return controller.mpv_.scrubCommandInFlight().value_or(0);
   }
 
   static double scrubTarget(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ ? controller.mpv_.scrub_seek_->target : -1.0;
+    const auto *in_flight = scrubInFlight(controller);
+    return in_flight ? in_flight->target : -1.0;
   }
 
   static std::optional<double>
@@ -482,12 +491,13 @@ class PlayerControllerTestAccess final {
   }
 
   static bool scrubFinal(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->final;
+    return controller.mpv_.scrub_seek_ &&
+           controller.mpv_.scrub_seek_->phase == MpvEngine::ScrubPhase::Released;
   }
 
   static bool scrubCommandExact(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ &&
-           controller.mpv_.scrub_seek_->command_exact;
+    const auto *in_flight = scrubInFlight(controller);
+    return in_flight && in_flight->exact;
   }
 
   static const char *scrubCommandMode(const PlayerController &controller) {
@@ -505,27 +515,30 @@ class PlayerControllerTestAccess final {
 
   static std::uint64_t scrubTimeoutCommand(
       const PlayerController &controller) {
-    return controller.mpv_.scrub_timeout_command_;
+    return controller.mpv_.scrub_timeout_key_
+               ? controller.mpv_.scrub_timeout_key_->command
+               : 0;
   }
 
   static bool scrubTimeoutOwnsActiveCommand(
       const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_timeout_timer_ &&
-           controller.mpv_.scrub_timeout_timer_->isActive() &&
-           controller.mpv_.scrub_timeout_gesture_ ==
-               controller.mpv_.scrub_seek_->gesture &&
-           controller.mpv_.scrub_timeout_request_serial_ ==
-               controller.mpv_.scrub_seek_->request_serial &&
-           controller.mpv_.scrub_timeout_command_ ==
-               controller.mpv_.scrub_seek_->command;
+    const auto &key = controller.mpv_.scrub_timeout_key_;
+    return controller.mpv_.scrub_seek_ && scrubTimeoutActive(controller) && key &&
+           key->gesture == controller.mpv_.scrub_seek_->gesture &&
+           key->request_serial == controller.mpv_.scrub_seek_->request_serial &&
+           key->command == scrubCommand(controller);
   }
 
   static bool scrubSeekStarted(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->seek_started;
+    const auto *in_flight = scrubInFlight(controller);
+    return in_flight &&
+           in_flight->progress != MpvEngine::ScrubSlotInFlight::Progress::Issued;
   }
 
   static bool scrubAbortPending(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->abort_pending;
+    return controller.mpv_.scrub_seek_ &&
+           std::holds_alternative<MpvEngine::ScrubSlotAborting>(
+               controller.mpv_.scrub_seek_->slot);
   }
 
   static void scrubCommandReply(PlayerController &controller,
@@ -534,17 +547,17 @@ class PlayerControllerTestAccess final {
   }
 
   static void scrubSeekStarted(PlayerController &controller) {
-    if (controller.mpv_.scrub_seek_)
-      controller.mpv_.scrub_seek_->seek_started = true;
+    controller.mpv_.noteSeekStarted();
   }
 
   static void scrubRestart(PlayerController &controller,
                            double authoritative_position) {
-    if (!controller.mpv_.scrub_seek_)
+    auto *in_flight = const_cast<MpvEngine::ScrubSlotInFlight *>(
+        scrubInFlight(controller));
+    if (!in_flight)
       return;
-    controller.mpv_.scrub_seek_->authoritative_position =
-        authoritative_position;
-    controller.mpv_.scrub_seek_->playback_restarted = true;
+    in_flight->landed = authoritative_position;
+    in_flight->progress = MpvEngine::ScrubSlotInFlight::Progress::Restarted;
     controller.mpv_.maybeCompleteScrubSeek();
   }
 
@@ -561,16 +574,13 @@ class PlayerControllerTestAccess final {
                            std::uint64_t command) {
     if (!controller.mpv_.scrub_seek_)
       return;
-    if (controller.mpv_.scrub_timeout_gesture_ ==
-            controller.mpv_.scrub_seek_->gesture &&
-        controller.mpv_.scrub_timeout_request_serial_ ==
-            controller.mpv_.scrub_seek_->request_serial &&
-        controller.mpv_.scrub_timeout_command_ == command) {
+    const MpvEngine::ScrubTimeoutKey key{controller.mpv_.scrub_seek_->gesture,
+                                         controller.mpv_.scrub_seek_->request_serial,
+                                         command};
+    if (controller.mpv_.scrub_timeout_key_ &&
+        controller.mpv_.scrub_timeout_key_->command == command)
       controller.mpv_.cancelScrubTimeout();
-    }
-    controller.mpv_.handleScrubTimeout(controller.mpv_.scrub_seek_->gesture,
-                                  controller.mpv_.scrub_seek_->request_serial,
-                                  command);
+    controller.mpv_.handleScrubTimeout(key);
   }
 
   static void scrubFinish(PlayerController &controller,
