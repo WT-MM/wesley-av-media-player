@@ -762,6 +762,25 @@ struct NativeVideoConsumer::Impl {
                      decoder.stats().generation});
   }
 
+  // After the output reported Done for a flush (closed false) or a terminal
+  // close (closed true): its facts must prove it settled at `generation` with
+  // no frame of ours outstanding. A close also refuses after any protocol
+  // violation, and tolerates the fatal of an exactly matched failed frame.
+  // Otherwise latches failureText and returns nullopt.
+  [[nodiscard]] std::optional<NativeTrackedVideoOutputFacts> settledOutput(
+      std::uint64_t provedGeneration, bool closed,
+      const char* failureText) noexcept {
+    const NativeTrackedVideoOutputFacts facts = output->facts();
+    if ((closed && outputProtocolViolation) ||
+        !outputSettledAt(facts, provedGeneration, closed,
+                         closed && matchedFrameFailure) ||
+        awaitingDraw.valid()) {
+      latch(NativeVideoConsumerFailure::Output, failureText);
+      return std::nullopt;
+    }
+    return facts;
+  }
+
   // A non-Done output progress, forwarded: Failed latches, and Quiescing
   // becomes Progress when this turn consumed an output event.
   [[nodiscard]] media::NativeMediaConsumerProgress forwardOutputProgress(
@@ -1450,10 +1469,8 @@ NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
                  "tracked video output event failed during the first arm flush");
       return NativeVideoConsumerArmProgress::Failed;
     }
-    const NativeTrackedVideoOutputFacts facts = impl.output->facts();
-    if (!outputSettledAt(facts, generation, false, false)) {
-      impl.latch(NativeVideoConsumerFailure::Output,
-                 "tracked video output arm facts are invalid");
+    if (!impl.settledOutput(generation, false,
+                            "tracked video output arm facts are invalid")) {
       return NativeVideoConsumerArmProgress::Failed;
     }
     impl.armDone = true;
@@ -2184,11 +2201,9 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
         output, event,
         "tracked video output failed the seek flush");
   }
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
-  if (!outputSettledAt(outputFacts, nextGeneration, false, false) ||
-      impl.awaitingDraw.valid()) {
-    impl.latch(NativeVideoConsumerFailure::Output,
-               "tracked video output facts are invalid after the seek flush");
+  if (!impl.settledOutput(
+          nextGeneration, false,
+          "tracked video output facts are invalid after the seek flush")) {
     return media::NativeMediaConsumerProgress::Failed;
   }
   impl.completedFlushRetired = retiredGeneration;
@@ -2295,12 +2310,9 @@ template <typename ImplType>
             flushOutput, flushEvent,
             "tracked video output failed the flush superseded by close");
       }
-      const NativeTrackedVideoOutputFacts flushed = impl.output->facts();
-      if (!outputSettledAt(flushed, impl.flushTarget, false, false) ||
-          impl.awaitingDraw.valid()) {
-        impl.latch(NativeVideoConsumerFailure::Output,
-                   "tracked video output facts are invalid after the close "
-                   "flush");
+      if (!impl.settledOutput(impl.flushTarget, false,
+                              "tracked video output facts are invalid after "
+                              "the close flush")) {
         return media::NativeMediaConsumerProgress::Failed;
       }
       impl.generation = impl.flushTarget;
@@ -2344,14 +2356,9 @@ template <typename ImplType>
         output, event,
         "tracked video output failed the terminal close");
   }
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
-  if (impl.outputProtocolViolation ||
-      !outputSettledAt(outputFacts, impl.terminalGeneration, true,
-                       impl.matchedFrameFailure) ||
-      impl.awaitingDraw.valid()) {
-    impl.latch(NativeVideoConsumerFailure::Output,
-               "tracked video output facts are invalid after the terminal "
-               "close");
+  if (!impl.settledOutput(impl.terminalGeneration, true,
+                          "tracked video output facts are invalid after the "
+                          "terminal close")) {
     return media::NativeMediaConsumerProgress::Failed;
   }
   impl.output.reset();
@@ -2460,17 +2467,14 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
         output, event,
         "tracked video output failed the retirement invalidation");
   }
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
-  if (impl.outputProtocolViolation ||
-      !outputSettledAt(outputFacts, invalidationGeneration, true,
-                       impl.matchedFrameFailure) ||
-      impl.awaitingDraw.valid()) {
-    impl.latch(NativeVideoConsumerFailure::Output,
-               "tracked video output facts are invalid after retirement");
+  const auto outputFacts = impl.settledOutput(
+      invalidationGeneration, true,
+      "tracked video output facts are invalid after retirement");
+  if (!outputFacts) {
     return media::NativeMediaConsumerProgress::Failed;
   }
 
-  impl.retiredOutputFacts = outputFacts;
+  impl.retiredOutputFacts = *outputFacts;
   impl.output.reset();
   impl.generation = invalidationGeneration;
   impl.configured = false;
