@@ -65,7 +65,6 @@ using UrlResolver = QUrl (*)(const QString &);
 void armTestSeamsBeforeApplication();
 // Right after QGuiApplication, before any window is shown.
 void armTestSeamsAfterApplication();
-void armTestSeamsForWindows(WindowManager &windows);
 // Starts the scripted drivers and reports against the first window.
 void startTestSeams(QGuiApplication &app, WindowManager &windows,
                     PlayerWindow &first, UrlResolver resolve);
@@ -74,7 +73,6 @@ void startTestSeams(QGuiApplication &app, WindowManager &windows,
 [[nodiscard]] inline const TestSeams *testSeams() noexcept { return nullptr; }
 inline void armTestSeamsBeforeApplication() {}
 inline void armTestSeamsAfterApplication() {}
-inline void armTestSeamsForWindows(WindowManager &) {}
 inline void startTestSeams(QGuiApplication &, WindowManager &, PlayerWindow &,
                            UrlResolver) {}
 #endif

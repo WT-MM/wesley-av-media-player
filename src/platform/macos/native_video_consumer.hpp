@@ -6,6 +6,7 @@
 #include "native_media_clock.hpp"
 #include "native_surface_budget.hpp"
 #include "native_tracked_video_output.hpp"
+#include "software_presentation_pool.hpp"
 #include "software_vp8_decoder.hpp"
 #include "video_decode_lane.hpp"
 #include "video_toolbox_decoder.hpp"
@@ -134,7 +135,7 @@ struct NativeVideoConsumerFacts {
   bool previewResumeNeedsKeyFrame{false};
   bool closed{false};
   NativeVideoConsumerFailure failure{NativeVideoConsumerFailure::None};
-  VideoToolboxDecoderStats decoder{};
+  VideoDecoderStats decoder{};
   NativeTrackedVideoOutputFacts output{};
 };
 
@@ -269,14 +270,14 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   // renderer retains past WAM's last lease, which no lease count can see and
   // which is therefore measured (software_vp8_decoder.hpp).
   // 1 + 1 + 1 + 2 + 1 = 6 <= 10, leaving four surfaces of headroom.
-  static_assert(kSoftwareVp8PoolDepth ==
+  static_assert(SoftwarePresentationPool::kDepth ==
                     kSoftwareVp8DecoderOwnedSurfaces + kDecodedQueueCapacity +
                         1U + kMaximumTrackedOutputSurfaceOwnership +
                         kSoftwareVp8RendererRetainedSurfaces,
                 "the software VP8 pool depth must equal the surfaces this "
                 "route can hold at one instant, or the pool becomes either a "
                 "stall or an unbounded allocator");
-  static_assert(kSoftwareVp8PoolDepth <=
+  static_assert(SoftwarePresentationPool::kDepth <=
                     static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces),
                 "software VP8 pool depth must fit the process-wide surface "
                 "budget");
@@ -289,12 +290,19 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   //
   // software_vp8_decoder.hpp restates this footprint in prose next to the
   // depth it belongs to; this is the machine-checked half.
-  static_assert(kSoftwareVp8PoolDepth *
+  static_assert(SoftwarePresentationPool::kDepth *
                         (media::MediaSourceLimits::kHardMaximumCodedPixels *
                              3ULL / 2ULL +
                          kNativeSurfaceBudgetSurfaceAlignmentSlackBytes) <=
                     kNativeSurfaceBudgetMaximumBytes,
                 "a full software VP8 pool at the v1 coded ceiling must fit the "
+                "process-wide byte budget");
+  // The libavcodec route allocates from the same depth at up to 10-bit 4:2:2,
+  // so the pool is also proven at the budget's worst-case surface.
+  static_assert(SoftwarePresentationPool::kDepth *
+                        kNativeSurfaceBudgetWorstCaseSurfaceBytes <=
+                    kNativeSurfaceBudgetMaximumBytes,
+                "a full software pool of worst-case surfaces must fit the "
                 "process-wide byte budget");
 
   // `captionFeed` is the live closed-caption tap: when non-null and the
@@ -315,9 +323,6 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   recoverQuarantined() noexcept;
   [[nodiscard]] static NativeVideoConsumerQuarantineFacts
   quarantineFacts() noexcept;
-  [[nodiscard]] static bool selectedTrackDurationsSupported(
-      media::MediaTime audioDuration,
-      media::MediaTime videoDuration) noexcept;
 
   NativeVideoConsumer(const NativeVideoConsumer&) = delete;
   NativeVideoConsumer& operator=(const NativeVideoConsumer&) = delete;

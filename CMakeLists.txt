@@ -195,6 +195,10 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/main.cpp
   src/qt/player_controller.cpp
   src/qt/player_controller.hpp
+  src/qt/app_settings.cpp
+  src/qt/app_settings.hpp
+  src/qt/mpv_engine.cpp
+  src/qt/mpv_engine.hpp
   src/qt/subtitle_sources.cpp
   src/qt/subtitle_sources.hpp
   src/qt/subtitle_bitmap_provider.cpp
@@ -210,6 +214,8 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/mpv_video_item.hpp
   src/qt/window_manager.cpp
   src/qt/window_manager.hpp
+  src/qt/media_url.cpp
+  src/qt/media_url.hpp
   src/jobs.cpp
   src/jobs.hpp
   src/caption_service.cpp
@@ -231,7 +237,6 @@ qt_add_qml_module(wam
     qml/QuickEditSheet.qml
     qml/CropOverlay.qml
     qml/PreferencesWindow.qml
-    qml/AppPreferences.qml
     qml/Scrubber.qml
     qml/AppMenuBar.qml
     qml/AppMenu.qml
@@ -441,23 +446,8 @@ if(APPLE)
     find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 
     set(WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES
-      src/platform/macos/native_video_metal_mapper.mm)
-    add_library(wam_macos_native_video_metal_mapper STATIC
-      ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
-    target_include_directories(
-      wam_macos_native_video_metal_mapper PUBLIC src)
-    target_compile_features(
-      wam_macos_native_video_metal_mapper PUBLIC cxx_std_20)
-    target_compile_options(wam_macos_native_video_metal_mapper PRIVATE
-      "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
-      -Wall -Wextra -Wpedantic)
-    target_link_libraries(wam_macos_native_video_metal_mapper
-      PUBLIC
-        wam_macos_native_video_core
-      PRIVATE
-        "${WAM_METAL_FRAMEWORK}")
-    set_target_properties(wam_macos_native_video_metal_mapper PROPERTIES
-      LINKER_LANGUAGE OBJCXX)
+      tests/metal_frame_mapper.hpp
+      tests/metal_frame_mapper.mm)
 
     if(BUILD_TESTING)
       add_executable(wam_native_session_factory_test tests/native_session_factory_test.mm)
@@ -994,6 +984,12 @@ if(BUILD_TESTING)
   target_include_directories(wam_playback_policy_test PRIVATE src)
   add_test(NAME playback_policy COMMAND wam_playback_policy_test)
 
+  add_executable(wam_launch_rules_test tests/launch_rules_test.cpp
+    src/qt/media_url.cpp src/qt/media_url.hpp)
+  target_include_directories(wam_launch_rules_test PRIVATE src src/qt)
+  target_link_libraries(wam_launch_rules_test PRIVATE Qt6::Core)
+  add_test(NAME launch_rules COMMAND wam_launch_rules_test)
+
   add_executable(wam_mpv_hwdec_interop_policy_test
     tests/mpv_hwdec_interop_policy_test.cpp
     src/qt/mpv_hwdec_interop_policy.hpp)
@@ -1030,6 +1026,10 @@ if(BUILD_TESTING)
     src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
+    src/qt/app_settings.cpp
+    src/qt/app_settings.hpp
+    src/qt/mpv_engine.cpp
+    src/qt/mpv_engine.hpp
     src/qt/subtitle_sources.cpp
     src/qt/subtitle_sources.hpp
     src/qt/subtitle_bitmap_provider.cpp
@@ -1062,7 +1062,8 @@ if(BUILD_TESTING)
     Qt6::Gui
     Qt6::Quick
     Qt6::OpenGL
-    ${WAM_MPV_INTEGRATION_TEST_TARGET})
+    ${WAM_MPV_INTEGRATION_TEST_TARGET}
+    wam_mpv_runtime)
   add_test(NAME player_controller_lazy COMMAND wam_player_controller_lazy_test)
   set_tests_properties(player_controller_lazy PROPERTIES TIMEOUT 20)
 
@@ -1072,6 +1073,10 @@ if(BUILD_TESTING)
     src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
+    src/qt/app_settings.cpp
+    src/qt/app_settings.hpp
+    src/qt/mpv_engine.cpp
+    src/qt/mpv_engine.hpp
     src/qt/subtitle_sources.cpp
     src/qt/subtitle_sources.hpp
     src/qt/subtitle_bitmap_provider.cpp
@@ -1109,7 +1114,8 @@ if(BUILD_TESTING)
     Qt6::Gui
     Qt6::Quick
     Qt6::OpenGL
-    ${WAM_MPV_INTEGRATION_TEST_TARGET})
+    ${WAM_MPV_INTEGRATION_TEST_TARGET}
+    wam_mpv_runtime)
   add_test(NAME player_core_render_context_permission
     COMMAND wam_player_core_render_context_permission_test)
   set_tests_properties(player_core_render_context_permission PROPERTIES
@@ -1161,6 +1167,10 @@ if(BUILD_TESTING)
       src/qt/mpv_video_item.hpp
       src/qt/player_controller.cpp
       src/qt/player_controller.hpp
+      src/qt/app_settings.cpp
+      src/qt/app_settings.hpp
+      src/qt/mpv_engine.cpp
+      src/qt/mpv_engine.hpp
       src/qt/subtitle_sources.cpp
       src/qt/subtitle_sources.hpp
       src/qt/subtitle_bitmap_provider.cpp
@@ -1476,6 +1486,7 @@ if(BUILD_TESTING)
           tests/software_vp8_test.mm
           src/platform/macos/software_vp8_decoder.hpp
           src/platform/macos/software_vp8_decoder.mm
+          src/platform/macos/software_presentation_pool.mm
           src/platform/macos/video_decode_lane.hpp
           src/platform/macos/native_surface_budget.hpp
           src/platform/macos/native_surface_budget.mm
@@ -1487,8 +1498,7 @@ if(BUILD_TESTING)
           src/platform/macos/video_toolbox_decoder.mm)
         target_include_directories(wam_software_vp8_test PRIVATE src)
         target_compile_definitions(wam_software_vp8_test PRIVATE
-          WAM_ENABLE_SOFTWARE_VP8
-          WAM_SOFTWARE_VP8_TESTING=1)
+          WAM_ENABLE_SOFTWARE_VP8)
         target_link_libraries(wam_software_vp8_test PRIVATE
           wam_native_core
           PkgConfig::WAM_LIBVPX
@@ -1521,6 +1531,7 @@ if(BUILD_TESTING)
         src/platform/macos/video_toolbox_decoder.mm
         src/platform/macos/software_vp8_decoder.hpp
         src/platform/macos/software_vp8_decoder.mm
+        src/platform/macos/software_presentation_pool.mm
         src/platform/macos/video_decode_lane.hpp)
       target_include_directories(wam_native_video_consumer_test PRIVATE src)
       target_compile_definitions(wam_native_video_consumer_test PRIVATE
@@ -1561,6 +1572,8 @@ if(BUILD_TESTING)
         src/platform/macos/native_layer_host_view.mm)
       target_include_directories(
         wam_native_layer_video_output_test PRIVATE src)
+      target_compile_definitions(wam_native_layer_video_output_test PRIVATE
+        WAM_NATIVE_LAYER_VIDEO_TESTING=1)
       target_link_libraries(wam_native_layer_video_output_test PRIVATE
         wam_native_core
         wam_macos_native_video_core

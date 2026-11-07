@@ -1338,6 +1338,7 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     offset += length;
   }
 
+  result.avcCoreBytes = static_cast<std::uint32_t>(offset);
   if (offset != bytes.size()) {
     // The AVC high-profile record extension is optional in common avcC. When
     // present, its chroma/depth hints do not override the SPS. Still require

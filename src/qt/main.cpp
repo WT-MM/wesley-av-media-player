@@ -7,6 +7,7 @@
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "media/avcodec/runtime.hpp"
 #endif
+#include "media_url.hpp"
 #include "mpv_video_item.hpp"
 #include "subtitle_bitmap_provider.hpp"
 #include "test_seams.hpp"
@@ -58,68 +59,6 @@ bool hasArgument(const QCoreApplication &app, const QString &argument) {
   const auto arguments = app.arguments();
   return std::find(arguments.cbegin(), arguments.cend(), argument) !=
          arguments.cend();
-}
-
-QUrl mediaUrlFromArgument(const QString &argument) {
-  QString local_argument = argument;
-  if (local_argument == QStringLiteral("~")) {
-    local_argument = QDir::homePath();
-  } else if (local_argument.startsWith(QStringLiteral("~/")) ||
-             local_argument.startsWith(QStringLiteral("~\\"))) {
-    local_argument = QDir::homePath() + local_argument.sliced(1);
-  }
-
-  // QUrl::fromUserInput treats an unqualified relative path as an HTTP host.
-  // Resolve local/path-shaped arguments first, including typos, so WAM can
-  // report a local-file error without making an unexpected network request.
-  const QFileInfo local_candidate(local_argument);
-  if (local_candidate.exists() || QDir::isAbsolutePath(local_argument))
-    return QUrl::fromLocalFile(local_candidate.absoluteFilePath());
-
-  const QUrl explicit_url(argument);
-  if (!explicit_url.scheme().isEmpty())
-    return QUrl::fromUserInput(argument);
-
-  // A bare argument with a suffix the open dialog offers stays a local path,
-  // so a missing file is reported as missing rather than falling through to
-  // the web-host heuristic below and opening as a URL.
-  const QByteArray suffix = local_candidate.suffix().toLatin1().toLower();
-  const bool known_media_extension = std::ranges::any_of(
-      wam::media::kMediaFileExtensions,
-      [&suffix](const wam::media::MediaFileExtensionRow &row) {
-        const std::string_view value = row.extension.substr(1);
-        return suffix == QByteArrayView(value.data(),
-                                        static_cast<qsizetype>(value.size()));
-      });
-  const qsizetype forward_slash = local_argument.indexOf(QLatin1Char('/'));
-  const qsizetype back_slash = local_argument.indexOf(QLatin1Char('\\'));
-  qsizetype first_separator = -1;
-  if (forward_slash >= 0 && back_slash >= 0)
-    first_separator = std::min(forward_slash, back_slash);
-  else
-    first_separator = std::max(forward_slash, back_slash);
-
-  const QString authority = first_separator >= 0
-                                ? local_argument.first(first_separator)
-                                : local_argument;
-  const bool unmistakable_web_host =
-      authority.startsWith(QStringLiteral("www."), Qt::CaseInsensitive) ||
-      authority.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) ==
-          0 ||
-      (first_separator >= 0 && authority.contains(QLatin1Char('.')));
-  if (unmistakable_web_host)
-    return QUrl::fromUserInput(QStringLiteral("http://") + local_argument);
-
-  // A bare missing media filename must remain local. QUrl::fromUserInput can
-  // otherwise mistake its extension (for example, ".mp4") for a web TLD.
-  if (first_separator >= 0 || known_media_extension) {
-    return QUrl::fromLocalFile(local_candidate.absoluteFilePath());
-  }
-
-  const QUrl inferred_url = QUrl::fromUserInput(argument);
-  if (inferred_url.isValid())
-    return inferred_url;
-  return {};
 }
 
 // Finder's "Open in WAM" (and any LaunchServices open) arrives as an Apple
@@ -181,7 +120,7 @@ QList<QUrl> initialMediaUrls(const QCoreApplication &app) {
     if (argument.startsWith(QLatin1Char('-')))
       continue;
 
-    const QUrl candidate = mediaUrlFromArgument(argument);
+    const QUrl candidate = wam::qt::mediaUrlFromArgument(argument);
     if (candidate.isValid())
       media.append(candidate);
   }
@@ -222,46 +161,21 @@ int verifyRuntime() {
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
   const auto demuxFailure = wam::media::LibavformatCursor::runtimeFailure();
   if (!demuxFailure.empty()) return runtimeVerificationFailure(7, QString::fromStdString(demuxFailure));
-  qInfo().noquote() << "native_demux_stages version=1 libavformat=63.1.101 loading=lazy protocols=file demuxers=mov,avi,flv,ogg,asf,rm,mpeg,mpegts,matroska";
+  qInfo().noquote() << "native_demux_stages version=1"
+                    << QString::fromStdString(
+                           wam::media::LibavformatCursor::runtimeDescription());
 #endif
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   if (const char* failure = wam::media::avcodec::runtimeFailure())
     return runtimeVerificationFailure(7, QString::fromLatin1(failure));
-  qInfo().noquote() << "native_codec_stages version=2 present=true libavcodec=63.1.101 libavutil=61.1.101 loading=lazy lease_retirement=unload license=LGPL-2.1-or-later required_decoders=present audio_routing=disabled";
+  qInfo().noquote() << "native_codec_stages version=2 present=true"
+                    << wam::media::avcodec::runtimeVersions()
+                    << "loading=lazy lease_retirement=unload "
+                       "license=LGPL-2.1-or-later required_decoders=present "
+                       "audio_routing=disabled";
   qInfo().noquote() << "native_hardware_capabilities av1=" << wam::macos::NativeEmbeddingSupport::supportsAv1()
                    << "vp9=" << wam::macos::NativeEmbeddingSupport::supportsVp9();
 #endif
-  const QUrl missing_relative =
-      mediaUrlFromArgument(QStringLiteral("videos/definitely-missing.mp4"));
-  const QUrl missing_filename =
-      mediaUrlFromArgument(QStringLiteral("definitely-missing.mp4"));
-  const QUrl explicit_remote =
-      mediaUrlFromArgument(QStringLiteral("https://example.invalid/video.mp4"));
-  const QUrl inferred_remote =
-      mediaUrlFromArgument(QStringLiteral("www.example.invalid/video.mp4"));
-  // A bare, nonexistent container filename must stay local for every
-  // extension the app offers; webm and mka probe the list beyond mp4.
-  const QUrl missing_webm =
-      mediaUrlFromArgument(QStringLiteral("definitely-missing.webm"));
-  const QUrl missing_mka =
-      mediaUrlFromArgument(QStringLiteral("definitely-missing.mka"));
-  if (!missing_relative.isLocalFile() || !missing_filename.isLocalFile() ||
-      !missing_webm.isLocalFile() || !missing_mka.isLocalFile() ||
-      explicit_remote.isLocalFile() ||
-      explicit_remote.scheme() != QStringLiteral("https") ||
-      inferred_remote.isLocalFile() ||
-      inferred_remote.scheme() != QStringLiteral("http")) {
-    return runtimeVerificationFailure(
-        6, QStringLiteral("WAM runtime verification failed: media path "
-                          "resolution is invalid."));
-  }
-
-  if (!wam::qt::verifyResumeTracker()) {
-    return runtimeVerificationFailure(
-        5, QStringLiteral(
-               "WAM runtime verification failed: resume tracking is invalid."));
-  }
-
 #ifndef Q_OS_MACOS
   const auto linked_runtime =
       wam::playback::mpv::MpvLinkedRuntimeFactory::create();
@@ -470,7 +384,6 @@ static int runApplication(int argc, char *argv[]) {
     wam::qt::WindowManager windows(engine, state_store);
     engine.rootContext()->setContextProperty(QStringLiteral("appHost"),
                                              &windows);
-    wam::qt::armTestSeamsForWindows(windows);
 
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
@@ -529,7 +442,7 @@ static int runApplication(int argc, char *argv[]) {
       return 2;
     if (!first->controller()->available())
       return 3;
-    wam::qt::startTestSeams(app, windows, *first, &mediaUrlFromArgument);
+    wam::qt::startTestSeams(app, windows, *first, &wam::qt::mediaUrlFromArgument);
 
     if (const auto rate = initialPlaybackRate(app))
       first->controller()->setRate(*rate);

@@ -23,7 +23,7 @@ void unload() noexcept {
   codecHandle = nullptr; utilHandle = nullptr;
 }
 const char* validate() noexcept {
-  if(table.avcodec_version()!=AV_VERSION_INT(63,1,101) || table.avutil_version()!=AV_VERSION_INT(61,1,101))return "DecoderUnavailable: AvcodecRuntimeAbiMismatch";
+  if(table.avcodec_version()!=LIBAVCODEC_VERSION_INT || table.avutil_version()!=LIBAVUTIL_VERSION_INT)return "DecoderUnavailable: AvcodecRuntimeAbiMismatch";
   for(const char* license:{table.avcodec_license(),table.avutil_license()})
     if(std::strcmp(license,"LGPL version 2.1 or later"))return "DecoderUnavailable: AvcodecRuntimeLicenseMismatch";
   for(const char* config:{table.avcodec_configuration(),table.avutil_configuration()})
@@ -139,4 +139,8 @@ void RuntimeLease::release() noexcept {
   if (!--leases) unload();
 }
 const char* runtimeFailure() noexcept { RuntimeLease lease; return lease.acquire(); }
+const char* runtimeVersions() noexcept {
+  return "libavcodec=" AV_STRINGIFY(LIBAVCODEC_VERSION)
+         " libavutil=" AV_STRINGIFY(LIBAVUTIL_VERSION);
+}
 }

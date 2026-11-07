@@ -4,9 +4,7 @@
 #include "core_media_codec_facts.hpp"
 #include "native_video_limits.hpp"
 #include "native_video_color.hpp"
-#if defined(WAM_ENABLE_AVFORMAT_STAGE)
 #include "video_decode_lane.hpp"
-#endif
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -18,11 +16,9 @@
 
 namespace wam::macos {
 namespace {
-#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+// The same decoder selection as main playback, so every codec the main lane
+// decodes (VP8 in software included) can also be scrubbed.
 using PreviewDecoder = VideoDecodeLane;
-#else
-using PreviewDecoder = VideoToolboxDecoder;
-#endif
 
 using media::MediaSample;
 using media::MediaTime;
@@ -35,27 +31,6 @@ constexpr std::size_t kMaximumPreviewReorderFrames = 8;
 // to a short local window while allowing an arbitrary forward drag to reuse
 // the graph through many small replacements.
 constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
-
-[[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
-  if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0 || time.epoch != 0 ||
-      (time.flags & kCMTimeFlags_HasBeenRounded) != 0) {
-    return std::nullopt;
-  }
-  return MediaTime{time.value, time.timescale};
-}
-
-[[nodiscard]] bool sameTime(CMTime lhs, CMTime rhs) noexcept {
-  return lhs.value == rhs.value && lhs.timescale == rhs.timescale &&
-         lhs.flags == rhs.flags && lhs.epoch == rhs.epoch;
-}
-
-[[nodiscard]] bool sameTiming(const FrameTiming& lhs,
-                              const FrameTiming& rhs) noexcept {
-  return lhs.generation == rhs.generation &&
-         lhs.keyFrame == rhs.keyFrame &&
-         sameTime(lhs.presentationTime, rhs.presentationTime) &&
-         sameTime(lhs.duration, rhs.duration);
-}
 
 [[nodiscard]] bool sameCommand(
     const preview_protocol::PreviewFrame& lhs,
@@ -346,10 +321,10 @@ struct NativePreviewFrameLane::Impl final {
        bool bypass)
       : binding(std::move(laneBinding)), output(std::move(previewOutput)),
         wake(wakeSeam), source(std::move(previewSource)), sink(wakeSeam),
-        decoder(VideoToolboxDecoderOptions{
+        decoder(VideoDecoderOptions{
             1, kMaximumPreviewReorderFrames,
-            VideoToolboxOutputInterop::OpenGL,
-            VideoToolboxDecoderProgressHandler{wake.signal, wake.context}}),
+            VideoDecoderOutputInterop::OpenGL,
+            VideoDecoderProgressHandler{wake.signal, wake.context}}),
         bypassDecoder(bypass), acceptedThrough(binding.acceptedThrough) {}
 
   [[nodiscard]] bool prepareDecoder() {
@@ -363,25 +338,9 @@ struct NativePreviewFrameLane::Impl final {
         latchFailure("preview video track disappeared before decoder setup");
         return false;
       }
-      const media::MediaVideoFormat& video = *track->video;
-      // Requiring hardware where the codec's only decoder on this platform is
-      // software fails VTDecompressionSessionCreate with -12906 on a stream the
-      // main playback lane decodes perfectly well. Both facts come from the
-      // shared table, so this lane and the main video consumer cannot answer
-      // either question differently.
-      const media::MediaCodecFacts& codecFacts =
-          media::mediaCodecFacts(track->codec);
-      const VideoStreamConfiguration configuration{
-          coreMediaCodecType(track->codec),
-          {static_cast<std::int32_t>(video.codedWidth),
-           static_cast<std::int32_t>(video.codedHeight)},
-          track->codecConfiguration, true, codecFacts.requiresHardwareDecode,
-          binding.activePlaybackGeneration.value,
-          video.transferFunction == media::MediaTransferFunction::Pq ||
-              video.transferFunction == media::MediaTransferFunction::Hlg,
-          colorPrimariesExtension(video.colorPrimaries),
-          transferFunctionExtension(video.transferFunction),
-          ycbcrMatrixExtension(video.matrixCoefficients), video.fullRangeVideo};
+      const VideoStreamConfiguration configuration =
+          videoStreamConfigurationFor(
+              *track, binding.activePlaybackGeneration.value);
       std::string configurationError;
       if (!decoder.configure(configuration, sink, &configurationError)) {
         latchFailure(configurationError.empty()
@@ -636,7 +595,7 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
         std::string error;
         const auto staged = impl_->sink.timing();
         if (staged.has_value()) {
-          if (!sameTiming(*staged, active.cachedFrame.timing())) {
+          if (!sameFrameTiming(*staged, active.cachedFrame.timing())) {
             impl_->latchFailure(
                 "preview cached-frame staging violated exact identity");
             return NativePreviewFrameRequestStatus::Failed;
@@ -732,7 +691,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
           !impl_->active || !impl_->active->awaitingDraw.valid() ||
           event->frameSequence != impl_->active->awaitingDraw ||
           event->generation != impl_->binding.activePlaybackGeneration.value ||
-          !sameTiming(event->timing, impl_->active->awaitingTiming)) {
+          !sameFrameTiming(event->timing, impl_->active->awaitingTiming)) {
         impl_->latchFailure("preview output event violated its exact identity");
         return NativePreviewFramePumpProgress::Failed;
       }
@@ -1126,7 +1085,7 @@ NativePreviewFrameCancelProgress NativePreviewFrameLane::stop(
         !impl_->active || !impl_->active->awaitingDraw.valid() ||
         event->frameSequence != impl_->active->awaitingDraw ||
         event->generation != activePlaybackGeneration.value ||
-        !sameTiming(event->timing, impl_->active->awaitingTiming)) {
+        !sameFrameTiming(event->timing, impl_->active->awaitingTiming)) {
       impl_->latchFailure("preview stop observed an invalid terminal event");
       return NativePreviewFrameCancelProgress::Failed;
     }
@@ -1213,7 +1172,7 @@ NativePreviewFrameLane::memoryFacts() const noexcept {
   }
   const NativePreviewSourceMemoryFacts source =
       impl_->source->memoryFacts();
-  const VideoToolboxDecoderMemoryFacts decoder =
+  const VideoDecoderMemoryFacts decoder =
       impl_->decoder.memoryFacts();
   result.sourceCurrentCompressedBytes =
       source.currentStagedCompressedBytes;

@@ -47,7 +47,8 @@ struct NativePlaybackOwnerTestAccess {
 class PlayerControllerTestAccess {
 public:
   static void failNative(PlayerController &player) {
-    if (player.native_playback_) NativePlaybackOwnerTestAccess::fail(*player.native_playback_);
+    if (player.native_)
+      NativePlaybackOwnerTestAccess::fail(static_cast<NativePlaybackOwner &>(*player.native_));
   }
 };
 
@@ -215,14 +216,14 @@ void reportWindows(const WindowManager &windows) {
         .add("paused", player->paused())
         .add("playing", player->playing())
         .add("rate", player->rate())
-        .add("step", player->seekStepSeconds())
-        .add("hugs", player->windowHugsVideo())
+        .add("step", windows.settings().seekStepSeconds())
+        .add("hugs", windows.settings().windowHugsVideo())
         .add("pitch", player->preservePitch())
         .add("geom", QStringLiteral("%1x%2+%3+%4").arg(frame.width()).arg(frame.height())
                          .arg(frame.x()).arg(frame.y()))
         .add("volume", player->volume(), 4)
         .add("muted", player->muted())
-        .add("gestures", player->scrollGesturesEnabled())
+        .add("gestures", windows.settings().scrollGesturesEnabled())
         .add("pos", player->position(), 4)
         .add("dur", player->duration(), 4)
         .add("chrome", rootFlag(window, "controlsRevealed"))
@@ -414,10 +415,9 @@ constexpr Verb kVerbs[] = {
     {QLatin1StringView("pause"), [](const VerbContext &c) { if (PlayerWindow *w = c.window()) w->controller()->pause(); }},
     {QLatin1StringView("play"), [](const VerbContext &c) { if (PlayerWindow *w = c.window()) w->controller()->play(); }},
     {QLatin1StringView("rate"), [](const VerbContext &c) { if (PlayerWindow *w = c.window()) w->controller()->setRate(c.number(2)); }},
-    // seekstep:<value>: set on window 0, to observe the settings mirror.
+    // seekstep:<value>: set the app-level seek step every window follows.
     {QLatin1StringView("seekstep"), [](const VerbContext &c) {
-       const QList<PlayerWindow *> &open = c.windows.windows();
-       if (!open.isEmpty()) open.first()->controller()->setSeekStepSeconds(c.number(1));
+       c.windows.settings().setSeekStepSeconds(static_cast<int>(std::lround(c.number(1))));
      }},
     // skip:<i>:<seconds>: the keyboard skip path (seekRelative), as opposed
     // to WAM_TEST_SEEK_SCRIPT's scrubber gestures.
@@ -794,16 +794,6 @@ void armTestSeamsAfterApplication() {
   // visible activation flicker here.
   if (const TestSeams *seams = testSeams(); seams != nullptr && seams->background)
     macos_window_chrome::adoptBackgroundLaunchPolicy();
-}
-
-void armTestSeamsForWindows(WindowManager &windows) {
-  const TestSeams *seams = testSeams();
-  if (seams == nullptr)
-    return;
-  windows.setBackgroundLaunch(seams->background);
-  if (seams->geometry)
-    windows.setParkedGeometry(seams->geometry->x(), seams->geometry->y(), seams->geometry->width(),
-                              seams->geometry->height(), seams->allWindowGeometry);
 }
 
 void startTestSeams(QGuiApplication &app, WindowManager &windows, PlayerWindow &first, UrlResolver resolve) {

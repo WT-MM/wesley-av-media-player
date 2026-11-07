@@ -3,7 +3,10 @@
 #include "platform/macos/native_playback_owner.hpp"
 
 #include "media/playback_router.hpp"
+#include "qt/native_engine.hpp"
 #include "qt/native_open_preflight.hpp"
+
+#include <QMetaObject>
 
 #include <QPointer>
 #include <QTimer>
@@ -21,7 +24,9 @@ class MpvVideoItem;
 class NativeBenchmarkTelemetry;
 class PlayerController;
 class PlayerCore;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
 struct NativePlaybackOwnerTestAccess;
+#endif
 
 namespace playback_router = ::wam::media::playback_router;
 namespace native_protocol = ::wam::media::native_playback;
@@ -47,7 +52,8 @@ void setMacosPlaybackActivityHeld(bool held) noexcept;
 // NativeMediaSession facts into PlaybackRouter transitions. The native
 // session never calls this object synchronously: its capacity-one edge only
 // queues a later, context-bound GUI drain.
-class NativePlaybackOwner final : public macos::NativePlaybackOwner {
+class NativePlaybackOwner final : public macos::NativePlaybackOwner,
+                                  public NativeEngine {
 public:
   explicit NativePlaybackOwner(PlayerController &controller);
   ~NativePlaybackOwner();
@@ -55,22 +61,73 @@ public:
   NativePlaybackOwner(const NativePlaybackOwner &) = delete;
   NativePlaybackOwner &operator=(const NativePlaybackOwner &) = delete;
 
-  [[nodiscard]] bool open(const QUrl &source, double initialPositionSeconds,
-                          bool paused);
-  [[nodiscard]] bool stop(bool preserveVisibleState = false);
-  [[nodiscard]] QString playbackFailureText(const QString &fallback) const;
-  [[nodiscard]] PauseDisposition setPaused(bool paused);
-  void fallbackOpenSucceeded(std::uint64_t attempt, std::uint64_t serial,
-                             std::uint64_t sourceKey);
-  void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
-                          std::uint64_t sourceKey);
-  void fallbackStopCommandReply(std::uint64_t replyUserdata, int error);
-  void fallbackIdleChanged(bool idle);
-  void fallbackRenderStateChanged();
-  void fallbackPlaybackFailed();
+  using PauseDisposition = NativeEngine::PauseDisposition;
+  using SeekDisposition = NativeEngine::SeekDisposition;
+  using PreviewDisposition = NativeEngine::PreviewDisposition;
+  using PreviewHandoffDisposition = NativeEngine::PreviewHandoffDisposition;
 
-  void attachSurface(MpvVideoItem *item) noexcept;
-  void detachSurface(MpvVideoItem *item) noexcept;
+  [[nodiscard]] bool open(const QUrl &source, double initialPositionSeconds,
+                          bool paused) override;
+  [[nodiscard]] bool stop() override;
+  [[nodiscard]] QString
+  playbackFailureText(const QString &fallback) const override;
+  [[nodiscard]] PauseDisposition setPaused(bool paused) override;
+  [[nodiscard]] PreviewHandoffDisposition preparePreviewHandoff() override {
+    return macos::NativePlaybackOwner::preparePreviewHandoff();
+  }
+  [[nodiscard]] PreviewDisposition previewFrame(double target,
+                                                std::uint64_t gesture,
+                                                std::uint64_t request) override {
+    return macos::NativePlaybackOwner::previewFrame(target, gesture, request);
+  }
+  [[nodiscard]] SeekDisposition commitSeek(double targetSeconds,
+                                           std::uint64_t gesture,
+                                           std::uint64_t request,
+                                           bool paused) override;
+  [[nodiscard]] bool setGain(float gain) override {
+    return macos::NativePlaybackOwner::setGain(gain);
+  }
+  [[nodiscard]] bool setMuted(bool muted) override {
+    return macos::NativePlaybackOwner::setMuted(muted);
+  }
+  [[nodiscard]] bool setRate(double rate) override {
+    return macos::NativePlaybackOwner::setRate(rate);
+  }
+  [[nodiscard]] bool setPreservePitch(bool preserve) override {
+    return macos::NativePlaybackOwner::setPreservePitch(preserve);
+  }
+  [[nodiscard]] bool nativeOwnsTransport() const noexcept override {
+    return macos::NativePlaybackOwner::nativeOwnsTransport();
+  }
+  [[nodiscard]] bool presentsOutsideScene() const noexcept override;
+  [[nodiscard]] bool needsFallbackRenderContext() const noexcept override {
+    return macos::NativePlaybackOwner::needsFallbackRenderContext();
+  }
+  [[nodiscard]] bool acceptsFallbackPlaybackEvents() const noexcept override {
+    return macos::NativePlaybackOwner::acceptsFallbackPlaybackEvents();
+  }
+  void fallbackOpenSucceeded(std::uint64_t attempt, std::uint64_t serial,
+                             std::uint64_t sourceKey) override;
+  void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
+                          std::uint64_t sourceKey) override;
+  void fallbackStopCommandReply(std::uint64_t replyUserdata,
+                                int error) override;
+  void fallbackIdleChanged(bool idle) override;
+  void fallbackRenderStateChanged() override;
+  void fallbackPlaybackFailed() override;
+  void beginFallbackEventDrain() noexcept override {
+    macos::NativePlaybackOwner::beginFallbackEventDrain();
+  }
+  void endFallbackEventDrain() override {
+    macos::NativePlaybackOwner::endFallbackEventDrain();
+  }
+  void noteFallbackSeek(bool submitted) noexcept override;
+  void notePreviewDemanded(std::uint64_t gesture, std::uint64_t request,
+                           double target,
+                           bool fallbackInitialized) noexcept override;
+
+  void attachSurface(MpvVideoItem *item) noexcept override;
+  void detachSurface(MpvVideoItem *item) noexcept override;
 
 private:
   void publishDiagnostic(const ::wam::macos::NativeMediaSessionDiagnostic &) override;
@@ -151,10 +208,16 @@ private:
   std::uint64_t latestOpenPreflightRequest_{0};
   bool surfaceLost_{false};
   NativeBenchmarkTelemetry *telemetry_{nullptr};
+  // This window's hold on the process-wide activity assertion.
+  QMetaObject::Connection activityConnection_;
+  bool activityHeld_{false};
   // Constructed only when the opt-in playback metrics stream is enabled.
   std::unique_ptr<QTimer> metricsTimer_;
 
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  // test_seams.cpp's `nativefail` verb injects a refusal through the router.
   friend struct NativePlaybackOwnerTestAccess;
+#endif
 };
 
 } // namespace wam::qt

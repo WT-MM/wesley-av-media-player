@@ -10,6 +10,9 @@ extern "C" {
 #include <libavutil/pixfmt.h>
 }
 #include <atomic>
+#include <optional>
+#include <string>
+#include <utility>
 #include <cstring>
 #include <vector>
 
@@ -23,7 +26,7 @@ media::MediaTime exact(CMTime t) noexcept {
 CMTime cm(media::MediaTime t) noexcept { return t.valid()?CMTimeMake(t.value,t.timescale):kCMTimeInvalid; }
 }
 struct SoftwareAvcodecVideoDecoder::Impl {
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   VideoStreamConfiguration configuration;
   std::vector<std::byte> configurationBytes;
   std::unique_ptr<DecodeWorker> worker;
@@ -35,6 +38,16 @@ struct SoftwareAvcodecVideoDecoder::Impl {
   std::uint64_t submitted{},delivered{},pressure{},generation{};
   unsigned depth{};
   bool chroma422{},fullRange{},eos{},notified{},suspended{},awaitingKeyFrame{};
+  bool retired{};
+  std::uint64_t retiredGeneration{},retiredInvalidation{};
+  // The diagnostic takeLastError() hands over once; failure state itself stays
+  // in `error` and the worker.
+  const char* reported{};
+  std::optional<std::string> lastError;
+  void latch(const char* reason,std::string* out) {
+    if(out) *out=reason;
+    if(!lastError) { try { lastError.emplace(reason); } catch(...) {} }
+  }
   OSType pixelFormat{};
   media::avcodec::Codec codec{};
   void fail(const char* reason) noexcept { error.store(reason,std::memory_order_release); }
@@ -76,10 +89,10 @@ struct SoftwareAvcodecVideoDecoder::Impl {
       CVPixelBufferRelease(destination); s.fail("AvcodecFrameColorUnsupported"); return FrameResult::Failed;
     }
     attach(kCVImageBufferColorPrimariesKey,primaries?primaries:
-       (frame.width<=704?kCVImageBufferColorPrimaries_SMPTE_C:kCVImageBufferColorPrimaries_ITU_R_709_2));
+       (untaggedSurfaceIsStandardDefinition(frame.width,frame.height)?kCVImageBufferColorPrimaries_SMPTE_C:kCVImageBufferColorPrimaries_ITU_R_709_2));
     attach(kCVImageBufferTransferFunctionKey,transfer?transfer:kCVImageBufferTransferFunction_ITU_R_709_2);
     attach(kCVImageBufferYCbCrMatrixKey,matrix?matrix:
-       (frame.width<=704?kCVImageBufferYCbCrMatrix_ITU_R_601_4:kCVImageBufferYCbCrMatrix_ITU_R_709_2));
+       (untaggedSurfaceIsStandardDefinition(frame.width,frame.height)?kCVImageBufferYCbCrMatrix_ITU_R_601_4:kCVImageBufferYCbCrMatrix_ITU_R_709_2));
     CFStringRef location=nullptr;
     switch(frame.chroma_location) {
     case AVCHROMA_LOC_UNSPECIFIED: break;
@@ -117,10 +130,12 @@ struct SoftwareAvcodecVideoDecoder::Impl {
     return worker->configure(config);
   }
 };
-SoftwareAvcodecVideoDecoder::SoftwareAvcodecVideoDecoder(VideoToolboxDecoderOptions options):impl_(std::make_unique<Impl>()) { impl_->options=options; }
+SoftwareAvcodecVideoDecoder::SoftwareAvcodecVideoDecoder(VideoDecoderOptions options):impl_(std::make_unique<Impl>()) { impl_->options=options; }
 SoftwareAvcodecVideoDecoder::~SoftwareAvcodecVideoDecoder() { close(); }
 bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& configuration,DecodedFrameSink& sink,std::string* error) {
-  close(); auto& s=*impl_;
+  auto& s=*impl_;
+  if(s.retired) { s.latch("AvcodecDecoderRetired",error); return false; }
+  close();
   if (configuration.codedSize.width<=0 || configuration.codedSize.height<=0 ||
       std::uint64_t(configuration.codedSize.width)*configuration.codedSize.height>DecodeWorker::kMaximumSoftwarePixels) {
     if(error)*error="AvcodecSoftwareReferenceBudgetExceeded";return false;
@@ -146,6 +161,7 @@ bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& conf
     (s.depth==10?kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
   if(s.fullRange) s.pixelFormat=fullRangeCounterpartFormat(s.pixelFormat);
   s.eos=false; s.notified=false; s.suspended=false; s.awaitingKeyFrame=true; s.error.store(nullptr);
+  s.reported=nullptr;
   if(!s.pool.configure(configuration.codedSize.width,configuration.codedSize.height,s.pixelFormat) || !s.start()) {
     if(error) *error=s.worker && s.worker->failure()?s.worker->failure():"AvcodecVideoConfigureFailed";
     close(); return false;
@@ -154,44 +170,67 @@ bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& conf
 }
 VideoDecodeSubmitResult SoftwareAvcodecVideoDecoder::submitCMSampleBuffer(CMSampleBufferRef sample,std::uint64_t generation,std::string* error) {
   auto& s=*impl_;
-  if(!sample || !s.worker || generation!=s.generation) return VideoDecodeSubmitResult::Rejected;
+  if(!sample || !s.worker || generation!=s.generation) {
+    s.latch(!sample?"AvcodecSampleMissing":!s.worker?"AvcodecNotConfigured":"AvcodecStaleGeneration",error);
+    return VideoDecodeSubmitResult::Rejected;
+  }
+  if(s.eos) { s.latch("AvcodecSubmitAfterEndOfStream",error); return VideoDecodeSubmitResult::Rejected; }
+  if(s.awaitingKeyFrame && !sampleIsSyncSample(sample)) {
+    s.latch("decoder requires a key frame after configure or flush",error);
+    return VideoDecodeSubmitResult::Rejected;
+  }
   if(!s.worker->hasCapacity()) {
-    if(s.worker->failure()) { if(error)*error=s.worker->failure(); return VideoDecodeSubmitResult::Rejected; }
+    if(s.worker->failure()) { s.latch(s.worker->failure(),error); return VideoDecodeSubmitResult::Rejected; }
     ++s.pressure; return VideoDecodeSubmitResult::Backpressure;
   }
   auto block=CMSampleBufferGetDataBuffer(sample);
   const auto bytes=block?CMBlockBufferGetDataLength(block):0;
   const auto scratch=s.worker->conversionStorage();
   if(!bytes || bytes>scratch.size() || CMBlockBufferCopyDataBytes(block,0,bytes,scratch.data())!=noErr) {
-    if(error)*error="AvcodecPacketStorageInvalid"; return VideoDecodeSubmitResult::Rejected;
+    s.latch("AvcodecPacketStorageInvalid",error); return VideoDecodeSubmitResult::Rejected;
   }
   PacketTiming timing{exact(CMSampleBufferGetPresentationTimeStamp(sample)),exact(CMSampleBufferGetDecodeTimeStamp(sample)),
     exact(CMSampleBufferGetDuration(sample)),generation,generation};
   switch(s.worker->submit(scratch.first(bytes),timing)) {
   case WorkerResult::Accepted: s.awaitingKeyFrame=false; ++s.submitted; return VideoDecodeSubmitResult::Accepted;
   case WorkerResult::Backpressure: ++s.pressure; return VideoDecodeSubmitResult::Backpressure;
-  default: if(error)*error="AvcodecPacketSubmissionRefused"; return VideoDecodeSubmitResult::Rejected;
+  default: s.latch("AvcodecPacketSubmissionRefused",error); return VideoDecodeSubmitResult::Rejected;
   }
 }
 VideoDecodeDrainProgress SoftwareAvcodecVideoDecoder::beginEndOfStream(std::uint64_t generation,std::string* error) {
   auto& s=*impl_; if(generation!=s.generation)return VideoDecodeDrainProgress::StaleGeneration;
-  if(!s.worker || s.worker->endOfStream(generation)!=WorkerResult::Accepted)return VideoDecodeDrainProgress::Failed;
-  s.eos=true; return drainEndOfStream(generation,error);
+  if(!s.eos) {
+    if(!s.worker || s.worker->endOfStream(generation)!=WorkerResult::Accepted) {
+      s.latch(s.worker?"AvcodecEndOfStreamRefused":"AvcodecNotConfigured",error);
+      return VideoDecodeDrainProgress::Failed;
+    }
+    s.eos=true;
+    return VideoDecodeDrainProgress::Progress;
+  }
+  if(s.notified) return VideoDecodeDrainProgress::Done;
+  return VideoDecodeDrainProgress::Quiescing;
 }
 VideoDecodeDrainProgress SoftwareAvcodecVideoDecoder::drainPresentation(std::uint64_t generation,std::string* error) {
   auto& s=*impl_; if(generation!=s.generation)return VideoDecodeDrainProgress::StaleGeneration;
   if(s.suspended) return VideoDecodeDrainProgress::Quiescing;
   const char* failure=s.error.load(); if(!failure && s.worker)failure=s.worker->failure();
-  if(failure || !s.worker) { if(error)*error=failure?failure:"AvcodecNotConfigured"; return VideoDecodeDrainProgress::Failed; }
+  if(failure || !s.worker) { s.latch(failure?failure:"AvcodecNotConfigured",error); return VideoDecodeDrainProgress::Failed; }
   if(!s.published.load(std::memory_order_acquire)) { s.worker->retryOutput(); return VideoDecodeDrainProgress::Quiescing; }
   const auto result=s.sink->enqueue(s.pending,error);
   if(result==FrameEnqueueResult::Backpressure)return VideoDecodeDrainProgress::Quiescing;
-  if(result==FrameEnqueueResult::Rejected)return VideoDecodeDrainProgress::Failed;
+  if(result==FrameEnqueueResult::Rejected) {
+    s.fail("AvcodecSinkRejectedFrame"); s.latch("AvcodecSinkRejectedFrame",error);
+    return VideoDecodeDrainProgress::Failed;
+  }
   s.pending.reset(); s.published.store(false,std::memory_order_release); ++s.delivered;
   s.worker->retryOutput(); return VideoDecodeDrainProgress::Progress;
 }
 VideoDecodeDrainProgress SoftwareAvcodecVideoDecoder::drainEndOfStream(std::uint64_t generation,std::string* error) {
-  auto& s=*impl_; const auto progress=drainPresentation(generation,error);
+  auto& s=*impl_;
+  if(generation==s.generation && !s.eos) {
+    s.latch("AvcodecEndOfStreamDrainBeforeBegin",error); return VideoDecodeDrainProgress::Failed;
+  }
+  const auto progress=drainPresentation(generation,error);
   if(progress!=VideoDecodeDrainProgress::Quiescing)return progress;
   if(s.eos && s.worker->drained() && !s.published.load(std::memory_order_acquire)) {
     if(!s.notified) { s.sink->endOfStream(generation); s.notified=true; }
@@ -200,7 +239,7 @@ VideoDecodeDrainProgress SoftwareAvcodecVideoDecoder::drainEndOfStream(std::uint
   return VideoDecodeDrainProgress::Quiescing;
 }
 void SoftwareAvcodecVideoDecoder::suspendForPreview(std::uint64_t next) noexcept {
-  auto& s=*impl_; if(!s.worker && !s.suspended)return;
+  auto& s=*impl_; if(s.retired || (!s.worker && !s.suspended))return;
   if(s.worker) s.worker->close();
   s.worker.reset(); s.pending.reset(); s.published.store(false);
   s.generation=next; s.eos=false; s.notified=false; s.error.store(nullptr);
@@ -215,22 +254,30 @@ bool SoftwareAvcodecVideoDecoder::resumeAfterPreview() noexcept {
   return true;
 }
 void SoftwareAvcodecVideoDecoder::flush(std::uint64_t next) noexcept {
+  if(impl_->retired) return;
   suspendForPreview(next);
   static_cast<void>(resumeAfterPreview());
 }
 VideoDecoderRetireProgress SoftwareAvcodecVideoDecoder::retire(std::uint64_t retired,std::uint64_t next) noexcept {
-  if(retired!=impl_->generation)return VideoDecoderRetireProgress::StaleGeneration;
+  auto& s=*impl_;
+  if(s.retired)
+    return s.retiredGeneration==retired && s.retiredInvalidation==next
+        ? VideoDecoderRetireProgress::Done : VideoDecoderRetireProgress::StaleGeneration;
+  if(retired!=s.generation)return VideoDecoderRetireProgress::StaleGeneration;
   if(next<=retired)return VideoDecoderRetireProgress::Failed;
-  close(); impl_->generation=next; return VideoDecoderRetireProgress::Done;
+  close(); s.generation=next;
+  s.retired=true; s.retiredGeneration=retired; s.retiredInvalidation=next;
+  return VideoDecoderRetireProgress::Done;
 }
 void SoftwareAvcodecVideoDecoder::close() noexcept {
-  auto& s=*impl_; if(s.worker) s.worker->close(); s.worker.reset();
+  auto& s=*impl_; if(s.retired) return;
+  if(s.worker) s.worker->close(); s.worker.reset();
   s.pending.reset(); s.published.store(false); s.pool.close(); s.suspended=false;
   std::vector<std::byte>().swap(s.configurationBytes); s.configuration.codecConfiguration={};
   if(s.sink) s.sink->flush(s.generation+1); s.sink=nullptr;
 }
-VideoToolboxDecoderStats SoftwareAvcodecVideoDecoder::stats() const noexcept {
-  const auto& s=*impl_; VideoToolboxDecoderStats result;
+VideoDecoderStats SoftwareAvcodecVideoDecoder::stats() const noexcept {
+  const auto& s=*impl_; VideoDecoderStats result;
   result.configured=bool(s.worker)||s.suspended; result.generation=s.generation; result.awaitingKeyFrame=s.awaitingKeyFrame;
   result.maxInFlightFrames=s.options.maxInFlightFrames;
   result.inFlightFrames=s.worker?s.worker->queuedPackets():0;
@@ -242,8 +289,8 @@ VideoToolboxDecoderStats SoftwareAvcodecVideoDecoder::stats() const noexcept {
   result.outputInterop=s.options.outputInterop; result.requestedOutputPixelFormat=s.pixelFormat; result.actualOutputPixelFormat=s.pixelFormat;
   return result;
 }
-VideoToolboxDecoderMemoryFacts SoftwareAvcodecVideoDecoder::memoryFacts() const noexcept {
-  VideoToolboxDecoderMemoryFacts facts;
+VideoDecoderMemoryFacts SoftwareAvcodecVideoDecoder::memoryFacts() const noexcept {
+  VideoDecoderMemoryFacts facts;
   facts.presentationFrames=impl_->published.load(std::memory_order_acquire)?1:0;
   if(impl_->worker) {
     facts.inFlightFrames=impl_->worker->queuedPackets();
@@ -255,8 +302,11 @@ VideoToolboxDecoderMemoryFacts SoftwareAvcodecVideoDecoder::memoryFacts() const 
   return facts;
 }
 std::optional<std::string> SoftwareAvcodecVideoDecoder::takeLastError() {
-  if(auto error=impl_->error.load())return std::string(error);
-  if(impl_->worker)if(auto error=impl_->worker->failure())return std::string(error);
-  return {};
+  auto& s=*impl_;
+  // Asynchronous worker/frame failures are surfaced once, like a latched one.
+  const char* failure=s.error.load();
+  if(!failure && s.worker) failure=s.worker->failure();
+  if(failure && failure!=s.reported) { s.reported=failure; s.latch(failure,nullptr); }
+  return std::exchange(s.lastError,std::nullopt);
 }
 }

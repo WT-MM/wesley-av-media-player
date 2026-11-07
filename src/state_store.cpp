@@ -145,15 +145,15 @@ bool parseRecord(std::string_view line, PersistentState& state,
     int value = 0;
     if (!parseNumber(line, value)) return false;
     // Admits the whole boost range the maximum-volume setting can open up.
-    // A window is only ever SEEDED at 100 (see WindowManager::seedController),
+    // A new window starts at most at 100% (AppSettings::initialVolume),
     // so a recorded boost cannot make a fresh window loud.
-    state.volume = std::clamp(value, 0, 400);
+    state.volume = std::clamp(value, 0, kMaximumVolumePercent);
     return true;
   }
   if (key == "max_volume") {
     int value = 0;
     if (!parseNumber(line, value)) return false;
-    state.maximum_volume = std::clamp(value, 100, 400);
+    state.maximum_volume = std::clamp(value, kUnityVolumePercent, kMaximumVolumePercent);
     return true;
   }
   if (key == "profile") {
@@ -171,7 +171,7 @@ bool parseRecord(std::string_view line, PersistentState& state,
   if (key == "seek_step") {
     int value = 0;
     if (!parseNumber(line, value)) return false;
-    state.seek_step_seconds = std::clamp(value, 1, 60);
+    state.seek_step_seconds = std::clamp(value, kMinimumSeekStepSeconds, kMaximumSeekStepSeconds);
     return true;
   }
   if (key == "hugs_video") {

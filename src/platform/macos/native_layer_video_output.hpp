@@ -111,26 +111,21 @@ class NativeLayerVideoOutput final : public NativeTrackedVideoOutput {
 
   // AVSampleBufferDisplayLayer composites the decoded IOSurface out of process;
   // this output enqueues it and never reads a pixel, so the decoder is free to
-  // deliver its native lossless surface instead of paying a per-frame
-  // VTPixelTransferSession to hand back an uncompressed one.
-  [[nodiscard]] bool presentsDecodedSurfacesDirectly() const noexcept override {
-    return true;
-  }
+  // deliver its native lossless surface and the system converts every format,
+  // transfer and gamut. Rotation is a CoreAnimation transform on a layer
+  // WindowServer already composites, so a portrait file costs what a landscape
+  // one costs; a detached, layer-less output (the contract tests) can honour
+  // only the identity.
+  [[nodiscard]] NativePresentationCapabilities presentationCapabilities()
+      const noexcept override;
+  [[nodiscard]] bool applyPresentationGeometry(
+      media::MediaDisplaySize displaySize,
+      int quarterTurnDegrees) noexcept override;
 
-  // This route CAN rotate, and for free: the quarter turn is a CoreAnimation
-  // transform on a layer WindowServer already composites, so a portrait file
-  // costs exactly what a landscape one costs. See
-  // setNativeLayerPresentationRotation in native_layer_host_view.hpp.
-  bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept override;
-  [[nodiscard]] bool setPresentationRotation(int degrees) noexcept override;
-
-  // Activates the first generation directly. The tracked contract requires an
-  // accepted generation before any submit; production arms through
-  // flushProgress(0, generation), and only the contract tests call this.
-  [[nodiscard]] bool startGeneration(std::uint64_t generation,
-                                     std::string* error = nullptr) noexcept;
-
+#if defined(WAM_NATIVE_LAYER_VIDEO_TESTING)
+  // The audit counters, read only by the contract tests.
   [[nodiscard]] NativeLayerVideoOutputHealth health() const noexcept;
+#endif
 
  private:
   struct State;

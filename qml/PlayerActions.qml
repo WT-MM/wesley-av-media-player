@@ -59,7 +59,7 @@ QtObject {
     function stepLabel(action) {
         if (!hasWindow)
             return action;
-        const step = Number(controller.seekStepSeconds);
+        const step = Number(appSettings.seekStepSeconds);
         return action + " " + formatSeconds(step) + (step === 1 ? " Second" : " Seconds");
     }
 
@@ -234,8 +234,8 @@ QtObject {
         text: "Window Hugs Video"
         enabled: actions.hasWindow
         checkable: true
-        checked: actions.hasWindow ? actions.controller.windowHugsVideo : true
-        onActivated: actions.controller.setWindowHugsVideo(!actions.controller.windowHugsVideo)
+        checked: appSettings.windowHugsVideo
+        onActivated: appSettings.windowHugsVideo = !appSettings.windowHugsVideo
     }
     // Disabled for an HDR source: it already uses the display's extended
     // range, and a boost on top would only clip its highlights.

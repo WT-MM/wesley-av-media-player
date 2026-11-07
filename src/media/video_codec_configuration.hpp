@@ -150,6 +150,10 @@ struct VideoCodecConfigurationFacts {
   std::uint16_t vpsCount{0};
   std::uint16_t spsCount{0};
   std::uint16_t ppsCount{0};
+  // AVC only: bytes of the record through its last PPS. An avcC may carry an
+  // optional, hint-only high-profile extension after that; two records with
+  // the same core describe the same stream.
+  std::uint32_t avcCoreBytes{0};
   VideoCodecColorFacts color{};
 
   friend constexpr bool

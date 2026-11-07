@@ -3,10 +3,7 @@
 
 #include "player_controller.hpp"
 #include "state_store.hpp"
-
-#ifndef Q_OS_MACOS
-#include "playback/mpv/mpv_runtime.hpp"
-#endif
+#include "test_seams.hpp"
 
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
@@ -79,123 +76,7 @@ std::string persistentKey(const QString &local_path) {
   return local_path.toUtf8().toStdString();
 }
 
-int appearanceValue(::wam::AppearanceTheme theme) {
-  return static_cast<int>(theme);
-}
-
-::wam::AppearanceTheme appearanceTheme(int appearance) {
-  switch (appearance) {
-  case 1:
-    return ::wam::AppearanceTheme::Dark;
-  case 2:
-    return ::wam::AppearanceTheme::System;
-  case 0:
-  default:
-    return ::wam::AppearanceTheme::Light;
-  }
-}
-
-void applyColorScheme(QStyleHints *style_hints, int appearance) {
-  if (!style_hints)
-    return;
-  switch (appearanceTheme(appearance)) {
-  case ::wam::AppearanceTheme::Dark:
-    style_hints->setColorScheme(Qt::ColorScheme::Dark);
-    break;
-  case ::wam::AppearanceTheme::System:
-    style_hints->setColorScheme(Qt::ColorScheme::Unknown);
-    break;
-  case ::wam::AppearanceTheme::Light:
-  default:
-    style_hints->setColorScheme(Qt::ColorScheme::Light);
-    break;
-  }
-}
-
-// Background-launch and parked-geometry seams. Owned here because they apply
-// to every window this process creates.
-bool g_background_launch = false;
-bool g_parked_geometry_valid = false;
-bool g_parked_all_windows = false;
-QRect g_parked_geometry;
-
 } // namespace
-
-// ---------------------------------------------------------------------------
-// ResumeTracker
-// ---------------------------------------------------------------------------
-
-void ResumeTracker::observePosition(double position) {
-  if (std::isfinite(position) && position > 0.0) {
-    snapshot_.position = position;
-    snapshot_.position_observed = true;
-  }
-}
-
-void ResumeTracker::observeDuration(double duration) {
-  if (std::isfinite(duration) && duration > 0.0)
-    snapshot_.duration = duration;
-}
-
-void ResumeTracker::commitZeroPosition(quint64 generation) {
-  if (generation == generation_) {
-    snapshot_.position = 0.0;
-    snapshot_.position_observed = true;
-  }
-}
-
-ResumeSnapshot ResumeTracker::transitionTo(const QString &local_source) {
-  ResumeSnapshot previous = snapshot_;
-  snapshot_ = ResumeSnapshot{local_source, 0.0, 0.0, false};
-  ++generation_;
-  return previous;
-}
-
-bool verifyResumeTracker() {
-  ResumeTracker tracker;
-
-  // Merely opening a source is not evidence that playback reached zero. A
-  // second open (or quit/load failure) before mpv reports time-pos must leave
-  // any previously persisted resume point untouched.
-  tracker.transitionTo(QStringLiteral("/media/unobserved.mp4"));
-  const ResumeSnapshot unobserved_snapshot =
-      tracker.transitionTo(QStringLiteral("/media/first.mp4"));
-  if (unobserved_snapshot.position_observed)
-    return false;
-
-  tracker.observeDuration(120.0);
-  tracker.observePosition(42.0);
-
-  // PlayerController::open resets the old timeline before sourceChanged.
-  tracker.observePosition(0.0);
-  tracker.observeDuration(0.0);
-  const ResumeSnapshot open_snapshot =
-      tracker.transitionTo(QStringLiteral("/media/second.mp4"));
-  if (open_snapshot.local_source != QStringLiteral("/media/first.mp4") ||
-      open_snapshot.position != 42.0 || open_snapshot.duration != 120.0 ||
-      !open_snapshot.position_observed)
-    return false;
-
-  tracker.observeDuration(90.0);
-  tracker.observePosition(27.0);
-
-  // PlayerController::stop changes source before resetting the timeline.
-  const ResumeSnapshot stop_snapshot = tracker.transitionTo({});
-  tracker.observePosition(0.0);
-  tracker.observeDuration(0.0);
-  if (stop_snapshot.local_source != QStringLiteral("/media/second.mp4") ||
-      stop_snapshot.position != 27.0 || stop_snapshot.duration != 90.0 ||
-      !stop_snapshot.position_observed ||
-      !tracker.snapshot().local_source.isEmpty())
-    return false;
-
-  // A deliberate seek to the beginning still clears the stable position.
-  tracker.transitionTo(QStringLiteral("/media/third.mp4"));
-  tracker.observePosition(18.0);
-  tracker.commitZeroPosition(tracker.generation());
-  return tracker.snapshot().position == 0.0 &&
-         tracker.snapshot().position_observed;
-}
 
 // ---------------------------------------------------------------------------
 // PlayerWindow
@@ -210,7 +91,8 @@ PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
   context_ = new QQmlContext(engine.rootContext(), this);
 
   controller_ = new PlayerController(this);
-  manager_.seedController(controller_);
+  controller_->bindSettings(manager_.settings());
+  controller_->setVolume(manager_.settings().initialVolume());
   context_->setContextProperty(QStringLiteral("player"), controller_);
 
   qml_root_ = component.create(context_);
@@ -244,7 +126,9 @@ PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
 #endif
 
   wireResumeTracking();
-  wireSettingsMirror();
+  connect(controller_, &PlayerController::volumeChanged, this, [this] {
+    manager_.settings().rememberVolume(controller_->volume());
+  });
 
   if (window_ != nullptr) {
     connect(window_, &QWindow::activeChanged, this, [this] {
@@ -310,7 +194,7 @@ void PlayerWindow::raiseWindow() {
   // Under the background-launch seam the window must come to the front
   // WITHOUT this process becoming active -- that is the entire point of the
   // seam, and an ordinary raise would steal the keyboard mid-measurement.
-  if (g_background_launch) {
+  if (const TestSeams *seams = testSeams(); seams != nullptr && seams->background) {
     ::wam::macos_window_chrome::orderFrontWithoutActivating(window_);
     return;
   }
@@ -448,30 +332,19 @@ void PlayerWindow::wireResumeTracking() {
   });
 }
 
-void PlayerWindow::wireSettingsMirror() {
-  connect(controller_, &PlayerController::appearanceChanged, this,
-          [this] { manager_.mirrorAppearance(controller_); });
-  connect(controller_, &PlayerController::seekStepSecondsChanged, this,
-          [this] { manager_.mirrorSeekStep(controller_); });
-  connect(controller_, &PlayerController::windowHugsVideoChanged, this,
-          [this] { manager_.mirrorWindowHugsVideo(controller_); });
-  connect(controller_, &PlayerController::preservePitchChanged, this,
-          [this] { manager_.mirrorPreservePitch(controller_); });
-  connect(controller_, &PlayerController::scrollGesturesEnabledChanged, this,
-          [this] { manager_.mirrorScrollGestures(controller_); });
-  connect(controller_, &PlayerController::maximumVolumeChanged, this,
-          [this] { manager_.mirrorMaximumVolume(controller_); });
-  connect(controller_, &PlayerController::volumeChanged, this,
-          [this] { manager_.noteVolumeChanged(controller_); });
-}
-
 // ---------------------------------------------------------------------------
 // WindowManager
 // ---------------------------------------------------------------------------
 
 WindowManager::WindowManager(QQmlEngine &engine, ::wam::StateStore &store,
                              QObject *parent)
-    : QObject(parent), engine_(engine), store_(store) {
+    : QObject(parent), engine_(engine), store_(store), settings_(store) {
+  engine.rootContext()->setContextProperty(QStringLiteral("appSettings"),
+                                           &settings_);
+  connect(&settings_, &AppSettings::edited, this,
+          &WindowManager::requestCheckpoint);
+  connect(&settings_, &AppSettings::appearanceChanged, this,
+          &WindowManager::darkAppearanceChanged);
   component_ = new QQmlComponent(&engine, QStringLiteral("Wam"),
                                  QStringLiteral("Main"), this);
   WAM_STARTUP_STAMP(QmlComponentLoaded);
@@ -488,12 +361,6 @@ WindowManager::WindowManager(QQmlEngine &engine, ::wam::StateStore &store,
     if (checkpoint_.checkpoint([this] { return saveIfDirty(); }))
       checkpoint_timer_->start();
   });
-
-  // The saved appearance decides the process-wide colour scheme before any
-  // window exists, so the very first window is painted in the right one rather
-  // than flashing the default and correcting itself.
-  applyColorScheme(QGuiApplication::styleHints(),
-                   appearanceValue(store_.state().appearance_theme));
 }
 
 WindowManager::~WindowManager() {
@@ -505,16 +372,6 @@ WindowManager::~WindowManager() {
   preferences_ = nullptr;
   delete menu_bar_;
   menu_bar_ = nullptr;
-}
-
-void WindowManager::setBackgroundLaunch(bool enabled) {
-  g_background_launch = enabled;
-}
-
-void WindowManager::setParkedGeometry(int x, int y, int width, int height, bool allWindows) {
-  g_parked_all_windows = allWindows;
-  g_parked_geometry_valid = width > 0 && height > 0;
-  g_parked_geometry = QRect(x, y, width, height);
 }
 
 void WindowManager::requestCheckpoint() {
@@ -533,40 +390,6 @@ void WindowManager::flushPersistence() {
   (void)checkpoint_.flushNow([this] { return saveIfDirty(); });
 }
 
-void WindowManager::seedController(PlayerController *controller) const {
-  if (controller == nullptr)
-    return;
-#ifndef Q_OS_MACOS
-  // Off macOS there is no native route at all, so every window's controller
-  // needs its own compatibility engine handle. libmpv explicitly supports many
-  // mpv_create() handles from one loaded library image, and the runtime object
-  // being retained here is the immutable, process-lifetime API table -- not a
-  // handle -- so N controllers sharing it is exactly its intended use.
-  const auto linked_runtime =
-      ::wam::playback::mpv::MpvLinkedRuntimeFactory::create();
-  if (linked_runtime)
-    static_cast<void>(controller->provisionMpvFallbackRuntime(
-        linked_runtime.runtime));
-#endif
-  const ::wam::PersistentState &state = store_.state();
-  controller->setAppearance(appearanceValue(state.appearance_theme));
-  // Before the level, always: setVolume clamps against the ceiling in force,
-  // so a window seeded in the other order would have its level cut to the
-  // default 200% before the real (possibly higher) maximum arrived.
-  controller->setMaximumVolume(
-      static_cast<double>(std::clamp(state.maximum_volume, 100, 400)) / 100.0);
-  // Deliberately capped at 100 even though the store records up to 200: a
-  // window opened now must never blast at a boost level chosen in some other
-  // window, or in some earlier session. See noteVolumeChanged.
-  controller->setVolume(
-      static_cast<double>(std::clamp(state.volume, 0, 100)) / 100.0);
-  controller->setSeekStepSeconds(
-      static_cast<double>(std::clamp(state.seek_step_seconds, 1, 60)));
-  controller->setWindowHugsVideo(state.window_hugs_video);
-  controller->setPreservePitch(state.preserve_pitch);
-  controller->setScrollGesturesEnabled(state.scroll_gestures);
-}
-
 PlayerWindow *WindowManager::createWindow() {
   if (windows_.size() >= kMaximumPlayerWindows)
     return nullptr;
@@ -582,12 +405,14 @@ PlayerWindow *WindowManager::createWindow() {
   last_created_ = window;
 
   if (QQuickWindow *quick = window->window()) {
-    if (g_parked_geometry_valid && (previous == nullptr || g_parked_all_windows)) {
+    const TestSeams *seams = testSeams();
+    if (seams != nullptr && seams->geometry &&
+        (previous == nullptr || seams->allWindowGeometry)) {
       // Park the first window, or every window for a quiet storm proof. It is
       // applied again on the next event-loop passes because QML's own sizing
       // (windowHugsVideo, the first frame's natural size) settles after this
       // point and would otherwise overwrite it.
-      const QRect parked = g_parked_geometry;
+      const QRect parked = *seams->geometry;
       const auto apply = [quick, parked] {
         quick->setGeometry(parked);
       };
@@ -710,143 +535,26 @@ bool WindowManager::darkAppearance() const {
          QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
 }
 
-void WindowManager::mirrorAppearance(PlayerController *origin) {
-  if (mirroring_ || origin == nullptr)
-    return;
-  mirroring_ = true;
-  const int value = origin->appearance();
-  store_.state().appearance_theme = appearanceTheme(value);
-  applyColorScheme(QGuiApplication::styleHints(), value);
-  for (PlayerWindow *window : windows_) {
-    if (window->controller() != origin)
-      window->controller()->setAppearance(value);
-  }
-  mirroring_ = false;
-  emit darkAppearanceChanged();
-  requestCheckpoint();
-}
-
-void WindowManager::mirrorSeekStep(PlayerController *origin) {
-  if (mirroring_ || origin == nullptr)
-    return;
-  mirroring_ = true;
-  const double value = origin->seekStepSeconds();
-  store_.state().seek_step_seconds =
-      std::clamp(static_cast<int>(std::lround(value)), 1, 60);
-  for (PlayerWindow *window : windows_) {
-    if (window->controller() != origin)
-      window->controller()->setSeekStepSeconds(value);
-  }
-  mirroring_ = false;
-  requestCheckpoint();
-}
-
-void WindowManager::mirrorWindowHugsVideo(PlayerController *origin) {
-  if (mirroring_ || origin == nullptr)
-    return;
-  mirroring_ = true;
-  const bool value = origin->windowHugsVideo();
-  store_.state().window_hugs_video = value;
-  for (PlayerWindow *window : windows_) {
-    if (window->controller() != origin)
-      window->controller()->setWindowHugsVideo(value);
-  }
-  mirroring_ = false;
-  requestCheckpoint();
-}
-
-void WindowManager::mirrorPreservePitch(PlayerController *origin) {
-  if (mirroring_ || origin == nullptr)
-    return;
-  mirroring_ = true;
-  const bool value = origin->preservePitch();
-  store_.state().preserve_pitch = value;
-  for (PlayerWindow *window : windows_) {
-    if (window->controller() != origin)
-      window->controller()->setPreservePitch(value);
-  }
-  mirroring_ = false;
-  requestCheckpoint();
-}
-
-void WindowManager::mirrorScrollGestures(PlayerController *origin) {
-  if (mirroring_ || origin == nullptr)
-    return;
-  mirroring_ = true;
-  const bool value = origin->scrollGesturesEnabled();
-  store_.state().scroll_gestures = value;
-  for (PlayerWindow *window : windows_) {
-    if (window->controller() != origin)
-      window->controller()->setScrollGesturesEnabled(value);
-  }
-  mirroring_ = false;
-  requestCheckpoint();
-}
-
-void WindowManager::mirrorMaximumVolume(PlayerController *origin) {
-  if (mirroring_ || origin == nullptr)
-    return;
-  mirroring_ = true;
-  const double value = origin->maximumVolume();
-  store_.state().maximum_volume =
-      std::clamp(static_cast<int>(std::lround(value * 100.0)), 100, 400);
-  for (PlayerWindow *window : windows_) {
-    if (window->controller() != origin)
-      window->controller()->setMaximumVolume(value);
-  }
-  mirroring_ = false;
-  requestCheckpoint();
-}
-
-void WindowManager::noteVolumeChanged(PlayerController *origin) {
-  if (origin == nullptr)
-    return;
-  // Volume is deliberately NOT mirrored. QuickTime gives each window its own
-  // level, and muting one video must not mute the others. What is persisted is
-  // simply whichever window set it last.
-  //
-  // The stored value keeps the real level, boost included -- the on-disk
-  // format admits 0..400, the whole range the maximum-volume setting can open
-  // up -- but seedController() caps what a NEW window is seeded with at 100.
-  // A window the user deliberately pushed to 180% must stay there across a
-  // media replacement; a brand-new window opened later must not blast at 180%
-  // because of a decision made in a different window. Recording the truth and
-  // capping the restore is what gives both.
-  store_.state().volume = std::clamp(
-      static_cast<int>(std::lround(origin->volume() * 100.0)), 0, 400);
-  requestCheckpoint();
-}
-
 void WindowManager::showPreferences() {
-  // Preferences is app-level: one window, one persisted state, and its changes
-  // are mirrored live onto every open player. It binds to the focused
-  // window's controller through `appHost.focusedController`, so with no window
-  // open there would be nothing to bind to -- create one first, which is also
-  // the state a user who reaches Preferences from an empty app expects to
-  // return to.
+  // Preferences is app-level: one window bound to AppSettings, which every
+  // open player follows live. Reaching it from an empty app also opens a
+  // player window, which is the state the user expects to return to.
   if (windows_.isEmpty())
     (void)createWindow();
 
   if (preferences_ == nullptr) {
-    if (preferences_component_ == nullptr) {
-      preferences_component_ = new QQmlComponent(
-          &engine_, QStringLiteral("Wam"), QStringLiteral("AppPreferences"),
-          this);
-    }
-    // Initial properties, not a binding: this is the only creation path that
-    // has the controller in place before the panel's own controls evaluate.
-    preferences_ = preferences_component_->createWithInitialProperties(
-        {{QStringLiteral("liveController"),
-          QVariant::fromValue(focusedControllerObject())}},
-        engine_.rootContext());
+    QQmlComponent component(&engine_, QStringLiteral("Wam"),
+                            QStringLiteral("PreferencesWindow"));
+    preferences_ = qobject_cast<QWindow *>(component.create(engine_.rootContext()));
     if (preferences_ == nullptr) {
       qWarning() << "WAM could not create the Preferences window:"
-                 << preferences_component_->errorString();
+                 << component.errorString();
       return;
     }
-    preferences_->setParent(this);
   }
-  QMetaObject::invokeMethod(preferences_, "presentPreferences");
+  preferences_->show();
+  preferences_->raise();
+  preferences_->requestActivate();
 }
 
 void WindowManager::openMedia() {

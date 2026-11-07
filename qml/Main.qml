@@ -19,7 +19,7 @@ ApplicationWindow {
         const command = root.actions[name];
         return command !== undefined && command !== null && command.trigger !== undefined && command.trigger();
     }
-    property int appearance: 0 // Light by default; 1 Dark; 2 Follow system.
+    readonly property int appearance: appSettings.appearance // 0 Light (default), 1 Dark, 2 Follow system.
     readonly property bool darkAppearance: appearance === 1 || (appearance === 2 && systemPalette.window.hslLightness < 0.5)
     property bool quickEditOpen: false
     // Crop mode is per WINDOW, like the sheet that turns it on. The rectangle
@@ -203,7 +203,7 @@ ApplicationWindow {
     // itself. onWindowHugsVideoActiveChanged (below) is what schedules the
     // continuous re-snap, so every one of those gates has to live in this
     // single computed property rather than be re-checked ad hoc.
-    readonly property bool windowHugsVideoActive: root.controller.windowHugsVideo
+    readonly property bool windowHugsVideoActive: appSettings.windowHugsVideo
         && !root.benchmarkModeActive
         && root.controller.hasMedia
         && root.visibility !== Window.FullScreen
@@ -489,7 +489,7 @@ ApplicationWindow {
     // controller.volume. Two reasons, both real:
     //
     //   * A binding would fire for the seed value WindowManager pushes into
-    //     every new controller (seedController), flashing a volume card onto
+    //     every new controller (AppSettings::initialVolume), flashing a volume card onto
     //     a window the instant it opens.
     //   * A binding would keep re-laying-out the card's Text on every level
     //     change even while it is invisible, which is exactly the cost the
@@ -647,10 +647,10 @@ ApplicationWindow {
             openQuickEdit();
     }
 
-    // Preferences is app-level -- ONE window for the whole application, whose
-    // changes are mirrored live onto every open player (see
-    // WindowManager::showPreferences and qml/AppPreferences.qml). A per-window
-    // panel would mean N panels disagreeing about one persisted setting.
+    // Preferences is app-level -- ONE window for the whole application, bound
+    // to `appSettings`, which every open player follows live (see
+    // WindowManager::showPreferences). A per-window panel would mean N panels
+    // disagreeing about one persisted setting.
     function showPreferences() {
         appHost.showPreferences();
     }
@@ -792,8 +792,6 @@ ApplicationWindow {
 
     Component.onCompleted: {
         stage.forceActiveFocus();
-        if (controller.appearance !== undefined)
-            appearance = controller.appearance;
         revealControls();
     }
 
@@ -863,7 +861,7 @@ ApplicationWindow {
 
     // Up/Down: one wheel notch, with the scroll gesture's OSD and flash.
     function nudgeVolume(delta) {
-        root.controller.setVolume(Math.max(0, Math.min(root.controller.maximumVolume,
+        root.controller.setVolume(Math.max(0, Math.min(appSettings.maximumVolume,
                                                        root.controller.volume + delta)));
         transport.flashVolume();
         root.showVolumeOsd();
@@ -1600,7 +1598,7 @@ ApplicationWindow {
             anchors.fill: parent
             acceptedButtons: Qt.NoButton
             enabled: root.controller.hasMedia
-                && root.controller.scrollGesturesEnabled
+                && appSettings.scrollGesturesEnabled
             onWheel: wheel => {
                 const outcome = root.controller.scrollGesture(
                     wheel.pixelDelta.x, wheel.pixelDelta.y,
@@ -1810,11 +1808,7 @@ ApplicationWindow {
                 onCropModeRequested: enabled => root.setCropMode(enabled)
                 onCropAspectRequested: aspect => root.cropAspect = aspect
                 onCloseRequested: root.closeQuickEdit()
-                onAppearanceRequested: nextAppearance => {
-                    root.appearance = nextAppearance;
-                    if (root.controller.setAppearance)
-                        root.controller.setAppearance(nextAppearance);
-                }
+                onAppearanceRequested: nextAppearance => appSettings.appearance = nextAppearance
                 Component.onCompleted: root.showQuickEdit()
             }
         }

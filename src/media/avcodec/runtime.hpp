@@ -12,4 +12,6 @@ private:
   bool held_{};
 };
 [[nodiscard]] const char* runtimeFailure() noexcept;
+// The bundled libavcodec and libavutil versions, as built.
+[[nodiscard]] const char* runtimeVersions() noexcept;
 }
