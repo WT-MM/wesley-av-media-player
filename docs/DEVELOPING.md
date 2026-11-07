@@ -99,8 +99,7 @@ hundred dangling links and no QML plugin code at all. The script materializes
 them, lets `macdeployqt` finish the deployment those real files then require,
 and normalizes any remaining absolute Homebrew reference onto the copy inside
 the bundle. It is idempotent and a no-op on a Qt installation whose QML tree is
-regular files, which is why `release-macos.yml`'s checksum-pinned Qt SDK never
-needed it.
+regular files, such as Qt's own installer SDK.
 
 The two whisper scripts are all `build/WAM.app` needs for captions:
 
@@ -143,19 +142,12 @@ release notes carry the first-launch instruction (right-click → Open, or
 `xattr -d com.apple.quarantine`) and `spctl --assess` rejects the app by
 design.
 
-`.github/workflows/release-macos.yml` remains the aspirational path:
-a protected `macos-release` environment, checksum-pinned dependencies built for
-macOS 13.3, Developer ID signing, Apple notarization, ticket stapling, and a
-Gatekeeper assessment. None of the secrets it needs exist yet, so it is
-dormant. When a Developer ID certificate and notary key are available it
-supersedes `release.yml`; until then it should not be expected to run.
-
-The protected environment supplies checksum-pinned per-architecture Qt SDK and
-media closure archives, the full Developer ID Application authority and team
-ID, the base64 PKCS#12 certificate and password, App Store Connect notary key ID
-and issuer ID, and the base64 notary API key. Release credentials are imported
-into an ephemeral CI keychain and removed in an unconditional cleanup step;
-they must not be placed in the repository or local build files.
+Developer ID signing and notarization are not wired into CI: no signing
+secrets exist yet. `scripts/release_macos_notarize.zsh` (covered by the
+`macos_release_notarize_transaction` test) is the notarize, staple and assess
+step a signed release would add to `release.yml` once a Developer ID
+certificate and notary key are available. Release credentials must never be
+placed in the repository or local build files.
 
 ## macOS release media closure
 

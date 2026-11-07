@@ -10,8 +10,7 @@ set -euo pipefail
 # `../../../../Cellar/qtdeclarative/6.11.1/share/qt/qml/QtQuick/qmldir`, which
 # only resolves from inside the Homebrew prefix. In the app it dangles, so the
 # bundle carries no QML plugin code at all and the QML engine cannot start.
-# (Qt's own checksum-pinned SDK layout has regular files there, which is why
-# `.github/workflows/release-macos.yml` never hit this.)
+# (Qt's own installer SDK has regular files there.)
 #
 # Materialize those links from the Cellar, then run `macdeployqt` over the app
 # so the now-real plugin binaries get the work Qt's deployment skipped: their

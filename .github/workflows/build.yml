@@ -24,26 +24,15 @@ jobs:
     timeout-minutes: 90
     runs-on: macos-15
     env:
-      QT_VERSION: 6.11.1
       WAM_ARCHITECTURE: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Select an Xcode whose SDK provides SpeechAnalyzer
-        # macos-15 defaults to Xcode 16.4 (macOS 15 SDK); the Apple caption
-        # backend is compile-probed and would silently build as the stub.
-        run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.0.app
-          xcrun --show-sdk-version
-      - name: Install pinned Qt
-        uses: jurplel/install-qt-action@v4
+      - uses: ./.github/actions/macos-setup
         with:
-          version: ${{ env.QT_VERSION }}
-          modules: qtshadertools
-          cache: true
+          qt: "true"
       - run: brew install cmake ninja pkg-config mpv ffmpeg
-      - run: test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
       - name: Install test-proof Python modules
         run: python3 -m pip install --quiet numpy
       - name: Generate deterministic native decoder fixture
@@ -77,24 +66,13 @@ jobs:
           test "$(ffprobe -v error -select_streams v:0 \
             -show_entries stream=pix_fmt -of csv=p=0 \
             build-fixtures/native-main10-hevc.mp4)" = "yuv420p10le"
-      - name: Restore the native LGPL decoder SDK
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/macos-setup
         with:
-          path: third_party/ffmpeg-lgpl
-          key: ffmpeg-lgpl-${{ runner.os }}-${{ runner.arch }}-13.3-${{ hashFiles('scripts/build_ffmpeg_lgpl.sh', 'scripts/apply_ffmpeg_memory_reservation.py', 'third_party/ffmpeg-patches/wam_memory_reservation.inc', 'third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz') }}
-      - name: Build the native LGPL decoder SDK
-        run: |
-          set -euo pipefail
-          if [[ ! -f third_party/ffmpeg-lgpl/lib/libavcodec-wamnative.63.dylib ]]; then
-            scripts/build_ffmpeg_lgpl.sh third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz
-          fi
-          [[ "$(lipo -archs third_party/ffmpeg-lgpl/lib/libavcodec-wamnative.63.dylib)" == arm64 ]]
+          ffmpeg-lgpl: "true"
       - run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TESTING=ON
-          -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON
-          -DWAM_ENABLE_AVFORMAT_STAGE=ON
           -DWAM_NATIVE_VIDEO_TEST_FIXTURE=${{ github.workspace }}/build-fixtures/native-bframes-h264.mp4
           -DWAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE=${{ github.workspace }}/build-fixtures/native-main10-hevc.mp4
           -DWAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE=ON
@@ -102,6 +80,17 @@ jobs:
       # Hosted runners have no accelerated GL display and cannot drive the
       # app's windows reliably; those tests run locally (see tests/CMakeLists.txt).
       - run: ctest --test-dir build --output-on-failure -LE 'gui|gpu'
+      # Telemetry and the native test seams are compiled out of the build
+      # above; build them once so their guarded code cannot rot, and run the
+      # suite that does not need the app's windows or a GPU display.
+      - run: >-
+          cmake -S . -B build-telemetry -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+          -DWAM_NATIVE_BENCHMARK_TELEMETRY=ON
+          -DWAMKIT_ENABLE_TEST_SUPPORT=ON
+      - run: cmake --build build-telemetry --parallel
+      - run: ctest --test-dir build-telemetry --output-on-failure -LE 'gui|gpu'
       - name: Install Qt app bundle
         run: |
           set -o pipefail
@@ -156,7 +145,7 @@ jobs:
       - run: >-
           ditto -c -k --sequesterRsrc --keepParent
           stage/WAM.app WAM-macOS-${{ env.WAM_ARCHITECTURE }}.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: WAM-macOS-${{ env.WAM_ARCHITECTURE }}
           path: WAM-macOS-${{ env.WAM_ARCHITECTURE }}.zip
@@ -166,20 +155,19 @@ jobs:
   linux:
     timeout-minutes: 90
     runs-on: ubuntu-24.04
-    env:
-      QT_VERSION: 6.11.1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - run: grep '^WAM_' packaging/pins.env >> "$GITHUB_ENV"
       - name: Install pinned Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ env.QT_VERSION }}
+          version: ${{ env.WAM_QT_VERSION }}
           modules: qtshadertools
           cache: true
       - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build pkg-config libmpv-dev libgl-dev libegl1 ffmpeg libfuse2t64 libxcb-cursor0 libxkbcommon-x11-0 xvfb
-      - run: test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
+      - run: test "$(qmake -query QT_VERSION)" = "$WAM_QT_VERSION"
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - run: cmake --build build --parallel
       - run: xvfb-run -a ctest --test-dir build --output-on-failure
@@ -240,7 +228,7 @@ jobs:
               fi
             fi
           done < <(find squashfs-root/usr/bin squashfs-root/usr/lib squashfs-root/usr/plugins squashfs-root/usr/qml -type f 2>/dev/null)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: WAM-Linux
           path: WAM*.AppImage
@@ -258,7 +246,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - uses: msys2/setup-msys2@v2
@@ -326,7 +314,7 @@ jobs:
       - name: Create Windows ZIP
         shell: pwsh
         run: Compress-Archive -Path package/* -DestinationPath WAM-Windows.zip -Force
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: WAM-Windows
           path: WAM-Windows.zip

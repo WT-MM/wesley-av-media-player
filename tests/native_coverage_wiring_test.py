@@ -34,7 +34,6 @@ def main():
     a = parser.parse_args()
     app = Path(a.app).resolve()
     assert app.parts[-4:] == ('WAM.app', 'Contents', 'MacOS', 'WAM')
-    assert app.parent.parent.parent.parent.name == 'build'
     temporary = tempfile.TemporaryDirectory(prefix='wam-wiring-', dir=os.environ.get('WAM_TEST_SCRATCH', '/private/tmp'))
     root = Path(a.artifacts or temporary.name)
     root.mkdir(parents=True, exist_ok=True)
