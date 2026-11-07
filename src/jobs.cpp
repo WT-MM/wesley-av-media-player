@@ -6,9 +6,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <sstream>
 #include <system_error>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -160,80 +162,105 @@ bool reapKilledChild(pid_t child, int* status,
   return false;
 }
 
-SupervisedChild superviseChildGroup(pid_t child,
-                                    const CancellationFlag& cancellation,
-                                    std::chrono::milliseconds grace,
-                                    const std::function<bool()>& stopRequested) {
-  constexpr auto kKilledReapBound = std::chrono::milliseconds(500);
-  SupervisedChild out;
+ChildOutcome superviseChildGroup(pid_t child,
+                                 const CancellationFlag& cancellation,
+                                 std::chrono::milliseconds grace,
+                                 const std::function<bool()>& stopRequested) {
+  static constexpr auto kKilledReapBound = std::chrono::milliseconds(500);
+  const auto reapKilled = [child]() -> std::optional<int> {
+    int status = 0;
+    if (reapKilledChild(child, &status, kKilledReapBound)) return status;
+    return std::nullopt;
+  };
+
   int setup_error = 0;
   if (!establishProcessGroup(child, &setup_error)) {
     // macOS can report ESRCH when a very short-lived, already-isolated child
     // has become waitable before the parent wins the setpgid race. Preserve
     // its real status without ever signalling an unverified numeric PGID.
-    out.isolated = false;
-    out.error = setup_error;
     int observation_error = 0;
     const auto observation = observePosixChild(child, &observation_error);
     if (observation == ChildObservation::Exited) {
+      int status = 0;
       int reap_error = 0;
-      out.exited = reapPosixChild(child, &out.status, &reap_error);
-      if (out.exited) out.error = 0;
-      else if (reap_error) out.error = reap_error;
-    } else if (observation == ChildObservation::Running ||
-               observation_error != ECHILD) {
-      terminateUnisolatedChild(child, 0);
+      if (reapPosixChild(child, &status, &reap_error))
+        return ChildUnisolated{0, status};
+      return ChildUnisolated{reap_error ? reap_error : setup_error,
+                             std::nullopt};
     }
-    return out;
+    if (observation == ChildObservation::Running ||
+        observation_error != ECHILD)
+      terminateUnisolatedChild(child, 0);
+    return ChildUnisolated{setup_error, std::nullopt};
   }
 
-  const auto terminate = [&] {
-    out.terminated = true;
-    signalVerifiedProcessGroup(child, SIGTERM);
-    return std::chrono::steady_clock::now() + grace;
-  };
+  enum class Phase { Supervising, Terminating };
+  Phase phase = Phase::Supervising;
+  ChildTerminated::Reason reason = ChildTerminated::Reason::Cancelled;
   auto force_kill_at = std::chrono::steady_clock::time_point::max();
+  const auto requestTerminate = [&](ChildTerminated::Reason why) {
+    phase = Phase::Terminating;
+    reason = why;
+    signalVerifiedProcessGroup(child, SIGTERM);
+    force_kill_at = std::chrono::steady_clock::now() + grace;
+  };
+  // The leader remains waitable (possibly a zombie) through this final group
+  // signal. That reserves its PID/PGID and makes -child safe.
+  const auto forceKill = [&]() -> ChildOutcome {
+    signalVerifiedProcessGroup(child, SIGKILL);
+    return ChildTerminated{reason, reapKilled()};
+  };
+
   for (;;) {
     const bool stop = stopRequested && stopRequested();
-    if (!out.terminated) {
-      if (cancellation.requested() || stop) {
-        out.cancelled = cancellation.requested();
-        out.stopped = !out.cancelled;
-        force_kill_at = terminate();
-      } else {
+    switch (phase) {
+      case Phase::Supervising: {
+        if (cancellation.requested() || stop) {
+          requestTerminate(cancellation.requested()
+                               ? ChildTerminated::Reason::Cancelled
+                               : ChildTerminated::Reason::Stopped);
+          break;
+        }
         int observation_error = 0;
         const auto observation = observePosixChild(child, &observation_error);
-        if (observation == ChildObservation::Error) {
-          // ECHILD means somebody else already reaped the leader, so its PID
-          // can no longer protect the group identity. Never group-signal it.
-          if (observation_error != ECHILD) {
+        switch (observation) {
+          case ChildObservation::Running:
+            break;
+          case ChildObservation::Error: {
+            const int error = observation_error ? observation_error : 1;
+            // ECHILD means somebody else already reaped the leader, so its
+            // PID can no longer protect the group identity. Never
+            // group-signal it.
+            if (observation_error == ECHILD) return ChildLost{error, std::nullopt};
             signalVerifiedProcessGroup(child, SIGKILL);
-            out.exited = reapKilledChild(child, &out.status, kKilledReapBound);
+            return ChildLost{error, reapKilled()};
           }
-          out.error = observation_error ? observation_error : 1;
-          return out;
-        }
-        if (observation == ChildObservation::Exited) {
-          // The exit is only observed, not reaped. Re-check cancellation while
-          // the PID still reserves the process-group identity.
-          if (cancellation.requested()) {
-            out.cancelled = true;
-            force_kill_at = terminate();
-          } else {
+          case ChildObservation::Exited: {
+            // The exit is only observed, not reaped. Re-check cancellation
+            // while the PID still reserves the process-group identity.
+            if (cancellation.requested()) {
+              requestTerminate(ChildTerminated::Reason::Cancelled);
+              break;
+            }
+            int status = 0;
             int reap_error = 0;
-            out.exited = reapPosixChild(child, &out.status, &reap_error);
-            if (!out.exited) out.error = reap_error ? reap_error : 1;
-            return out;
+            if (reapPosixChild(child, &status, &reap_error))
+              return ChildExited{status};
+            return ChildLost{reap_error ? reap_error : 1, std::nullopt};
           }
         }
+        break;
       }
-    }
-    if (out.terminated && std::chrono::steady_clock::now() >= force_kill_at) {
-      // The leader remains waitable (possibly a zombie) through this final
-      // group signal. That reserves its PID/PGID and makes -child safe.
-      signalVerifiedProcessGroup(child, SIGKILL);
-      out.exited = reapKilledChild(child, &out.status, kKilledReapBound);
-      return out;
+      case Phase::Terminating: {
+        // Once the leader has exited there is nothing left to be graceful
+        // for; the group kill also ends any descendant that ignored SIGTERM.
+        int observation_error = 0;
+        if (std::chrono::steady_clock::now() >= force_kill_at ||
+            observePosixChild(child, &observation_error) ==
+                ChildObservation::Exited)
+          return forceKill();
+        break;
+      }
     }
     std::this_thread::sleep_for(kSupervisePollInterval);
   }
@@ -394,15 +421,24 @@ int runProcessCommand(const detail::CancellationFlag& cancellation,
     execvp(arguments.front(), arguments.data());
     _exit(errno == ENOENT ? 127 : 126);
   }
-  const auto supervised =
-      superviseChildGroup(child, cancellation, kGracefulShutdownTimeout, {});
   // Cancellation is the canonical public outcome even if a cooperative TERM
   // handler made the leader exit zero.
-  if (supervised.terminated ||
-      (!supervised.isolated && supervised.exited && cancellation.requested()))
-    return 130;
-  if (supervised.error) return supervised.error;
-  return supervised.exited ? normalizedExitCode(supervised.status) : 1;
+  struct ExportExitCode {
+    const CancellationFlag& cancellation;
+    int operator()(const ChildExited& exited) const {
+      return normalizedExitCode(exited.status);
+    }
+    int operator()(const ChildTerminated&) const { return 130; }
+    int operator()(const ChildUnisolated& unisolated) const {
+      if (!unisolated.status) return unisolated.error;
+      return cancellation.requested() ? 130
+                                      : normalizedExitCode(*unisolated.status);
+    }
+    int operator()(const ChildLost& lost) const { return lost.error; }
+  };
+  return std::visit(
+      ExportExitCode{cancellation},
+      superviseChildGroup(child, cancellation, kGracefulShutdownTimeout, {}));
 }
 
 #endif

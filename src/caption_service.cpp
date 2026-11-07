@@ -20,6 +20,7 @@
 #include <sstream>
 #include <system_error>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #ifdef _WIN32
@@ -440,25 +441,41 @@ ProcessResult runProcess(const fs::path &executable,
   drainPosixPipe(diagnostic_pipe[0], result.output);
   monitor.finish();
   close(output_pipe[0]);
-  if (!supervised.isolated) {
-    result.cancelled = cancellation.requested();
-    if (supervised.exited) {
+  struct CaptionExit {
+    ProcessResult& result;
+    const detail::CancellationFlag& cancellation;
+    void operator()(const ChildExited& exited) const {
+      result.exit_code = normalizedExitCode(exited.status);
+    }
+    void operator()(const ChildTerminated& terminated) const {
+      switch (terminated.reason) {
+        case ChildTerminated::Reason::Cancelled: result.cancelled = true; break;
+        case ChildTerminated::Reason::Stopped: result.timed_out = true; break;
+      }
       result.exit_code =
-          result.cancelled ? 130 : normalizedExitCode(supervised.status);
-    } else {
+          terminated.status ? normalizedExitCode(*terminated.status) : 130;
+    }
+    void operator()(const ChildUnisolated& unisolated) const {
+      result.cancelled = cancellation.requested();
+      if (unisolated.status) {
+        result.exit_code = result.cancelled
+                               ? 130
+                               : normalizedExitCode(*unisolated.status);
+        return;
+      }
       result.launched = false;
-      result.exit_code = result.cancelled ? 130 : supervised.error;
+      result.exit_code = result.cancelled ? 130 : unisolated.error;
       result.launch_error =
           std::string("could not establish an isolated process group: ") +
-          std::strerror(supervised.error);
+          std::strerror(unisolated.error);
     }
-    return result;
-  }
-  result.cancelled = supervised.cancelled;
-  result.timed_out = supervised.stopped;
-  result.exit_code = supervised.exited ? normalizedExitCode(supervised.status)
-                     : supervised.terminated ? 130
-                                             : supervised.error;
+    void operator()(const ChildLost& lost) const {
+      result.exit_code = lost.killedStatus
+                             ? normalizedExitCode(*lost.killedStatus)
+                             : lost.error;
+    }
+  };
+  std::visit(CaptionExit{result, cancellation}, supervised);
   return result;
 }
 

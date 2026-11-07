@@ -11,6 +11,7 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #ifndef _WIN32
@@ -490,8 +491,8 @@ int main(int argc, char** argv) {
 
   {
     // The process-group leader exits on SIGTERM while its child deliberately
-    // ignores TERM. wait() must retain the PGID through the grace deadline and
-    // kill that descendant before reporting completion.
+    // ignores TERM. Supervision must keep the leader unreaped until the group
+    // SIGKILL so that descendant dies before completion is reported.
     const auto stamp =
         std::chrono::steady_clock::now().time_since_epoch().count();
     const auto directory = std::filesystem::temp_directory_path() /
@@ -577,6 +578,33 @@ int main(int argc, char** argv) {
     expect(!reaped && elapsed < std::chrono::seconds(2),
            "a deferred SIGKILL reap returns within its bound");
     kill(child, SIGKILL);
+  }
+  for (const bool cancel : {true, false}) {
+    // A leader that exits on SIGTERM ends supervision at once; the grace
+    // period only bounds a leader that ignores the request.
+    const pid_t child = fork();
+    if (child == 0) {
+      setpgid(0, 0);
+      for (;;) pause();
+    }
+    expect(child > 0, "fork a child for prompt termination");
+    wam::detail::CancellationFlag cancellation;
+    if (cancel) cancellation.request();
+    const auto started = std::chrono::steady_clock::now();
+    const auto outcome = wam::detail::superviseChildGroup(
+        child, cancellation, std::chrono::seconds(30),
+        [cancel] { return !cancel; });
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    const auto* terminated =
+        std::get_if<wam::detail::ChildTerminated>(&outcome);
+    expect(terminated != nullptr &&
+               terminated->reason ==
+                   (cancel ? wam::detail::ChildTerminated::Reason::Cancelled
+                           : wam::detail::ChildTerminated::Reason::Stopped) &&
+               terminated->status.has_value(),
+           "a terminated child reports why it was stopped and its status");
+    expect(elapsed < std::chrono::seconds(10),
+           "a child that exits on SIGTERM does not wait out the grace period");
   }
 #endif
 
