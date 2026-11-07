@@ -417,15 +417,12 @@ void testCloseRetiresQuiescingArm() {
              NativeVideoConsumerArmProgress::Quiescing,
          "first-generation render invalidation may quiesce");
   expect(fixture.consumer->close() ==
-             media::NativeMediaConsumerProgress::Quiescing,
-         "close preserves the exact pending pre-arm flush");
-  fixture.output->setFlushBlocked(false);
-  expect(fixture.consumer->close() ==
-             media::NativeMediaConsumerProgress::Progress,
-         "close first proves the pending pre-arm invalidation");
-  expect(fixture.consumer->close() ==
              media::NativeMediaConsumerProgress::Done,
-         "close then proves a strictly newer terminal invalidation");
+         "terminal close supersedes the pending pre-arm flush");
+  expect(fixture.output->facts().closed &&
+             fixture.output->facts().generation == 8 &&
+             !fixture.output->facts().invalidationPending,
+         "close proves an invalidation strictly past the pre-arm target");
 }
 
 void testExactRetirementGapAndPairOwnership() {

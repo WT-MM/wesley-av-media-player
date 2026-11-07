@@ -2171,12 +2171,6 @@ template <typename ImplType>
     impl.clearPreviewHandoff();
     impl.lifecycle = lifecycle;
     impl.terminalGeneration = *final;
-    // Close supersedes dispatcher-visible flush configuration. A normal close
-    // finishes the exact output pair below; an exact frame failure lets the
-    // output's fatal-tolerant terminal close supersede that pair.
-    if (lifecycle == Lifecycle::Close && impl.flushTarget != 0) {
-      impl.flushTimeline = {};
-    }
   }
   if (!impl.decoderClosed) {
     impl.decoder.close();
@@ -2186,71 +2180,13 @@ template <typename ImplType>
   if (impl.outputProtocolViolation) {
     return media::NativeMediaConsumerProgress::Failed;
   }
-
-  // Dispatcher close may supersede an in-flight seek. NativeTrackedVideoOutput
-  // keeps an exact flush operation pending until its render invalidation is
-  // proved and intentionally does not let close silently erase that proof.
-  // Finish the already-started exact pair first, then burn a strictly newer
-  // terminal generation on a later owner call.
-  if (impl.flushTarget != 0 && !impl.matchedFrameFailure) {
-    const PumpStatus flushEvent = impl.consumeOutputEvent();
-    if (flushEvent == PumpStatus::MatchedFrameFailure) {
-      // The companion tracked-output contract makes terminal close supersede
-      // its now-fatal pending flush. Preserve the strictly newer terminal
-      // generation already derived from arm/flush target and proceed below.
-      impl.clearFlushState();
-    } else {
-      if (flushEvent == PumpStatus::Failed) {
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      if (flushEvent == PumpStatus::Stale) {
-        return media::NativeMediaConsumerProgress::StaleGeneration;
-      }
-      if (impl.output == nullptr) {
-        impl.latch(NativeVideoConsumerFailure::Lifecycle,
-                   "tracked video output is missing during terminal close");
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      const NativeTrackedVideoOutputProgress flushOutput =
-          impl.output->flushProgress(impl.flushRetired, impl.flushTarget);
-      if (flushOutput != NativeTrackedVideoOutputProgress::Done) {
-        return impl.forwardOutputProgress(
-            flushOutput, flushEvent,
-            "tracked video output failed the flush superseded by close");
-      }
-      if (!impl.settledOutput(impl.flushTarget, false,
-                              "tracked video output facts are invalid after "
-                              "the close flush")) {
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      impl.generation = impl.flushTarget;
-      impl.clearFlushState();
-      // The terminal generation was initially derived while the output could
-      // still report retired facts. Rebase it exactly once above the generation
-      // whose invalidation has now been proved.
-      const auto final = media::nextMediaGeneration(impl.generation);
-      if (!final) {
-        impl.latch(NativeVideoConsumerFailure::Lifecycle,
-                   "rebased native video terminal generation would overflow");
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      impl.terminalGeneration = *final;
-      return media::NativeMediaConsumerProgress::Progress;
-    }
-  } else if (impl.flushTarget != 0) {
-    // A prior owner call already consumed the exact frame failure. Do not ask
-    // fatal output state to finish a nonterminal flush; final close owns its
-    // supersession and render invalidation proof.
-    impl.clearFlushState();
-  }
+  // A terminal close supersedes an arm or seek flush still pending in the
+  // output (NativeTrackedOutputProtocol::completeClose), and the terminal
+  // generation already lies past that flush's target.
+  impl.clearFlushState();
   const PumpStatus event = impl.consumeOutputEvent();
   if (event == PumpStatus::Failed) {
     return media::NativeMediaConsumerProgress::Failed;
-  }
-  if (event == PumpStatus::MatchedFrameFailure) {
-    // Exact identity/timing validation and credit retirement occurred inside
-    // consumeOutputEvent. Generic fatal facts can never authorize this path.
-    impl.clearFlushState();
   }
   if (impl.output == nullptr) {
     impl.markClosed(lifecycle);
