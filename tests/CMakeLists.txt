@@ -3,11 +3,6 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
-# Tests compile production sources directly, so they must see the same build
-# configuration as the targets those sources normally belong to.
-if(WAM_NATIVE_BENCHMARK_TELEMETRY)
-  add_compile_definitions(WAM_NATIVE_BENCHMARK_TELEMETRY=1)
-endif()
 
 # The tools that generate and inspect test media. Fixture generation needs GPL
 # encoders, so this is a development FFmpeg, never the one a release ships
@@ -71,7 +66,6 @@ endif()
 
 # Source lists shared with the production targets are relative to the root.
 list(TRANSFORM WAM_QUICKLOOK_FRAME_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
-list(TRANSFORM WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
 
 if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
   set(WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES
@@ -89,7 +83,7 @@ if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
   add_test(NAME native_retirement COMMAND wam_native_retirement_test)
   set_tests_properties(native_retirement PROPERTIES TIMEOUT 10)
   add_executable(wam_native_owner_embedding_test native_owner_embedding_test.mm)
-  target_link_libraries(wam_native_owner_embedding_test PRIVATE wam_macos_native_session_system)
+  target_link_libraries(wam_native_owner_embedding_test PRIVATE wam_macos_native_session_system_test_seams)
   add_test(NAME native_owner_embedding COMMAND wam_native_owner_embedding_test)
   add_executable(wam_native_layer_embedding_test native_layer_embedding_test.mm)
   target_compile_options(wam_native_layer_embedding_test PRIVATE -fobjc-arc)
@@ -836,6 +830,10 @@ if(APPLE)
     target_compile_options(
       wam_native_benchmark_telemetry_test PRIVATE
       -Wall -Wextra -Wpedantic)
+    if(WAM_NATIVE_BENCHMARK_TELEMETRY)
+      target_compile_definitions(wam_native_benchmark_telemetry_test PRIVATE
+        WAM_NATIVE_BENCHMARK_TELEMETRY=1)
+    endif()
     add_test(NAME macos_native_benchmark_telemetry
       COMMAND wam_native_benchmark_telemetry_test)
     set_tests_properties(macos_native_benchmark_telemetry PROPERTIES
@@ -888,22 +886,13 @@ if(APPLE)
     set_tests_properties(macos_native_video PROPERTIES SKIP_RETURN_CODE 77)
 
     # OpenGL/CGL hardware gate matching the shipping Qt graphics backend.
-    # The item is absent from default application builds; the opt-in
-    # production seam compiles it but does not register or construct it.
     add_executable(wam_native_qt_gl_compositor_test
-      native_qt_gl_compositor_test.mm
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.hpp
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.mm)
-    target_include_directories(wam_native_qt_gl_compositor_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      native_qt_gl_compositor_test.mm)
     target_compile_definitions(wam_native_qt_gl_compositor_test PRIVATE
-      WAM_NATIVE_TEST_SEAMS=1
       GL_SILENCE_DEPRECATION=1)
     target_link_libraries(wam_native_qt_gl_compositor_test PRIVATE
-      wam_macos_native_video_core
-      Qt6::Core
-      Qt6::Gui
+      wam_macos_native_qt_tracked_test_seams
       Qt6::Qml
-      Qt6::Quick
       "${WAM_OPENGL_FRAMEWORK}")
     target_compile_options(wam_native_qt_gl_compositor_test PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
@@ -916,26 +905,14 @@ if(APPLE)
     set_tests_properties(macos_native_qt_gl_compositor PROPERTIES
       TIMEOUT 120 SKIP_RETURN_CODE 77)
 
-    # Scene-graph route adapter gate (WAM_PRESENTATION=scenegraph). The
-    # adapter's fault-injection seams exist only under the testing macro, so
-    # the test compiles the adapter and item privately instead of linking
-    # the production archive.
+    # Scene-graph route adapter gate (WAM_PRESENTATION=scenegraph).
     add_executable(wam_native_qt_gl_output_test
-      native_qt_gl_output_test.mm
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/native_qt_gl_output.hpp
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/native_qt_gl_output.mm
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.hpp
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.mm)
-    target_include_directories(wam_native_qt_gl_output_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      native_qt_gl_output_test.mm)
     target_compile_definitions(wam_native_qt_gl_output_test PRIVATE
-      WAM_NATIVE_TEST_SEAMS=1
       GL_SILENCE_DEPRECATION=1)
     target_link_libraries(wam_native_qt_gl_output_test PRIVATE
-      wam_macos_native_video_core
-      Qt6::Core
-      Qt6::Gui
+      wam_macos_native_qt_tracked_test_seams
       Qt6::Qml
-      Qt6::Quick
       "${WAM_OPENGL_FRAMEWORK}")
     target_compile_options(wam_native_qt_gl_output_test PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
@@ -947,35 +924,17 @@ if(APPLE)
       COMMAND wam_native_qt_gl_output_test)
     set_tests_properties(macos_native_qt_gl_output PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
+    # The backend twin carries the video core twin plus core_media_carriage,
+    # which builds the test's sample buffers.
     add_executable(wam_video_toolbox_decoder_test
       video_toolbox_decoder_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
-      ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}
       ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
-    target_include_directories(wam_video_toolbox_decoder_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
-      WAM_NATIVE_TEST_SEAMS=1
       GL_SILENCE_DEPRECATION=1)
-    if(WAM_ENABLE_SOFTWARE_VP8)
-      # This target compiles the core sources directly rather than linking
-      # the library, so it needs the same feature definition and the same
-      # libvpx link the library carries.
-      target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
-        WAM_ENABLE_SOFTWARE_VP8)
-      target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
-        PkgConfig::WAM_LIBVPX)
-    endif()
     target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
-      wam_native_core
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_IOSURFACE_FRAMEWORK}"
+      wam_macos_native_backend_test_seams
       "${WAM_METAL_FRAMEWORK}"
       "${WAM_OPENGL_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}"
       "${WAM_AVFOUNDATION_FRAMEWORK}")
     target_compile_options(wam_video_toolbox_decoder_test PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
@@ -1082,6 +1041,10 @@ add_test(NAME software_color_qualification COMMAND wam_software_color_qualificat
 add_executable(wam_native_late_frame_trace_test native_late_frame_trace_test.cpp)
 target_include_directories(wam_native_late_frame_trace_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME native_late_frame_trace COMMAND wam_native_late_frame_trace_test)
+if(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  target_compile_definitions(wam_native_late_frame_trace_test PRIVATE
+    WAM_NATIVE_BENCHMARK_TELEMETRY=1)
+endif()
 if(WAM_NATIVE_BENCHMARK_TELEMETRY AND TARGET wam_native_video_consumer_test)
   set_tests_properties(macos_native_video_consumer PROPERTIES
     ENVIRONMENT "WAM_NATIVE_BENCHMARK_TELEMETRY=1")
