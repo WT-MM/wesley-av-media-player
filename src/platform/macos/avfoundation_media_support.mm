@@ -37,37 +37,6 @@ std::string describeNSError(NSError* error, const char* fallback) {
   return raw > 0 ? static_cast<MediaTrackId>(raw) : fallback;
 }
 
-[[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample,
-                                    bool* keyFrame) noexcept {
-  if (sample == nullptr || keyFrame == nullptr) {
-    return false;
-  }
-  CFArrayRef attachments =
-      CMSampleBufferGetSampleAttachmentsArray(sample, false);
-  if (attachments == nullptr || CFArrayGetCount(attachments) == 0) {
-    *keyFrame = true;
-    return true;
-  }
-  if (CFArrayGetCount(attachments) != 1) {
-    return false;
-  }
-  CFTypeRef value = CFArrayGetValueAtIndex(attachments, 0);
-  if (value == nullptr || CFGetTypeID(value) != CFDictionaryGetTypeID()) {
-    return false;
-  }
-  CFTypeRef notSync = CFDictionaryGetValue(
-      static_cast<CFDictionaryRef>(value), kCMSampleAttachmentKey_NotSync);
-  if (notSync == nullptr) {
-    *keyFrame = true;
-    return true;
-  }
-  if (CFGetTypeID(notSync) != CFBooleanGetTypeID()) {
-    return false;
-  }
-  *keyFrame = !CFBooleanGetValue(static_cast<CFBooleanRef>(notSync));
-  return true;
-}
-
 [[nodiscard]] std::optional<CMTimeRange> exactReaderTimeRangeFacts(
     CMTime duration, CMTime decodeStart) noexcept {
   if (!CMTIME_IS_NUMERIC(duration) || !CMTIME_IS_NUMERIC(decodeStart) ||
