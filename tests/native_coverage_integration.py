@@ -101,10 +101,10 @@ def main():
             'sha256': hashlib.sha256((root/name).read_bytes()).hexdigest()})
         return root/name
 
-    def decode(path, rate, frames, target=0, reference=None, bit_exact=False, origin=False, mono=False):
+    def decode(path, rate, frames, target=0, reference=None, bit_exact=False, origin=False, mono=False, seek=False):
         target_frame = math.ceil(Fraction(target)*rate)
         pcm = root/(path.name+f'-{str(target).replace(chr(47),chr(95))}.f32')
-        result = run([a.audio, path, pcm, target, *(["origin"] if origin else [])])
+        result = run([a.audio, path, pcm, target, *(["origin"] if origin else ["seek"] if seek else [])])
         assert f'rate={rate}' in result.stderr and f'frames={frames-target_frame} ' in result.stderr, result.stderr
         assert 'exact=1 drained=1' in result.stderr, result.stderr
         assert f'first={target_frame} ' in result.stderr, result.stderr
@@ -142,10 +142,14 @@ def main():
         decode(path,48000,192000)
         decode(path,48000,192000,2)
     if a.case in ('all','mp3'):
-        for rate in (8000,22050,24000,32000):
+        # Bare MP3: MPEG-2 LSF (22050/24000, 576-frame packets, gapless from
+        # the LAME tag) and MPEG-1 (32000/44100). A warm seek on the open
+        # source must keep the same gapless trim as the cold open.
+        for rate in (8000,22050,24000,32000,44100):
             path = generate(f'mp3-{rate}.mp3',rate,'libmp3lame')
             decode(path,rate,rate*4)
             if rate == 22050: decode(path,rate,rate*4,2)
+            if rate in (22050,44100): decode(path,rate,rate*4,'5/2',seek=True)
     if a.case in ('all','opus'):
         for rate in (8000,24000,48000):
             path = generate(f'opus-{rate}.webm',rate,'libopus')

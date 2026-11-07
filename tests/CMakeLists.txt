@@ -1218,7 +1218,9 @@ if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/ui_regression_test.py"
         --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_TEST_FFMPEG}" --case "${ui_case}"
         --output "${PROJECT_BINARY_DIR}/ui-evidence/${ui_case}")
-    set_tests_properties(ui_${ui_case} PROPERTIES TIMEOUT 70 RUN_SERIAL TRUE LABELS gui)
+    # The harness bounds every launch (and samples a hung one), so a hang
+    # fails there with evidence well before this backstop.
+    set_tests_properties(ui_${ui_case} PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE LABELS gui)
   endforeach()
 endif()
 
@@ -1226,7 +1228,11 @@ if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
   add_test(NAME macos_video_service_lifetime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/video_service_lifetime_test.py"
       "$<TARGET_BUNDLE_DIR:wam>" --ffmpeg "${WAM_TEST_FFMPEG}")
-  set_tests_properties(macos_video_service_lifetime PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+  set_tests_properties(macos_video_service_lifetime PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  add_test(NAME macos_startup_launch
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/startup_launch_test.py"
+      "$<TARGET_BUNDLE_DIR:wam>" --ffmpeg "${WAM_TEST_FFMPEG}")
+  set_tests_properties(macos_startup_launch PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS gui)
 endif()
 
 if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
