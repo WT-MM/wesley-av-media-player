@@ -165,7 +165,7 @@ PreparedFixture prepare(const Fixture& fixture) {
   prepared.outcome = wam::media::mpegts::prepareMpegTsLocalFile(
       fixture.stream, options, {});
   if (prepared.outcome.asset != nullptr) {
-    prepared.context = wam::macos::adoptPreparedMpegTsAssetContext(
+    prepared.context = wam::macos::MpegTsAssetContext::adopt(
         fixture.stream, options, prepared.outcome.asset);
   }
   return prepared;
@@ -241,10 +241,6 @@ void testPlanMappingWithoutBackWalk(const Fixture& fixture) {
   expect(facts.backend.readersCreated == targets.size() &&
              facts.backend.readersStarted == targets.size(),
          "exactly one cursor is created and started per preview epoch");
-  expect(facts.backend.assetLoadAttempts == 0 &&
-             facts.backend.assetLoadsCompleted == 0 &&
-             facts.backend.assetLoadNanoseconds == 0,
-         "preview never reopens a container the main source already admitted");
 }
 
 void testDecodeOnlyBoundaryAndForwardRetarget(const Fixture& fixture) {

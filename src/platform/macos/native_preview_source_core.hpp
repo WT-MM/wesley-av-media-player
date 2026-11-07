@@ -330,7 +330,7 @@ class NativePreviewSourceCore final : public NativePreviewSource {
       sample.decodeOnly = *decodeOnly;
       sample.sampleCount = 1;
       sample.payload = media::MediaPayloadLease(
-          std::make_shared<CoreMediaSampleStorage>(owned.release(), bytes));
+          leaseSampleBuffer(std::move(owned), bytes));
       clearStage();
       if (!media::validateMediaSample(sample, *binding_.descriptor, limits_,
                                       &error)) {

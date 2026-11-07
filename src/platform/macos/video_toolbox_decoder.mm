@@ -1,4 +1,5 @@
 #include "media/native_late_frame_trace.hpp"
+#include "platform/macos/native_primitives.hpp"
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
 #include <mach/mach_time.h>
 #endif
@@ -63,12 +64,6 @@ bool consumeCFAllocationFailure(
   return true;
 }
 #endif
-
-void assignError(std::string *error, std::string message) {
-  if (error != nullptr) {
-    *error = std::move(message);
-  }
-}
 
 std::string statusError(const char *operation, OSStatus status) {
   return std::string(operation) + " failed with OSStatus " +
@@ -1494,15 +1489,10 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   }
   const bool is422 =
       parsed && media::mediaSampleFormatIs422(parsed->sampleFormat);
-  if (is422) {
-    return codedDepthIsTenBit(configuration)
-        ? kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
-        : kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange;
-  }
-  return (codedDepthIsTenBit(configuration) ||
-          configuration.highDynamicRangeTransfer)
-             ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+  // A 4:2:2 surface keeps its coded depth; 4:2:0 widens for an HDR transfer.
+  return biplanarVideoRangeFormat(
+      is422, codedDepthIsTenBit(configuration) ||
+                 (!is422 && configuration.highDynamicRangeTransfer));
 }
 
 struct DirectCompressedSampleMetadata {

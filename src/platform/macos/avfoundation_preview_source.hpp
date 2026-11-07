@@ -28,8 +28,6 @@ using AVFoundationPreviewCancelInterleaveHook = void (*)(
 // reader, while using the same accounting methods as ProductionPreviewGeneration.
 struct AVFoundationPreviewSharedContextProbe {
   bool sharedLoadReady{false};
-  NativePreviewBackendFacts backendBefore{};
-  NativePreviewBackendFacts backendAfterSharedLoad{};
   NativePreviewBackendFacts backendAfterCreationFailure{};
   NativePreviewBackendFacts backendAfterStartedReader{};
   AVFoundationAssetContextFacts contextBefore{};

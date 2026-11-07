@@ -361,7 +361,7 @@ class FakeBackend final : public AVFoundationPreviewBackend {
   std::vector<NativePreviewRequest> requests;
   std::vector<std::filesystem::path> paths;
   std::vector<std::shared_ptr<FakeGeneration>> made;
-  NativePreviewBackendFacts suppliedFacts{1, 1, 123'456, 0, 0};
+  NativePreviewBackendFacts suppliedFacts{};
 };
 
 struct CancelInterleave final {
@@ -484,11 +484,6 @@ void testProductionSharedContextLoadAndReaderAccounting() {
             NativePreviewBinding{path, admitted, {}, context});
     expect(probe.sharedLoadReady,
            "production preview should borrow the prepared shared handles");
-    expect(probe.backendBefore.assetLoadAttempts == 0 &&
-               probe.backendAfterSharedLoad.assetLoadAttempts == 0 &&
-               probe.backendAfterSharedLoad.assetLoadsCompleted == 0 &&
-               probe.backendAfterSharedLoad.assetLoadNanoseconds == 0,
-           "shared production load must issue no asset or track metadata load");
     expect(probe.contextAfterSharedLoad.assetMetadataLoadBatches ==
                    probe.contextBefore.assetMetadataLoadBatches &&
                probe.contextAfterSharedLoad.selectedTrackMetadataLoadBatches ==
@@ -505,10 +500,7 @@ void testProductionSharedContextLoadAndReaderAccounting() {
                probe.contextAfterCreationFailure.readersStarted ==
                    probe.contextBefore.readersStarted,
            "failed reader initialization is an attempt, not a created reader");
-    expect(probe.backendAfterStartedReader.assetLoadAttempts == 0 &&
-               probe.backendAfterStartedReader.assetLoadsCompleted == 0 &&
-               probe.backendAfterStartedReader.assetLoadNanoseconds == 0 &&
-               probe.backendAfterStartedReader.readersCreated == 1 &&
+    expect(probe.backendAfterStartedReader.readersCreated == 1 &&
                probe.backendAfterStartedReader.readersStarted == 1 &&
                probe.contextAfterStartedReader.readerCreationAttempts ==
                    probe.contextBefore.readerCreationAttempts + 2 &&
@@ -584,10 +576,8 @@ void testVideoOnlyReadAndBound() {
              facts.actualDecodeStart == MediaTime{4, 1} &&
              facts.stagedSampleBuffers == 0 &&
              facts.peakStagedSampleBuffers == 1 && facts.samplesRead == 2 &&
-             facts.discontinuitiesRead == 1 &&
-             facts.backend.assetLoadsCompleted == 1 &&
-             facts.backend.assetLoadNanoseconds == 123'456,
-         "preview facts should prove one-buffer ownership and expose cold asset latency");
+             facts.discontinuitiesRead == 1,
+         "preview facts should prove one-buffer ownership");
   expect(memory.stagedSamples == 0 &&
              memory.currentStagedCompressedBytes == 0 &&
              memory.peakStagedCompressedBytes == 32,

@@ -131,6 +131,32 @@ struct YCbCrMatrixRows {
   return width <= 1024 && height <= 576;
 }
 
+// The tags that default: BT.601 matrix and SMPTE C primaries for SD, BT.709
+// for HD, and a BT.709 transfer either way.
+struct UntaggedSurfaceTags {
+  CFStringRef matrix;
+  CFStringRef primaries;
+  CFStringRef transfer;
+};
+[[nodiscard]] inline UntaggedSurfaceTags untaggedSurfaceTags(
+    std::size_t width, std::size_t height) noexcept {
+  const bool sd = untaggedSurfaceIsStandardDefinition(width, height);
+  return {sd ? kCVImageBufferYCbCrMatrix_ITU_R_601_4
+             : kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+          sd ? kCVImageBufferColorPrimaries_SMPTE_C
+             : kCVImageBufferColorPrimaries_ITU_R_709_2,
+          kCVImageBufferTransferFunction_ITU_R_709_2};
+}
+
+// The video-range biplanar YCbCr format for a 4:2:0 or 4:2:2 surface.
+[[nodiscard]] constexpr OSType biplanarVideoRangeFormat(bool chroma422,
+                                                        bool tenBit) noexcept {
+  return chroma422 ? (tenBit ? kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+                             : kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange)
+                   : (tenBit ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+                             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
+}
+
 // Absent matrix metadata is inferred, never refused (see
 // untaggedSurfaceIsStandardDefinition). Explicit metadata
 // always wins over the inference. An explicit value outside the three known

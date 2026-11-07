@@ -681,7 +681,7 @@ void testStage() {
 // ---------------------------------------------------------------------------
 
 void testLane() {
-  expect(VideoDecodeLane::softwareVp8Available(),
+  expect(SoftwareVp8Decoder::available(),
          "the lane reports software VP8 as available in this build");
 
   VideoDecodeLane lane;

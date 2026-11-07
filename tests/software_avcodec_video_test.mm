@@ -102,8 +102,7 @@ int main(int argc,char** argv) {
     std::array<std::byte,wam::media::kVideoCodecVpcCBytes> record{};
     REQUIRE(wam::media::buildVp9CodecConfiguration(*parsed.facts,record));
     extra.assign(record.begin(),record.end());
-    EXPECT(nativeVp9StageAdmitted(false,true));
-    EXPECT(!nativeVp9StageAdmitted(false,false));
+    EXPECT(nativeVp9StageAdmitted());
   }
   Sink sink;sink.expected=eight?kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
     is422?kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;

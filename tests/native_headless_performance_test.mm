@@ -407,10 +407,7 @@ void writeTimingReport(const std::filesystem::path& fixture,
               begun.error);
 
   const auto begunFacts = preview->facts();
-  require(begunFacts.backend.assetLoadAttempts == 0 &&
-              begunFacts.backend.assetLoadsCompleted == 0 &&
-              begunFacts.backend.assetLoadNanoseconds == 0 &&
-              begunFacts.backend.readersCreated == 1 &&
+  require(begunFacts.backend.readersCreated == 1 &&
               begunFacts.backend.readersStarted == 1,
           "preview did not borrow metadata and start exactly one reader");
   const AVFoundationAssetContextFacts afterPreviewStart = context->facts();

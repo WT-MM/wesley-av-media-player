@@ -1,4 +1,5 @@
 #include "software_vp8_decoder.hpp"
+#include "platform/macos/native_primitives.hpp"
 
 #include "native_video_color.hpp"
 #include "native_video_limits.hpp"
@@ -22,16 +23,6 @@
 namespace wam::macos {
 namespace {
 
-void assignError(std::string *error, const char *message) {
-  if (error != nullptr) {
-    try {
-      error->assign(message);
-    } catch (...) {
-      // The typed result is authoritative; the diagnostic string is optional.
-    }
-  }
-}
-
 // --------------------------------------------------------------------------
 // Colour attachments.
 // --------------------------------------------------------------------------
@@ -43,22 +34,12 @@ void assignError(std::string *error, const char *message) {
 // own untagged default makes the CALayer and scene-graph routes agree.
 CFDictionaryRef createColorAttachments(std::int32_t width,
                                        std::int32_t height) {
-  const bool standardDefinition = untaggedSurfaceIsStandardDefinition(
+  const UntaggedSurfaceTags tags = untaggedSurfaceTags(
       static_cast<std::size_t>(width), static_cast<std::size_t>(height));
   const void *keys[] = {kCVImageBufferYCbCrMatrixKey,
                         kCVImageBufferColorPrimariesKey,
                         kCVImageBufferTransferFunctionKey};
-  const void *values[] = {
-      standardDefinition
-          ? static_cast<const void *>(kCVImageBufferYCbCrMatrix_ITU_R_601_4)
-          : static_cast<const void *>(kCVImageBufferYCbCrMatrix_ITU_R_709_2),
-      standardDefinition
-          ? static_cast<const void *>(kCVImageBufferColorPrimaries_SMPTE_C)
-          : static_cast<const void *>(kCVImageBufferColorPrimaries_ITU_R_709_2),
-      standardDefinition
-          ? static_cast<const void *>(kCVImageBufferTransferFunction_ITU_R_709_2)
-          : static_cast<const void *>(
-                kCVImageBufferTransferFunction_ITU_R_709_2)};
+  const void *values[] = {tags.matrix, tags.primaries, tags.transfer};
   return CFDictionaryCreate(kCFAllocatorDefault, keys, values, 3,
                             &kCFTypeDictionaryKeyCallBacks,
                             &kCFTypeDictionaryValueCallBacks);
