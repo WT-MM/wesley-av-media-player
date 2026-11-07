@@ -3,10 +3,13 @@
 #include "media/native_display_geometry.hpp"
 
 #include <QObject>
+#include <QRectF>
 #include <QSizeF>
 #include <QUrl>
 
 #include <functional>
+#include <memory>
+#include <variant>
 
 class QTimer;
 class QWindow;
@@ -191,43 +194,6 @@ void setContentAspectRatio(QWindow *window, const media::MediaDisplaySize &exact
 // already aspect-locked on its own for that entire span.
 [[nodiscard]] bool interactiveResizeActive(QWindow *window);
 
-// Resizes `window` so a `videoPixelWidth` x `videoPixelHeight` video renders
-// at 1:1 native pixels (dividing by the window's screen's backing scale
-// factor), centered on that screen and clamped to its visible frame.
-void resizeToActualSize(QWindow *window, const media::MediaDisplaySize &exact,
-                        qreal videoPixelWidth, qreal videoPixelHeight);
-
-// QuickTime's green-button zoom, as a double-click on the video: grows
-// `window` to the largest `videoWidth`:`videoHeight` rectangle that fits the
-// current screen's visible frame (so the menu bar and Dock stay clear) and
-// centers it there. A non-positive video size fills the visible frame
-// outright, which is what an audio-only source wants. Calling it again while
-// `window` still sits at that fitted frame restores the frame it had before
-// the fit, mirroring AppKit's zoom toggle.
-void resizeToFitScreen(QWindow *window, const media::MediaDisplaySize &exact,
-                       qreal videoWidth, qreal videoHeight);
-
-// "Fill Screen (Padded)": with `filled` true, grows `window` to its screen's
-// entire visible frame and remembers the exact frame it had first; with
-// `filled` false, puts it back on that remembered frame to the point. The
-// video letterboxes/pillarboxes itself inside the oversized window -- the
-// layer route's videoGravity is already AVLayerVideoGravityResizeAspect over a
-// black layer background, and the non-layer route paints the same black
-// backdrop -- so the bars are free and cost nothing to keep on screen.
-//
-// Per window (one row each, like the zoom toggle's memory, and deliberately a
-// separate row from it so the two toggles cannot eat each other's restore
-// frame). Returns whether the frame change was actually issued: false for a
-// window in fullscreen (which owns its frame outright), for an un-fill with
-// nothing remembered, and for a frame change refused because another one is
-// already in flight.
-bool setFillScreenPadded(QWindow *window, bool filled);
-
-// Forgets `window`'s remembered pre-fill frame without moving it. For the
-// deliberate geometry commands (Actual Size, Fit to Screen) that make the
-// remembered frame stale: after one of those, "put it back" means nothing.
-void clearFillScreenPadded(QWindow *window);
-
 // The EDR headroom of `window`'s screen right now: how far above SDR white the
 // display can currently go, as a multiple (1.0 means no headroom at all, i.e.
 // an SDR display or one already driven to its limit). Read from NSScreen's
@@ -268,18 +234,6 @@ qreal setVividBoost(QWindow *window, qreal boost);
 [[nodiscard]] qreal appliedVividBoost(QWindow *window);
 [[nodiscard]] int theaterDimOverlayCount();
 
-// Snaps `window` to a `videoWidth`:`videoHeight` aspect ratio so freshly
-// opened media fills the window edge to edge with no letterbox bars, the way
-// QuickTime Player resizes itself when a new video loads. Keeps `window`'s
-// current width where possible (falling back to fitting within the screen's
-// visible frame, aspect preserved, if that width would not fit) and keeps
-// its current on-screen center. This is a one-time programmatic -setFrame:,
-// not a persistent constraint -- unlike setContentAspectRatio, it does not
-// affect subsequent user drags or programmatic/AppleScript resizes. A
-// non-positive dimension is a no-op.
-void snapToVideoAspectRatio(QWindow *window, const media::MediaDisplaySize &exact,
-                            qreal videoWidth, qreal videoHeight);
-
 } // namespace wam::macos_window_chrome
 
 namespace wam::qt {
@@ -296,12 +250,18 @@ class MacWindowChrome final : public QObject {
   // bounds change it did not make, so QML suppresses the QuickTime aspect
   // snap for these runs.
   Q_PROPERTY(bool benchmarkMode READ benchmarkMode CONSTANT)
+  // "Fill Screen (Padded)" is on: the window sits on its screen's visible
+  // frame and remembers the frame to go back to.
+  Q_PROPERTY(bool fillScreenPadded READ fillScreenPadded NOTIFY fillScreenPaddedChanged)
 
 public:
   explicit MacWindowChrome(QWindow *window, QObject *parent = nullptr);
   ~MacWindowChrome() override;
 
   [[nodiscard]] bool benchmarkMode() const { return benchmarkMode_; }
+  [[nodiscard]] bool fillScreenPadded() const {
+    return std::holds_alternative<FramePaddedFill>(frameMode_);
+  }
 
   Q_INVOKABLE void setTitlebarRevealed(bool revealed, bool animated = true);
   // Hides the cursor until the next physical mouse move. Exists because on
@@ -315,13 +275,37 @@ public:
   void setExactVideoDisplaySize(media::MediaDisplaySize size);
   Q_INVOKABLE void setContentAspectRatio(qreal width, qreal height);
   Q_INVOKABLE bool interactiveResizeActive() const;
+  // Resizes the window so a `videoPixelWidth` x `videoPixelHeight` video
+  // renders at 1:1 native pixels (dividing by the screen's backing scale
+  // factor), centered on that screen and clamped to its visible frame.
   Q_INVOKABLE void resizeToActualSize(qreal videoPixelWidth,
                                       qreal videoPixelHeight);
+  // QuickTime's green-button zoom, as a double-click on the video: grows the
+  // window to the largest `videoWidth`:`videoHeight` rectangle that fits the
+  // screen's visible frame (so the menu bar and Dock stay clear) and centers
+  // it there. A non-positive video size fills the visible frame outright,
+  // which is what an audio-only source wants. Calling it again while the
+  // window still sits at that fitted frame restores the frame it had before
+  // the fit, mirroring AppKit's zoom toggle.
   Q_INVOKABLE void resizeToFitScreen(qreal videoWidth, qreal videoHeight);
-  // Returns whether the frame change was issued, so qml/Main.qml only flips
-  // its own per-window `fillScreenPadded` flag when the window really moved.
+  // "Fill Screen (Padded)": with `filled` true, grows the window to its
+  // screen's entire visible frame and remembers the exact frame it had
+  // first; with `filled` false, puts it back on that frame to the point. The
+  // video letterboxes/pillarboxes itself inside the oversized window -- the
+  // layer route's videoGravity is already AVLayerVideoGravityResizeAspect
+  // over a black layer background, and the non-layer route paints the same
+  // black backdrop -- so the bars cost nothing. Returns whether the frame
+  // change was issued: false in fullscreen (which owns its frame outright),
+  // for an un-fill while not filled, and while another frame change of this
+  // window is in flight -- in which case the mode is unchanged.
   Q_INVOKABLE bool setFillScreenPadded(bool filled);
-  Q_INVOKABLE void clearFillScreenPadded();
+  // Snaps the window to a `videoWidth`:`videoHeight` aspect ratio so freshly
+  // opened media fills it edge to edge, the way QuickTime Player resizes
+  // itself when a new video loads. Keeps the current width where possible
+  // (falling back to fitting within the screen's visible frame, aspect
+  // preserved) and the current on-screen center. A one-time instant
+  // -setFrame:, not a persistent constraint like setContentAspectRatio. A
+  // non-positive dimension is a no-op.
   Q_INVOKABLE void snapToVideoAspectRatio(qreal videoWidth, qreal videoHeight);
   Q_INVOKABLE qreal titlebarHeight() const;
   Q_INVOKABLE bool pointerInTitlebarBand() const;
@@ -349,8 +333,26 @@ signals:
   // local event monitor detects it natively and swallows AppKit's own
   // titlebar double-click zoom in the same breath.
   void titlebarDoubleClicked();
+  void fillScreenPaddedChanged();
 
 private:
+  // What the window's frame remembers. Fitted and PaddedFill each hold the
+  // frame their toggle puts back; any other deliberate geometry command
+  // (Actual Size, a fit replacing a fill, an aspect snap of a fitted window)
+  // makes that frame stale and returns to Free. A mode changes only after
+  // the frame change it describes was accepted.
+  struct FrameFree {};
+  struct FrameFitted { QRectF restore; QRectF fitted; };
+  struct FramePaddedFill { QRectF restore; };
+  using FrameMode = std::variant<FrameFree, FrameFitted, FramePaddedFill>;
+  void setFrameMode(FrameMode mode);
+  FrameMode frameMode_;
+  // True while a frame change of this window is being applied (for the
+  // animated zoom paths, until the animation's last frame commits); further
+  // frame changes of this window are refused meanwhile. Shared with the
+  // animation's completion block, which can outlive this object.
+  std::shared_ptr<bool> frameChangeInFlight_ = std::make_shared<bool>(false);
+
   media::MediaDisplaySize exactDisplaySize_;
   // Re-clamps the applied boost against the screen's current headroom. Called
   // from the watch timer while the mode is on.

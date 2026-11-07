@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <memory>
 #include <thread>
+#include <variant>
 #include <vector>
 
 namespace wam::qt {
@@ -159,7 +160,9 @@ public:
   // cancelled and joined first, so at most one worker exists at a time.
   void beginNativeLoad(int id);
   void cancelNativeLoad();
-  [[nodiscard]] bool loading() const noexcept { return loading_; }
+  [[nodiscard]] bool loading() const noexcept {
+    return std::holds_alternative<LoadRunning>(load_);
+  }
 
   // Text for a media time in seconds, or an empty string. Cheap: the previous
   // index is used as a hint, so steady playback costs two comparisons.
@@ -224,7 +227,11 @@ private:
                        media::matroska::BitmapSubtitleTrackLoad load);
   void clearBitmapCues();
   void composeBitmapFrame();
-  void setLoading(bool loading);
+  // Running -> Idle: joins the worker and announces the change. No-op when idle.
+  void endLoad();
+  // Whether a delivered result belongs to the running load; if so the load
+  // ends here and the caller applies the result.
+  [[nodiscard]] bool acceptLoad(std::uint64_t generation);
 
   std::vector<Source> sources_;
   int active_id_{kOffId};
@@ -249,13 +256,19 @@ private:
   BitmapFrame bitmap_frame_;
   quint64 bitmap_serial_{0};
 
-  // One worker at a time, always joined before it is replaced or destroyed --
-  // a detached thread holding `this` is the one way this lane could outlive
-  // its window.
-  std::thread worker_;
-  std::shared_ptr<std::atomic<bool>> cancel_;
-  std::uint64_t generation_{0};
-  bool loading_{false};
+  // The native load lane: idle, or one worker loading one generation. The
+  // worker is always joined before it is replaced or destroyed -- a detached
+  // thread holding `this` is the one way this lane could outlive its window.
+  // A generation lives only as long as its Running state, so a result that
+  // arrives after a cancel or a newer load matches nothing and is dropped.
+  struct LoadIdle {};
+  struct LoadRunning {
+    std::uint64_t generation{0};
+    std::shared_ptr<std::atomic<bool>> cancel;
+    std::thread worker;
+  };
+  std::variant<LoadIdle, LoadRunning> load_;
+  std::uint64_t last_generation_{0};
 };
 
 }  // namespace wam::qt

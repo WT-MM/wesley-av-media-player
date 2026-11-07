@@ -13,6 +13,8 @@
 #include <mpv/render_gl.h>
 #include <chrono>
 #include <cstdlib>
+#include <type_traits>
+#include <utility>
 
 namespace wam::qt {
 namespace {
@@ -358,10 +360,7 @@ PlayerCore::~PlayerCore() {
     // release has freed the renderer and broken that cycle. This assertion is
     // a guard against ever reintroducing an unsafe destructor fallback:
     // libmpv forbids every mpv_render_* call from a different/no GL context.
-    Q_ASSERT(!render_context_);
-    Q_ASSERT(render_context_owner_.isNull());
-    Q_ASSERT(!render_context_callback_installed_);
-    Q_ASSERT(!render_context_keepalive_);
+    Q_ASSERT(std::holds_alternative<std::monostate>(render_resource_));
     Q_ASSERT(!renderContextBusy());
     static_cast<void>(render_lifecycle_.invalidate());
   }
@@ -404,9 +403,8 @@ bool PlayerCore::retireFallbackAfterRenderRelease(
   mpv_handle *retired = nullptr;
   {
     std::scoped_lock lock(render_mutex_);
-    if (renderContextAllowed() || renderContextBusy() || render_context_ ||
-        !render_context_owner_.isNull() || render_context_callback_installed_ ||
-        render_context_keepalive_ ||
+    if (renderContextAllowed() || renderContextBusy() ||
+        !std::holds_alternative<std::monostate>(render_resource_) ||
         RenderLifecycle::phase(render_lifecycle_.snapshot()) !=
             RenderPhase::Empty) {
       return false;
@@ -480,9 +478,23 @@ QOpenGLContext *PlayerCore::currentOpenGlContext() const noexcept {
   return QOpenGLContext::currentContext();
 }
 
+mpv_render_context *PlayerCore::renderContextLocked() const noexcept {
+  if (const auto *created = std::get_if<RenderCreated>(&render_resource_))
+    return created->context;
+  if (const auto *installed = std::get_if<RenderInstalled>(&render_resource_))
+    return installed->context;
+  return nullptr;
+}
+
 bool PlayerCore::renderContextOwnerIsCurrentLocked() const noexcept {
-  return render_context_ && !render_context_owner_.isNull() &&
-         currentOpenGlContext() == render_context_owner_.data();
+  const auto exact_owner = [this](const QPointer<QOpenGLContext> &owner) {
+    return !owner.isNull() && currentOpenGlContext() == owner.data();
+  };
+  if (const auto *created = std::get_if<RenderCreated>(&render_resource_))
+    return exact_owner(created->owner);
+  if (const auto *installed = std::get_if<RenderInstalled>(&render_resource_))
+    return exact_owner(installed->owner);
+  return false;
 }
 
 bool PlayerCore::commitRenderContextPermission(bool keep_busy) noexcept {
@@ -550,25 +562,23 @@ void PlayerCore::terminateMpvHandle(mpv_handle *handle) noexcept {
 
 bool PlayerCore::freeRenderContextResourceLocked(
     std::shared_ptr<PlayerCore> &deferred_keepalive) noexcept {
-  if (!render_context_) {
-    deferred_keepalive = std::move(render_context_keepalive_);
-    render_context_owner_.clear();
-    render_context_callback_installed_ = false;
-    return true;
-  }
-  if (!renderContextOwnerIsCurrentLocked())
+  if (renderContextLocked() && !renderContextOwnerIsCurrentLocked())
     return false;
-
-  // Move the self-owner first, but retain the local reference through the
-  // entire mpv free, lifecycle notification, and caller return path.
-  deferred_keepalive = std::move(render_context_keepalive_);
-  if (render_context_callback_installed_) {
-    setRenderContextUpdateCallback(render_context_, nullptr, nullptr);
-  }
-  freeRenderContext(render_context_);
-  render_context_ = nullptr;
-  render_context_callback_installed_ = false;
-  render_context_owner_.clear();
+  // Move the self-owner out first, but retain the local reference through
+  // the entire mpv free, lifecycle notification, and caller return path.
+  auto resource = std::exchange(render_resource_, std::monostate{});
+  std::visit(
+      [&](auto &held) {
+        using Held = std::decay_t<decltype(held)>;
+        if constexpr (!std::is_same_v<Held, std::monostate>)
+          deferred_keepalive = std::move(held.keepalive);
+        if constexpr (std::is_same_v<Held, RenderInstalled>)
+          setRenderContextUpdateCallback(held.context, nullptr, nullptr);
+        if constexpr (std::is_same_v<Held, RenderCreated> ||
+                      std::is_same_v<Held, RenderInstalled>)
+          freeRenderContext(held.context);
+      },
+      resource);
   return true;
 }
 
@@ -578,7 +588,7 @@ bool PlayerCore::invalidateAndFreeRenderContextLocked(
   // Check the exact live owner before invalidating. On mismatch the retained
   // renderer, lifecycle, Busy bit, and self-owner remain intact, and no
   // mpv_render_* API is invoked.
-  if (render_context_ && !renderContextOwnerIsCurrentLocked())
+  if (renderContextLocked() && !renderContextOwnerIsCurrentLocked())
     return false;
 
   retired_ticket = render_lifecycle_.invalidate();
@@ -622,7 +632,7 @@ bool PlayerCore::ensureRenderContext() {
     return false;
 
   if (const auto ready = render_lifecycle_.readyTicket()) {
-    if (render_context_ && renderContextAllowed()) {
+    if (renderContextLocked() && renderContextAllowed()) {
       return renderContextOwnerIsCurrentLocked();
     }
     if (!renderContextAllowed()) {
@@ -692,9 +702,8 @@ bool PlayerCore::ensureRenderContext() {
       notifyRenderInvalidated(*retired_ticket);
     return false;
   }
-  render_context_keepalive_ = std::move(admitted_keepalive);
-  render_context_owner_ = creating_context;
-  render_context_callback_installed_ = false;
+  render_resource_ =
+      RenderReserved{creating_context, std::move(admitted_keepalive)};
 
 #if defined(WAM_QT_TEST_SEAMS)
   if (before_render_context_create_for_testing_)
@@ -703,11 +712,11 @@ bool PlayerCore::ensureRenderContext() {
 
   // The hook may model a context switch or destruction. Never call the API
   // unless the exact captured owner is still live and current.
-  if (render_context_owner_.isNull() ||
-      currentOpenGlContext() != render_context_owner_.data()) {
+  const auto &reserved = std::get<RenderReserved>(render_resource_);
+  if (reserved.owner.isNull() ||
+      currentOpenGlContext() != reserved.owner.data()) {
     retired_ticket = render_lifecycle_.invalidate();
-    deferred_keepalive = std::move(render_context_keepalive_);
-    render_context_owner_.clear();
+    static_cast<void>(freeRenderContextResourceLocked(deferred_keepalive));
     clearRenderContextBusy();
     lock.unlock();
     if (retired_ticket)
@@ -719,8 +728,7 @@ bool PlayerCore::ensureRenderContext() {
   // revoke that won while Busy skips the actual mpv call and create counter.
   if (!commitRenderContextPermission(true)) {
     retired_ticket = render_lifecycle_.invalidate();
-    deferred_keepalive = std::move(render_context_keepalive_);
-    render_context_owner_.clear();
+    static_cast<void>(freeRenderContextResourceLocked(deferred_keepalive));
     clearRenderContextBusy();
     lock.unlock();
     if (retired_ticket)
@@ -763,8 +771,11 @@ bool PlayerCore::ensureRenderContext() {
   }
 #endif
 
-  if (candidate)
-    render_context_ = candidate;
+  if (candidate) {
+    auto &held = std::get<RenderReserved>(render_resource_);
+    render_resource_ = RenderCreated{candidate, std::move(held.owner),
+                                     std::move(held.keepalive)};
+  }
 
   // libmpv requires the exact creating GL context for every render API call,
   // including callback installation and free. A post-API context switch keeps
@@ -816,9 +827,13 @@ bool PlayerCore::ensureRenderContext() {
     return false;
   }
 
-  setRenderContextUpdateCallback(
-      render_context_, &PlayerCore::onRenderUpdate, this);
-  render_context_callback_installed_ = true;
+  {
+    auto &created = std::get<RenderCreated>(render_resource_);
+    setRenderContextUpdateCallback(created.context, &PlayerCore::onRenderUpdate,
+                                   this);
+    render_resource_ = RenderInstalled{created.context, std::move(created.owner),
+                                       std::move(created.keepalive)};
+  }
 
   // This RMW is the Ready commit point. If it succeeds, a later revoke is an
   // active-context revocation: lifecycle publication may finish, but ticket
@@ -849,7 +864,8 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
   if (width <= 0 || height <= 0)
     return;
   std::scoped_lock lock(render_mutex_);
-  if (!render_context_ || !renderContextAllowed() ||
+  mpv_render_context *const render_context = renderContextLocked();
+  if (!render_context || !renderContextAllowed() ||
       !renderContextOwnerIsCurrentLocked()) {
     return;
   }
@@ -864,11 +880,11 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
 
   // Rendering the current frame is also correct for redraws caused by an
   // expose or resize even when MPV_RENDER_UPDATE_FRAME is not set.
-  api().mpv_render_context_update(render_context_);
+  api().mpv_render_context_update(render_context);
   mpv_render_frame_info nextFrame{};
   if (collect_fallback_metrics_) {
     const mpv_render_param query{MPV_RENDER_PARAM_NEXT_FRAME_INFO, &nextFrame};
-    if (api().mpv_render_context_get_info(render_context_, query) < 0) nextFrame = {};
+    if (api().mpv_render_context_get_info(render_context, query) < 0) nextFrame = {};
   }
   mpv_opengl_fbo target{framebuffer, width, height, 0};
   int flip = flip_y ? 1 : 0;
@@ -877,7 +893,7 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
       {MPV_RENDER_PARAM_FLIP_Y, &flip},
       {MPV_RENDER_PARAM_INVALID, nullptr},
   };
-  const int result = api().mpv_render_context_render(render_context_, parameters);
+  const int result = api().mpv_render_context_render(render_context, parameters);
   if (collect_fallback_metrics_) fallback_frame_counters_.rendered(nextFrame, result);
 }
 

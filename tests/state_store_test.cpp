@@ -501,21 +501,51 @@ int main() {
   injected.remember(std::string("/tmp/movie\0theme dark.mp4", 25), 30.0);
   expect(injected.state().positions.empty(),
          "line delimiters and NUL cannot enter the resume cache");
-  injected.state().positions["/tmp/direct\nrestore 0\n.mp4"] = 30.0;
+  injected.state().positions["/tmp/direct\nrestore 0\n.mp4"].seconds = 30.0;
   expect(!injected.save(),
          "direct LF mutation cannot serialize an injected record");
   expect(injected.dirty(), "failed LF serialization remains dirty");
   injected.state().positions.clear();
-  injected.state().positions["/tmp/direct\rprofile 0.mp4"] = 30.0;
+  injected.state().positions["/tmp/direct\rprofile 0.mp4"].seconds = 30.0;
   expect(!injected.save(),
          "direct CR mutation cannot serialize an injected record");
   expect(injected.dirty(), "failed CR serialization remains dirty");
   injected.state().positions.clear();
-  injected.state().positions[std::string("/tmp/direct\0theme dark.mp4", 26)] =
-      30.0;
+  injected.state().positions[std::string("/tmp/direct\0theme dark.mp4", 26)]
+      .seconds = 30.0;
   expect(!injected.save(),
          "direct NUL mutation cannot serialize an injected record");
   expect(injected.dirty(), "failed NUL serialization remains dirty");
+
+  {
+    wam::StateStore recency(path);
+    const auto key = [](std::size_t index) {
+      return "/tmp/resume-" + std::to_string(index) + ".mp4";
+    };
+    for (std::size_t index = 0; index < wam::StateStore::kMaxPositions;
+         ++index)
+      recency.remember(key(index), 10.0 + static_cast<double>(index));
+    recency.remember(key(0), 99.0);
+    recency.remember(key(1000), 20.0);
+    expect(recency.positionFor(key(1000)) == 20.0,
+           "a full resume cache keeps the position just remembered");
+    expect(recency.positionFor(key(0)) == 99.0,
+           "refreshing an entry protects it from eviction");
+    expect(recency.positionFor(key(1)) == 0.0,
+           "a full resume cache evicts the least recently remembered entry");
+    expect(recency.state().positions.size() ==
+               wam::StateStore::kMaxPositions,
+           "eviction keeps the cache at its bound");
+    expect(recency.save(), "recency cache saves");
+
+    wam::StateStore reloaded(path);
+    expect(reloaded.load(), "recency cache loads");
+    reloaded.remember(key(1001), 30.0);
+    expect(reloaded.positionFor(key(1001)) == 30.0 &&
+               reloaded.positionFor(key(2)) == 0.0 &&
+               reloaded.positionFor(key(1000)) == 20.0,
+           "recency order survives a save and load");
+  }
 
   std::filesystem::remove(path, error);
   std::cout << "state store tests passed\n";

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "media/byte_source.hpp"
 #include "media/subtitle_text.hpp"
 #include "media/tx3g_text.hpp"
 
@@ -85,6 +86,7 @@ struct SubtitleTrackLoad {
   // cue with no styling has an empty vector at its index.
   std::vector<std::vector<subtitles::Tx3gStyleSpan>> styles;
   bool ok{false};
+  bool cancelled{false};
   bool truncated{false};
   // Samples that decoded to nothing usable. Reported rather than hidden.
   std::uint32_t skipped{0};
@@ -99,7 +101,8 @@ struct SubtitleTrackLoad {
 // (clamped to the next sample's start, which is what a muxer that writes
 // overlong durations means).
 [[nodiscard]] SubtitleTrackLoad loadMp4SubtitleTrack(
-    const std::filesystem::path& path, std::uint32_t trackId) noexcept;
+    const std::filesystem::path& path, std::uint32_t trackId,
+    CancellationToken cancellation = {}) noexcept;
 
 // Unpacks mdhd's 15-bit ISO-639-2 packing (three 5-bit letters, 0x60 based).
 // Exposed for testing.

@@ -284,7 +284,7 @@ bool NativePlaybackOwner::open(const QUrl &source,
       routeSetPreservePitch(controller_.preservePitch()));
   const auto request = openPreflight_.enqueue(
       {*sourceKey, source.toEncoded().toStdString(), initialPositionSeconds, paused,
-       !surfaceLost_ && surface_ != nullptr &&
+       surface_ != nullptr &&
            host_.nativeRouteAdmissionAllowed()});
   if (!request.has_value()) {
     return false;
@@ -394,7 +394,7 @@ NativePlaybackOwner::setPaused(bool paused) {
 std::optional<macos::NativePlaybackOwner::Preparation>
 NativePlaybackOwner::preparationFor(native_protocol::SourceKey sourceKey) {
   const auto* record = sourceRecord(sourceKey);
-  if (!record || !record->initialPosition || record->localPath.empty() || !surface_ || surfaceLost_)
+  if (!record || !record->initialPosition || record->localPath.empty() || !surface_)
     return {};
   return Preparation{record->localPath, *record->initialPosition,
       macos::qtNativePresentationFactory(&surface_->nativeVideoItem()),
@@ -463,25 +463,29 @@ bool NativePlaybackOwner::submitFallbackStop() {
     return false;
   }
 
-  fallbackStop_->replyId =
+  const std::uint64_t replyId =
       nextMpvReplyId(MpvReply::FallbackStop, nextFallbackStopReplyId_);
+  fallbackStop_->phase = FallbackStopSubmitted{replyId};
   ++fallbackStop_->submissions;
-  fallbackStop_->commandReplied = false;
-  fallbackStop_->idleObserved = false;
 
   if (!host_.mpvEngine().submitStop(
-          mpvReplyUserdata(MpvReply::FallbackStop, fallbackStop_->replyId))) {
+          mpvReplyUserdata(MpvReply::FallbackStop, replyId))) {
     if (fallbackStop_->submissions < kMaximumFallbackStopSubmissions)
       return submitFallbackStop();
     exhaustFallbackStop(QStringLiteral(
         "Could not stop playback."));
     return false;
   }
-  const std::uint64_t replyId = fallbackStop_->replyId;
   QTimer::singleShot(
       kFallbackStopWatchdogMilliseconds, &timerContext_, [this, replyId] {
-        if (!fallbackStop_.has_value() || fallbackStop_->replyId != replyId ||
-            fallbackStop_->terminalResetRequired) {
+        if (!fallbackStop_.has_value())
+          return;
+        const auto *submitted =
+            std::get_if<FallbackStopSubmitted>(&fallbackStop_->phase);
+        const auto *replied =
+            std::get_if<FallbackStopReplied>(&fallbackStop_->phase);
+        if ((submitted == nullptr || submitted->replyId != replyId) &&
+            (replied == nullptr || replied->replyId != replyId)) {
           return;
         }
         exhaustFallbackStop(QStringLiteral("Playback took too long to stop."));
@@ -492,9 +496,7 @@ bool NativePlaybackOwner::submitFallbackStop() {
 void NativePlaybackOwner::exhaustFallbackStop(const QString &detail) {
   if (!fallbackStop_.has_value())
     return;
-  fallbackStop_->terminalResetRequired = true;
-  fallbackStop_->commandReplied = false;
-  fallbackStop_->idleObserved = false;
+  fallbackStop_->phase = FallbackStopExhausted{};
   qWarning().noquote() << "WAM:" << detail;
   host_.setLastError(QStringLiteral("Playback stopped responding. Please open the file again."));
   maybeCompleteFallbackStop();
@@ -655,7 +657,13 @@ void NativePlaybackOwner::fallbackOpenFailed(std::uint64_t attempt,
 
 void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyId,
                                                    int error) {
-  if (!fallbackStop_.has_value() || replyId != fallbackStop_->replyId)
+  if (!fallbackStop_.has_value())
+    return;
+  // Only the command in flight answers; an exhausted stop ignores late
+  // replies instead of submitting into a core it is already resetting.
+  const auto *submitted =
+      std::get_if<FallbackStopSubmitted>(&fallbackStop_->phase);
+  if (submitted == nullptr || submitted->replyId != replyId)
     return;
   if (error < 0) {
     if (fallbackStop_->submissions < kMaximumFallbackStopSubmissions) {
@@ -666,24 +674,24 @@ void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyId,
     }
     return;
   }
-  fallbackStop_->commandReplied = true;
-  fallbackStop_->idleObserved = false;
-  if (host_.mpvEngine().idle()) {
-    fallbackStop_->idleObserved = true;
-  }
+  fallbackStop_->phase =
+      FallbackStopReplied{replyId, host_.mpvEngine().idle()};
   maybeCompleteFallbackStop();
 }
 
 void NativePlaybackOwner::fallbackIdleChanged(bool idle) {
-  if (!fallbackStop_.has_value() || !fallbackStop_->commandReplied || !idle ||
+  if (!fallbackStop_.has_value() || !idle ||
       fallbackStop_->core != host_.mpvEngine().core) {
     return;
   }
+  auto *replied = std::get_if<FallbackStopReplied>(&fallbackStop_->phase);
+  if (replied == nullptr)
+    return;
   // Property observations are coalesced and can have been published before
   // the Stop reply. Re-read only after exact command completion so the value
   // is causally post-Stop.
   if (host_.mpvEngine().idle()) {
-    fallbackStop_->idleObserved = true;
+    replied->idleObserved = true;
   }
   maybeCompleteFallbackStop();
 }
@@ -711,13 +719,17 @@ void NativePlaybackOwner::maybeCompleteFallbackStop() {
   }
 
   const playback_router::FallbackCommand command = fallbackStop_->command;
-  if (fallbackStop_->terminalResetRequired) {
+  if (std::holds_alternative<FallbackStopSubmitted>(fallbackStop_->phase))
+    return;
+  if (const auto *replied =
+          std::get_if<FallbackStopReplied>(&fallbackStop_->phase)) {
+    if (!replied->idleObserved)
+      return;
+  } else {
     const std::shared_ptr<PlayerCore> retiredCore = fallbackStop_->core;
     if (!host_.resetRoutedFallbackCoreAfterRelease(retiredCore)) {
       return;
     }
-  } else if (!fallbackStop_->commandReplied || !fallbackStop_->idleObserved) {
-    return;
   }
   fallbackStop_.reset();
   execute(routeFallbackStopped({command.stamp}));
@@ -725,7 +737,6 @@ void NativePlaybackOwner::maybeCompleteFallbackStop() {
 
 void NativePlaybackOwner::attachSurface(MpvVideoItem *item) noexcept {
   surface_ = item;
-  surfaceLost_ = false;
 }
 
 void NativePlaybackOwner::detachSurface(MpvVideoItem *item) noexcept {
@@ -733,7 +744,6 @@ void NativePlaybackOwner::detachSurface(MpvVideoItem *item) noexcept {
     return;
   }
   surface_.clear();
-  surfaceLost_ = true;
   if (hasNativeSession()) abandonNativeSession();
 }
 

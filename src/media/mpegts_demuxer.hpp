@@ -156,8 +156,6 @@ struct MpegTsCompressedSample {
   MediaSampleKind kind{MediaSampleKind::EncodedVideo};
   bool keyFrame{false};
   bool decodableFromCold{false};
-  bool discontinuity{false};
-  bool continuityGap{false};  // packets were lost inside this access unit
 
   friend bool operator==(const MpegTsCompressedSample&,
                          const MpegTsCompressedSample&) = default;

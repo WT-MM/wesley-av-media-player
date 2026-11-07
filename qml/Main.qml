@@ -20,19 +20,24 @@ ApplicationWindow {
         return command !== undefined && command !== null && command.trigger !== undefined && command.trigger();
     }
     readonly property int appearance: appSettings.appearance // 0 Light (default), 1 Dark, 2 Follow system.
-    readonly property bool darkAppearance: appearance === 1 || (appearance === 2 && systemPalette.window.hslLightness < 0.5)
-    property bool quickEditOpen: false
-    // Crop mode is per WINDOW, like the sheet that turns it on. The rectangle
-    // itself lives on the controller (also per window) and is reset there on
-    // every media change.
-    property bool cropMode: false
+    // The one derivation every window (and Preferences) shares.
+    readonly property bool darkAppearance: appHost.darkAppearance
+    // The Quick Edit sheet: "closed", "open", or "cropping" (the crop
+    // overlay is up). Crop mode is per WINDOW and reachable only from the
+    // open sheet, so it cannot outlive it: the overlay up with its own
+    // controls gone would be a dead end. The rectangle itself lives on the
+    // controller (also per window) and is reset there on every media change.
+    property string editorState: "closed"
+    readonly property bool quickEditOpen: editorState !== "closed"
+    readonly property bool cropMode: editorState === "cropping"
     // 0 = free; otherwise the locked width/height ratio in displayed pixels.
     property real cropAspect: 0
 
     function setCropMode(enabled) {
-        if (root.cropMode === enabled)
+        const next = enabled ? "cropping" : "open";
+        if (!root.quickEditOpen || root.editorState === next)
             return;
-        root.cropMode = enabled;
+        root.editorState = next;
         // Entering crop mode on an untouched frame would show a rectangle
         // exactly on the frame edge, with every handle half outside the
         // window and nothing to grab. Open at an inset instead, so the
@@ -42,19 +47,21 @@ ApplicationWindow {
         if (enabled && !root.controller.cropActive)
             root.controller.setCrop(0.1, 0.1, 0.8, 0.8);
     }
-    // How the next media dialog result is delivered: into this window, or
-    // through the app-level opener that may create a new one. See openMedia()
-    // and openMediaInNewWindow() below.
-    property bool mediaDialogOpensNewWindow: false
     property bool quickEditInstantiated: false
     readonly property real quickEditWidth: Math.min(340, root.width - 24)
     readonly property real quickEditRightMargin: Math.max(16, SafeArea.margins.right + 16)
-    property bool controlsRevealed: true
-    // True while the pointer is anywhere in the titlebar band (see
-    // titlebarBand below). Pins the chrome revealed the same way
-    // transport.interactionActive does, so nothing fades out from under a
-    // cursor that is on its way to the close button.
-    property bool titlebarPinned: false
+    // The chrome (titlebar band, floating transport, traffic lights) is in
+    // exactly one of these states, and only setChromeState changes it:
+    //   "empty"     no media: always shown, never fades
+    //   "held"      a transport interaction holds it up
+    //   "pinned"    the pointer is in the titlebar band (see titlebarBand
+    //               below), so nothing fades out from under a cursor on its
+    //               way to the close button; fadeTimer re-checks
+    //   "countdown" shown; fadeTimer runs to the idle hide
+    //   "hidden"
+    property string chromeState: "empty"
+    readonly property bool controlsRevealed: chromeState !== "hidden"
+    readonly property bool titlebarPinned: chromeState === "pinned"
     // The chrome appears and disappears with no animation when the pointer
     // is not on the window at all (a window that has just gone inactive, or
     // one the pointer left) -- fading in chrome nobody is pointing at reads
@@ -76,8 +83,9 @@ ApplicationWindow {
     // videoBackdrop below is already "#000000" whenever media is open. So
     // nothing is drawn for this mode that was not already being drawn, and a
     // padded window with its chrome hidden costs exactly what an unpadded one
-    // does.
-    property bool fillScreenPadded: false
+    // does. The mode itself lives on the chrome bridge, which changes it only
+    // when the frame change was really issued.
+    readonly property bool fillScreenPadded: root.windowChrome ? root.windowChrome.fillScreenPadded : false
 
     // --- Vivid boost and Theater dim -------------------------------------
     //
@@ -223,10 +231,6 @@ ApplicationWindow {
     // Qt ignores these hints on platforms that do not implement an expanded client area.
     flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
 
-    SystemPalette {
-        id: systemPalette
-    }
-
     function clampTransportX(candidate) {
         const left = Math.max(12, SafeArea.margins.left + 10);
         const right = Math.max(left, stage.width - SafeArea.margins.right - transport.width - 12);
@@ -269,28 +273,32 @@ ApplicationWindow {
         return root.windowChrome.pointerInTitlebarBand();
     }
 
-    function revealControls() {
-        fadeTimer.stop();
+    // The one transition function: also owns fadeTimer, which runs exactly in
+    // the two states that end in a re-check.
+    function setChromeState(next) {
+        chromeState = controller.hasMedia ? next : "empty";
+        if (chromeState === "countdown" || chromeState === "pinned")
+            fadeTimer.restart();
+        else
+            fadeTimer.stop();
+    }
 
-        // With media loaded, the chrome belongs to the pointer: it shows
-        // while the pointer is on this window (video surface or titlebar
-        // band) and stays hidden otherwise, so background playback and
-        // property changes cannot flash it onto an idle screen.
-        if (controller.hasMedia && !transport.interactionActive) {
+    // With media loaded, the chrome belongs to the pointer: it shows while
+    // the pointer is on this window (video surface or titlebar band) and
+    // stays hidden otherwise, so background playback and property changes
+    // cannot flash it onto an idle screen.
+    function revealControls() {
+        if (transport.interactionActive)
+            setChromeState("held");
+        else if (!root.active)
+            setChromeState("hidden");
+        else if (stageHover.hovered)
+            setChromeState("countdown");
+        else
             // Window activation comes through here, and the pointer can
             // already be resting in the band with no hover event to
             // announce it -- ask AppKit rather than assume it is not.
-            if (root.active && !stageHover.hovered)
-                titlebarPinned = pointerInTitlebar();
-            if (!root.active || (!stageHover.hovered && !root.titlebarPinned)) {
-                controlsRevealed = false;
-                return;
-            }
-        }
-
-        controlsRevealed = true;
-        if (controller.hasMedia && !transport.interactionActive)
-            fadeTimer.restart();
+            setChromeState(pointerInTitlebar() ? "pinned" : "hidden");
     }
 
     // revealControls() for a gesture that IS the pointer being on this window.
@@ -301,71 +309,33 @@ ApplicationWindow {
     // variant skips the gate and still re-arms the idle fade rather than
     // pinning the chrome up.
     function revealControlsForPointerGesture() {
-        fadeTimer.stop();
-        controlsRevealed = true;
-        if (controller.hasMedia && !transport.interactionActive)
-            fadeTimer.restart();
+        setChromeState(transport.interactionActive ? "held" : "countdown");
     }
 
-    function hideControlsIfIdle() {
-        if (!controller.hasMedia)
-            return;
-
-        if (transport.interactionActive) {
-            controlsRevealed = true;
-            return;
-        }
-
-        // The idle timeout is the one moment the pointer's real position
-        // decides something, so ask for it rather than trusting the last
-        // hover event: a cursor parked in the band (over the close button,
-        // say) must keep the whole chrome up, and re-arming the timer makes
-        // this a re-check rather than a permanent pin.
-        if (root.active && pointerInTitlebar()) {
-            titlebarPinned = true;
-            controlsRevealed = true;
-            fadeTimer.restart();
-            return;
-        }
-
-        titlebarPinned = false;
-        controlsRevealed = false;
-    }
-
-    function hideControlsImmediately() {
-        fadeTimer.stop();
+    // The idle timeout and a hover exit. Either is the moment the pointer's
+    // real position decides something, so ask for it rather than trusting
+    // the last hover event: a cursor parked in the band (over the close
+    // button, say) keeps the whole chrome up -- a hover exit that lands
+    // there is the pointer crossing from the QML scene onto the native strip
+    // above it, not leaving -- and the timer then re-checks rather than pins.
+    function hideControls() {
         if (transport.interactionActive)
-            return;
-
-        // A hover exit that lands in the titlebar band is not an exit at
-        // all: the pointer merely crossed from the QML scene onto the native
-        // strip above it. Hiding here is what made the chrome vanish while
-        // the user was reaching for the traffic lights.
-        if (root.active && pointerInTitlebar()) {
-            titlebarPinned = true;
-            controlsRevealed = true;
-            fadeTimer.restart();
-            return;
-        }
-
-        titlebarPinned = false;
-        controlsRevealed = false;
+            setChromeState("held");
+        else
+            setChromeState(root.active && pointerInTitlebar() ? "pinned" : "hidden");
     }
 
     function transportInteractionChanged() {
-        if (transport.interactionActive) {
-            fadeTimer.stop();
-            controlsRevealed = true;
-        } else {
+        if (transport.interactionActive)
+            setChromeState("held");
+        else
             revealControls();
-        }
     }
 
     // The empty player's own click, and the drag-and-drop-equivalent gesture:
     // whatever is chosen loads into THIS window.
     function openMedia() {
-        mediaDialogOpensNewWindow = false;
-        showMediaDialog();
+        showMediaDialog(false);
     }
 
     // File > Open and Cmd-O, routed here by WindowManager::openMedia(): the
@@ -375,11 +345,11 @@ ApplicationWindow {
     // up front to receive the result would leave a blank player behind every
     // time the dialog was cancelled.
     function openMediaInNewWindow() {
-        mediaDialogOpensNewWindow = true;
-        showMediaDialog();
+        showMediaDialog(true);
     }
 
-    function showMediaDialog() {
+    function showMediaDialog(opensNewWindow) {
+        mediaDialogLoader.opensNewWindow = opensNewWindow;
         rememberDialogFocus();
         if (mediaDialogLoader.item)
             mediaDialogLoader.item.open();
@@ -483,15 +453,8 @@ ApplicationWindow {
     function showVolumeOsd() {
         if (!root.controller.hasMedia)
             return;
-        root.osdOwner = "volume";
-        volumeOsd.show(root.volumeOsdLine());
+        volumeOsd.show(root.volumeOsdLine(), "volume");
     }
-
-    // One transient card, two clients. `osdOwner` names which one last raised
-    // it so the volume's live-rewrite handlers below cannot stamp a level over
-    // a timecode that is still on screen (press "." and nudge the volume, and
-    // without this the frame readout silently becomes "45%").
-    property string osdOwner: ""
 
     // Millisecond resolution, not the transport's seconds: a frame step moves
     // the playhead by ~17-42 ms, and a seconds-only readout would sit
@@ -515,8 +478,7 @@ ApplicationWindow {
     function showPositionOsd() {
         if (!root.controller.hasMedia)
             return;
-        root.osdOwner = "position";
-        volumeOsd.show(root.positionOsdLine());
+        volumeOsd.show(root.positionOsdLine(), "position");
     }
 
     // ---------------------------------------------------------------------
@@ -536,7 +498,6 @@ ApplicationWindow {
             return false;
         if (!root.windowChrome.setFillScreenPadded(!root.fillScreenPadded))
             return false;
-        root.fillScreenPadded = !root.fillScreenPadded;
         root.revealControls();
         return true;
     }
@@ -577,20 +538,9 @@ ApplicationWindow {
         return true;
     }
 
-    // The remembered pre-fill frame is stale the moment the user issues a
-    // different, deliberate geometry command (Actual Size, Fit to Screen):
-    // after one of those, "put it back" no longer means anything they asked
-    // for. Drop the memory and the mode together rather than leaving a toggle
-    // armed on a rectangle that is no longer the answer to any question.
-    function forgetFillScreenPadded() {
-        if (!root.windowChrome)
-            return;
-        root.windowChrome.clearFillScreenPadded();
-        root.fillScreenPadded = false;
-    }
-
     function showQuickEdit() {
-        quickEditOpen = true;
+        if (editorState === "closed")
+            editorState = "open";
         revealControls();
     }
 
@@ -605,13 +555,9 @@ ApplicationWindow {
     }
 
     function closeQuickEdit() {
-        quickEditOpen = false;
-        // Crop mode is only reachable from this sheet, so it must not outlive
-        // it: leaving the overlay up with its own controls gone would be a
-        // dead-end the user has no way out of. The rectangle itself survives
-        // -- closing the sheet is not "discard my crop", and reopening shows
-        // the same selection.
-        setCropMode(false);
+        // Ends crop mode too. The rectangle survives -- closing the sheet is
+        // not "discard my crop", and reopening shows the same selection.
+        editorState = "closed";
         stage.forceActiveFocus();
         revealControls();
     }
@@ -656,7 +602,6 @@ ApplicationWindow {
             return false;
         if (root.videoNaturalSize.width <= 0 || root.videoNaturalSize.height <= 0)
             return false;
-        root.forgetFillScreenPadded();
         root.windowChrome.resizeToActualSize(root.videoNaturalSize.width, root.videoNaturalSize.height);
         return true;
     }
@@ -672,7 +617,6 @@ ApplicationWindow {
             return false;
         if (visibility === Window.FullScreen)
             return false;
-        root.forgetFillScreenPadded();
         root.windowChrome.resizeToFitScreen(root.videoNaturalSize.width, root.videoNaturalSize.height);
         return true;
     }
@@ -759,11 +703,10 @@ ApplicationWindow {
     Timer {
         id: fadeTimer
         // QuickTime-feel idle timeout: 3s of no genuine pointer movement
-        // fades the chrome (revealControls/hideControlsIfIdle above still
-        // pin it while the pointer is on the transport or titlebar band).
+        // fades the chrome. Started and stopped only by setChromeState.
         interval: 3000
         repeat: false
-        onTriggered: root.hideControlsIfIdle()
+        onTriggered: root.hideControls()
     }
 
     Timer {
@@ -837,7 +780,7 @@ ApplicationWindow {
             fileMode: FileDialog.OpenFile
             nameFilters: [mediaFileNameFilter, "All files (*)"]
             onAccepted: {
-                if (root.mediaDialogOpensNewWindow)
+                if (mediaDialogLoader.opensNewWindow)
                     appHost.openUrl(selectedFile);
                 else
                     root.controller.open(selectedFile);
@@ -854,6 +797,9 @@ ApplicationWindow {
 
     Loader {
         id: mediaDialogLoader
+        // Where this dialog's result goes: through the app-level opener that
+        // may create a new window, or into this one.
+        property bool opensNewWindow: false
         active: false
         sourceComponent: mediaDialogComponent
         onLoaded: item.open()
@@ -1317,10 +1263,8 @@ ApplicationWindow {
             HoverHandler {
                 id: titlebarHover
                 onHoveredChanged: {
-                    if (hovered) {
-                        root.titlebarPinned = true;
+                    if (hovered)
                         root.revealControls();
-                    }
                 }
             }
 
@@ -1335,10 +1279,8 @@ ApplicationWindow {
                 running: root.titlebarPinned && !titlebarHover.hovered
                     && root.visibility !== Window.FullScreen
                 onTriggered: {
-                    if (root.pointerInTitlebar())
-                        return;
-                    root.titlebarPinned = false;
-                    root.revealControls();
+                    if (!root.pointerInTitlebar())
+                        root.revealControls();
                 }
             }
 
@@ -1506,7 +1448,7 @@ ApplicationWindow {
                 if (hovered)
                     root.revealControls();
                 else
-                    root.hideControlsImmediately();
+                    root.hideControls();
             }
         }
 
@@ -1836,12 +1778,12 @@ ApplicationWindow {
         // no layout, no frame) whenever the card is down, which is almost
         // always.
         function onVolumeChanged() {
-            if (volumeOsd.shown && root.osdOwner === "volume")
+            if (volumeOsd.owner === "volume")
                 volumeOsd.text = root.volumeOsdLine();
         }
 
         function onMutedChanged() {
-            if (volumeOsd.shown && root.osdOwner === "volume")
+            if (volumeOsd.owner === "volume")
                 volumeOsd.text = root.volumeOsdLine();
         }
 
@@ -1852,7 +1794,7 @@ ApplicationWindow {
         // number land on the frame you actually stepped to rather than the one
         // you left. Same early-out: nothing happens while the card is down.
         function onPositionChanged() {
-            if (volumeOsd.shown && root.osdOwner === "position")
+            if (volumeOsd.owner === "position")
                 volumeOsd.text = root.positionOsdLine();
         }
 
@@ -1972,7 +1914,7 @@ ApplicationWindow {
         if (active)
             revealControls();
         else
-            hideControlsImmediately();
+            hideControls();
     }
 
     // FULLSCREEN TRANSITIONS.

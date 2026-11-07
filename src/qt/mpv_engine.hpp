@@ -17,6 +17,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 namespace wam::playback::mpv {
@@ -205,14 +206,20 @@ static_assert([] {
 // class touches the mpv handle of a router-owned stop or pause.
 class MpvEngine final {
 public:
+  // An open's reply and its PLAYBACK_RESTART may arrive in either order;
+  // whichever comes second commits it. ReplyHeld keeps a successful reply
+  // until the restart (metadata reads before the first frame can block on
+  // the VO); RestartSeen means the reply commits on arrival.
+  enum class OpenProgress : std::uint8_t { Queued, ReplyHeld, RestartSeen };
+
   struct OpenAttempt {
     std::uint64_t id = 0;
     std::uint64_t request_serial = 0;
     std::uint64_t render_stamp = 0;
     std::int64_t playlist_entry_id = -1;
-    bool reply_ready = false;
+    OpenProgress progress = OpenProgress::Queued;
+    // FILE_LOADED arrived before the commit and is replayed after it.
     bool file_loaded = false;
-    bool playback_restarted = false;
   };
 
   // The router's identity for an open it handed to this engine.
@@ -229,10 +236,74 @@ public:
     FullReload,
   };
 
+  // The open this engine has been asked for and has not yet committed: its
+  // source and request, the loadfile in flight for it (absent until a Ready
+  // render generation takes it, or after that generation was lost), and the
+  // router's identity when the router handed it over.
+  struct PendingOpen {
+    QUrl source;
+    std::uint64_t request_serial = 0;
+    std::optional<OpenAttempt> attempt;
+    std::optional<RoutedFallbackOpen> routed;
+  };
+
+  struct RenderRecoveryAttempt {
+    std::uint64_t id = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t render_stamp = 0;
+    std::int64_t playlist_entry_id = -1;
+    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
+    std::int64_t started_playlist_entry_id = -1;
+    bool restarted_playlist_entry = false;
+  };
+
+  // The restore ladder, in order. Only a full reload re-attaches subtitles
+  // and per-file state; the other modes start at the track snapshot.
+  enum class RestoreStep : std::uint8_t {
+    Subtitles,
+    PerFileState,
+    TrackSnapshot,
+    Transport,
+    Done,
+  };
+
+  // Waiting for a Ready render generation to recover onto.
+  struct RecoveryAwaitingGeneration {
+    // No initializer, so the enclosing class can default-construct the
+    // phase variant; the variant value-initializes it to false.
+    bool file_loaded;
+  };
+  // A vid reselect or reload command is queued against `attempt`'s
+  // generation and its reply is outstanding.
+  struct RecoveryCommandInFlight {
+    RenderRecoveryAttempt attempt;
+    bool file_loaded = false;
+    bool playback_restarted = false;
+  };
+  // The generation `stamp` is accepted; the ladder restores per-file state
+  // and transport, then one queued completion publishes the live snapshot.
+  struct RecoveryRestoring {
+    std::uint64_t stamp = 0;
+    RestoreStep step = RestoreStep::Subtitles;
+    std::size_t subtitles_restored = 0;
+    bool file_loaded = false;
+    bool playback_restarted = false;
+    // A queued retry or completion runs only while its token is current, so
+    // leaving this phase retires both.
+    std::optional<std::uint64_t> retry_token;
+    std::optional<std::uint64_t> completion_token;
+  };
+  using RecoveryPhase =
+      std::variant<RecoveryAwaitingGeneration, RecoveryCommandInFlight,
+                   RecoveryRestoring>;
+
   struct RenderRecovery {
+    // What the recovery restores: the transport intent and the per-file
+    // state captured when the render context was lost.
     std::uint64_t request_serial = 0;
     double position = 0.0;
     bool paused = true;
+    bool position_overridden = false;
     RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
     std::int64_t video_track_id = -1;
     std::int64_t audio_track_id = -1;
@@ -243,21 +314,30 @@ public:
     QUrl reload_source;
     std::int64_t playlist_position = -1;
     bool preserve_playlist_context = false;
-    std::uint64_t accepted_render_stamp = 0;
-    bool command_failed = false;
-    bool file_loaded = false;
-    bool playback_restarted = false;
-    bool external_subtitles_restored = false;
-    std::size_t external_subtitles_restored_count = 0;
-    bool per_file_state_restored = false;
-    bool transport_restored = false;
-    bool position_overridden = false;
-    std::uint64_t completion_token = 0;
-    int restore_retry_count = 0;
-    bool restore_retry_queued = false;
-    QString restore_failure;
+    // Restore retries spent; an escalation keeps the budget.
+    int restore_retries = 0;
+    RecoveryPhase phase;
 
-    // Three restarts, each clearing exactly the progress its event voids.
+    [[nodiscard]] RenderRecoveryAttempt *attempt() noexcept {
+      auto *in_flight = std::get_if<RecoveryCommandInFlight>(&phase);
+      return in_flight ? &in_flight->attempt : nullptr;
+    }
+    [[nodiscard]] RecoveryRestoring *restoring() noexcept {
+      return std::get_if<RecoveryRestoring>(&phase);
+    }
+    [[nodiscard]] const RecoveryRestoring *restoring() const noexcept {
+      return std::get_if<RecoveryRestoring>(&phase);
+    }
+    [[nodiscard]] const RenderRecoveryAttempt *attempt() const noexcept {
+      const auto *in_flight = std::get_if<RecoveryCommandInFlight>(&phase);
+      return in_flight ? &in_flight->attempt : nullptr;
+    }
+    [[nodiscard]] bool fileLoaded() const noexcept;
+    void noteFileLoaded() noexcept;
+
+    // Named transitions.
+    // A Ready generation was accepted (directly, or by the command reply).
+    void acceptGeneration(std::uint64_t stamp);
     // A second render-context loss: re-run the restore from the top, with
     // the captured position and its override kept.
     void restartForNewRenderContext();
@@ -267,29 +347,56 @@ public:
     // The reload started a different playlist entry (a redirect child):
     // its position and track snapshot are no longer this recovery's.
     void restartForNewPlaylistEntry();
+    // A newer user transport intent: restore transport again.
+    void reopenTransport() noexcept;
+    // A NoReselection recovery that only binds a render generation: after
+    // EOF, or for a redirect child started while no generation was bound.
+    [[nodiscard]] static RenderRecovery
+    adoption(std::uint64_t request_serial, bool paused,
+             std::uint64_t render_stamp);
   };
 
-  struct RenderRecoveryAttempt {
-    std::uint64_t id = 0;
-    std::uint64_t request_serial = 0;
-    std::uint64_t render_stamp = 0;
-    std::int64_t playlist_entry_id = -1;
-    std::int64_t video_track_id = -1;
-    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
-    std::int64_t started_playlist_entry_id = -1;
-    bool restarted_playlist_entry = false;
+  // Startup's deferred snapshot: waiting for PLAYBACK_RESTART, a completion
+  // queued for the end of the event drain, or a retry timer pending after a
+  // live state that disagreed. A queued completion or retry runs only while
+  // its token is current.
+  struct StartupAwaitingRestart {};
+  struct StartupCompletionQueued {
+    std::uint64_t token;
   };
+  struct StartupRetryQueued {
+    std::uint64_t token;
+  };
+  using StartupSyncPhase =
+      std::variant<StartupAwaitingRestart, StartupCompletionQueued,
+                   StartupRetryQueued>;
 
   struct StartupPlaybackSync {
     std::uint64_t request_serial = 0;
     std::uint64_t render_stamp = 0;
     std::int64_t playlist_entry_id = -1;
     bool intended_paused = false;
+    // Set only by a user seek during startup, which then outranks the live
+    // position.
     std::optional<double> intended_position;
-    bool position_overridden = false;
-    std::uint64_t completion_token = 0;
     int retry_count = 0;
+    StartupSyncPhase phase;
   };
+
+  // mpv's file events for playlist entries: between entries, inside one
+  // (START_FILE seen, no END_FILE yet), or after one ended at EOF, which
+  // play() can resume without a new START_FILE.
+  struct EntryBetween {};
+  struct EntryActive {
+    std::int64_t entry;
+  };
+  struct EntryEnded {
+    std::int64_t entry;
+  };
+  using EntryEvents = std::variant<EntryBetween, EntryActive, EntryEnded>;
+
+  // Neither startup synchronization nor a recovery is in flight.
+  struct Settled {};
 
   struct PlaylistEntryRange {
     std::int64_t first = -1;
@@ -300,21 +407,18 @@ public:
   // play. A new routed open, a stop, a failed initialization and a core
   // replacement all start a new lineage with `lineage = {}`.
   struct Lineage {
-    QUrl pending_source;
-    std::uint64_t pending_request_serial = 0;
-    std::optional<OpenAttempt> open_attempt;
+    std::optional<PendingOpen> pending_open;
     std::optional<OpenAttempt> committed_open;
     QUrl committed_entry_source;
     std::int64_t committed_playlist_position = -1;
-    std::optional<RenderRecovery> render_recovery;
-    std::optional<RenderRecoveryAttempt> render_recovery_attempt;
-    std::optional<StartupPlaybackSync> startup_playback_sync;
-    std::optional<RoutedFallbackOpen> routed_fallback_open;
+    // After a commit the file settles: startup synchronization or a render
+    // recovery gates observations until it completes; never both at once.
+    std::variant<Settled, StartupPlaybackSync, RenderRecovery> settle;
     std::vector<PlaylistEntryRange> redirect_ranges;
-    bool observed_current_path = false;
-    std::int64_t active_event_playlist_entry_id = -1;
-    std::int64_t terminal_playlist_entry_id = -1;
-    std::int64_t last_error_playlist_entry_id = -1;
+    EntryEvents entry_events;
+    // The entry whose END_FILE error is on screen; a later entry's
+    // FILE_LOADED clears it.
+    std::optional<std::int64_t> error_entry;
     std::uint64_t last_reported_render_failure_stamp = 0;
     std::int64_t selected_video_track_id = -1;
     std::int64_t selected_audio_track_id = -1;
@@ -322,6 +426,49 @@ public:
     std::int64_t selected_tracks_playlist_entry_id = -1;
     std::optional<bool> current_file_has_audio_track;
     std::vector<std::filesystem::path> attached_subtitle_files;
+
+    // The entry START_FILE opened and END_FILE has not closed, or -1.
+    [[nodiscard]] std::int64_t activeEntry() const noexcept {
+      const auto *active = std::get_if<EntryActive>(&entry_events);
+      return active ? active->entry : -1;
+    }
+
+    [[nodiscard]] RenderRecovery *recovery() noexcept {
+      return std::get_if<RenderRecovery>(&settle);
+    }
+    [[nodiscard]] const RenderRecovery *recovery() const noexcept {
+      return std::get_if<RenderRecovery>(&settle);
+    }
+    [[nodiscard]] StartupPlaybackSync *startup() noexcept {
+      return std::get_if<StartupPlaybackSync>(&settle);
+    }
+    [[nodiscard]] const StartupPlaybackSync *startup() const noexcept {
+      return std::get_if<StartupPlaybackSync>(&settle);
+    }
+    void endRecovery() noexcept {
+      if (recovery())
+        settle = Settled{};
+    }
+    void endStartupSync() noexcept {
+      if (startup())
+        settle = Settled{};
+    }
+
+    [[nodiscard]] OpenAttempt *openAttempt() noexcept {
+      return pending_open && pending_open->attempt ? &*pending_open->attempt
+                                                   : nullptr;
+    }
+    [[nodiscard]] const OpenAttempt *openAttempt() const noexcept {
+      return pending_open && pending_open->attempt ? &*pending_open->attempt
+                                                   : nullptr;
+    }
+
+    [[nodiscard]] RenderRecoveryAttempt *recoveryAttempt() noexcept {
+      return recovery() ? recovery()->attempt() : nullptr;
+    }
+    [[nodiscard]] const RenderRecoveryAttempt *recoveryAttempt() const noexcept {
+      return recovery() ? recovery()->attempt() : nullptr;
+    }
   };
 
   MpvEngine(PlayerController *owner, MpvEngineHost &host);
@@ -406,8 +553,8 @@ public:
   bool beginOpen(const QUrl &source);
   // An open the native router handed to this engine.
   void beginRoutedOpen(const QUrl &source, const RoutedFallbackOpen &routed);
-  [[nodiscard]] bool opening() const noexcept { return lineage.open_attempt.has_value(); }
-  [[nodiscard]] bool recovering() const noexcept { return lineage.render_recovery.has_value(); }
+  [[nodiscard]] bool opening() const noexcept { return lineage.openAttempt() != nullptr; }
+  [[nodiscard]] bool recovering() const noexcept { return lineage.recovery() != nullptr; }
   // Each records the intent in an in-flight recovery or startup sync of the
   // current request, which restores it once mpv is back.
   void play();
@@ -471,10 +618,16 @@ public:
   void handleStartFile(std::int64_t playlist_entry_id);
   void handleEndFile(const mpv_event_end_file &end);
   void handlePlaybackReady(bool file_loaded);
-  void abandonPendingOpen();
+  // Drops the pending open, keeping the committed media visible; returns the
+  // router's identity for it, if the router handed it over.
+  std::optional<RoutedFallbackOpen> abandonPendingOpen();
+  // The active entry is the current request's (its open's or its committed
+  // file's).
+  [[nodiscard]] bool activeEntryIsCurrent() const;
   void cacheCurrentTrackSelection();
   void cacheCurrentEntrySource();
-  void notifyRoutedFallbackOpenFailed();
+  void notifyRoutedFallbackOpenFailed(
+      const std::optional<RoutedFallbackOpen> &routed);
 
   // --- Render recovery and startup sync --------------------------------
   // A lost render context reloads (or reselects) the committed file and
@@ -491,23 +644,25 @@ public:
   void restoreRenderRecovery();
   void queueRenderRecoveryCompletion();
   void finishRenderRecoveryCompletion(std::uint64_t completion_token,
-                                      std::uint64_t request_serial,
                                       std::uint64_t render_stamp,
                                       std::int64_t playlist_entry_id);
+  // True when the committed open is `request_serial`'s, bound to the live
+  // render generation `render_stamp`, and its entry `playlist_entry_id` is
+  // the active one.
+  [[nodiscard]] bool committedOutputIs(std::uint64_t request_serial,
+                                       std::uint64_t render_stamp,
+                                       std::int64_t playlist_entry_id) const;
+  void notePlaybackRestartForRecovery();
   [[nodiscard]] std::optional<LivePlaybackState> readLivePlaybackState() const;
+  // Whether the live engine state agrees with an intended pause, or is
+  // terminal (idle, EOF), which outranks the intent.
   [[nodiscard]] static bool
-  livePlaybackStateMatchesRecovery(const RenderRecovery &recovery,
-                                   const LivePlaybackState &live_state);
-  [[nodiscard]] static bool
-  livePlaybackStateMatchesStartupSync(const StartupPlaybackSync &startup_sync,
-                                      const LivePlaybackState &live_state);
+  livePlaybackStateMatches(bool intended_paused,
+                           const LivePlaybackState &live_state);
   void commitRenderRecovery(const RenderRecovery &recovery,
                             const LivePlaybackState &live_state);
   void queueStartupPlaybackSync();
-  void finishStartupPlaybackSync(std::uint64_t completion_token,
-                                 std::uint64_t request_serial,
-                                 std::uint64_t render_stamp,
-                                 std::int64_t playlist_entry_id);
+  void finishStartupPlaybackSync(std::uint64_t completion_token);
   void reconcileStartupPlaybackSync(const LivePlaybackState &live_state);
   void commitStartupPlaybackSync(const LivePlaybackState &live_state);
   void scheduleRenderRecoveryRetry(const QString &error);
@@ -562,26 +717,44 @@ private:
     VideoGamma,
   };
 
+  // The capacity-one command slot: free, one seek in flight, or an
+  // in-flight seek whose watchdog asked mpv to abort it.
+  struct ScrubSlotIdle {};
+  struct ScrubSlotInFlight {
+    // Issued, then mpv's SEEK for it, then its PLAYBACK_RESTART.
+    enum class Progress : std::uint8_t { Issued, Seeking, Restarted };
+    std::uint64_t command;
+    double target;
+    bool exact;
+    bool replied = false;
+    Progress progress = Progress::Issued;
+    // The position the restart landed on.
+    std::optional<double> landed;
+  };
+  struct ScrubSlotAborting {
+    std::uint64_t command;
+  };
+  // Dragging until the pointer is released; a release target can still wait
+  // behind an approximate preview draining from the slot.
+  enum class ScrubPhase : std::uint8_t { Dragging, Released };
+
   struct ScrubSeek {
     std::uint64_t gesture = 0;
     std::uint64_t request_serial = 0;
-    std::uint64_t command = 0;
     std::int64_t playlist_entry_id = -1;
-    double target = 0.0;
-    std::optional<double> pending_target;
-    std::optional<double> authoritative_position;
     bool intended_paused = true;
-    // final records that pointer ownership has been released. command_exact
-    // records the precision of the currently issued capacity-one command;
-    // those states intentionally differ while an approximate preview is
-    // draining after release.
-    bool final = false;
-    bool command_exact = false;
-    bool command_replied = false;
-    bool seek_started = false;
-    bool playback_restarted = false;
-    bool replacement_dispatched = false;
-    bool abort_pending = false;
+    ScrubPhase phase = ScrubPhase::Dragging;
+    // The latest target waiting for the slot.
+    std::optional<double> pending_target;
+    // A released gesture re-issues its target once after a failed command.
+    bool retry_spent = false;
+    std::variant<ScrubSlotIdle, ScrubSlotInFlight, ScrubSlotAborting> slot;
+  };
+
+  struct ScrubTimeoutKey {
+    std::uint64_t gesture = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t command = 0;
   };
 
   void overrideIntendedPause(bool paused);
@@ -589,11 +762,14 @@ private:
   void dispatchScrubSeek(double target, bool exact);
   void maybeCompleteScrubSeek();
   [[nodiscard]] static const char *scrubSeekMode(bool exact);
-  void armScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
-                       std::uint64_t command);
+  void armScrubTimeout(const ScrubTimeoutKey &key);
   void cancelScrubTimeout();
-  void handleScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
-                          std::uint64_t command);
+  void handleScrubTimeout(const ScrubTimeoutKey &key);
+  // The gesture still belongs to the current request's committed, active
+  // playlist entry.
+  [[nodiscard]] bool scrubLineageCurrent() const;
+  // The command occupying the slot (in flight or aborting), if any.
+  [[nodiscard]] std::optional<std::uint64_t> scrubCommandInFlight() const;
 
   PlayerController *owner_;
   MpvEngineHost &host_;
@@ -602,12 +778,10 @@ private:
   std::uint64_t next_scrub_command_id_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;
-  std::uint64_t next_render_recovery_completion_token_ = 0;
-  std::uint64_t next_startup_playback_sync_token_ = 0;
+  // Tokens for queued recovery/startup retries and completions.
+  std::uint64_t next_deferred_token_ = 0;
   QTimer *scrub_timeout_timer_ = nullptr;
-  std::uint64_t scrub_timeout_gesture_ = 0;
-  std::uint64_t scrub_timeout_request_serial_ = 0;
-  std::uint64_t scrub_timeout_command_ = 0;
+  std::optional<ScrubTimeoutKey> scrub_timeout_key_;
   std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime_;
   std::shared_ptr<PlayerCore> replacement_;
 };

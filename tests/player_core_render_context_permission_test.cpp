@@ -20,6 +20,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <exception>
+#include <type_traits>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -187,20 +188,37 @@ public:
   }
 
   [[nodiscard]] static bool hasRenderContext(const PlayerCore &core) {
-    return core.render_context_ != nullptr;
+    return core.renderContextLocked() != nullptr;
   }
 
   [[nodiscard]] static QOpenGLContext *
   renderContextOwner(const PlayerCore &core) {
-    return core.render_context_owner_.data();
+    return std::visit(
+        [](const auto &held) -> QOpenGLContext * {
+          if constexpr (std::is_same_v<std::decay_t<decltype(held)>,
+                                       std::monostate>)
+            return nullptr;
+          else
+            return held.owner.data();
+        },
+        core.render_resource_);
   }
 
   [[nodiscard]] static bool callbackInstalled(const PlayerCore &core) {
-    return core.render_context_callback_installed_;
+    return std::holds_alternative<PlayerCore::RenderInstalled>(
+        core.render_resource_);
   }
 
   [[nodiscard]] static bool hasSelfKeepalive(const PlayerCore &core) {
-    return static_cast<bool>(core.render_context_keepalive_);
+    return std::visit(
+        [](const auto &held) {
+          if constexpr (std::is_same_v<std::decay_t<decltype(held)>,
+                                       std::monostate>)
+            return false;
+          else
+            return static_cast<bool>(held.keepalive);
+        },
+        core.render_resource_);
   }
 
   [[nodiscard]] static RenderTicket lifecycle(const PlayerCore &core) {

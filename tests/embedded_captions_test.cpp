@@ -346,6 +346,37 @@ void testLiveCaptionFeedOrdersByPresentation() {
   expect(!feed.sawCaptions(), "a captionless stream reports no captions");
 }
 
+// Seeking back re-reads captions that are already closed. The re-read cue
+// must neither duplicate the closed one nor be appended after later cues,
+// which would break the ordered lookup for everything after it.
+void testLiveCaptionFeedRereadAfterBackwardSeek() {
+  using wam::media::captions::LiveCaptionFeed;
+  LiveCaptionFeed feed;
+  // Pop-on `text` presented over [start, start + 100 ms).
+  const auto popOn = [&feed](std::int64_t start, std::pair<int, int> text) {
+    feed.noteCompressedPicture(
+        start - 2'000'000, avccPicture({{0x94, 0x20}, {0x94, 0xE0}, text}),
+        4);
+    feed.noteCompressedPicture(start, avccPicture({{0x94, 0x2F}}), 4);
+    feed.noteCompressedPicture(start + 100'000'000,
+                               avccPicture({{0x94, 0x2C}}), 4);
+    feed.notePresentedPicture(start - 2'000'000);
+    feed.notePresentedPicture(start);
+    feed.notePresentedPicture(start + 100'000'000);
+  };
+  popOn(1'000'000'000, {0xC8, 0x49});  // "HI"
+  popOn(2'000'000'000, {0x4F, 0xCB});  // "OK"
+  expect(feed.textAt(1'050'000'000) == "HI" &&
+             feed.textAt(2'050'000'000) == "OK",
+         "both cues are read in order");
+  feed.resetForSeek();
+  popOn(1'000'000'000, {0xC8, 0x49});
+  expect(feed.textAt(1'050'000'000) == "HI",
+         "a re-read cue still displays");
+  expect(feed.textAt(2'050'000'000) == "OK",
+         "a re-read earlier cue keeps later cues reachable");
+}
+
 void testAvccWalk() {
   const std::string nal = ccSeiNal({field1(0x14, 0x2F)});
   std::string sample;
@@ -718,6 +749,7 @@ int main() {
   testCea608IgnoresOtherField();
   testCea608IgnoresInvalidTriplet();
   testLiveCaptionFeedOrdersByPresentation();
+  testLiveCaptionFeedRereadAfterBackwardSeek();
   testCea608CharacterSet();
   testCea608SpecialCharacter();
   testCea608Backspace();

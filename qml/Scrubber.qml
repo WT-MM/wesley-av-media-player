@@ -5,19 +5,28 @@ Slider {
     id: control
 
     property real mediaPosition: 0
+    // The media the position belongs to; a change ends any wait for a seek
+    // committed into the previous one.
+    property url source
     property real previewPosition: 0
+    //   "idle"      the handle shows mediaPosition
+    //   "scrubbing" a pointer drag: previews are paced at frame cadence and
+    //               the pacer fields below mean something only here
+    //   "settling"  a seek was committed: the handle holds previewPosition
+    //               until playback reaches it or seekSettleTimer gives up
+    // Only setPhase changes it; it also owns seekSettleTimer.
+    property string phase: "idle"
+    // Pacer state, reset on entering "scrubbing"; -1 means no target.
     property real pendingSeek: -1
     property real lastPreviewSeek: -1
     property real previewCadenceElapsed: 0
-    property bool previewPacerActive: false
-    property bool awaitingSeek: false
     property color accentColor: "#f1f1f2"
     property string accessibleName: "Playback position"
     readonly property real previewCadenceSeconds: 0.016
     readonly property bool scrubbing: scrubArea.pressed
-    readonly property real displayPosition: scrubbing || awaitingSeek
-        ? boundedValue(previewPosition)
-        : boundedValue(mediaPosition)
+    readonly property real displayPosition: phase === "idle"
+        ? boundedValue(mediaPosition)
+        : boundedValue(previewPosition)
     signal previewSeekRequested(real seconds)
     signal seekRequested(real seconds)
 
@@ -64,11 +73,19 @@ Slider {
         return left >= 0 && right >= 0 && left === right;
     }
 
+    function setPhase(next) {
+        phase = next;
+        if (next === "settling")
+            seekSettleTimer.restart();
+        else
+            seekSettleTimer.stop();
+    }
+
     function beginPreviewPacing() {
         pendingSeek = -1;
         lastPreviewSeek = -1;
         previewCadenceElapsed = 0;
-        previewPacerActive = true;
+        setPhase("scrubbing");
     }
 
     function queuePreviewSeek(seconds) {
@@ -97,7 +114,7 @@ Slider {
     }
 
     function advancePreviewPacer(frameSeconds) {
-        if (!previewPacerActive || !isFinite(frameSeconds) || frameSeconds <= 0)
+        if (phase !== "scrubbing" || !isFinite(frameSeconds) || frameSeconds <= 0)
             return;
         const elapsed = previewCadenceElapsed + frameSeconds;
         if (pendingSeek >= 0 && elapsed >= previewCadenceSeconds) {
@@ -118,8 +135,6 @@ Slider {
 
     function previewAt(pointerX) {
         previewPosition = boundedValue(valueForPointer(pointerX));
-        awaitingSeek = true;
-        seekSettleTimer.stop();
         // Send the first preview immediately. Later pointer updates only
         // replace one pending target while the visual handle remains live.
         queuePreviewSeek(previewPosition);
@@ -128,41 +143,40 @@ Slider {
     function finishScrub(pointerX, updateFromPointer) {
         if (updateFromPointer)
             previewPosition = boundedValue(valueForPointer(pointerX));
-        previewPacerActive = false;
         previewCadenceElapsed = 0;
         pendingSeek = -1;
         lastPreviewSeek = -1;
-        awaitingSeek = true;
-        seekSettleTimer.restart();
+        setPhase("settling");
 
         // Always commit the release position. A coalesced update may otherwise
         // leave playback one pointer event behind the handle.
         seekRequested(previewPosition);
     }
 
-    function adjustBy(delta) {
-        const target = boundedValue(displayPosition + delta);
-        previewPosition = target;
-        awaitingSeek = true;
-        seekSettleTimer.restart();
-        seekRequested(target);
-    }
-
-    function seekToFromKeyboard(target) {
+    // A keyboard or accessibility seek. During a drag the drag keeps the
+    // handle; its release commits and settles.
+    function commitSeek(target) {
         previewPosition = boundedValue(target);
-        awaitingSeek = true;
-        seekSettleTimer.restart();
+        if (phase !== "scrubbing")
+            setPhase("settling");
         seekRequested(previewPosition);
     }
 
+    function adjustBy(delta) {
+        commitSeek(displayPosition + delta);
+    }
+
     onMediaPositionChanged: {
-        if (!awaitingSeek || scrubbing)
+        if (phase !== "settling")
             return;
         const tolerance = Math.max(0.08, Math.min(0.75, stepSize / 2));
-        if (Math.abs(boundedValue(mediaPosition) - previewPosition) <= tolerance) {
-            seekSettleTimer.stop();
-            awaitingSeek = false;
-        }
+        if (Math.abs(boundedValue(mediaPosition) - previewPosition) <= tolerance)
+            setPhase("idle");
+    }
+
+    onSourceChanged: {
+        if (phase === "settling")
+            setPhase("idle");
     }
 
     Keys.priority: Keys.BeforeItem
@@ -174,10 +188,10 @@ Slider {
             adjustBy(stepSize);
             event.accepted = true;
         } else if (event.key === Qt.Key_Home) {
-            seekToFromKeyboard(from);
+            commitSeek(from);
             event.accepted = true;
         } else if (event.key === Qt.Key_End) {
-            seekToFromKeyboard(to);
+            commitSeek(to);
             event.accepted = true;
         } else if (event.key === Qt.Key_PageDown) {
             adjustBy(-Math.max(stepSize * 10, (to - from) / 10));
@@ -190,7 +204,7 @@ Slider {
 
     FrameAnimation {
         id: previewFramePacer
-        running: control.previewPacerActive
+        running: control.phase === "scrubbing"
         onTriggered: control.advancePreviewPacer(frameTime)
     }
 
@@ -198,7 +212,7 @@ Slider {
         id: seekSettleTimer
         interval: 1500
         repeat: false
-        onTriggered: control.awaitingSeek = false
+        onTriggered: control.setPhase("idle")
     }
 
     background: Item {

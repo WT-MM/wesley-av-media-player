@@ -42,7 +42,9 @@ public:
   NativeBenchmarkTelemetry &
   operator=(const NativeBenchmarkTelemetry &) = delete;
 
-  [[nodiscard]] bool enabled() const noexcept { return enabled_; }
+  [[nodiscard]] bool enabled() const noexcept {
+    return lifecycle_ != Lifecycle::Disabled;
+  }
 
   void openRequested(media::native_playback::SourceKey sourceKey,
                      bool libmpvInitialized) noexcept;
@@ -203,7 +205,27 @@ private:
   // distort the memory result.
   static constexpr std::size_t kMaximumSerializedBytes = 64 * 1024;
 
-  bool enabled_{false};
+  // Disabled never records. Recording accepts points until it fails closed
+  // or finishes; a finished recorder remembers whether its stream committed.
+  enum class Lifecycle : std::uint8_t {
+    Disabled,
+    Recording,
+    Failed,
+    Finished,
+    FinishedFailed,
+  };
+  // Whether the first frame of the latest open has been drawn: checkpoints
+  // stay memory-only until it has, so startup timing is not contaminated.
+  enum class FirstDraw : std::uint8_t { None, Awaiting, Captured };
+  [[nodiscard]] bool recording() const noexcept {
+    return lifecycle_ == Lifecycle::Recording;
+  }
+  [[nodiscard]] bool failed() const noexcept {
+    return lifecycle_ == Lifecycle::Failed ||
+           lifecycle_ == Lifecycle::FinishedFailed;
+  }
+
+  Lifecycle lifecycle_{Lifecycle::Disabled};
   char runId_[37]{};
   char assetSha256_[65]{};
   char candidateId_[65]{};
@@ -225,10 +247,7 @@ private:
   std::uint64_t committedEventCount_{0};
   unsigned char streamChainSha256_[32]{};
   bool headerWritten_{false};
-  bool awaitingFirstDraw_{false};
-  bool firstDrawCaptured_{false};
-  bool failed_{false};
-  bool finished_{false};
+  FirstDraw firstDraw_{FirstDraw::None};
 
 #if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeBenchmarkTelemetryTestAccess;

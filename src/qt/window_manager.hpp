@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 class QQmlComponent;
 class QQmlContext;
@@ -120,11 +121,12 @@ public:
   [[nodiscard]] QQuickWindow *window() const { return window_; }
   [[nodiscard]] QObject *qmlRoot() const { return qml_root_; }
 
-  // True while this window has never been asked to hold media and holds none:
-  // the one state in which an "open" that would otherwise create a window
-  // claims this window instead, so a blank player is never left behind next to
-  // the file the user actually asked for.
-  [[nodiscard]] bool claimable() const;
+  // True while this window holds no media, or is already opening `source`:
+  // the states in which an "open" that would otherwise create a window claims
+  // this window instead, so a blank player is never left behind next to the
+  // file the user actually asked for. A window opening a different file is
+  // taken, so a multi-file open gives each file its own window.
+  [[nodiscard]] bool claimableFor(const QUrl &source) const;
 
   [[nodiscard]] bool open(const QUrl &source);
   void raiseWindow();
@@ -148,8 +150,9 @@ private:
   QQuickWindow *window_ = nullptr;
 
   ResumeTracker resume_tracker_;
-  double resume_position_ = 0.0;
-  bool resume_pending_ = false;
+  // The remembered position to resume this media at, until it applies or the
+  // user seeks first.
+  std::optional<double> pending_resume_;
 };
 
 // ---------------------------------------------------------------------------
@@ -210,7 +213,7 @@ public:
   [[nodiscard]] bool darkAppearance() const;
 
   // The window an "open" would claim rather than displace, or nullptr.
-  [[nodiscard]] PlayerWindow *claimableWindow() const;
+  [[nodiscard]] PlayerWindow *claimableWindow(const QUrl &source) const;
 
   void noteFocused(PlayerWindow *window);
   void noteClosed(PlayerWindow *window);

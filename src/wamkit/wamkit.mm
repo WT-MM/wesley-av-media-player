@@ -86,7 +86,12 @@ public:
   std::shared_ptr<NativeLayerHostView> layer;
   wam_event_callback_t callback{nullptr}; void* context{nullptr};
   wam_snapshot_t snapshot{};
-  bool closed{false}, disposed{false}, metricsEnabled{false};
+  // Live until Close is submitted; Closing until its stop completes, or until
+  // the close deadline publishes PLAYER_CLOSED with retirement still pending
+  // (Quarantined); Closed once nothing is left to retire. Main thread only.
+  enum class Lifecycle : std::uint8_t { Live, Closing, Quarantined, Closed };
+  Lifecycle lifecycle{Lifecycle::Live};
+  bool disposed{false}, metricsEnabled{false};
   unsigned outstanding{0};
   std::uint64_t nextRequest{0};
   Engine() {
@@ -113,10 +118,10 @@ public:
   }
   ~Engine() override { if (timer) dispatch_source_cancel(timer); }
   wam_status_t submit(Command command, wam_request_id_t* request, wam_error_t* error) {
-    if (closed || disposed) return WAM_CLOSED;
+    if (lifecycle != Lifecycle::Live || disposed) return WAM_CLOSED;
     if (outstanding>=32 || nextRequest==UINT64_MAX) return WAM_BACKPRESSURE;
     command.id=++nextRequest; ++outstanding; if(request)*request=command.id;
-    if(command.operation==Operation::Close) closed=true;
+    if(command.operation==Operation::Close) lifecycle=Lifecycle::Closing;
 #if defined(WAMKIT_ENABLE_TEST_SUPPORT)
     if(command.operation==Operation::Seek && NativeEmbeddingSupport::testMuted()) {
       const char* recovery=std::getenv("WAM_TEST_DEVICE_RECOVERY_SEEK");
@@ -228,6 +233,7 @@ private:
         std::weak_ptr<Engine> weak=shared_from_this();
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,int64_t(media::kNativeStallDeadlineMilliseconds)*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
           if(auto self=weak.lock();self && self->stopping && self->stopping->id==command.id){
+            self->lifecycle=Lifecycle::Quarantined;
             self->snapshot.retiring=1;self->state(WAM_PLAYER_CLOSED);self->finish(self->stopping,WAM_QUARANTINED);
 #if defined(WAMKIT_ENABLE_TEST_SUPPORT)
             NativeRetirement::setTestPaused(false);
@@ -271,11 +277,19 @@ private:
   bool beginFallbackStop(const router::Action&) override{return false;}
   std::optional<router::Transition> applyFallbackRunState(const router::Action&) override{return {};}
   void pruneSourceRecords() override{
-    if(routeSnapshot().state==router::State::Idle && !retirementPending() && stopping){
-      snapshot.retiring=0;state(stopping->operation==Operation::Close?WAM_PLAYER_CLOSED:WAM_EMPTY);
-      finish(stopping,WAM_COMPLETED);if(closed)enableMetrics(false);
-    }else if(closed && !retirementPending() && snapshot.state==WAM_PLAYER_CLOSED && snapshot.retiring){
-      snapshot.retiring=0;state(WAM_PLAYER_CLOSED);enableMetrics(false);
+    if(retirementPending())return;
+    if(routeSnapshot().state==router::State::Idle && stopping){
+      const bool closing=stopping->operation==Operation::Close;
+      snapshot.retiring=0;state(closing?WAM_PLAYER_CLOSED:WAM_EMPTY);
+      finish(stopping,WAM_COMPLETED);
+      if(lifecycle!=Lifecycle::Live)enableMetrics(false);
+      if(closing)lifecycle=Lifecycle::Closed;
+      return;
+    }
+    switch(lifecycle){
+    case Lifecycle::Live: case Lifecycle::Closing: case Lifecycle::Closed: return;
+    case Lifecycle::Quarantined:
+      snapshot.retiring=0;state(WAM_PLAYER_CLOSED);enableMetrics(false);lifecycle=Lifecycle::Closed;return;
     }
   }
   void maybeCompleteFallbackStop() override{}

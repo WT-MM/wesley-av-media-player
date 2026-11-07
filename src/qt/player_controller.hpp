@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 class QTimer;
@@ -64,6 +65,10 @@ public:
   std::mutex mutex;
   std::shared_ptr<const Snapshot> latest;
   std::atomic<bool> queued{false};
+  // GUI thread only: the generated track was auto-selected once, and the
+  // committed SRT replaced the live cues.
+  bool selected = false;
+  bool committed = false;
   void publish(std::shared_ptr<const Snapshot> value) {
     { std::lock_guard lock(mutex); latest = std::move(value); }
     if (!queued.exchange(true)) emit available();
@@ -209,7 +214,13 @@ public:
   PlayerController &operator=(const PlayerController &) = delete;
 
   [[nodiscard]] bool available() const;
-  [[nodiscard]] bool loading() const { return loading_; }
+  [[nodiscard]] bool loading() const {
+    return std::holds_alternative<MediaOpening>(media_phase_);
+  }
+  // Whether an open of `source` may land in this player: it holds nothing,
+  // or it is already opening exactly that file. A player opening some other
+  // file is taken.
+  [[nodiscard]] bool claimableFor(const QUrl &source) const;
   [[nodiscard]] bool hasMedia() const { return !source_.isEmpty(); }
   [[nodiscard]] QUrl source() const override { return source_; }
   [[nodiscard]] QString mediaTitle() const { return media_title_; }
@@ -227,7 +238,7 @@ public:
   // The ceiling setVolume clamps to, applied from AppSettings::maximumVolume.
   [[nodiscard]] double maximumVolume() const { return maximum_volume_; }
   [[nodiscard]] bool scrollGestureActive() const {
-    return scroll_gesture_active_;
+    return !std::holds_alternative<ScrollIdle>(scroll_);
   }
   [[nodiscard]] bool muted() const { return muted_; }
   [[nodiscard]] double rate() const { return rate_; }
@@ -267,11 +278,16 @@ public:
   [[nodiscard]] bool exportPreservePitch() const {
     return export_preserve_pitch_;
   }
-  [[nodiscard]] bool exporting() const { return exporting_; }
+  [[nodiscard]] bool exporting() const { return export_.has_value(); }
   [[nodiscard]] QString exportStatus() const { return export_status_; }
-  [[nodiscard]] bool captionTranscribing() const { return caption_service_->transcribing(); }
-  [[nodiscard]] bool captionTrackCommitted() const { return caption_track_committed_; }
-  [[nodiscard]] bool captioning() const { return captioning_; }
+  [[nodiscard]] bool captionTranscribing() const {
+    const auto status = caption_service_->tryStatus();
+    return status && status->stage == ::wam::CaptionStage::Transcribing;
+  }
+  [[nodiscard]] bool captionTrackCommitted() const {
+    return caption_live_bridge_ && caption_live_bridge_->committed;
+  }
+  [[nodiscard]] bool captioning() const { return caption_job_.has_value(); }
   [[nodiscard]] QString captionStatus() const { return caption_status_; }
   [[nodiscard]] QString lastError() const { return last_error_; }
   [[nodiscard]] QString lastNotice() const { return last_notice_; }
@@ -372,9 +388,6 @@ public:
   // announcement of it stops.
   void beginTeardown() noexcept { tearing_down_ = true; }
 
-  // Job/caption adapters can drive these while remaining independent of QML.
-  void setExporting(bool exporting);
-  void setCaptioning(bool captioning);
   void setCaptionStatus(const QString &status);
 
 signals:
@@ -386,6 +399,9 @@ signals:
   void playingChanged();
   void pausedChanged();
   void positionChanged();
+  // A seek, scrub or frame step was asked for (by the user or on their
+  // behalf), before any engine acted on it.
+  void seekRequested();
   void durationChanged();
   void videoDisplaySizeChanged();
   void volumeChanged();
@@ -450,8 +466,9 @@ private:
     double origin = 0.0;
     double target = 0.0;
     std::uint64_t latest_preview_request = 0;
-    std::uint64_t dispatched_preview_request = 0;
-    bool intended_paused = true;
+    // The one preview request the session is working on; empty while the
+    // slot is free.
+    std::optional<std::uint64_t> in_flight_preview;
     // False when the native session refused the pointer-down preview handoff
     // for the whole binding -- an audio-only source has no thumbnail to show.
     // The gesture still tracks the drag in the time readout and still commits
@@ -471,6 +488,41 @@ private:
     double target = 0.0;
     double rollback_position = 0.0;
     bool intended_paused = true;
+  };
+
+  // The native transport gesture, which owns the logical pause intent until
+  // it ends. Scrubbing may still have the previous commit converging under
+  // it (a new drag that began before the last release landed); its pause
+  // intent is the scrub's. Committing's is the commit's own.
+  struct NativeGestureIdle {};
+  struct NativeScrubbing {
+    NativeScrubIntent scrub;
+    std::optional<NativeSeekIntent> converging;
+    bool intended_paused = true;
+  };
+  struct NativeCommitting {
+    NativeSeekIntent commit;
+  };
+  using NativeGesture =
+      std::variant<NativeGestureIdle, NativeScrubbing, NativeCommitting>;
+
+  // Frame geometry of the picture on screen, as last proved by a draw.
+  struct NativeFrameUnknown {};
+  struct NativeAudioOnly {};
+  struct NativeFrame {
+    double start = 0.0;
+    double duration = 0.0;
+  };
+  using NativeFrameGeometry =
+      std::variant<NativeFrameUnknown, NativeAudioOnly, NativeFrame>;
+
+  // A frame step pressed before the frame on screen was proved: the direction
+  // to step once THIS settling commit lands. Bound to the commit's identity,
+  // so a refused, failed or superseded settle cannot fire it later.
+  struct PendingFrameStep {
+    std::uint64_t gesture = 0;
+    std::uint64_t request = 0;
+    int direction = 0;
   };
 
   enum class NativeSeekTerminal : std::uint8_t {
@@ -587,13 +639,36 @@ private:
   void nativeCommitFailed(std::uint64_t gesture,
                           std::uint64_t request) noexcept override;
   void setNativeScrubPauseIntent(bool paused);
+  [[nodiscard]] NativeScrubIntent *nativeScrub() noexcept;
+  [[nodiscard]] const NativeSeekIntent *nativeCommit() const noexcept;
+  // The logical pause intent: the gesture's while one is live, else the
+  // transport's.
+  [[nodiscard]] bool nativeIntendedPaused() const noexcept;
+  // An accepted commit becomes the live one (under a scrub, the converging
+  // one). Ready or Failed for that identity retires it.
+  void adoptNativeCommit(const NativeSeekIntent &intent);
+  [[nodiscard]] bool retireNativeCommit(std::uint64_t gesture,
+                                        std::uint64_t request,
+                                        const double *target) noexcept;
+  // True when (gesture, request) is the preview occupying the slot.
+  [[nodiscard]] bool ownsNativePreview(std::uint64_t gesture,
+                                       std::uint64_t request) noexcept;
+  // Frees the slot after a terminal preview and spends it once on the newest
+  // desire if that is not the request that just finished.
+  void releaseNativePreviewSlot(std::uint64_t request, void *context,
+                                NativePreviewSubmitter submitter);
+  [[nodiscard]] static NativeSeekSubmission
+  submitNativeCommit(void *context, const NativeSeekIntent &intent) noexcept;
+  void stepNativeFrame(bool forward, void *context,
+                       NativeSeekSubmitter submitter);
+  [[nodiscard]] double nativeFrameDuration() const noexcept;
   // A native scrub or seek owns the logical pause intent until it commits.
   // Play at the end, or within one frame of it (never less than 50 ms),
   // replays from the start. `frame_duration` is the playing engine's own
   // frame duration, 0 when it knows none.
   [[nodiscard]] bool atEndForReplay(double frame_duration) const noexcept override;
   [[nodiscard]] bool nativeSeekInFlight() const noexcept override {
-    return native_scrub_intent_ || native_seek_intent_;
+    return !std::holds_alternative<NativeGestureIdle>(native_gesture_);
   }
   void invalidateNativeScrubIntent() noexcept;
   void invalidateNativeSeekIntents() noexcept;
@@ -667,7 +742,6 @@ private:
   void updatePause(bool paused) override;
   void updateIdle(bool idle) override;
   void updateLoading(bool loading) override;
-  bool loading_ = false;
   void updateEof(bool eof_reached) override;
   void updateDuration(double duration) override;
   // The native route's presentable ceiling (NativeMediaSession::
@@ -685,15 +759,31 @@ private:
   void updateSource(const QUrl &source) override;
   void updateMediaTitle(const QString &title) override;
   void resetTimeline() override;
-  void cancelCaptionsForMediaChange();
+  // Cancels a caption job unless `incoming` is the file it is captioning.
+  void cancelCaptionsForMediaChange(const QUrl &incoming);
+  // The engines' error report. During Opening an error IS the open failing
+  // (failOpen); otherwise it is only shown.
   void setLastError(const QString &error) override;
+  // Empties the player after its open failed, then shows why.
+  void failOpen(const QString &error);
+  // An error about a user action (a subtitle file, an export). Never changes
+  // what the player holds.
+  void showError(const QString &error);
+  // Burns the previous media's gesture, captions and timeline and stamps a
+  // new request serial for `source` (empty on stop).
+  void beginMediaTransaction(const QUrl &source);
   // Non-blocking counterpart to setLastError: fallback-continuation notices
   // (native playback degraded to compatibility playback, or a seek could not
   // be served natively) where playback kept going and a modal dialog would
   // be pure interruption. QML surfaces this as a transient toast.
   void setLastNotice(const QString &notice) override;
   void setExportStatus(const QString &status);
-  void cleanupExportStaging() noexcept;
+  void beginExportJob(std::filesystem::path output,
+                      std::filesystem::path staging);
+  // Ends the export job, removing its staging file unless it was committed.
+  void endExportJob() noexcept;
+  void beginCaptionJob(std::filesystem::path input);
+  void endCaptionJob();
   void startWorkPolling();
   void pollBackgroundWork();
 
@@ -711,16 +801,24 @@ private:
   // only honest gesture boundary.
   QTimer *scroll_settle_timer_ = nullptr;
   ScrollGestureModel scroll_model_;
-  // Live timeline sweep: the scrub gesture is open and this is the latest
-  // target the user has swept to. Empty when no sweep is in flight.
-  std::optional<double> scroll_sweep_target_;
+  // The scroll gesture: idle, active until it settles, or a live timeline
+  // sweep (one open scrub gesture and the latest target swept to).
+  struct ScrollIdle {};
+  struct ScrollActive {};
+  struct ScrollSweep {
+    double target = 0.0;
+  };
+  std::variant<ScrollIdle, ScrollActive, ScrollSweep> scroll_;
+  // Ends the gesture without committing a sweep: the media it was sweeping
+  // is going away.
+  void cancelScrollGesture();
+  void setScrollState(std::variant<ScrollIdle, ScrollActive, ScrollSweep> state);
 
   ::wam::BackgroundJob export_job_;
   std::shared_ptr<::wam::CaptionService> caption_service_ = std::make_shared<::wam::CaptionService>();
-  bool caption_download_prompted_ = false;
+  // The live generated track of the latest caption request. It outlives the
+  // job on success, so the committed cues keep arriving after it ends.
   std::shared_ptr<CaptionLiveBridge> caption_live_bridge_;
-  bool caption_live_selected_ = false;
-  bool caption_track_committed_ = false;
   std::unique_ptr<SubtitleSources> subtitles_;
   // The live closed-caption tap the native video consumer feeds for this
   // window. Owned here so it outlives any one session; handed to the session
@@ -733,13 +831,28 @@ private:
   double subtitle_bitmap_width_{0.0};
   double subtitle_bitmap_height_{0.0};
   bool subtitle_bitmap_visible_{false};
-  // The source the subtitle list was last built for, and under which engine.
-  // A route flip (native admission refused mid-open) must rebuild the list
-  // from the engine that actually ended up playing.
-  QUrl subtitle_sources_source_;
-  bool subtitle_sources_native_ = false;
-  bool subtitle_sources_built_ = false;
+  // The source the subtitle list was last built for, and under which engine;
+  // empty until built for this media. A route flip (native admission refused
+  // mid-open) must rebuild the list from the engine that actually ended up
+  // playing.
+  struct SubtitleListStamp {
+    QUrl source;
+    bool native = false;
+  };
+  std::optional<SubtitleListStamp> subtitle_list_built_;
 
+  // What the player holds. Empty <=> source_ is empty. Opening is the
+  // native route's open in flight, carrying the URL the user asked for (the
+  // compatibility route goes straight from Empty to Loaded when mpv reports
+  // the path).
+  struct MediaEmpty {};
+  struct MediaOpening {
+    QUrl requested;
+  };
+  struct MediaLoaded {};
+  using MediaPhase = std::variant<MediaEmpty, MediaOpening, MediaLoaded>;
+  MediaPhase media_phase_;
+  void setMediaPhase(MediaPhase phase);
   QUrl source_;
   // requested_source_ is the authoritative GUI intent. source_ mirrors mpv's
   // observed path and can briefly clear during asynchronous replacement.
@@ -749,15 +862,11 @@ private:
   QString last_notice_;
   QString export_status_;
   QString caption_status_;
-  QString caption_cancel_reason_;
-  std::filesystem::path export_output_;
-  std::filesystem::path export_staging_;
-  std::filesystem::path caption_input_;
+
   bool paused_ = true;
   bool idle_ = true;
   bool eof_reached_ = false;
   bool muted_ = false;
-  bool scroll_gesture_active_ = false;
   bool captions_visible_ = true;
   bool preserve_pitch_ = true;
   double position_ = 0.0;
@@ -777,11 +886,22 @@ private:
   // Per window, and reset on every media change: a rectangle drawn over one
   // shot means nothing over the next file's framing.
   ::wam::CropRect crop_{};
-  bool exporting_ = false;
-  bool captioning_ = false;
-  bool export_cancel_requested_ = false;
-  bool export_completion_pending_ = false;
-  bool caption_completion_pending_ = false;
+  // A running export: where it lands, the reserved staging file it encodes
+  // into, and whether the user cancelled it.
+  struct ExportJob {
+    std::filesystem::path output;
+    std::filesystem::path staging;
+    bool cancel_requested = false;
+  };
+  std::optional<ExportJob> export_;
+  // A running caption request: its input, why it is being cancelled (empty
+  // until cancelled), and whether its download prompt was already shown.
+  struct CaptionJob {
+    std::filesystem::path input;
+    QString cancel_reason;
+    bool download_prompted = false;
+  };
+  std::optional<CaptionJob> caption_job_;
   // See beginTeardown(): silences user-facing errors once this controller's
   // window is on its way out.
   bool tearing_down_ = false;
@@ -792,19 +912,14 @@ private:
   // so the Subtitles menu can name them honestly. A file the user loaded is
   // not a generated caption.
   std::vector<std::filesystem::path> generated_caption_files_;
-  std::optional<NativeScrubIntent> native_scrub_intent_;
-  std::optional<NativeSeekIntent> native_seek_intent_;
+  NativeGesture native_gesture_;
+  // The overlay of synchronous commitSeek calls currently on the C++ stack
+  // (innermost first). A terminal observation drained during submission is
+  // recorded here because the commit is not live yet.
   NativeSeekSubmissionState *native_seek_submission_ = nullptr;
   std::uint64_t latest_native_seek_submission_request_ = 0;
-  // Last proved on-screen frame geometry (native route). Negative start means
-  // "nothing proved yet"; a zero duration means the proof named an audio-only
-  // generation, which has no frame to step.
-  double native_frame_start_ = -1.0;
-  double native_frame_duration_ = 0.0;
-  // A step pressed before any frame geometry was proved converts into one
-  // settling commit at the current position; this remembers the direction to
-  // apply once that commit's own draw proof arrives.
-  int pending_frame_step_ = 0;
+  NativeFrameGeometry native_frame_;
+  std::optional<PendingFrameStep> pending_frame_step_;
 #if defined(WAM_QT_TEST_SEAMS)
   // The controller-only test target deliberately excludes the platform owner.
   // This seam lets it exercise the public previewSeekTo boundary while keeping

@@ -286,12 +286,27 @@ int SubtitleSources::containerPreferredId() const noexcept {
 // ---------------------------------------------------------------------------
 
 void SubtitleSources::cancelNativeLoad() {
-  if (cancel_)
-    cancel_->store(true, std::memory_order_relaxed);
-  if (worker_.joinable())
-    worker_.join();
-  cancel_.reset();
-  setLoading(false);
+  if (auto *running = std::get_if<LoadRunning>(&load_))
+    running->cancel->store(true, std::memory_order_relaxed);
+  endLoad();
+}
+
+void SubtitleSources::endLoad() {
+  auto *running = std::get_if<LoadRunning>(&load_);
+  if (running == nullptr)
+    return;
+  if (running->worker.joinable())
+    running->worker.join();
+  load_ = LoadIdle{};
+  emit loadingChanged();
+}
+
+bool SubtitleSources::acceptLoad(std::uint64_t generation) {
+  const auto *running = std::get_if<LoadRunning>(&load_);
+  if (running == nullptr || running->generation != generation)
+    return false;
+  endLoad();
+  return true;
 }
 
 void SubtitleSources::beginNativeLoad(int id) {
@@ -327,31 +342,38 @@ void SubtitleSources::beginNativeLoad(int id) {
     emit cuesChanged();
   }
 
-  const std::uint64_t generation = ++generation_;
+  const std::uint64_t generation = ++last_generation_;
   auto cancel = std::make_shared<std::atomic<bool>>(false);
-  cancel_ = cancel;
   const std::filesystem::path path = source->filePath;
   const std::uint64_t track = source->matroskaTrack;
   const media::subtitles::TextCodec codec = source->codec;
-  setLoading(true);
+  const auto tokenFor = [](const std::shared_ptr<std::atomic<bool>> &flag) {
+    return media::CancellationToken{
+        flag.get(), [](const void *context) noexcept {
+          return static_cast<const std::atomic<bool> *>(context)->load(
+              std::memory_order_relaxed);
+        }};
+  };
+  // Results are delivered queued onto the owning thread. `this` stays alive:
+  // the destructor cancels and JOINS before it runs, so no delivery can
+  // outlive the object.
+  std::thread worker;
 
   if (source->mp4Track != 0) {
-    // The MP4 tx3g lane. Same worker discipline as the Matroska lanes: one
-    // thread, cancelled and joined before it can be replaced, result delivered
-    // queued onto the owning thread. The reader opens its own descriptor and
-    // never touches the playback source, so a subtitle read cannot perturb
-    // decode -- the same rule matroska_subtitles.hpp states and for the same
-    // reason.
+    // The MP4 tx3g lane. The reader opens its own descriptor and never touches
+    // the playback source, so a subtitle read cannot perturb decode -- the
+    // same rule matroska_subtitles.hpp states and for the same reason.
     const std::uint32_t mp4Track = source->mp4Track;
-    worker_ = std::thread([this, generation, path, mp4Track]() {
+    worker = std::thread([this, generation, path, mp4Track, cancel, tokenFor]() {
       media::mp4::SubtitleTrackLoad mp4Load =
-          media::mp4::loadMp4SubtitleTrack(path, mp4Track);
+          media::mp4::loadMp4SubtitleTrack(path, mp4Track, tokenFor(cancel));
       // Restated as the Matroska load the apply path already understands, so
       // the cue lane below stays single-shaped. Style spans are dropped here:
       // the overlay is Text.PlainText by design.
       media::matroska::SubtitleTrackLoad load;
       load.cues = std::move(mp4Load.cues);
       load.ok = mp4Load.ok;
+      load.cancelled = mp4Load.cancelled;
       load.truncated = mp4Load.truncated;
       load.skippedWithoutDuration = mp4Load.skipped;
       load.error = std::move(mp4Load.error);
@@ -362,59 +384,44 @@ void SubtitleSources::beginNativeLoad(int id) {
           },
           Qt::QueuedConnection);
     });
-    return;
-  }
-
-  if (source->isBitmap()) {
-    // The bitmap lane. Same worker discipline as the text lane: one thread,
-    // cancelled and joined before it can be replaced, result delivered queued
-    // onto the owning thread.
+  } else if (source->isBitmap()) {
+    // The bitmap lane (PGS, VobSub).
     const media::subtitles::BitmapCodec bitmapCodec = source->bitmapCodec;
-    worker_ = std::thread([this, generation, path, track, bitmapCodec, cancel]() {
-      const media::CancellationToken token{
-          cancel.get(), [](const void *context) noexcept {
-            return static_cast<const std::atomic<bool> *>(context)->load(
-                std::memory_order_relaxed);
-          }};
-      media::matroska::BitmapSubtitleTrackLoad load =
-          media::matroska::loadMatroskaBitmapSubtitleTrack(path, track,
-                                                           bitmapCodec, token);
+    worker = std::thread(
+        [this, generation, path, track, bitmapCodec, cancel, tokenFor]() {
+          media::matroska::BitmapSubtitleTrackLoad load =
+              media::matroska::loadMatroskaBitmapSubtitleTrack(
+                  path, track, bitmapCodec, tokenFor(cancel));
+          QMetaObject::invokeMethod(
+              this,
+              [this, generation, load = std::move(load)]() mutable {
+                applyBitmapLoad(generation, std::move(load));
+              },
+              Qt::QueuedConnection);
+        });
+  } else {
+    worker = std::thread([this, generation, path, track, codec, cancel,
+                          tokenFor]() {
+      media::matroska::SubtitleTrackLoad load =
+          media::matroska::loadMatroskaSubtitleTrack(path, track, codec,
+                                                     tokenFor(cancel));
       QMetaObject::invokeMethod(
           this,
           [this, generation, load = std::move(load)]() mutable {
-            applyBitmapLoad(generation, std::move(load));
+            applyLoad(generation, std::move(load));
           },
           Qt::QueuedConnection);
     });
-    return;
   }
-
-  worker_ = std::thread([this, generation, path, track, codec, cancel]() {
-    const media::CancellationToken token{
-        cancel.get(), [](const void *context) noexcept {
-          return static_cast<const std::atomic<bool> *>(context)->load(
-              std::memory_order_relaxed);
-        }};
-    media::matroska::SubtitleTrackLoad load =
-        media::matroska::loadMatroskaSubtitleTrack(path, track, codec, token);
-    // Queued, so the result lands on the owning thread. `this` stays alive:
-    // the destructor cancels and JOINS before it runs, so no delivery can
-    // outlive the object.
-    QMetaObject::invokeMethod(
-        this,
-        [this, generation, load = std::move(load)]() mutable {
-          applyLoad(generation, std::move(load));
-        },
-        Qt::QueuedConnection);
-  });
+  load_ = LoadRunning{generation, std::move(cancel), std::move(worker)};
+  emit loadingChanged();
 }
 
 void SubtitleSources::applyLoad(std::uint64_t generation,
                                 media::matroska::SubtitleTrackLoad load) {
-  // A newer selection already superseded this one.
-  if (generation != generation_)
+  // A cancel or a newer selection already superseded this one.
+  if (!acceptLoad(generation))
     return;
-  setLoading(false);
   if (load.cancelled)
     return;
   if (!load.ok) {
@@ -426,13 +433,6 @@ void SubtitleSources::applyLoad(std::uint64_t generation,
   cues_ = std::move(load.cues);
   resetLookupHint();
   emit cuesChanged();
-}
-
-void SubtitleSources::setLoading(bool loading) {
-  if (loading_ == loading)
-    return;
-  loading_ = loading;
-  emit loadingChanged();
 }
 
 bool SubtitleSources::loadFileCues(const std::filesystem::path &path,
@@ -459,6 +459,10 @@ bool SubtitleSources::loadFileCues(const std::filesystem::path &path,
   }
   cues_ = parsed.cues;
   media::subtitles::finalizeCues(&cues_, false);
+  // A file is a text source: a previously loaded bitmap track must not keep
+  // drawing underneath it.
+  if (!bitmap_.cues.empty())
+    clearBitmapCues();
   resetLookupHint();
   emit cuesChanged();
   return true;
@@ -514,10 +518,9 @@ void SubtitleSources::clearBitmapCues() {
 
 void SubtitleSources::applyBitmapLoad(
     std::uint64_t generation, media::matroska::BitmapSubtitleTrackLoad load) {
-  // A newer selection already superseded this one.
-  if (generation != generation_)
+  // A cancel or a newer selection already superseded this one.
+  if (!acceptLoad(generation))
     return;
-  setLoading(false);
   if (load.cancelled)
     return;
   if (!load.ok) {

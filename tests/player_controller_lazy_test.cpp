@@ -1,4 +1,5 @@
 #include "fakes/mpv_runtime/injected_mpv_runtime.hpp"
+#include "qt/app_settings.hpp"
 #include "qt/player_controller.hpp"
 #include "qt/player_core_p.hpp"
 #include "qt/subtitle_sources.hpp"
@@ -7,6 +8,7 @@
 #include "support/process_wait.hpp"
 
 #include <QCoreApplication>
+#include <QTemporaryDir>
 #include <QEventLoop>
 #include <QTimer>
 #include <QThread>
@@ -19,7 +21,10 @@
 #include <cmath>
 #include <utility>
 #include <vector>
+#include <variant>
+#include <type_traits>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -38,6 +43,9 @@ class PlayerControllerTestAccess final {
     controller.updateVideoFacts(size.width, size.height, hdr);
   }
   static void resetTimeline(PlayerController& controller) { controller.resetTimeline(); }
+  static void setSource(PlayerController &controller, const QUrl &source) {
+    controller.updateSource(source);
+  }
 
   static std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime() {
     static const auto injected =
@@ -95,10 +103,9 @@ class PlayerControllerTestAccess final {
                               RenderTicket ticket) {
     controller.request_serial_ = serial;
     controller.requested_source_ = source;
-    controller.mpv_.lineage.pending_source = source;
-    controller.mpv_.lineage.pending_request_serial = serial;
-    controller.mpv_.lineage.open_attempt =
-        PlayerController::OpenAttempt{attempt_id, serial, ticket.stamp, -1};
+    controller.mpv_.lineage.pending_open = MpvEngine::PendingOpen{
+        source, serial,
+        PlayerController::OpenAttempt{attempt_id, serial, ticket.stamp, -1}};
   }
 
   static void observeOpenReply(PlayerController &controller, std::uint64_t id,
@@ -122,16 +129,19 @@ class PlayerControllerTestAccess final {
   }
 
   static bool hasPendingOpen(const PlayerController &controller) {
-    return !controller.mpv_.lineage.pending_source.isEmpty() &&
-           controller.mpv_.lineage.pending_request_serial != 0;
+    return controller.mpv_.lineage.pending_open.has_value();
   }
 
   static QUrl pendingSource(const PlayerController &controller) {
-    return controller.mpv_.lineage.pending_source;
+    return controller.mpv_.lineage.pending_open
+               ? controller.mpv_.lineage.pending_open->source
+               : QUrl{};
   }
 
   static std::uint64_t activeAttempt(const PlayerController &controller) {
-    return controller.mpv_.lineage.open_attempt ? controller.mpv_.lineage.open_attempt->id : 0;
+    return controller.mpv_.lineage.openAttempt()
+               ? controller.mpv_.lineage.openAttempt()->id
+               : 0;
   }
 
   static bool hasCommittedOpen(const PlayerController &controller) {
@@ -139,46 +149,47 @@ class PlayerControllerTestAccess final {
   }
 
   static bool hasRenderRecovery(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery.has_value();
+    return (controller.mpv_.lineage.recovery() != nullptr);
   }
 
   static bool hasStartupPlaybackSync(const PlayerController &controller) {
-    return controller.mpv_.lineage.startup_playback_sync.has_value();
+    return (controller.mpv_.lineage.startup() != nullptr);
   }
 
   static bool startupPlaybackSyncQueued(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.startup_playback_sync &&
-           controller.mpv_.lineage.startup_playback_sync->completion_token != 0;
+    return controller.mpv_.lineage.startup() &&
+           std::holds_alternative<MpvEngine::StartupCompletionQueued>(
+               controller.mpv_.lineage.startup()->phase);
   }
 
   static bool startupPlaybackIntendsPause(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.startup_playback_sync &&
-           controller.mpv_.lineage.startup_playback_sync->intended_paused;
+    return controller.mpv_.lineage.startup() &&
+           controller.mpv_.lineage.startup()->intended_paused;
   }
 
   static bool startupPositionOverridden(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.startup_playback_sync &&
-           controller.mpv_.lineage.startup_playback_sync->position_overridden;
+    return controller.mpv_.lineage.startup() &&
+           controller.mpv_.lineage.startup()->intended_position;
   }
 
   static double startupIntendedPosition(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.startup_playback_sync &&
-                   controller.mpv_.lineage.startup_playback_sync->intended_position
-               ? *controller.mpv_.lineage.startup_playback_sync->intended_position
+    return controller.mpv_.lineage.startup() &&
+                   controller.mpv_.lineage.startup()->intended_position
+               ? *controller.mpv_.lineage.startup()->intended_position
                : -1.0;
   }
 
   static bool startupAcceptsLiveState(
       const PlayerController &controller, bool paused, bool idle,
       std::optional<bool> eof_reached) {
-    if (!controller.mpv_.lineage.startup_playback_sync)
+    if (!controller.mpv_.lineage.startup())
       return false;
-    return MpvEngine::livePlaybackStateMatchesStartupSync(
-        *controller.mpv_.lineage.startup_playback_sync,
+    return MpvEngine::livePlaybackStateMatches(
+        controller.mpv_.lineage.startup()->intended_paused,
         MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             std::nullopt, std::nullopt});
   }
@@ -193,106 +204,118 @@ class PlayerControllerTestAccess final {
   }
 
   static double recoveryPosition(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery ? controller.mpv_.lineage.render_recovery->position
+    return controller.mpv_.lineage.recovery() ? controller.mpv_.lineage.recovery()->position
                                        : -1.0;
   }
 
   static bool recoveryPaused(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery && controller.mpv_.lineage.render_recovery->paused;
+    return controller.mpv_.lineage.recovery() && controller.mpv_.lineage.recovery()->paused;
   }
 
   static bool recoveryPlaybackRestarted(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->playback_restarted;
+    if (!controller.mpv_.lineage.recovery())
+      return false;
+    return std::visit(
+        [](const auto &phase) {
+          if constexpr (std::is_same_v<std::decay_t<decltype(phase)>,
+                                       MpvEngine::RecoveryAwaitingGeneration>)
+            return false;
+          else
+            return phase.playback_restarted;
+        },
+        controller.mpv_.lineage.recovery()->phase);
   }
 
   static bool recoveryCompletionQueued(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->completion_token != 0;
+    return controller.mpv_.lineage.recovery() &&
+           controller.mpv_.lineage.recovery()->restoring() &&
+           controller.mpv_.lineage.recovery()->restoring()->completion_token;
   }
 
   static bool recoveryTransportRestored(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->transport_restored;
+    return controller.mpv_.lineage.recovery() &&
+           controller.mpv_.lineage.recovery()->restoring() &&
+           controller.mpv_.lineage.recovery()->restoring()->step ==
+               MpvEngine::RestoreStep::Done;
   }
 
   static bool recoveryIsVideoReselect(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->mode ==
+    return controller.mpv_.lineage.recovery() &&
+           controller.mpv_.lineage.recovery()->mode ==
                PlayerController::RenderRecoveryMode::VideoReselect;
   }
 
   static bool recoveryIsFullReload(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->mode ==
+    return controller.mpv_.lineage.recovery() &&
+           controller.mpv_.lineage.recovery()->mode ==
                PlayerController::RenderRecoveryMode::FullReload;
   }
 
   static bool recoveryIsNoReselection(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->mode ==
+    return controller.mpv_.lineage.recovery() &&
+           controller.mpv_.lineage.recovery()->mode ==
                PlayerController::RenderRecoveryMode::NoReselection;
   }
 
   static std::size_t recoverySubtitleCount(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery
-               ? controller.mpv_.lineage.render_recovery->external_subtitles.size()
+    return controller.mpv_.lineage.recovery()
+               ? controller.mpv_.lineage.recovery()->external_subtitles.size()
                : 0;
   }
 
   static std::int64_t recoveryAudioTrack(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery
-               ? controller.mpv_.lineage.render_recovery->audio_track_id
+    return controller.mpv_.lineage.recovery()
+               ? controller.mpv_.lineage.recovery()->audio_track_id
                : -1;
   }
 
   static std::int64_t recoveryVideoTrack(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery
-               ? controller.mpv_.lineage.render_recovery->video_track_id
+    return controller.mpv_.lineage.recovery()
+               ? controller.mpv_.lineage.recovery()->video_track_id
                : -1;
   }
 
   static bool recoveryTrackSnapshotProven(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->track_snapshot_proven;
+    return controller.mpv_.lineage.recovery() &&
+           controller.mpv_.lineage.recovery()->track_snapshot_proven;
   }
 
   static std::int64_t recoverySubtitleTrack(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery
-               ? controller.mpv_.lineage.render_recovery->subtitle_track_id
+    return controller.mpv_.lineage.recovery()
+               ? controller.mpv_.lineage.recovery()->subtitle_track_id
                : -1;
   }
 
   static bool hasRecoveryAttempt(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery_attempt.has_value();
+    return controller.mpv_.lineage.recoveryAttempt() != nullptr;
   }
 
   static bool recoveryAttemptIsVideoReselect(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery_attempt &&
-           controller.mpv_.lineage.render_recovery_attempt->mode ==
+    return controller.mpv_.lineage.recoveryAttempt() &&
+           controller.mpv_.lineage.recoveryAttempt()->mode ==
                PlayerController::RenderRecoveryMode::VideoReselect;
   }
 
   static bool recoveryAttemptIsFullReload(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery_attempt &&
-           controller.mpv_.lineage.render_recovery_attempt->mode ==
+    return controller.mpv_.lineage.recoveryAttempt() &&
+           controller.mpv_.lineage.recoveryAttempt()->mode ==
                PlayerController::RenderRecoveryMode::FullReload;
   }
 
   static std::uint64_t recoveryAttemptId(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery_attempt
-               ? controller.mpv_.lineage.render_recovery_attempt->id
+    return controller.mpv_.lineage.recoveryAttempt()
+               ? controller.mpv_.lineage.recoveryAttempt()->id
                : 0;
   }
 
@@ -323,14 +346,12 @@ class PlayerControllerTestAccess final {
     controller.request_serial_ = serial;
     controller.requested_source_ = source;
     controller.source_ = source;
-    controller.mpv_.lineage.pending_source.clear();
-    controller.mpv_.lineage.pending_request_serial = 0;
-    controller.mpv_.lineage.open_attempt.reset();
+    controller.mpv_.lineage.pending_open.reset();
     controller.mpv_.lineage.committed_open = PlayerController::OpenAttempt{
         1, serial, ticket.stamp, playlist_entry_id};
     controller.mpv_.lineage.committed_entry_source = source;
     controller.mpv_.lineage.committed_playlist_position = 0;
-    controller.mpv_.lineage.active_event_playlist_entry_id = playlist_entry_id;
+    controller.mpv_.lineage.entry_events = MpvEngine::EntryActive{playlist_entry_id};
     controller.mpv_.lineage.selected_video_track_id = video_track_id;
     controller.mpv_.lineage.selected_audio_track_id = audio_track_id;
     controller.mpv_.lineage.selected_subtitle_track_id = subtitle_track_id;
@@ -359,22 +380,22 @@ class PlayerControllerTestAccess final {
   }
 
   static QUrl recoveryReloadSource(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery
-               ? controller.mpv_.lineage.render_recovery->reload_source
+    return controller.mpv_.lineage.recovery()
+               ? controller.mpv_.lineage.recovery()->reload_source
                : QUrl{};
   }
 
   static std::int64_t recoveryPlaylistPosition(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery
-               ? controller.mpv_.lineage.render_recovery->playlist_position
+    return controller.mpv_.lineage.recovery()
+               ? controller.mpv_.lineage.recovery()->playlist_position
                : -1;
   }
 
   static bool recoveryPreservesPlaylistContext(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->preserve_playlist_context;
+    return controller.mpv_.lineage.recovery() &&
+           controller.mpv_.lineage.recovery()->preserve_playlist_context;
   }
 
   static void setCommittedPlaylistPosition(PlayerController &controller,
@@ -385,19 +406,19 @@ class PlayerControllerTestAccess final {
   static std::uint64_t seedFullReloadAttempt(
       PlayerController &controller, RenderTicket ticket,
       std::int64_t playlist_entry_id, bool restarted_playlist_entry) {
-    if (!controller.mpv_.lineage.render_recovery)
+    if (!controller.mpv_.lineage.recovery())
       return 0;
     constexpr std::uint64_t attempt_id = 991;
-    controller.mpv_.lineage.render_recovery_attempt =
-        PlayerController::RenderRecoveryAttempt{
-            attempt_id,
-            controller.request_serial_,
-            ticket.stamp,
-            playlist_entry_id,
-            controller.mpv_.lineage.render_recovery->video_track_id,
-            PlayerController::RenderRecoveryMode::FullReload,
-            playlist_entry_id,
-            restarted_playlist_entry};
+    controller.mpv_.lineage.recovery()->phase =
+        MpvEngine::RecoveryCommandInFlight{
+            MpvEngine::RenderRecoveryAttempt{
+                attempt_id,
+                controller.request_serial_,
+                ticket.stamp,
+                playlist_entry_id,
+                PlayerController::RenderRecoveryMode::FullReload,
+                playlist_entry_id,
+                restarted_playlist_entry}};
     return attempt_id;
   }
 
@@ -405,8 +426,7 @@ class PlayerControllerTestAccess final {
                                     RenderTicket ticket) {
     if (controller.mpv_.lineage.committed_open)
       controller.mpv_.lineage.committed_open->render_stamp = ticket.stamp;
-    controller.mpv_.lineage.render_recovery.reset();
-    controller.mpv_.lineage.render_recovery_attempt.reset();
+    controller.mpv_.lineage.endRecovery();
   }
 
   static std::int64_t authoritativePlaylistEntry(
@@ -428,8 +448,8 @@ class PlayerControllerTestAccess final {
     recovery.position = position;
     recovery.paused = paused;
     recovery.track_snapshot_proven = true;
-    recovery.accepted_render_stamp = ticket.stamp;
-    controller.mpv_.lineage.render_recovery = std::move(recovery);
+    recovery.acceptGeneration(ticket.stamp);
+    controller.mpv_.lineage.settle = std::move(recovery);
     controller.position_ = position;
     controller.updatePause(paused);
   }
@@ -448,12 +468,21 @@ class PlayerControllerTestAccess final {
     return controller.mpv_.scrub_seek_.has_value();
   }
 
+  static const MpvEngine::ScrubSlotInFlight *
+  scrubInFlight(const PlayerController &controller) {
+    return controller.mpv_.scrub_seek_
+               ? std::get_if<MpvEngine::ScrubSlotInFlight>(
+                     &controller.mpv_.scrub_seek_->slot)
+               : nullptr;
+  }
+
   static std::uint64_t scrubCommand(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ ? controller.mpv_.scrub_seek_->command : 0;
+    return controller.mpv_.scrubCommandInFlight().value_or(0);
   }
 
   static double scrubTarget(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ ? controller.mpv_.scrub_seek_->target : -1.0;
+    const auto *in_flight = scrubInFlight(controller);
+    return in_flight ? in_flight->target : -1.0;
   }
 
   static std::optional<double>
@@ -468,12 +497,13 @@ class PlayerControllerTestAccess final {
   }
 
   static bool scrubFinal(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->final;
+    return controller.mpv_.scrub_seek_ &&
+           controller.mpv_.scrub_seek_->phase == MpvEngine::ScrubPhase::Released;
   }
 
   static bool scrubCommandExact(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ &&
-           controller.mpv_.scrub_seek_->command_exact;
+    const auto *in_flight = scrubInFlight(controller);
+    return in_flight && in_flight->exact;
   }
 
   static const char *scrubCommandMode(const PlayerController &controller) {
@@ -491,27 +521,30 @@ class PlayerControllerTestAccess final {
 
   static std::uint64_t scrubTimeoutCommand(
       const PlayerController &controller) {
-    return controller.mpv_.scrub_timeout_command_;
+    return controller.mpv_.scrub_timeout_key_
+               ? controller.mpv_.scrub_timeout_key_->command
+               : 0;
   }
 
   static bool scrubTimeoutOwnsActiveCommand(
       const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_timeout_timer_ &&
-           controller.mpv_.scrub_timeout_timer_->isActive() &&
-           controller.mpv_.scrub_timeout_gesture_ ==
-               controller.mpv_.scrub_seek_->gesture &&
-           controller.mpv_.scrub_timeout_request_serial_ ==
-               controller.mpv_.scrub_seek_->request_serial &&
-           controller.mpv_.scrub_timeout_command_ ==
-               controller.mpv_.scrub_seek_->command;
+    const auto &key = controller.mpv_.scrub_timeout_key_;
+    return controller.mpv_.scrub_seek_ && scrubTimeoutActive(controller) && key &&
+           key->gesture == controller.mpv_.scrub_seek_->gesture &&
+           key->request_serial == controller.mpv_.scrub_seek_->request_serial &&
+           key->command == scrubCommand(controller);
   }
 
   static bool scrubSeekStarted(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->seek_started;
+    const auto *in_flight = scrubInFlight(controller);
+    return in_flight &&
+           in_flight->progress != MpvEngine::ScrubSlotInFlight::Progress::Issued;
   }
 
   static bool scrubAbortPending(const PlayerController &controller) {
-    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->abort_pending;
+    return controller.mpv_.scrub_seek_ &&
+           std::holds_alternative<MpvEngine::ScrubSlotAborting>(
+               controller.mpv_.scrub_seek_->slot);
   }
 
   static void scrubCommandReply(PlayerController &controller,
@@ -520,17 +553,17 @@ class PlayerControllerTestAccess final {
   }
 
   static void scrubSeekStarted(PlayerController &controller) {
-    if (controller.mpv_.scrub_seek_)
-      controller.mpv_.scrub_seek_->seek_started = true;
+    controller.mpv_.noteSeekStarted();
   }
 
   static void scrubRestart(PlayerController &controller,
                            double authoritative_position) {
-    if (!controller.mpv_.scrub_seek_)
+    auto *in_flight = const_cast<MpvEngine::ScrubSlotInFlight *>(
+        scrubInFlight(controller));
+    if (!in_flight)
       return;
-    controller.mpv_.scrub_seek_->authoritative_position =
-        authoritative_position;
-    controller.mpv_.scrub_seek_->playback_restarted = true;
+    in_flight->landed = authoritative_position;
+    in_flight->progress = MpvEngine::ScrubSlotInFlight::Progress::Restarted;
     controller.mpv_.maybeCompleteScrubSeek();
   }
 
@@ -547,16 +580,13 @@ class PlayerControllerTestAccess final {
                            std::uint64_t command) {
     if (!controller.mpv_.scrub_seek_)
       return;
-    if (controller.mpv_.scrub_timeout_gesture_ ==
-            controller.mpv_.scrub_seek_->gesture &&
-        controller.mpv_.scrub_timeout_request_serial_ ==
-            controller.mpv_.scrub_seek_->request_serial &&
-        controller.mpv_.scrub_timeout_command_ == command) {
+    const MpvEngine::ScrubTimeoutKey key{controller.mpv_.scrub_seek_->gesture,
+                                         controller.mpv_.scrub_seek_->request_serial,
+                                         command};
+    if (controller.mpv_.scrub_timeout_key_ &&
+        controller.mpv_.scrub_timeout_key_->command == command)
       controller.mpv_.cancelScrubTimeout();
-    }
-    controller.mpv_.handleScrubTimeout(controller.mpv_.scrub_seek_->gesture,
-                                  controller.mpv_.scrub_seek_->request_serial,
-                                  command);
+    controller.mpv_.handleScrubTimeout(key);
   }
 
   static void scrubFinish(PlayerController &controller,
@@ -717,17 +747,15 @@ class PlayerControllerTestAccess final {
   }
 
   static std::uint64_t nativePreviewRequest(
-      const PlayerController &controller) {
-    return controller.native_scrub_intent_
-               ? controller.native_scrub_intent_->latest_preview_request
-               : 0;
+      PlayerController &controller) {
+    const auto *scrub = controller.nativeScrub();
+    return scrub ? scrub->latest_preview_request : 0;
   }
 
   static std::uint64_t nativeDispatchedPreviewRequest(
-      const PlayerController &controller) {
-    return controller.native_scrub_intent_
-               ? controller.native_scrub_intent_->dispatched_preview_request
-               : 0;
+      PlayerController &controller) {
+    const auto *scrub = controller.nativeScrub();
+    return scrub ? scrub->in_flight_preview.value_or(0) : 0;
   }
 
   static bool endNativeScrub(PlayerController &controller, double target) {
@@ -767,6 +795,10 @@ class PlayerControllerTestAccess final {
     double nested_target{0.0};
     NativeSeekProbe *nested_probe{nullptr};
   };
+
+  static void acceptNativeSubmission(NativeSeekProbe &probe) {
+    probe.result = PlayerController::NativeSeekSubmission::Accepted;
+  }
 
   static void rejectNativeSubmission(NativeSeekProbe &probe) {
     probe.result = PlayerController::NativeSeekSubmission::Rejected;
@@ -893,43 +925,67 @@ class PlayerControllerTestAccess final {
     controller.nativeCommitFailed(gesture, request);
   }
 
+  static const PlayerController::NativeScrubIntent *
+  scrubOf(const PlayerController &controller) {
+    const auto *scrubbing =
+        std::get_if<PlayerController::NativeScrubbing>(&controller.native_gesture_);
+    return scrubbing ? &scrubbing->scrub : nullptr;
+  }
+
   static bool hasNativeScrub(const PlayerController &controller) {
-    return controller.native_scrub_intent_.has_value();
+    return scrubOf(controller) != nullptr;
   }
 
   static bool hasNativeSeek(const PlayerController &controller) {
-    return controller.native_seek_intent_.has_value();
+    return controller.nativeCommit() != nullptr;
   }
 
   static std::uint64_t nativeScrubGesture(
       const PlayerController &controller) {
-    return controller.native_scrub_intent_
-               ? controller.native_scrub_intent_->gesture
-               : 0;
+    return scrubOf(controller) ? scrubOf(controller)->gesture : 0;
   }
 
   static std::uint64_t nativeSeekGesture(const PlayerController &controller) {
-    return controller.native_seek_intent_
-               ? controller.native_seek_intent_->gesture
-               : 0;
+    return controller.nativeCommit() ? controller.nativeCommit()->gesture : 0;
   }
 
   static std::uint64_t nativeSeekRequest(const PlayerController &controller) {
-    return controller.native_seek_intent_
-               ? controller.native_seek_intent_->request
-               : 0;
+    return controller.nativeCommit() ? controller.nativeCommit()->request : 0;
   }
 
   static double nativeScrubTarget(const PlayerController &controller) {
-    return controller.native_scrub_intent_
-               ? controller.native_scrub_intent_->target
-               : -1.0;
+    return scrubOf(controller) ? scrubOf(controller)->target : -1.0;
   }
 
   static double nativeSeekTarget(const PlayerController &controller) {
-    return controller.native_seek_intent_
-               ? controller.native_seek_intent_->target
-               : -1.0;
+    return controller.nativeCommit() ? controller.nativeCommit()->target : -1.0;
+  }
+
+  // A frame step through the native branch, against an injected commit
+  // submitter, and the step it leaves armed for its settling commit.
+  static void stepNativeFrame(PlayerController &controller, bool forward,
+                              NativeSeekProbe &probe) {
+    controller.stepNativeFrame(
+        forward, &probe,
+        [](void *context,
+           const PlayerController::NativeSeekIntent &request) noexcept {
+          auto &capture = *static_cast<NativeSeekProbe *>(context);
+          ++capture.submissions;
+          capture.gesture = request.gesture;
+          capture.request = request.request;
+          capture.target = request.target;
+          capture.intended_paused = request.intended_paused;
+          return capture.result;
+        });
+  }
+
+  static bool frameStepArmed(const PlayerController &controller) {
+    return controller.pending_frame_step_.has_value();
+  }
+
+  static void publishFrameGeometry(PlayerController &controller, double start,
+                                   double duration) {
+    controller.publishNativeFrameGeometry(start, duration);
   }
 
   // Frame stepping's whole exactness argument lives in this one function, so
@@ -941,10 +997,7 @@ class PlayerControllerTestAccess final {
   }
 
   static bool nativeIntendsPause(const PlayerController &controller) {
-    if (controller.native_scrub_intent_)
-      return controller.native_scrub_intent_->intended_paused;
-    return controller.native_seek_intent_ &&
-           controller.native_seek_intent_->intended_paused;
+    return controller.nativeSeekInFlight() && controller.nativeIntendedPaused();
   }
 
   static void setNativePauseIntent(PlayerController &controller, bool paused) {
@@ -985,19 +1038,20 @@ class PlayerControllerTestAccess final {
   }
 
   static void queueRecoveryCompletion(PlayerController &controller) {
-    if (!controller.mpv_.lineage.render_recovery)
+    if (!controller.mpv_.lineage.recovery())
       return;
-    controller.mpv_.lineage.render_recovery->transport_restored = true;
+    if (auto *restoring = controller.mpv_.lineage.recovery()->restoring())
+      restoring->step = MpvEngine::RestoreStep::Done;
     controller.mpv_.queueRenderRecoveryCompletion();
   }
 
   static void finishQueuedRecoveryCompletion(PlayerController &controller) {
-    if (!controller.mpv_.lineage.render_recovery || !controller.mpv_.lineage.committed_open)
+    if (!controller.mpv_.lineage.recovery() || !controller.mpv_.lineage.committed_open)
       return;
+    const auto *restoring = controller.mpv_.lineage.recovery()->restoring();
     controller.mpv_.finishRenderRecoveryCompletion(
-        controller.mpv_.lineage.render_recovery->completion_token,
-        controller.mpv_.lineage.render_recovery->request_serial,
-        controller.mpv_.lineage.render_recovery->accepted_render_stamp,
+        restoring && restoring->completion_token ? *restoring->completion_token : 0,
+        restoring ? restoring->stamp : 0,
         controller.mpv_.lineage.committed_open->playlist_entry_id);
   }
 
@@ -1007,10 +1061,10 @@ class PlayerControllerTestAccess final {
                                   std::optional<double> position,
                                   std::optional<double> duration =
                                       std::nullopt) {
-    if (!controller.mpv_.lineage.render_recovery)
+    if (!controller.mpv_.lineage.recovery())
       return;
     const PlayerController::RenderRecovery recovery =
-        *controller.mpv_.lineage.render_recovery;
+        *controller.mpv_.lineage.recovery();
     controller.mpv_.commitRenderRecovery(
         recovery, MpvEngine::LivePlaybackState{
                       paused, idle, eof_reached, position, duration});
@@ -1040,10 +1094,10 @@ class PlayerControllerTestAccess final {
   static bool recoveryAcceptsLiveState(
       const PlayerController &controller, bool paused, bool idle,
       bool eof_reached) {
-    if (!controller.mpv_.lineage.render_recovery)
+    if (!controller.mpv_.lineage.recovery())
       return false;
-    return MpvEngine::livePlaybackStateMatchesRecovery(
-        *controller.mpv_.lineage.render_recovery,
+    return MpvEngine::livePlaybackStateMatches(
+        controller.mpv_.lineage.recovery()->paused,
         MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             std::nullopt, std::nullopt});
   }
@@ -1090,36 +1144,58 @@ class PlayerControllerTestAccess final {
                                              std::int64_t audio,
                                              std::int64_t subtitle,
                                              bool has_audio_track) {
-    if (!controller.mpv_.lineage.render_recovery || !controller.mpv_.lineage.committed_open)
+    if (!controller.mpv_.lineage.recovery() || !controller.mpv_.lineage.committed_open)
       return;
-    controller.mpv_.lineage.render_recovery->video_track_id = video;
-    controller.mpv_.lineage.render_recovery->audio_track_id = audio;
-    controller.mpv_.lineage.render_recovery->subtitle_track_id = subtitle;
-    controller.mpv_.lineage.render_recovery->file_has_audio_track = has_audio_track;
-    controller.mpv_.lineage.render_recovery->track_snapshot_proven = true;
+    controller.mpv_.lineage.recovery()->video_track_id = video;
+    controller.mpv_.lineage.recovery()->audio_track_id = audio;
+    controller.mpv_.lineage.recovery()->subtitle_track_id = subtitle;
+    controller.mpv_.lineage.recovery()->file_has_audio_track = has_audio_track;
+    controller.mpv_.lineage.recovery()->track_snapshot_proven = true;
     controller.mpv_.lineage.selected_video_track_id = video;
     controller.mpv_.lineage.selected_audio_track_id = audio;
     controller.mpv_.lineage.selected_subtitle_track_id = subtitle;
     controller.mpv_.lineage.selected_tracks_playlist_entry_id =
         controller.mpv_.lineage.committed_open->playlist_entry_id;
     controller.mpv_.lineage.current_file_has_audio_track = has_audio_track;
+    const auto *restoring = controller.mpv_.lineage.recovery()->restoring();
+    std::uint64_t stamp = restoring ? restoring->stamp : 0;
     if (const auto ready = controller.mpv_.core->readyRenderTicket())
-      controller.mpv_.lineage.render_recovery->accepted_render_stamp = ready->stamp;
-    controller.mpv_.lineage.committed_open->render_stamp =
-        controller.mpv_.lineage.render_recovery->accepted_render_stamp;
-    controller.mpv_.lineage.render_recovery.reset();
+      stamp = ready->stamp;
+    controller.mpv_.lineage.committed_open->render_stamp = stamp;
+    controller.mpv_.lineage.endRecovery();
   }
 
   static void exhaustRecoveryRetry(PlayerController &controller,
                                    const QString &error) {
-    if (!controller.mpv_.lineage.render_recovery)
+    if (!controller.mpv_.lineage.recovery())
       return;
-    controller.mpv_.lineage.render_recovery->restore_retry_count = 3;
+    controller.mpv_.lineage.recovery()->restore_retries = 3;
     controller.mpv_.scheduleRenderRecoveryRetry(error);
   }
 
+  static void scheduleRecoveryRetry(PlayerController &controller,
+                                    const QString &error) {
+    controller.mpv_.scheduleRenderRecoveryRetry(error);
+  }
+
+  static void setRecoveryVideoReselect(PlayerController &controller) {
+    if (controller.mpv_.lineage.recovery())
+      controller.mpv_.lineage.recovery()->mode =
+          PlayerController::RenderRecoveryMode::VideoReselect;
+  }
+
+  static void acceptRecoveryGeneration(PlayerController &controller,
+                                       RenderTicket ticket) {
+    if (controller.mpv_.lineage.recovery())
+      controller.mpv_.lineage.recovery()->acceptGeneration(ticket.stamp);
+  }
+
+  static void startNewLineage(PlayerController &controller) {
+    controller.mpv_.startNewLineage();
+  }
+
   static std::int64_t activeEntry(const PlayerController &controller) {
-    return controller.mpv_.lineage.active_event_playlist_entry_id;
+    return controller.mpv_.lineage.activeEntry();
   }
 
   static void seedPendingReplacement(PlayerController &controller,
@@ -1127,8 +1203,7 @@ class PlayerControllerTestAccess final {
                                      std::uint64_t serial) {
     controller.request_serial_ = serial;
     controller.requested_source_ = source;
-    controller.mpv_.lineage.pending_source = source;
-    controller.mpv_.lineage.pending_request_serial = serial;
+    controller.mpv_.lineage.pending_open = MpvEngine::PendingOpen{source, serial};
   }
 
   static void endFile(PlayerController &controller, int reason,
@@ -1206,6 +1281,53 @@ int main(int argc, char **argv) {
     expect(notifications==0, "caption worker cannot call UI directly");
     QCoreApplication::processEvents();
     expect(notifications==1 && bool(bridge.latest), "caption event queue is coalesced");
+  }
+  {
+    // A timeline sweep belongs to the media it was sweeping: opening another
+    // file ends it, so its settle cannot seek the new file to the old target.
+    QTemporaryDir dir;
+    wam::StateStore store(std::filesystem::path(dir.path().toStdString()) / "state.tsv");
+    wam::qt::AppSettings settings(store);
+    wam::qt::PlayerController controller;
+    controller.bindSettings(settings);
+    wam::qt::PlayerControllerTestAccess::setSource(
+        controller, QUrl::fromLocalFile(dir.path() + QStringLiteral("/a.mp4")));
+    expect(controller.scrollGesture(-200.0, 0.0, 0.0, 0.0, false, 2) == 2 &&
+               controller.scrollGestureActive(),
+           "a horizontal scroll opens a timeline sweep");
+    static_cast<void>(controller.open(QUrl::fromLocalFile(dir.path() + QStringLiteral("/b.mp4"))));
+    expect(!controller.scrollGestureActive(), "opening another file ends the sweep");
+  }
+  {
+    // A track load superseded by an inline source (a sidecar file) must not
+    // deliver its result afterwards: the cancel retires its generation.
+    QTemporaryDir dir;
+    const std::filesystem::path sidecar =
+        std::filesystem::path(dir.path().toStdString()) / "cue.srt";
+    std::ofstream(sidecar) << "1\n00:00:00,000 --> 00:00:10,000\nSidecar\n";
+    wam::qt::SubtitleSources tracks;
+    wam::qt::SubtitleSources::Source embedded;
+    embedded.label = QStringLiteral("Embedded");
+    embedded.mp4Track = 1;
+    embedded.filePath = std::filesystem::path(dir.path().toStdString()) / "absent.mp4";
+    tracks.setEmbeddedTracks({embedded});
+    const int sidecarId = tracks.addFileSource(
+        sidecar, wam::qt::SubtitleSources::Origin::External, {}, 0);
+    int failures = 0;
+    QObject::connect(&tracks, &wam::qt::SubtitleSources::loadFailed,
+                     [&failures](const QString &) { ++failures; });
+    tracks.beginNativeLoad(tracks.sources().front().id);
+    expect(tracks.loading(), "an embedded track loads on a worker");
+    tracks.setActiveId(sidecarId);
+    tracks.beginNativeLoad(sidecarId);
+    expect(!tracks.loading(), "an inline sidecar load leaves no worker running");
+    for (int i = 0; i < 20; ++i) {
+      QCoreApplication::processEvents();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    expect(failures == 0, "a superseded track load delivers nothing");
+    expect(tracks.textAt(1.0) == QStringLiteral("Sidecar"),
+           "the sidecar's cues are the ones shown");
   }
   {
     wam::qt::SubtitleSources tracks;
@@ -1979,6 +2101,38 @@ int main(int argc, char **argv) {
   }
 
   {
+    // A video reselect whose entry fails escalates to a full reload while a
+    // restore retry is queued; that stale retry must not strand the budget.
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    const auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://tickets/escalated-retry"));
+    Access::seedCommittedRecovery(controller, source, 66, ready, 966, 12.0,
+                                  false);
+    Access::setRecoveryVideoReselect(controller);
+    Access::scheduleRecoveryRetry(
+        controller, QStringLiteral("Restored video output did not become ready."));
+    Access::endFile(controller, MPV_END_FILE_REASON_ERROR, 966,
+                    MPV_ERROR_LOADING_FAILED);
+    expect(Access::recoveryIsFullReload(controller),
+           "an unloaded reselect escalates to a full reload");
+    QCoreApplication::processEvents();
+    Access::acceptRecoveryGeneration(controller, ready);
+    for (int attempt = 0; attempt < 8 && Access::hasRenderRecovery(controller);
+         ++attempt) {
+      Access::scheduleRecoveryRetry(
+          controller, QStringLiteral("Unable to restore selected media tracks."));
+      // Long enough for the slowest (50 ms) retry timer to fire.
+      static_cast<void>(processEventsUntil([] { return false; },
+                                           std::chrono::milliseconds(80)));
+    }
+    expect(!Access::hasRenderRecovery(controller) &&
+               !controller.lastError().isEmpty(),
+           "restore failures after escalation still retry, then degrade");
+  }
+
+
+  {
     using Access = wam::qt::PlayerControllerTestAccess;
     wam::qt::PlayerController controller;
     expect(Access::initializeEngine(controller),
@@ -2092,6 +2246,26 @@ int main(int argc, char **argv) {
     expect(Access::recoveryIsVideoReselect(controller) &&
                Access::recoveryTrackSnapshotProven(controller),
            "a second invalidation uses the proven live A/V snapshot");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    const auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://tickets/reload-restart-order"));
+    Access::seedCommittedMedia(controller, source, 74, ready, 474, 1, 0, 0,
+                               false);
+    Access::clearTrackSnapshot(controller);
+    Access::renderInvalidated(controller, Access::invalidateRenderer(controller));
+    const auto replacement = Access::makeRendererReady(controller);
+    const std::uint64_t reload = Access::seedFullReloadAttempt(
+        controller, replacement, 475, false);
+    Access::startFile(controller, 475);
+    Access::playbackReady(controller);
+    Access::completeRecoveryAttempt(controller, reload);
+    expect(Access::hasRenderRecovery(controller) &&
+               Access::recoveryPlaybackRestarted(controller),
+           "a reload's restart that beats its command reply still counts");
   }
 
   {
@@ -2458,6 +2632,26 @@ int main(int argc, char **argv) {
                Access::scrubTimeoutCommand(controller) == 0,
            "later exact position convergence restores play intent and "
            "cancels the reusable watchdog");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    expect(Access::initializeEngine(controller),
+           "lineage-reset scrub test has a live libmpv client");
+    const auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://scrub/lineage-reset"));
+    Access::seedCommittedMedia(controller, source, 103, ready, 1003, 1, 2,
+                               0, true);
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    controller.beginScrub();
+    controller.previewSeekTo(20.0);
+    expect(Access::hasScrub(controller) && Access::scrubCommand(controller) != 0,
+           "a mid-drag gesture owns an in-flight seek");
+    Access::startNewLineage(controller);
+    expect(!Access::hasScrub(controller) &&
+               !Access::scrubTimeoutActive(controller),
+           "a new lineage (stop, owner error) ends the scrub gesture with it");
   }
 
   {
@@ -3213,6 +3407,31 @@ int main(int argc, char **argv) {
     Access::failNativeSeek(controller, nested.gesture, nested.request);
   }
 
+  {
+    // A frame step pressed before the frame on screen was proved stays armed
+    // only while its own settling commit converges. A refused or failed
+    // settle used to leave it armed, and the next drawn frame (the first one
+    // after Play) fired it, pausing playback by itself.
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::NativeSeekProbe probe;
+    Access::rejectNativeSubmission(probe);
+    Access::stepNativeFrame(controller, true, probe);
+    expect(probe.submissions == 1, "an unproved frame step settles first");
+    expect(!Access::frameStepArmed(controller),
+           "a refused settle leaves no frame step armed");
+
+    Access::acceptNativeSubmission(probe);
+    Access::stepNativeFrame(controller, true, probe);
+    expect(Access::frameStepArmed(controller),
+           "an accepted settle arms the step for its own landing");
+    Access::publishFrameGeometry(controller, 5.0, 0.04);
+    expect(Access::frameStepArmed(controller),
+           "a main-draw proof does not spend the step");
+    Access::failNativeSeek(controller, probe.gesture, probe.request);
+    expect(!Access::frameStepArmed(controller) && !Access::hasNativeSeek(controller),
+           "a failed settle disarms its step");
+  }
   {
     // ------------------------------------------------------------------
     // Frame stepping: the exactness property, against real sample timing.

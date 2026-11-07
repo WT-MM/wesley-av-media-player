@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <variant>
 
 namespace wam::qt {
 
@@ -142,14 +143,25 @@ private:
     PlaybackSourceClass sourceClass{PlaybackSourceClass::Network};
   };
 
+  // One fallback Stop transaction: the command is in flight, or it replied
+  // and waits for mpv to report idle, or it was given up on and the core is
+  // reset instead. Either of the last two completes once rendering is
+  // released.
+  struct FallbackStopSubmitted {
+    std::uint64_t replyId{0};
+  };
+  struct FallbackStopReplied {
+    std::uint64_t replyId{0};
+    bool idleObserved{false};
+  };
+  struct FallbackStopExhausted {};
   struct FallbackStop {
     playback_router::FallbackCommand command{};
     std::shared_ptr<PlayerCore> core;
-    std::uint64_t replyId{0};
     unsigned submissions{0};
-    bool commandReplied{false};
-    bool idleObserved{false};
-    bool terminalResetRequired{false};
+    std::variant<FallbackStopSubmitted, FallbackStopReplied,
+                 FallbackStopExhausted>
+        phase{FallbackStopSubmitted{}};
   };
 
   void completeOpenPreflight(::wam::macos::NativeOpenPreflightResult result);
@@ -209,7 +221,6 @@ private:
   std::uint64_t nextSourceKey_{0};
   std::uint64_t nextFallbackStopReplyId_{0};
   std::uint64_t latestOpenPreflightRequest_{0};
-  bool surfaceLost_{false};
   NativeBenchmarkTelemetry *telemetry_{nullptr};
   // This window's hold on the process-wide activity assertion.
   QMetaObject::Connection activityConnection_;

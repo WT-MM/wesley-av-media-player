@@ -247,13 +247,10 @@ NativeBenchmarkTelemetry &NativeBenchmarkTelemetry::instance() noexcept {
 NativeBenchmarkTelemetry::NativeBenchmarkTelemetry(bool enabled, Clock clock,
                                                    Sink sink, Flusher flusher,
                                                    void *sinkContext) noexcept
-    : enabled_(enabled && clock != nullptr && sink != nullptr &&
-               flusher != nullptr),
-      clock_(clock), sink_(sink), flusher_(flusher), sinkContext_(sinkContext) {
-  if (enabled_) {
+    : clock_(clock), sink_(sink), flusher_(flusher), sinkContext_(sinkContext) {
+  if (enabled && clock != nullptr && sink != nullptr && flusher != nullptr) {
     if (!processIdentity(runId_, assetSha256_, candidateId_, processId_,
                          processStartAbstime_)) {
-      enabled_ = false;
       return;
     }
     static_assert(std::is_trivially_default_constructible_v<BufferedPoint>);
@@ -262,9 +259,9 @@ NativeBenchmarkTelemetry::NativeBenchmarkTelemetry(bool enabled, Clock clock,
     if (points_ == nullptr || serialized_ == nullptr) {
       points_.reset();
       serialized_.reset();
-      enabled_ = false;
       return;
     }
+    lifecycle_ = Lifecycle::Recording;
     ownerThread_ = std::this_thread::get_id();
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
     media::audioBenchmarkMailbox.enabled.store(true, std::memory_order_relaxed);
@@ -273,7 +270,7 @@ NativeBenchmarkTelemetry::NativeBenchmarkTelemetry(bool enabled, Clock clock,
 }
 
 NativeBenchmarkTelemetry::~NativeBenchmarkTelemetry() noexcept {
-  if (enabled_ && !finished_) {
+  if (lifecycle_ == Lifecycle::Recording || lifecycle_ == Lifecycle::Failed) {
     static_cast<void>(finishUnchecked());
   }
 }
@@ -370,11 +367,12 @@ bool NativeBenchmarkTelemetry::onOwnerThread() const noexcept {
 
 void NativeBenchmarkTelemetry::failClosed() noexcept {
   pointCount_ = 0;
-  failed_ = true;
+  lifecycle_ = lifecycle_ == Lifecycle::Finished ? Lifecycle::FinishedFailed
+                                                 : Lifecycle::Failed;
 }
 
 bool NativeBenchmarkTelemetry::record(Point point) noexcept {
-  if (!enabled_ || failed_ || finished_ || !onOwnerThread()) {
+  if (!recording() || !onOwnerThread()) {
     return false;
   }
   return recordAt(point, clock_());
@@ -382,7 +380,7 @@ bool NativeBenchmarkTelemetry::record(Point point) noexcept {
 
 bool NativeBenchmarkTelemetry::recordAt(Point point,
                                         std::uint64_t monotonic) noexcept {
-  if (!enabled_ || failed_ || finished_ || !onOwnerThread()) {
+  if (!recording() || !onOwnerThread()) {
     return false;
   }
   if (pointCount_ == kMaximumBufferedPoints) {
@@ -400,7 +398,7 @@ bool NativeBenchmarkTelemetry::recordAt(Point point,
 
 bool NativeBenchmarkTelemetry::recordPairAt(Point first, Point second,
                                             std::uint64_t monotonic) noexcept {
-  if (!enabled_ || failed_ || finished_ || !onOwnerThread()) {
+  if (!recording() || !onOwnerThread()) {
     return false;
   }
   if (pointCount_ > kMaximumBufferedPoints - 2) {
@@ -420,7 +418,7 @@ bool NativeBenchmarkTelemetry::recordPairAt(Point first, Point second,
 }
 
 bool NativeBenchmarkTelemetry::flushBuffered() noexcept {
-  if (failed_) {
+  if (failed()) {
     return false;
   }
   if (pointCount_ == 0) {
@@ -604,7 +602,7 @@ bool NativeBenchmarkTelemetry::flushBuffered() noexcept {
 }
 
 bool NativeBenchmarkTelemetry::flushStreamCommit() noexcept {
-  if (failed_) {
+  if (failed()) {
     return false;
   }
   std::size_t serializedSize = 0;
@@ -732,11 +730,10 @@ void NativeBenchmarkTelemetry::drainAudio() noexcept {
 }
 
 bool NativeBenchmarkTelemetry::checkpoint() noexcept {
-  if (!enabled_) {
+  if (lifecycle_ == Lifecycle::Disabled) {
     return true;
   }
-  if (failed_ || finished_ || !onOwnerThread() || awaitingFirstDraw_ ||
-      !firstDrawCaptured_) {
+  if (!recording() || !onOwnerThread() || firstDraw_ != FirstDraw::Captured) {
     return false;
   }
   drainAudio();
@@ -744,11 +741,13 @@ bool NativeBenchmarkTelemetry::checkpoint() noexcept {
 }
 
 bool NativeBenchmarkTelemetry::finishUnchecked() noexcept {
-  if (finished_) {
-    return !failed_;
-  }
+  if (lifecycle_ == Lifecycle::Finished)
+    return true;
+  if (lifecycle_ == Lifecycle::FinishedFailed)
+    return false;
   drainAudio();
-  finished_ = true;
+  lifecycle_ = lifecycle_ == Lifecycle::Failed ? Lifecycle::FinishedFailed
+                                               : Lifecycle::Finished;
   if (!flushBuffered()) {
     return false;
   }
@@ -756,7 +755,7 @@ bool NativeBenchmarkTelemetry::finishUnchecked() noexcept {
 }
 
 bool NativeBenchmarkTelemetry::finish() noexcept {
-  if (!enabled_) {
+  if (lifecycle_ == Lifecycle::Disabled) {
     return true;
   }
   if (!onOwnerThread()) {
@@ -773,8 +772,7 @@ void NativeBenchmarkTelemetry::openRequested(
   point.sourceKey = sourceKey.value;
   point.libmpvInitialized = libmpvInitialized;
   if (record(point)) {
-    awaitingFirstDraw_ = true;
-    firstDrawCaptured_ = false;
+    firstDraw_ = FirstDraw::Awaiting;
   }
 }
 
@@ -812,7 +810,7 @@ void NativeBenchmarkTelemetry::fallbackSelected(
   // contaminated. After first draw, fallback already invalidates the trial;
   // publish it durably before returning so the live harness's final reread
   // cannot miss the route transition while WAM is still running.
-  if (firstDrawCaptured_) {
+  if (firstDraw_ == FirstDraw::Captured) {
     static_cast<void>(flushBuffered());
   }
 }
@@ -848,7 +846,7 @@ void NativeBenchmarkTelemetry::started(
 void NativeBenchmarkTelemetry::firstFrameDrawn(
     const media::native_playback::VideoDrawProof &proof,
     bool libmpvInitialized) noexcept {
-  if (!enabled_ || failed_ || finished_ || !onOwnerThread()) {
+  if (!recording() || !onOwnerThread()) {
     return;
   }
   Point point{};
@@ -867,8 +865,7 @@ void NativeBenchmarkTelemetry::firstFrameDrawn(
   if (!recordAt(point, now)) {
     return;
   }
-  awaitingFirstDraw_ = false;
-  firstDrawCaptured_ = true;
+  firstDraw_ = FirstDraw::Captured;
   static_cast<void>(flushBuffered());
 }
 
@@ -994,7 +991,7 @@ void NativeBenchmarkTelemetry::commitSeekSubmitted(
 void NativeBenchmarkTelemetry::commitReady(
     const media::native_playback::CommitReady &event,
     bool libmpvInitialized) noexcept {
-  if (!enabled_ || failed_ || finished_ || !onOwnerThread()) {
+  if (!recording() || !onOwnerThread()) {
     return;
   }
   const std::uint64_t now = clock_();

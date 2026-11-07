@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -34,16 +35,17 @@ subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-i', str(media), '-an',
 (root / 'truncated.mp4').write_bytes(media.read_bytes()[:10000])
 (root / 'cue.srt').write_text('1\n00:00:00,000 --> 00:00:19,900\nA subtitle near the bottom\n')
 
-def run(name, source, script, ms=6500, expect=0, **extra):
+def run(name, source, script, ms=6500, expect=0, home=None, **extra):
     out = root / name
     out.mkdir(exist_ok=True)
-    home = out / ('home-' + uuid.uuid4().hex)
+    home = home or out / ('home-' + uuid.uuid4().hex)
     home.mkdir(exist_ok=True)
     # Cocoa is required for native menus; no window is activated.
     env = wam_launch.seam_env(home, WAM_TEST_QUIT_AFTER_MS=ms, WAM_TEST_WINDOW_SCRIPT=script,
                               WAM_TEST_NOTICE_TRACE=1, WAM_PLAYBACK_METRICS_PATH=out/'samples.jsonl',
                               WAM_PLAYBACK_METRICS_INTERVAL_MS=100, QT_QPA_PLATFORM='cocoa', **extra)
-    rc, log = wam_launch.run(a.app.resolve(), [source], env, out/'stderr.log', ms/1000 + 20)
+    sources = source if isinstance(source, list) else [source]
+    rc, log = wam_launch.run(a.app.resolve(), sources, env, out/'stderr.log', ms/1000 + 20)
     (out/'receipt.json').write_text(json.dumps(dict(returncode=rc, script=script, source=str(source)), indent=2))
     assert rc == expect, (rc, str(out), log[-2000:])
     reports = wam_launch.records(log)
@@ -77,6 +79,31 @@ elif case == 'pending':
     check(of(reports, 'test_loading', loading=True, title='fixture.mp4'), 'Pending request must expose loading/title')
     check(not of(reports, 'test_windows', count=2), 'Pending open must reuse its window')
     check(rows[0]['media']==1 and rows[-1]['playing']==1, 'Pending request owns media and starts')
+elif case == 'multiopen':
+    # Two files on the command line (a Finder multi-select) open two windows:
+    # the second must not claim the first while that one is still opening.
+    _, reports, _ = run(case, [media, root/'last.mp4'], 'report@2500')
+    check(of(reports, 'test_windows', count=2), 'Each file gets its own window')
+    check(sorted(r['source'] for r in windows(reports)) == ['fixture.mp4', 'last.mp4'],
+          'Both files are open')
+elif case == 'resume':
+    # A remembered position must not override a seek the user made before
+    # playback started (pause during the open, seek, then play).
+    # The pause has to land after preflight and before playback starts; under
+    # load it can miss that window, so the whole sequence is retried.
+    for attempt in range(3):
+        home = root / f'resume-home-{attempt}'
+        shutil.rmtree(home, ignore_errors=True)
+        _, reports, _ = run(f'resume-first-{attempt}', fallback, 'skip:0:9@1800,pause:0@100,report@500',
+                            ms=4000, home=home)
+        check(9 < windows(reports)[-1]['pos'] < 14, 'First run leaves a resume point')
+        _, reports, _ = run(f'resume-second-{attempt}', fallback,
+                            'pause:0@80,report@1700,skip:0:2@1,report@600,play:0@1,report@1200', home=home)
+        rows = windows(reports)
+        if rows[0]['playing'] == 0:
+            break
+    check(rows[0]['playing'] == 0, 'Exercise a paused open')
+    check(rows[-1]['playing'] == 1 and rows[-1]['pos'] < 6, "The user's seek wins over the resume point")
 elif case == 'failed':
     _, reports, _ = run(case, root/'garbage.mp4', f'report@1800,menu@1,load:0:{media}@50,report@3000')
     rows = windows(reports)
@@ -137,6 +164,20 @@ elif case == 'truncated':
     _, reports, _ = run(case, root/'truncated.mp4', 'report@2400')
     check(any('incomplete' in n['error'] for n in notices(reports)), 'Specific file damage must survive fallback failure')
     check(windows(reports)[-1]['media']==0, 'Damaged file must empty the player')
+elif case == 'fill':
+    # A second Fill Screen toggle during the first one's zoom animation is
+    # refused; the window must then still un-fill on the next toggle.
+    _, reports, _ = run(case, media, 'report@1600,action:0:fillScreenPadded@50,action:0:fillScreenPadded@20,'
+                        'report@800,action:0:fillScreenPadded@50,report@800',
+                        WAM_TEST_GEOMETRY='480x270+120+160')
+    rows = windows(reports)
+    check(rows[1]['padded']==1 and rows[1]['geom']!=rows[0]['geom'], 'A refused un-fill keeps the window filled')
+    check(rows[-1]['padded']==0 and rows[-1]['geom']==rows[0]['geom'], 'The next toggle restores the pre-fill frame')
+elif case == 'chrome':
+    # An empty window's chrome never fades, including when it loses focus.
+    _, reports, _ = run(case, media, 'new@1600,focus:1:1@100,focus:1:0@100,report@200')
+    rows = windows(reports)
+    check(rows[1]['media']==0 and rows[1]['chrome']==1, 'An empty window keeps its chrome when deactivated')
 elif case == 'menu':
     _, reports, _ = run(case, media, 'seekstep:1@1600,menu@50,seekstep:5@50,menu@50')
     items = menu_items(reports)
@@ -172,5 +213,17 @@ elif case == 'hdr':
         check(row['hdr'] == 1 and row['vnat'] == '320x180', f'PQ {ext} must report HDR and its size')
     _, reports, _ = run('sdr', media, 'report@2000', ms=3000)
     check(windows(reports)[-1]['hdr'] == 0, 'An untagged file is SDR')
+elif case == 'playlisttitle':
+    # A playlist opens through the fallback route and redirects to its entry;
+    # the entry's own title must replace the playlist's.
+    titled = root / 'titled.wmv'
+    subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-i', str(fallback), '-c', 'copy',
+                    '-metadata', 'title=Synthetic Entry Title', str(titled)], check=True, timeout=60)
+    playlist = root / 'redirect.m3u'
+    playlist.write_text('#EXTM3U\n' + str(titled) + '\n')
+    _, reports, samples = run(case, playlist, 'layout:0@4500', ms=6000)
+    check(any(s['backend']=='mpv' for s in samples), 'Playlist must use fallback')
+    check(of(reports, 'test_loading')[-1]['title'] == 'Synthetic Entry Title',
+          'A redirected entry must show its own title')
 else:
     raise AssertionError(case)
