@@ -1852,6 +1852,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
           return result;
         }
         aac_timeline_ = handles.aacTimeline;
+        mp3_gapless_ = handles.mp3Gapless;
         asset = (__bridge AVURLAsset*)(
             const_cast<void*>(handles.asset));
         videoTrack = (__bridge AVAssetTrack*)(
@@ -2060,6 +2061,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // timeline to prove zero-based, no identifier to disambiguate against
         // the video track, and no audio format to describe. selectedAudio
         // stays unset and descriptor->tracks holds the video track alone.
+        mp3_gapless_.reset();
         if (audioTrack != nil) {
           std::array<media::AudioTrackCandidate,
                      MediaSourceLimits::kHardMaximumTracks> candidates{};
@@ -2090,7 +2092,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
                   return false;
                 }
                 const auto previousDuration = mutableDescriptor->duration;
-                if (const auto gapless = mp3LsfGapless(*proposed, request_.path)) {
+                const auto gapless = mp3LsfGapless(*proposed, request_.path);
+                if (gapless) {
                   proposed->duration = {static_cast<std::int64_t>(gapless->retainedFrames),
                                         static_cast<std::int32_t>(gapless->sampleRate)};
                   if (videoTrack == nil) mutableDescriptor->duration = proposed->duration;
@@ -2107,6 +2110,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
                   return false;
                 }
                 audioTrack = candidate;
+                mp3_gapless_ = gapless;
                 return true;
               });
           if (!selected) {
@@ -2132,7 +2136,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
             AVFoundationAssetContextNativeHandles{
                 (__bridge const void*)asset,
                 (__bridge const void*)videoTrack,
-                (__bridge const void*)audioTrack, aac_timeline_},
+                (__bridge const void*)audioTrack, aac_timeline_,
+                mp3_gapless_},
             metadataLoads);
         if (assetContext == nullptr) {
           result.error =
@@ -2280,9 +2285,9 @@ class ProductionGeneration final : public AVFoundationGeneration {
         audio_movie_shift_ = editFacts->shift;
         audio_media_start_ = editFacts->mediaStart;
         if (selectedAudio != nullptr && CMTimeCompare(audio_movie_shift_, kCMTimeZero) == 0) {
-          if (const auto gapless = mp3LsfGapless(*selectedAudio, request_.path)) {
-            audio_movie_shift_ = CMTimeMake(-static_cast<std::int64_t>(gapless->encoderDelay),
-                                            static_cast<std::int32_t>(gapless->sampleRate));
+          if (mp3_gapless_) {
+            audio_movie_shift_ = CMTimeMake(-static_cast<std::int64_t>(mp3_gapless_->encoderDelay),
+                                            static_cast<std::int32_t>(mp3_gapless_->sampleRate));
           }
         }
         // Place access unit 0 the decoder's own lead-in before the origin, as
@@ -3069,6 +3074,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
   }
 
   std::shared_ptr<const media::AacPacketTimeline> aac_timeline_;
+  std::optional<media::codec::Mp3LameGapless> mp3_gapless_;
   AVFoundationGenerationRequest request_;
   std::array<CMSampleTimingInfo,
              media::MediaSourceLimits::kHardMaximumAudioSampleCount>

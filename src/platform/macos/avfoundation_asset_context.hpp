@@ -2,6 +2,7 @@
 
 #include "media/native_media_source.hpp"
 #include "media/aac_packet_timeline.hpp"
+#include "media/codec/mpeg_audio.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -41,6 +42,9 @@ struct AVFoundationAssetContextNativeHandles {
   const void* selectedVideoTrack{nullptr};
   const void* selectedAudioTrack{nullptr};
   std::shared_ptr<const media::AacPacketTimeline> aacTimeline;
+  // The bare MP3 stream's LAME delay/padding, read from the file once at
+  // admission.
+  std::optional<media::codec::Mp3LameGapless> mp3Gapless;
 
   // Native v1 admits audio-less assets (a GIF-to-MP4 conversion carries one
   // H.264 track and no audio) AND video-less ones (a standalone music file),
