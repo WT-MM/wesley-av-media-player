@@ -444,97 +444,97 @@ class PlayerControllerTestAccess final {
   }
 
   static bool hasScrub(const PlayerController &controller) {
-    return controller.scrub_seek_.has_value();
+    return controller.mpv_.scrub_seek_.has_value();
   }
 
   static std::uint64_t scrubCommand(const PlayerController &controller) {
-    return controller.scrub_seek_ ? controller.scrub_seek_->command : 0;
+    return controller.mpv_.scrub_seek_ ? controller.mpv_.scrub_seek_->command : 0;
   }
 
   static double scrubTarget(const PlayerController &controller) {
-    return controller.scrub_seek_ ? controller.scrub_seek_->target : -1.0;
+    return controller.mpv_.scrub_seek_ ? controller.mpv_.scrub_seek_->target : -1.0;
   }
 
   static std::optional<double>
   scrubPendingTarget(const PlayerController &controller) {
-    return controller.scrub_seek_
-               ? controller.scrub_seek_->pending_target
+    return controller.mpv_.scrub_seek_
+               ? controller.mpv_.scrub_seek_->pending_target
                : std::nullopt;
   }
 
   static bool scrubIntendsPause(const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_seek_->intended_paused;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->intended_paused;
   }
 
   static bool scrubFinal(const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_seek_->final;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->final;
   }
 
   static bool scrubCommandExact(const PlayerController &controller) {
-    return controller.scrub_seek_ &&
-           controller.scrub_seek_->command_exact;
+    return controller.mpv_.scrub_seek_ &&
+           controller.mpv_.scrub_seek_->command_exact;
   }
 
   static const char *scrubCommandMode(const PlayerController &controller) {
-    return PlayerController::scrubSeekMode(scrubCommandExact(controller));
+    return MpvEngine::scrubSeekMode(scrubCommandExact(controller));
   }
 
   static QTimer *scrubTimeoutTimer(const PlayerController &controller) {
-    return controller.scrub_timeout_timer_;
+    return controller.mpv_.scrub_timeout_timer_;
   }
 
   static bool scrubTimeoutActive(const PlayerController &controller) {
-    return controller.scrub_timeout_timer_ &&
-           controller.scrub_timeout_timer_->isActive();
+    return controller.mpv_.scrub_timeout_timer_ &&
+           controller.mpv_.scrub_timeout_timer_->isActive();
   }
 
   static std::uint64_t scrubTimeoutCommand(
       const PlayerController &controller) {
-    return controller.scrub_timeout_command_;
+    return controller.mpv_.scrub_timeout_command_;
   }
 
   static bool scrubTimeoutOwnsActiveCommand(
       const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_timeout_timer_ &&
-           controller.scrub_timeout_timer_->isActive() &&
-           controller.scrub_timeout_gesture_ ==
-               controller.scrub_seek_->gesture &&
-           controller.scrub_timeout_request_serial_ ==
-               controller.scrub_seek_->request_serial &&
-           controller.scrub_timeout_command_ ==
-               controller.scrub_seek_->command;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_timeout_timer_ &&
+           controller.mpv_.scrub_timeout_timer_->isActive() &&
+           controller.mpv_.scrub_timeout_gesture_ ==
+               controller.mpv_.scrub_seek_->gesture &&
+           controller.mpv_.scrub_timeout_request_serial_ ==
+               controller.mpv_.scrub_seek_->request_serial &&
+           controller.mpv_.scrub_timeout_command_ ==
+               controller.mpv_.scrub_seek_->command;
   }
 
   static bool scrubSeekStarted(const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_seek_->seek_started;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->seek_started;
   }
 
   static bool scrubAbortPending(const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_seek_->abort_pending;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->abort_pending;
   }
 
   static void scrubCommandReply(PlayerController &controller,
                                 std::uint64_t command, int error = 0) {
-    controller.handleScrubCommandReply(command, error);
+    controller.mpv_.handleScrubCommandReply(command, error);
   }
 
   static void scrubSeekStarted(PlayerController &controller) {
-    if (controller.scrub_seek_)
-      controller.scrub_seek_->seek_started = true;
+    if (controller.mpv_.scrub_seek_)
+      controller.mpv_.scrub_seek_->seek_started = true;
   }
 
   static void scrubRestart(PlayerController &controller,
                            double authoritative_position) {
-    if (!controller.scrub_seek_)
+    if (!controller.mpv_.scrub_seek_)
       return;
-    controller.scrub_seek_->authoritative_position =
+    controller.mpv_.scrub_seek_->authoritative_position =
         authoritative_position;
-    controller.scrub_seek_->playback_restarted = true;
-    controller.maybeCompleteScrubSeek();
+    controller.mpv_.scrub_seek_->playback_restarted = true;
+    controller.mpv_.maybeCompleteScrubSeek();
   }
 
   static void scrubPlaybackRestart(PlayerController &controller) {
-    controller.handleScrubPlaybackRestart();
+    controller.mpv_.handleScrubPlaybackRestart();
   }
 
   static void scrubObservedPosition(PlayerController &controller,
@@ -544,23 +544,23 @@ class PlayerControllerTestAccess final {
 
   static void scrubTimeout(PlayerController &controller,
                            std::uint64_t command) {
-    if (!controller.scrub_seek_)
+    if (!controller.mpv_.scrub_seek_)
       return;
-    if (controller.scrub_timeout_gesture_ ==
-            controller.scrub_seek_->gesture &&
-        controller.scrub_timeout_request_serial_ ==
-            controller.scrub_seek_->request_serial &&
-        controller.scrub_timeout_command_ == command) {
-      controller.cancelScrubTimeout();
+    if (controller.mpv_.scrub_timeout_gesture_ ==
+            controller.mpv_.scrub_seek_->gesture &&
+        controller.mpv_.scrub_timeout_request_serial_ ==
+            controller.mpv_.scrub_seek_->request_serial &&
+        controller.mpv_.scrub_timeout_command_ == command) {
+      controller.mpv_.cancelScrubTimeout();
     }
-    controller.handleScrubTimeout(controller.scrub_seek_->gesture,
-                                  controller.scrub_seek_->request_serial,
+    controller.mpv_.handleScrubTimeout(controller.mpv_.scrub_seek_->gesture,
+                                  controller.mpv_.scrub_seek_->request_serial,
                                   command);
   }
 
   static void scrubFinish(PlayerController &controller,
                           bool restore_transport) {
-    controller.finishScrubGesture(restore_transport);
+    controller.mpv_.finishScrubGesture(restore_transport);
   }
 
   static bool beginNativeScrub(PlayerController &controller) {

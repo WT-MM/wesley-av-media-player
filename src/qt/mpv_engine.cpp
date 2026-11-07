@@ -1,12 +1,14 @@
 #include "mpv_engine.hpp"
 
 #include "media/startup_benchmark.hpp"
+#include "player_controller.hpp"
 #include "player_core_p.hpp"
 #include "playback/mpv/mpv_runtime.hpp"
 
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QTimer>
 
 #include <algorithm>
 #include <new>
@@ -14,6 +16,9 @@
 
 namespace wam::qt {
 namespace {
+
+constexpr double kScrubConvergenceToleranceSeconds = 0.050;
+constexpr int kScrubSeekTimeoutMs = 750;
 
 using ::wam::playback::mpv::MpvApi;
 
@@ -63,10 +68,27 @@ QUrl urlFromMpvPath(const QString &path) {
 }
 
 
-MpvEngine::MpvEngine(PlayerController *owner)
-    : core(std::make_shared<PlayerCore>(owner)), owner_(owner) {}
+MpvEngine::MpvEngine(PlayerController *owner, MpvEngineHost &host)
+    : core(std::make_shared<PlayerCore>(owner)), owner_(owner), host_(host) {
+  // Scrubbing can issue many commands over one pointer gesture. Reusing one
+  // timer avoids allocating a lambda/timer event for every command and makes
+  // stale timeout ownership explicit when the capacity-one slot is rearmed.
+  scrub_timeout_timer_ = new QTimer(owner);
+  scrub_timeout_timer_->setSingleShot(true);
+  scrub_timeout_timer_->setTimerType(Qt::PreciseTimer);
+  QObject::connect(scrub_timeout_timer_, &QTimer::timeout, owner, [this] {
+    const std::uint64_t gesture = scrub_timeout_gesture_;
+    const std::uint64_t request_serial = scrub_timeout_request_serial_;
+    const std::uint64_t command = scrub_timeout_command_;
+    cancelScrubTimeout();
+    handleScrubTimeout(gesture, request_serial, command);
+  });
+}
 
-MpvEngine::~MpvEngine() = default;
+MpvEngine::~MpvEngine() {
+  if (scrub_timeout_timer_)
+    scrub_timeout_timer_->stop();
+}
 
 bool MpvEngine::ready() const { return core && core->ready(); }
 
@@ -469,6 +491,317 @@ int MpvEngine::commandNow(const char **arguments) {
 void MpvEngine::abortCommand(std::uint64_t reply_userdata) {
   if (const ReadyMpvClient client = readyMpvClient(core.get()))
     client.api->mpv_abort_async_command(client.handle, reply_userdata);
+}
+
+const char *MpvEngine::scrubSeekMode(bool exact) {
+  return exact ? "absolute+exact" : "absolute+keyframes";
+}
+
+void MpvEngine::armScrubTimeout(std::uint64_t gesture,
+                                       std::uint64_t request_serial,
+                                       std::uint64_t command) {
+  if (!scrub_timeout_timer_)
+    return;
+  scrub_timeout_timer_->stop();
+  scrub_timeout_gesture_ = gesture;
+  scrub_timeout_request_serial_ = request_serial;
+  scrub_timeout_command_ = command;
+  scrub_timeout_timer_->start(kScrubSeekTimeoutMs);
+}
+
+void MpvEngine::cancelScrubTimeout() {
+  if (scrub_timeout_timer_)
+    scrub_timeout_timer_->stop();
+  scrub_timeout_gesture_ = 0;
+  scrub_timeout_request_serial_ = 0;
+  scrub_timeout_command_ = 0;
+}
+
+void MpvEngine::dispatchScrubSeek(double target, bool exact) {
+  if (!scrub_seek_ || !ready() || scrub_seek_->command != 0 ||
+      scrub_seek_->request_serial != host_.requestSerial() || !lineage.committed_open ||
+      lineage.committed_open->request_serial != host_.requestSerial() ||
+      lineage.committed_open->playlist_entry_id != scrub_seek_->playlist_entry_id ||
+      lineage.active_event_playlist_entry_id != scrub_seek_->playlist_entry_id) {
+    finishScrubGesture(true);
+    return;
+  }
+
+  const std::uint64_t command =
+      nextMpvReplyId(MpvReply::Scrub, next_scrub_command_id_);
+  const std::uint64_t reply_userdata = mpvReplyUserdata(MpvReply::Scrub, command);
+
+  scrub_seek_->command = command;
+  scrub_seek_->target = target;
+  scrub_seek_->command_exact = exact;
+  scrub_seek_->command_replied = false;
+  scrub_seek_->seek_started = false;
+  scrub_seek_->playback_restarted = false;
+  scrub_seek_->authoritative_position.reset();
+  const std::uint64_t gesture = scrub_seek_->gesture;
+  const std::uint64_t request_serial = scrub_seek_->request_serial;
+  const int result = sendCommand({QByteArrayLiteral("seek"),
+                                  QByteArray::number(target, 'g', 12),
+                                  QByteArray(scrubSeekMode(exact))},
+                                 reply_userdata);
+  if (result < 0) {
+    finishScrubGesture(true);
+    return;
+  }
+
+  // Command completion alone does not mean a frame was decoded. Keep the
+  // capacity-one slot until a post-issuance SEEK and playback restart identify
+  // a decoded frame. Exact release commands additionally converge to 50 ms.
+  armScrubTimeout(gesture, request_serial, command);
+}
+
+void MpvEngine::handleScrubTimeout(std::uint64_t gesture,
+                                          std::uint64_t request_serial,
+                                          std::uint64_t command) {
+  if (!scrub_seek_ || scrub_seek_->gesture != gesture ||
+      scrub_seek_->request_serial != request_serial ||
+      scrub_seek_->command != command) {
+    return;
+  }
+  if (scrub_seek_->command_replied) {
+    scrub_seek_->command = 0;
+    scrub_seek_->command_replied = false;
+    scrub_seek_->seek_started = false;
+    scrub_seek_->playback_restarted = false;
+    scrub_seek_->authoritative_position.reset();
+    scrub_seek_->pending_target.reset();
+    // The command reply proves only API execution, not decoder completion.
+    // Without a matching restart, issuing the retained final target here
+    // could overlap the still-decoding seek. Exit conservatively instead.
+    finishScrubGesture(true);
+    return;
+  }
+  if (ready() && !scrub_seek_->abort_pending) {
+    scrub_seek_->abort_pending = true;
+    abortCommand(mpvReplyUserdata(MpvReply::Scrub, command));
+  }
+}
+
+void MpvEngine::handleScrubCommandReply(std::uint64_t command,
+                                               int error) {
+  if (!scrub_seek_ || scrub_seek_->request_serial != host_.requestSerial() ||
+      scrub_seek_->command != command) {
+    return;
+  }
+  if (scrub_seek_->abort_pending) {
+    // Abort is best-effort: even its reply cannot prove the old decoder seek
+    // stopped. Never launch a retained target over that unproven work.
+    finishScrubGesture(true);
+    return;
+  }
+  if (error < 0) {
+    cancelScrubTimeout();
+    const std::optional<double> pending = scrub_seek_->pending_target;
+    const bool final = scrub_seek_->final;
+    scrub_seek_->command = 0;
+    scrub_seek_->command_exact = false;
+    scrub_seek_->command_replied = false;
+    scrub_seek_->seek_started = false;
+    scrub_seek_->playback_restarted = false;
+    scrub_seek_->authoritative_position.reset();
+    scrub_seek_->pending_target.reset();
+    if (final && pending && !scrub_seek_->replacement_dispatched) {
+      scrub_seek_->replacement_dispatched = true;
+      dispatchScrubSeek(*pending, true);
+      return;
+    }
+    finishScrubGesture(true);
+    return;
+  }
+  scrub_seek_->command_replied = true;
+  maybeCompleteScrubSeek();
+}
+
+void MpvEngine::handleScrubPlaybackRestart() {
+  if (!scrub_seek_ || scrub_seek_->command == 0 || !scrub_seek_->seek_started ||
+      scrub_seek_->request_serial != host_.requestSerial() || !lineage.committed_open ||
+      lineage.committed_open->request_serial != host_.requestSerial() ||
+      lineage.committed_open->playlist_entry_id != scrub_seek_->playlist_entry_id ||
+      lineage.active_event_playlist_entry_id != scrub_seek_->playlist_entry_id ||
+      !ready()) {
+    return;
+  }
+  scrub_seek_->playback_restarted = true;
+  const auto live_position = doubleProperty("time-pos");
+  if (live_position && std::isfinite(*live_position))
+    scrub_seek_->authoritative_position = std::max(0.0, *live_position);
+  maybeCompleteScrubSeek();
+}
+
+void MpvEngine::maybeCompleteScrubSeek() {
+  if (!scrub_seek_ || !scrub_seek_->command_replied ||
+      !scrub_seek_->playback_restarted) {
+    return;
+  }
+  if (!scrub_seek_->authoritative_position ||
+      !std::isfinite(*scrub_seek_->authoritative_position)) {
+    return;
+  }
+  if (scrub_seek_->command_exact &&
+      std::abs(*scrub_seek_->authoritative_position - scrub_seek_->target) >
+          kScrubConvergenceToleranceSeconds) {
+    return;
+  }
+
+  const bool released = scrub_seek_->final;
+  const bool completed_exact = scrub_seek_->command_exact;
+  const double completed_target = scrub_seek_->target;
+  const std::optional<double> pending = scrub_seek_->pending_target;
+  cancelScrubTimeout();
+  scrub_seek_->command = 0;
+  scrub_seek_->command_exact = false;
+  scrub_seek_->command_replied = false;
+  scrub_seek_->seek_started = false;
+  scrub_seek_->playback_restarted = false;
+  scrub_seek_->authoritative_position.reset();
+  scrub_seek_->pending_target.reset();
+  if (released) {
+    const double final_target = pending.value_or(completed_target);
+    // An approximate preview that drains after pointer release never counts
+    // as the release seek, even if its keyframe happens to equal the target.
+    if (!completed_exact || !nearlyEqual(final_target, completed_target)) {
+      dispatchScrubSeek(final_target, true);
+      return;
+    }
+    finishScrubGesture(true);
+    return;
+  }
+  if (pending)
+    dispatchScrubSeek(*pending, false);
+}
+
+void MpvEngine::finishScrubGesture(bool restore_transport) {
+  if (!scrub_seek_)
+    return;
+  cancelScrubTimeout();
+  const bool intended_paused = scrub_seek_->intended_paused;
+  const std::uint64_t active_command = scrub_seek_->command;
+  const bool matching_lineage =
+      scrub_seek_->request_serial == host_.requestSerial() && lineage.committed_open &&
+      lineage.committed_open->request_serial == host_.requestSerial() &&
+      lineage.committed_open->playlist_entry_id == scrub_seek_->playlist_entry_id &&
+      lineage.active_event_playlist_entry_id == scrub_seek_->playlist_entry_id;
+  if (active_command != 0 && ready()) {
+    abortCommand(mpvReplyUserdata(MpvReply::Scrub, active_command));
+  }
+  scrub_seek_.reset();
+  if (!restore_transport || !matching_lineage || !ready())
+    return;
+  if (setPausedNow(intended_paused))
+    host_.updatePause(intended_paused);
+}
+
+void MpvEngine::invalidateScrubGesture() { finishScrubGesture(false); }
+
+bool MpvEngine::acceptsPlaybackObservation() const {
+  return !host_.requestedSource().isEmpty() && lineage.pending_source.isEmpty() &&
+         lineage.pending_request_serial == 0 && !lineage.open_attempt && !scrub_seek_ &&
+         !lineage.render_recovery && !lineage.startup_playback_sync && lineage.committed_open &&
+         lineage.committed_open->request_serial == host_.requestSerial() &&
+         lineage.committed_open->playlist_entry_id >= 0 && core &&
+         core->validateRenderTicket({lineage.committed_open->render_stamp}) &&
+         lineage.active_event_playlist_entry_id == lineage.committed_open->playlist_entry_id;
+}
+
+void MpvEngine::beginScrub(double position) {
+  if (!ready() || scrub_seek_ || lineage.render_recovery ||
+      lineage.startup_playback_sync || !acceptsPlaybackObservation()) {
+    return;
+  }
+
+  const std::optional<bool> live_paused = flagProperty("pause");
+  if (!live_paused)
+    return;
+  ++next_scrub_gesture_id_;
+  if (next_scrub_gesture_id_ == 0)
+    ++next_scrub_gesture_id_;
+  scrub_seek_ = ScrubSeek{next_scrub_gesture_id_,
+                          host_.requestSerial(),
+                          0,
+                          lineage.committed_open->playlist_entry_id,
+                          position,
+                          std::nullopt,
+                          std::nullopt,
+                          *live_paused};
+
+  if (!setPausedNow(true)) {
+    scrub_seek_.reset();
+    return;
+  }
+  host_.updatePause(*live_paused);
+}
+
+void MpvEngine::previewScrub(double target) {
+  if (!scrub_seek_) {
+    // Preview calls belong only to an explicitly owned pointer gesture. If
+    // startup or render recovery refused ownership, ignore cadence updates;
+    // the release path still performs one ordinary exact seek.
+    return;
+  }
+  const std::uint64_t request_serial = host_.requestSerial();
+  if (lineage.render_recovery && lineage.render_recovery->request_serial == request_serial) {
+    lineage.render_recovery->position = target;
+    lineage.render_recovery->transport_restored = false;
+    lineage.render_recovery->position_overridden = true;
+  }
+  if (lineage.startup_playback_sync &&
+      lineage.startup_playback_sync->request_serial == request_serial) {
+    lineage.startup_playback_sync->intended_position = target;
+    lineage.startup_playback_sync->position_overridden = true;
+  }
+
+  if (scrub_seek_->request_serial != request_serial) {
+    invalidateScrubGesture();
+    return;
+  }
+  if (scrub_seek_->command != 0) {
+    scrub_seek_->pending_target = target;
+  } else {
+    dispatchScrubSeek(target, false);
+  }
+  host_.updatePosition(target);
+}
+
+bool MpvEngine::endScrub(double target, bool valid) {
+  if (!scrub_seek_)
+    return false;
+  if (!ready() || !valid ||
+      scrub_seek_->request_serial != host_.requestSerial()) {
+    finishScrubGesture(true);
+    return true;
+  }
+  scrub_seek_->final = true;
+  scrub_seek_->pending_target = target;
+  if (scrub_seek_->command == 0) {
+    scrub_seek_->pending_target.reset();
+    dispatchScrubSeek(target, true);
+  }
+  host_.updatePosition(target);
+  return true;
+}
+
+void MpvEngine::setScrubIntendedPaused(bool paused) {
+  if (scrub_seek_)
+    scrub_seek_->intended_paused = paused;
+}
+
+void MpvEngine::noteSeekStarted() {
+  if (scrub_seek_ && scrub_seek_->command != 0)
+    scrub_seek_->seek_started = true;
+}
+
+bool MpvEngine::observeScrubPosition(double position) {
+  if (!scrub_seek_)
+    return false;
+  if (scrub_seek_->playback_restarted)
+    scrub_seek_->authoritative_position = position;
+  maybeCompleteScrubSeek();
+  return true;
 }
 
 void MpvEngine::detachOwner() {

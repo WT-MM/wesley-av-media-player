@@ -10,6 +10,7 @@
 
 #include <mpv/client.h>
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <initializer_list>
@@ -21,10 +22,35 @@ namespace wam::playback::mpv {
 class MpvRuntime;
 }
 
+class QTimer;
+
 namespace wam::qt {
 
 class PlayerController;
+class PlayerControllerTestAccess;
 class PlayerCore;
+
+// What MpvEngine may do to its PlayerController: read the controller's
+// request lineage and publish what the compatibility engine observed. This is
+// the engine's whole surface toward the controller.
+class MpvEngineHost {
+public:
+  // The authoritative open intent: the serial of the latest request and its
+  // source (empty after a stop).
+  [[nodiscard]] virtual std::uint64_t requestSerial() const = 0;
+  [[nodiscard]] virtual QUrl requestedSource() const = 0;
+
+  virtual void updatePause(bool paused) = 0;
+  virtual void updatePosition(double position) = 0;
+
+protected:
+  ~MpvEngineHost() = default;
+};
+
+[[nodiscard]] inline bool nearlyEqual(double left, double right,
+                                      double epsilon = 0.0005) {
+  return std::abs(left - right) <= epsilon;
+}
 
 // mpv's `path` (and playlist filename) as a URL: local paths become file URLs.
 [[nodiscard]] QUrl urlFromMpvPath(const QString &path);
@@ -222,7 +248,7 @@ public:
     std::vector<std::filesystem::path> attached_subtitle_files;
   };
 
-  explicit MpvEngine(PlayerController *owner);
+  MpvEngine(PlayerController *owner, MpvEngineHost &host);
   ~MpvEngine();
 
   MpvEngine(const MpvEngine &) = delete;
@@ -297,11 +323,75 @@ public:
 
   void detachOwner();
 
+  // --- Observation gate -------------------------------------------------
+  // True when an mpv property event describes the committed file of the
+  // current request, with no open, scrub, recovery or startup sync in flight.
+  [[nodiscard]] bool acceptsPlaybackObservation() const;
+
+  // --- Scrub (pointer gesture on this engine) ----------------------------
+  // A capacity-one seek pipeline: keyframe previews while dragging, one exact
+  // seek on release, then the captured pause intent is restored.
+  [[nodiscard]] bool scrubbing() const noexcept { return scrub_seek_.has_value(); }
+  void beginScrub(double position);
+  void previewScrub(double target);
+  // False when no gesture is open (the caller seeks instead). `valid` false
+  // ends the gesture without a seek.
+  [[nodiscard]] bool endScrub(double target, bool valid);
+  void setScrubIntendedPaused(bool paused);
+  void noteSeekStarted();
+  // Feeds an observed time-pos to an open gesture; false when none is open.
+  [[nodiscard]] bool observeScrubPosition(double position);
+  void handleScrubCommandReply(std::uint64_t command, int error);
+  void handleScrubPlaybackRestart();
+  void finishScrubGesture(bool restore_transport);
+  void invalidateScrubGesture();
+
   std::shared_ptr<PlayerCore> core;
   Lineage lineage;
 
 private:
+  friend class PlayerControllerTestAccess;
+
+  struct ScrubSeek {
+    std::uint64_t gesture = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t command = 0;
+    std::int64_t playlist_entry_id = -1;
+    double target = 0.0;
+    std::optional<double> pending_target;
+    std::optional<double> authoritative_position;
+    bool intended_paused = true;
+    // final records that pointer ownership has been released. command_exact
+    // records the precision of the currently issued capacity-one command;
+    // those states intentionally differ while an approximate preview is
+    // draining after release.
+    bool final = false;
+    bool command_exact = false;
+    bool command_replied = false;
+    bool seek_started = false;
+    bool playback_restarted = false;
+    bool replacement_dispatched = false;
+    bool abort_pending = false;
+  };
+
+  void dispatchScrubSeek(double target, bool exact);
+  void maybeCompleteScrubSeek();
+  [[nodiscard]] static const char *scrubSeekMode(bool exact);
+  void armScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
+                       std::uint64_t command);
+  void cancelScrubTimeout();
+  void handleScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
+                          std::uint64_t command);
+
   PlayerController *owner_;
+  MpvEngineHost &host_;
+  std::optional<ScrubSeek> scrub_seek_;
+  std::uint64_t next_scrub_gesture_id_ = 0;
+  std::uint64_t next_scrub_command_id_ = 0;
+  QTimer *scrub_timeout_timer_ = nullptr;
+  std::uint64_t scrub_timeout_gesture_ = 0;
+  std::uint64_t scrub_timeout_request_serial_ = 0;
+  std::uint64_t scrub_timeout_command_ = 0;
   std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime_;
   std::shared_ptr<PlayerCore> replacement_;
 };

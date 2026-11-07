@@ -75,7 +75,9 @@ signals:
 // QML-facing playback state and commands. All regular libmpv client calls are
 // made on this object's (GUI) thread; video rendering remains isolated on Qt
 // Quick's render thread in MpvVideoItem.
-class PlayerController final : public QObject, private NativeEngineHost {
+class PlayerController final : public QObject,
+                               private NativeEngineHost,
+                               private MpvEngineHost {
   Q_OBJECT
 
   Q_PROPERTY(bool available READ available NOTIFY availableChanged)
@@ -445,28 +447,6 @@ private:
     std::optional<double> duration;
   };
 
-  struct ScrubSeek {
-    std::uint64_t gesture = 0;
-    std::uint64_t request_serial = 0;
-    std::uint64_t command = 0;
-    std::int64_t playlist_entry_id = -1;
-    double target = 0.0;
-    std::optional<double> pending_target;
-    std::optional<double> authoritative_position;
-    bool intended_paused = true;
-    // final records that pointer ownership has been released. command_exact
-    // records the precision of the currently issued capacity-one command;
-    // those states intentionally differ while an approximate preview is
-    // draining after release.
-    bool final = false;
-    bool command_exact = false;
-    bool command_replied = false;
-    bool seek_started = false;
-    bool playback_restarted = false;
-    bool replacement_dispatched = false;
-    bool abort_pending = false;
-  };
-
   // Controller-side ownership for a native pointer gesture. The handle tracks
   // every movement immediately, while native media work is demand-driven: one
   // exact request may be in flight and all later movement coalesces into the
@@ -586,18 +566,6 @@ private:
   void observeOpenCommandReply(std::uint64_t attempt_id, int error);
   void handleOpenCommandReply(std::uint64_t attempt_id, int error);
   void handleRenderRecoveryCommandReply(std::uint64_t attempt_id, int error);
-  void handleScrubCommandReply(std::uint64_t command, int error);
-  void handleScrubPlaybackRestart();
-  void dispatchScrubSeek(double target, bool exact);
-  void maybeCompleteScrubSeek();
-  [[nodiscard]] static const char *scrubSeekMode(bool exact);
-  void armScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
-                       std::uint64_t command);
-  void cancelScrubTimeout();
-  void handleScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
-                          std::uint64_t command);
-  void finishScrubGesture(bool restore_transport);
-  void invalidateScrubGesture();
   [[nodiscard]] static std::optional<std::uint64_t>
   reserveNativeSeekIdentity(std::uint64_t &high_water) noexcept;
   [[nodiscard]] double boundedSeekTarget(double seconds) const noexcept;
@@ -756,10 +724,15 @@ private:
   [[nodiscard]] static std::int64_t
   authoritativePlaylistEntry(std::int64_t live_entry,
                              std::int64_t captured_start_entry);
-  [[nodiscard]] bool acceptsPlaybackObservation() const;
   [[nodiscard]] bool
   playlistEntryBelongsToCurrentLineage(std::int64_t playlist_entry_id) const;
   [[nodiscard]] bool engineReady() const override;
+  [[nodiscard]] std::uint64_t requestSerial() const override {
+    return request_serial_;
+  }
+  [[nodiscard]] QUrl requestedSource() const override {
+    return requested_source_;
+  }
   [[nodiscard]] MpvEngine &mpvEngine() noexcept override { return mpv_; }
   [[nodiscard]] bool needsRenderContext() const;
   bool initializePlaybackEngine() override;
@@ -821,7 +794,6 @@ private:
   QPointer<MpvVideoItem> video_item_;
   const AppSettings *settings_ = nullptr;
   QTimer *work_timer_ = nullptr;
-  QTimer *scrub_timeout_timer_ = nullptr;
   // Pointer-scroll gestures. The model owns the axis lock and the detent; the
   // timer owns "the gesture has settled", which is what both releases the
   // axis lock and commits a timeline sweep. A wheel stream has no release
@@ -907,20 +879,14 @@ private:
   std::uint64_t request_serial_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;
-  std::uint64_t next_scrub_gesture_id_ = 0;
-  std::uint64_t next_scrub_command_id_ = 0;
   std::uint64_t next_native_seek_gesture_id_ = 0;
   std::uint64_t next_native_seek_request_id_ = 0;
-  std::uint64_t scrub_timeout_gesture_ = 0;
-  std::uint64_t scrub_timeout_request_serial_ = 0;
-  std::uint64_t scrub_timeout_command_ = 0;
   std::uint64_t next_render_recovery_completion_token_ = 0;
   std::uint64_t next_startup_playback_sync_token_ = 0;
   // The subset of mpv_.lineage.attached_subtitle_files this player GENERATED,
   // so the Subtitles menu can name them honestly. A file the user loaded is
   // not a generated caption.
   std::vector<std::filesystem::path> generated_caption_files_;
-  std::optional<ScrubSeek> scrub_seek_;
   std::optional<NativeScrubIntent> native_scrub_intent_;
   std::optional<NativeSeekIntent> native_seek_intent_;
   NativeSeekSubmissionState *native_seek_submission_ = nullptr;

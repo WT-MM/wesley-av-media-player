@@ -52,8 +52,6 @@ using ::wam::playback::mpv::MpvApi;
 using media::native_playback::kMaximumNativeRate;
 using media::native_playback::kMinimumNativeRate;
 using media::native_playback::kNativeRateGrid;
-constexpr double kScrubConvergenceToleranceSeconds = 0.050;
-constexpr int kScrubSeekTimeoutMs = 750;
 
 // Volume runs past unity into VLC-style amplification. 4.0 is the ABSOLUTE
 // ceiling on every route: the native gain stage clamps there (and saturates
@@ -73,9 +71,6 @@ constexpr double kMinimumMaximumVolume = ScrollGestureModel::kDetentValue;
 // a deliberate flick commits before the user reaches for anything else.
 constexpr int kScrollSettleMs = 200;
 
-bool nearlyEqual(double left, double right, double epsilon = 0.0005) {
-  return std::abs(left - right) <= epsilon;
-}
 
 QString sourceArgument(const QUrl &source) {
   if (source.isLocalFile())
@@ -267,7 +262,7 @@ std::int64_t readTrackSelection(const mpv_event_property *property) {
 } // namespace
 
 PlayerController::PlayerController(QObject *parent)
-    : QObject(parent), mpv_(this) {
+    : QObject(parent), mpv_(this, static_cast<MpvEngineHost &>(*this)) {
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   native_ = std::make_unique<NativePlaybackOwner>(
       *this, static_cast<NativeEngineHost &>(*this));
@@ -278,22 +273,8 @@ PlayerController::PlayerController(QObject *parent)
   connect(work_timer_, &QTimer::timeout, this,
           &PlayerController::pollBackgroundWork);
 
-  // Scrubbing can issue many commands over one pointer gesture. Reusing one
-  // timer avoids allocating a lambda/timer event for every command and makes
-  // stale timeout ownership explicit when the capacity-one slot is rearmed.
-  scrub_timeout_timer_ = new QTimer(this);
-  scrub_timeout_timer_->setSingleShot(true);
-  scrub_timeout_timer_->setTimerType(Qt::PreciseTimer);
-  connect(scrub_timeout_timer_, &QTimer::timeout, this, [this] {
-    const std::uint64_t gesture = scrub_timeout_gesture_;
-    const std::uint64_t request_serial = scrub_timeout_request_serial_;
-    const std::uint64_t command = scrub_timeout_command_;
-    cancelScrubTimeout();
-    handleScrubTimeout(gesture, request_serial, command);
-  });
-
   // One reused single-shot timer for the whole scroll-gesture lifetime, for
-  // the same reason as the scrub timeout above: a momentum tail can restart
+  // the same reason as MpvEngine's scrub timeout: a momentum tail can restart
   // it a hundred times a second.
   scroll_settle_timer_ = new QTimer(this);
   scroll_settle_timer_->setSingleShot(true);
@@ -321,7 +302,6 @@ PlayerController::PlayerController(QObject *parent)
 }
 
 PlayerController::~PlayerController() {
-  cancelScrubTimeout();
   if (scroll_settle_timer_)
     scroll_settle_timer_->stop();
   scroll_sweep_target_.reset();
@@ -464,7 +444,7 @@ bool PlayerController::open(const QUrl &source) {
     }
   }
 
-  finishScrubGesture(true);
+  mpv_.finishScrubGesture(true);
 
   updateEof(false);
   resetTimeline();
@@ -507,7 +487,7 @@ void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
     }
   }
 
-  finishScrubGesture(true);
+  mpv_.finishScrubGesture(true);
   updateEof(false);
   resetTimeline();
 
@@ -610,8 +590,8 @@ void PlayerController::play() {
   }
   if (!engineReady())
     return;
-  if (scrub_seek_) {
-    scrub_seek_->intended_paused = false;
+  if (mpv_.scrubbing()) {
+    mpv_.setScrubIntendedPaused(false);
     updatePause(false);
     return;
   }
@@ -657,8 +637,8 @@ void PlayerController::pause() {
   }
   if (!engineReady())
     return;
-  if (scrub_seek_) {
-    scrub_seek_->intended_paused = true;
+  if (mpv_.scrubbing()) {
+    mpv_.setScrubIntendedPaused(true);
     updatePause(true);
     return;
   }
@@ -700,7 +680,7 @@ void PlayerController::stop() {
     scroll_gesture_active_ = false;
     emit scrollGestureActiveChanged();
   }
-  invalidateScrubGesture();
+  mpv_.invalidateScrubGesture();
   invalidateNativeSeekIntents();
   if (native_) {
     static_cast<void>(native_->stop());
@@ -1294,31 +1274,7 @@ void PlayerController::beginScrub() {
       return;
     }
   }
-  if (!engineReady() || scrub_seek_ || mpv_.lineage.render_recovery ||
-      mpv_.lineage.startup_playback_sync || !acceptsPlaybackObservation()) {
-    return;
-  }
-
-  const std::optional<bool> live_paused = mpv_.flagProperty("pause");
-  if (!live_paused)
-    return;
-  ++next_scrub_gesture_id_;
-  if (next_scrub_gesture_id_ == 0)
-    ++next_scrub_gesture_id_;
-  scrub_seek_ = ScrubSeek{next_scrub_gesture_id_,
-                          request_serial_,
-                          0,
-                          mpv_.lineage.committed_open->playlist_entry_id,
-                          position_,
-                          std::nullopt,
-                          std::nullopt,
-                          *live_paused};
-
-  if (!mpv_.setPausedNow(true)) {
-    scrub_seek_.reset();
-    return;
-  }
-  updatePause(*live_paused);
+  mpv_.beginScrub(position_);
 }
 
 void PlayerController::seekTo(double seconds) {
@@ -1343,7 +1299,7 @@ void PlayerController::seekTo(double seconds) {
   }
   if (!engineReady() || !std::isfinite(seconds))
     return;
-  if (scrub_seek_) {
+  if (mpv_.scrubbing()) {
     endScrub(seconds);
     return;
   }
@@ -1406,34 +1362,7 @@ void PlayerController::previewSeekTo(double seconds) {
   }
   if (!engineReady() || !std::isfinite(seconds))
     return;
-  const double target = boundedSeekTarget(seconds);
-  if (!scrub_seek_) {
-    // Preview calls belong only to an explicitly owned pointer gesture. If
-    // startup or render recovery refused ownership, ignore cadence updates;
-    // the release path still performs one ordinary exact seek.
-    return;
-  }
-  if (mpv_.lineage.render_recovery && mpv_.lineage.render_recovery->request_serial == request_serial_) {
-    mpv_.lineage.render_recovery->position = target;
-    mpv_.lineage.render_recovery->transport_restored = false;
-    mpv_.lineage.render_recovery->position_overridden = true;
-  }
-  if (mpv_.lineage.startup_playback_sync &&
-      mpv_.lineage.startup_playback_sync->request_serial == request_serial_) {
-    mpv_.lineage.startup_playback_sync->intended_position = target;
-    mpv_.lineage.startup_playback_sync->position_overridden = true;
-  }
-
-  if (scrub_seek_->request_serial != request_serial_) {
-    invalidateScrubGesture();
-    return;
-  }
-  if (scrub_seek_->command != 0) {
-    scrub_seek_->pending_target = target;
-  } else {
-    dispatchScrubSeek(target, false);
-  }
-  updatePosition(target);
+  mpv_.previewScrub(boundedSeekTarget(seconds));
 }
 
 void PlayerController::endScrub(double seconds) {
@@ -1453,229 +1382,10 @@ void PlayerController::endScrub(double seconds) {
       return;
     }
   }
-  if (!scrub_seek_) {
+  const bool valid = std::isfinite(seconds);
+  if (!mpv_.endScrub(valid ? boundedSeekTarget(seconds) : 0.0, valid))
     seekTo(seconds);
-    return;
-  }
-  if (!engineReady() || !std::isfinite(seconds) ||
-      scrub_seek_->request_serial != request_serial_) {
-    finishScrubGesture(true);
-    return;
-  }
-  const double target = boundedSeekTarget(seconds);
-  scrub_seek_->final = true;
-  scrub_seek_->pending_target = target;
-  if (scrub_seek_->command == 0) {
-    scrub_seek_->pending_target.reset();
-    dispatchScrubSeek(target, true);
-  }
-  updatePosition(target);
 }
-
-const char *PlayerController::scrubSeekMode(bool exact) {
-  return exact ? "absolute+exact" : "absolute+keyframes";
-}
-
-void PlayerController::armScrubTimeout(std::uint64_t gesture,
-                                       std::uint64_t request_serial,
-                                       std::uint64_t command) {
-  if (!scrub_timeout_timer_)
-    return;
-  scrub_timeout_timer_->stop();
-  scrub_timeout_gesture_ = gesture;
-  scrub_timeout_request_serial_ = request_serial;
-  scrub_timeout_command_ = command;
-  scrub_timeout_timer_->start(kScrubSeekTimeoutMs);
-}
-
-void PlayerController::cancelScrubTimeout() {
-  if (scrub_timeout_timer_)
-    scrub_timeout_timer_->stop();
-  scrub_timeout_gesture_ = 0;
-  scrub_timeout_request_serial_ = 0;
-  scrub_timeout_command_ = 0;
-}
-
-void PlayerController::dispatchScrubSeek(double target, bool exact) {
-  if (!scrub_seek_ || !engineReady() || scrub_seek_->command != 0 ||
-      scrub_seek_->request_serial != request_serial_ || !mpv_.lineage.committed_open ||
-      mpv_.lineage.committed_open->request_serial != request_serial_ ||
-      mpv_.lineage.committed_open->playlist_entry_id != scrub_seek_->playlist_entry_id ||
-      mpv_.lineage.active_event_playlist_entry_id != scrub_seek_->playlist_entry_id) {
-    finishScrubGesture(true);
-    return;
-  }
-
-  const std::uint64_t command =
-      nextMpvReplyId(MpvReply::Scrub, next_scrub_command_id_);
-  const std::uint64_t reply_userdata = mpvReplyUserdata(MpvReply::Scrub, command);
-
-  scrub_seek_->command = command;
-  scrub_seek_->target = target;
-  scrub_seek_->command_exact = exact;
-  scrub_seek_->command_replied = false;
-  scrub_seek_->seek_started = false;
-  scrub_seek_->playback_restarted = false;
-  scrub_seek_->authoritative_position.reset();
-  const std::uint64_t gesture = scrub_seek_->gesture;
-  const std::uint64_t request_serial = scrub_seek_->request_serial;
-  const int result = mpv_.sendCommand({QByteArrayLiteral("seek"),
-                                  QByteArray::number(target, 'g', 12),
-                                  QByteArray(scrubSeekMode(exact))},
-                                 reply_userdata);
-  if (result < 0) {
-    finishScrubGesture(true);
-    return;
-  }
-
-  // Command completion alone does not mean a frame was decoded. Keep the
-  // capacity-one slot until a post-issuance SEEK and playback restart identify
-  // a decoded frame. Exact release commands additionally converge to 50 ms.
-  armScrubTimeout(gesture, request_serial, command);
-}
-
-void PlayerController::handleScrubTimeout(std::uint64_t gesture,
-                                          std::uint64_t request_serial,
-                                          std::uint64_t command) {
-  if (!scrub_seek_ || scrub_seek_->gesture != gesture ||
-      scrub_seek_->request_serial != request_serial ||
-      scrub_seek_->command != command) {
-    return;
-  }
-  if (scrub_seek_->command_replied) {
-    scrub_seek_->command = 0;
-    scrub_seek_->command_replied = false;
-    scrub_seek_->seek_started = false;
-    scrub_seek_->playback_restarted = false;
-    scrub_seek_->authoritative_position.reset();
-    scrub_seek_->pending_target.reset();
-    // The command reply proves only API execution, not decoder completion.
-    // Without a matching restart, issuing the retained final target here
-    // could overlap the still-decoding seek. Exit conservatively instead.
-    finishScrubGesture(true);
-    return;
-  }
-  if (engineReady() && !scrub_seek_->abort_pending) {
-    scrub_seek_->abort_pending = true;
-    mpv_.abortCommand(mpvReplyUserdata(MpvReply::Scrub, command));
-  }
-}
-
-void PlayerController::handleScrubCommandReply(std::uint64_t command,
-                                               int error) {
-  if (!scrub_seek_ || scrub_seek_->request_serial != request_serial_ ||
-      scrub_seek_->command != command) {
-    return;
-  }
-  if (scrub_seek_->abort_pending) {
-    // Abort is best-effort: even its reply cannot prove the old decoder seek
-    // stopped. Never launch a retained target over that unproven work.
-    finishScrubGesture(true);
-    return;
-  }
-  if (error < 0) {
-    cancelScrubTimeout();
-    const std::optional<double> pending = scrub_seek_->pending_target;
-    const bool final = scrub_seek_->final;
-    scrub_seek_->command = 0;
-    scrub_seek_->command_exact = false;
-    scrub_seek_->command_replied = false;
-    scrub_seek_->seek_started = false;
-    scrub_seek_->playback_restarted = false;
-    scrub_seek_->authoritative_position.reset();
-    scrub_seek_->pending_target.reset();
-    if (final && pending && !scrub_seek_->replacement_dispatched) {
-      scrub_seek_->replacement_dispatched = true;
-      dispatchScrubSeek(*pending, true);
-      return;
-    }
-    finishScrubGesture(true);
-    return;
-  }
-  scrub_seek_->command_replied = true;
-  maybeCompleteScrubSeek();
-}
-
-void PlayerController::handleScrubPlaybackRestart() {
-  if (!scrub_seek_ || scrub_seek_->command == 0 || !scrub_seek_->seek_started ||
-      scrub_seek_->request_serial != request_serial_ || !mpv_.lineage.committed_open ||
-      mpv_.lineage.committed_open->request_serial != request_serial_ ||
-      mpv_.lineage.committed_open->playlist_entry_id != scrub_seek_->playlist_entry_id ||
-      mpv_.lineage.active_event_playlist_entry_id != scrub_seek_->playlist_entry_id ||
-      !engineReady()) {
-    return;
-  }
-  scrub_seek_->playback_restarted = true;
-  const auto live_position = mpv_.doubleProperty("time-pos");
-  if (live_position && std::isfinite(*live_position))
-    scrub_seek_->authoritative_position = std::max(0.0, *live_position);
-  maybeCompleteScrubSeek();
-}
-
-void PlayerController::maybeCompleteScrubSeek() {
-  if (!scrub_seek_ || !scrub_seek_->command_replied ||
-      !scrub_seek_->playback_restarted) {
-    return;
-  }
-  if (!scrub_seek_->authoritative_position ||
-      !std::isfinite(*scrub_seek_->authoritative_position)) {
-    return;
-  }
-  if (scrub_seek_->command_exact &&
-      std::abs(*scrub_seek_->authoritative_position - scrub_seek_->target) >
-          kScrubConvergenceToleranceSeconds) {
-    return;
-  }
-
-  const bool released = scrub_seek_->final;
-  const bool completed_exact = scrub_seek_->command_exact;
-  const double completed_target = scrub_seek_->target;
-  const std::optional<double> pending = scrub_seek_->pending_target;
-  cancelScrubTimeout();
-  scrub_seek_->command = 0;
-  scrub_seek_->command_exact = false;
-  scrub_seek_->command_replied = false;
-  scrub_seek_->seek_started = false;
-  scrub_seek_->playback_restarted = false;
-  scrub_seek_->authoritative_position.reset();
-  scrub_seek_->pending_target.reset();
-  if (released) {
-    const double final_target = pending.value_or(completed_target);
-    // An approximate preview that drains after pointer release never counts
-    // as the release seek, even if its keyframe happens to equal the target.
-    if (!completed_exact || !nearlyEqual(final_target, completed_target)) {
-      dispatchScrubSeek(final_target, true);
-      return;
-    }
-    finishScrubGesture(true);
-    return;
-  }
-  if (pending)
-    dispatchScrubSeek(*pending, false);
-}
-
-void PlayerController::finishScrubGesture(bool restore_transport) {
-  if (!scrub_seek_)
-    return;
-  cancelScrubTimeout();
-  const bool intended_paused = scrub_seek_->intended_paused;
-  const std::uint64_t active_command = scrub_seek_->command;
-  const bool matching_lineage =
-      scrub_seek_->request_serial == request_serial_ && mpv_.lineage.committed_open &&
-      mpv_.lineage.committed_open->request_serial == request_serial_ &&
-      mpv_.lineage.committed_open->playlist_entry_id == scrub_seek_->playlist_entry_id &&
-      mpv_.lineage.active_event_playlist_entry_id == scrub_seek_->playlist_entry_id;
-  if (active_command != 0 && engineReady()) {
-    mpv_.abortCommand(mpvReplyUserdata(MpvReply::Scrub, active_command));
-  }
-  scrub_seek_.reset();
-  if (!restore_transport || !matching_lineage || !engineReady())
-    return;
-  if (mpv_.setPausedNow(intended_paused))
-    updatePause(intended_paused);
-}
-
-void PlayerController::invalidateScrubGesture() { finishScrubGesture(false); }
 
 void PlayerController::seekRelative(double seconds) {
   if (nativeRouteActive()) {
@@ -1685,7 +1395,7 @@ void PlayerController::seekRelative(double seconds) {
   }
   if (!engineReady() || !std::isfinite(seconds))
     return;
-  if (scrub_seek_ || mpv_.lineage.render_recovery || position_ + seconds < 0.0 ||
+  if (mpv_.scrubbing() || mpv_.lineage.render_recovery || position_ + seconds < 0.0 ||
       (duration_ > 0.0 && position_ + seconds >= duration_)) {
     seekTo(duration_ > 0.0 ? std::clamp(position_ + seconds, 0.0,
         std::max(0.0, duration_ - 0.001)) : position_ + seconds);
@@ -2996,7 +2706,7 @@ void PlayerController::drainMpvEvents() {
         continue;
       }
       if (reply.kind == MpvReply::Scrub) {
-        handleScrubCommandReply(reply.id, event->error);
+        mpv_.handleScrubCommandReply(reply.id, event->error);
         continue;
       }
       if (reply.kind == MpvReply::Open) {
@@ -3033,14 +2743,13 @@ void PlayerController::drainMpvEvents() {
     if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) {
       if (native_)
         native_->noteFallbackSeek(false);
-      handleScrubPlaybackRestart();
+      mpv_.handleScrubPlaybackRestart();
       handlePlaybackReady(false);
       continue;
     }
 
     if (event->event_id == MPV_EVENT_SEEK) {
-      if (scrub_seek_ && scrub_seek_->command != 0)
-        scrub_seek_->seek_started = true;
+      mpv_.noteSeekStarted();
       continue;
     }
 
@@ -3604,8 +3313,8 @@ bool PlayerController::playlistEntryBelongsToCurrentLineage(
 }
 
 void PlayerController::handleStartFile(std::int64_t playlist_entry_id) {
-  if (scrub_seek_) {
-    invalidateScrubGesture();
+  if (mpv_.scrubbing()) {
+    mpv_.invalidateScrubGesture();
   }
   if (playlist_entry_id < 0) {
     mpv_.lineage.active_event_playlist_entry_id = -1;
@@ -3727,7 +3436,7 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
   if (!current_entry)
     return;
 
-  invalidateScrubGesture();
+  mpv_.invalidateScrubGesture();
 
   mpv_.lineage.active_event_playlist_entry_id = -1;
 
@@ -3903,7 +3612,7 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
       cacheCurrentTrackSelection();
     else
       queueStartupPlaybackSync();
-  } else if (file_loaded && acceptsPlaybackObservation()) {
+  } else if (file_loaded && mpv_.acceptsPlaybackObservation()) {
     cacheCurrentTrackSelection();
   }
   // FILE_LOADED is the moment mpv's track-list is complete, and it is the one
@@ -3923,18 +3632,8 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
   restoreRenderRecovery();
 }
 
-bool PlayerController::acceptsPlaybackObservation() const {
-  return !requested_source_.isEmpty() && mpv_.lineage.pending_source.isEmpty() &&
-         mpv_.lineage.pending_request_serial == 0 && !mpv_.lineage.open_attempt && !scrub_seek_ &&
-         !mpv_.lineage.render_recovery && !mpv_.lineage.startup_playback_sync && mpv_.lineage.committed_open &&
-         mpv_.lineage.committed_open->request_serial == request_serial_ &&
-         mpv_.lineage.committed_open->playlist_entry_id >= 0 && mpv_.core &&
-         mpv_.core->validateRenderTicket({mpv_.lineage.committed_open->render_stamp}) &&
-         mpv_.lineage.active_event_playlist_entry_id == mpv_.lineage.committed_open->playlist_entry_id;
-}
-
 void PlayerController::applyObservedPause(bool paused) {
-  if (acceptsPlaybackObservation())
+  if (mpv_.acceptsPlaybackObservation())
     updatePause(paused);
 }
 
@@ -3942,19 +3641,15 @@ void PlayerController::applyObservedPosition(double position) {
   if (!std::isfinite(position))
     return;
   const double value = std::max(0.0, position);
-  if (scrub_seek_) {
-    if (scrub_seek_->playback_restarted)
-      scrub_seek_->authoritative_position = value;
-    maybeCompleteScrubSeek();
+  if (mpv_.observeScrubPosition(value))
     return;
-  }
-  if (!acceptsPlaybackObservation())
+  if (!mpv_.acceptsPlaybackObservation())
     return;
   updatePosition(value);
 }
 
 void PlayerController::applyObservedDuration(double duration) {
-  if (!acceptsPlaybackObservation() || !std::isfinite(duration))
+  if (!mpv_.acceptsPlaybackObservation() || !std::isfinite(duration))
     return;
   updateDuration(duration);
 }
@@ -3975,7 +3670,7 @@ void PlayerController::updateDuration(double duration) {
 void PlayerController::applyObservedVideoFacts() {
   if (!mpv_.core || !engineReady() || mpv_.lineage.open_attempt)
     return;
-  // Deliberately NOT gated on acceptsPlaybackObservation(), which every other
+  // Deliberately NOT gated on mpv_.acceptsPlaybackObservation(), which every other
   // observation here does use. mpv announces dwidth/dheight once per file,
   // during the open, while that gate is still closed, and never again unless
   // the value changes. Gating here would discard the only announcement there
@@ -4023,24 +3718,24 @@ void PlayerController::updateVideoFacts(media::MediaRational width,
 }
 
 void PlayerController::applyObservedIdle(bool idle) {
-  if (acceptsPlaybackObservation())
+  if (mpv_.acceptsPlaybackObservation())
     updateIdle(idle);
 }
 
 void PlayerController::applyObservedEof(bool eof_reached) {
-  if (acceptsPlaybackObservation())
+  if (mpv_.acceptsPlaybackObservation())
     updateEof(eof_reached);
 }
 
 void PlayerController::applyObservedVideoTrack(std::int64_t video_track_id) {
-  if (!acceptsPlaybackObservation())
+  if (!mpv_.acceptsPlaybackObservation())
     return;
   mpv_.lineage.selected_video_track_id = video_track_id >= 0 ? video_track_id : -1;
   mpv_.lineage.selected_tracks_playlist_entry_id = mpv_.lineage.committed_open->playlist_entry_id;
 }
 
 void PlayerController::applyObservedAudioTrack(std::int64_t audio_track_id) {
-  if (!acceptsPlaybackObservation())
+  if (!mpv_.acceptsPlaybackObservation())
     return;
   mpv_.lineage.selected_audio_track_id = audio_track_id >= 0 ? audio_track_id : -1;
   mpv_.lineage.selected_tracks_playlist_entry_id = mpv_.lineage.committed_open->playlist_entry_id;
@@ -4048,7 +3743,7 @@ void PlayerController::applyObservedAudioTrack(std::int64_t audio_track_id) {
 
 void PlayerController::applyObservedSubtitleTrack(
     std::int64_t subtitle_track_id) {
-  if (!acceptsPlaybackObservation())
+  if (!mpv_.acceptsPlaybackObservation())
     return;
   mpv_.lineage.selected_subtitle_track_id = subtitle_track_id >= 0 ? subtitle_track_id : -1;
   mpv_.lineage.selected_tracks_playlist_entry_id = mpv_.lineage.committed_open->playlist_entry_id;
@@ -4629,9 +4324,9 @@ void PlayerController::handleRenderInvalidated(
   if (requested_source_.isEmpty())
     return;
 
-  if (scrub_seek_ && mpv_.lineage.committed_open &&
+  if (mpv_.scrubbing() && mpv_.lineage.committed_open &&
       mpv_.lineage.committed_open->render_stamp == retired_render_stamp) {
-    invalidateScrubGesture();
+    mpv_.invalidateScrubGesture();
   }
 
   bool needs_retry = false;
