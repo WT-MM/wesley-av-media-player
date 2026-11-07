@@ -38,9 +38,6 @@ def main():
     def run(argv,log):
         with log.open('w') as stream:
             result=subprocess.run(argv,cwd=repo,stdout=stream,stderr=subprocess.STDOUT)
-            if result.returncode in (-9,137):
-                stream.write('\nEnvironmental launch kill; rerunning same binary.\n');stream.flush()
-                result=subprocess.run(argv,cwd=repo,stdout=stream,stderr=subprocess.STDOUT)
         return result.returncode
     def build(log):
         rc=run(['cmake','--build','build','--parallel'],log)

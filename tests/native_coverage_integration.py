@@ -15,8 +15,6 @@ from fractions import Fraction
 
 def run(argv, expected=0):
     result = subprocess.run([str(x) for x in argv], capture_output=True, text=True)
-    if result.returncode == 137 or result.returncode == -9:
-        result = subprocess.run([str(x) for x in argv], capture_output=True, text=True)
     if result.returncode != expected:
         raise AssertionError(f'{argv}\nrc={result.returncode}\n{result.stdout}\n{result.stderr}')
     return result

@@ -7,7 +7,6 @@ for name in ['video-probe','audio-probe','ffmpeg','ffprobe','output']:p.add_argu
 p.add_argument('--asset',action='append',required=True);p.add_argument('--equal-endpoints',action='store_true');a=p.parse_args();rows=[]
 def run(command):
  r=subprocess.run(command,capture_output=True,text=True,timeout=900)
- if r.returncode==-9:r=subprocess.run(command,capture_output=True,text=True,timeout=900)
  assert r.returncode==0,(command,r.stderr);return r
 with tempfile.TemporaryDirectory(prefix='wam-mixed-proof-',dir='/private/tmp') as tmp:
  root=pathlib.Path(tmp)

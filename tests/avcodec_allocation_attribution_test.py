@@ -4,8 +4,6 @@ import subprocess
 import sys
 
 result = subprocess.run(sys.argv[1:], capture_output=True, text=True, timeout=30)
-if result.returncode == -9:
-    result = subprocess.run(sys.argv[1:], capture_output=True, text=True, timeout=30)
 assert result.returncode == 0, result.stderr
 rows = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
 current = None

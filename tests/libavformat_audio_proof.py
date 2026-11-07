@@ -10,7 +10,6 @@ with tempfile.TemporaryDirectory(prefix='wam-avformat-audio-',dir='/private/tmp'
  expected=np.fromfile(reference,dtype='<f4').reshape(-1,2)
  for target in ['0','1/7','1','2999/1000']:
   path=root/'actual.f32';run=subprocess.run([a.probe,a.asset,str(path),target],capture_output=True,text=True,timeout=30)
-  if run.returncode==-9:run=subprocess.run([a.probe,a.asset,str(path),target],capture_output=True,text=True,timeout=30)
   assert run.returncode==0,run.stderr
   frame=-(-(Fraction(target)*48000).numerator//(Fraction(target)*48000).denominator)
   actual=np.fromfile(path,dtype='<f4').reshape(-1,2);want=expected[frame:]
