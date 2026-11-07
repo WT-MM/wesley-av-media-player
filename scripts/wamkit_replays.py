@@ -3,10 +3,13 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import subprocess
+import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests/support'))
+import wam_launch  # noqa: E402
 
 
 def sha(path):
@@ -35,14 +38,11 @@ def main():
         metrics_path = run / 'metrics.jsonl'
         if metrics_path.exists():
             raise RuntimeError('Use a fresh output directory for each campaign')
-        env = {k: v for k, v in os.environ.items() if not k.startswith('WAM_')}
         run_id = subprocess.check_output(['uuidgen'], text=True).strip().lower()
-        env.update(HOME=str(run / 'home'), WAM_NATIVE_BENCHMARK_TELEMETRY='1',
-                   WAM_NATIVE_BENCHMARK_RUN_ID=run_id,
-                   WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),
-                   WAM_NATIVE_BENCHMARK_CANDIDATE_ID=candidate,
-                   WAM_TEST_BACKGROUND='1', WAM_TEST_MUTED='1',
-                   WAM_TEST_GEOMETRY='480x270+2400+1000',
+        env = wam_launch.seam_env(run / 'home',
+                   run_id=run_id,
+                   asset_sha256=sha(asset),
+                   candidate_id=candidate,
                    WAM_TEST_QUIT_AFTER_MS=str(int(args.seconds * 1000)),
                    WAM_PLAYBACK_METRICS_PATH=str(metrics_path))
         start = time.monotonic()
@@ -62,7 +62,7 @@ def main():
         drawn = max((row.get('drawn_frames') or 0 for row in metrics), default=0)
         rates = [row.get('clock_rate') for row in metrics if row.get('clock_rate') is not None and not row.get('paused')]
         result = dict(asset=str(asset), candidate_sha256=candidate,
-                      asset_sha256=env['WAM_NATIVE_BENCHMARK_ASSET_SHA256'], run_id=run_id,
+                      asset_sha256=sha(asset), run_id=run_id,
                       pid=process.pid, rc=rc, seconds=time.monotonic() - start,
                       native='native_selected' in text and 'fallback_selected' not in text and 'WAM: native failure' not in text,
                       first_frame_drawn='first_frame_drawn' in text, drawn_frames=drawn, clock_rates=rates)

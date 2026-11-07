@@ -5,8 +5,12 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import time
 import uuid
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'tests/support'))
+import wam_launch  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--asset', required=True)
@@ -32,11 +36,9 @@ for index in reversed(range(16)):
 steps.append('report@1800')
 run_id = str(uuid.uuid4())
 candidate = sha(app)
-env = {k:v for k,v in os.environ.items() if not k.startswith('WAM_')}
-env.update(HOME=str(root / 'home'), WAM_NATIVE_BENCHMARK_TELEMETRY='1',
-           WAM_NATIVE_BENCHMARK_RUN_ID=run_id, WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),
-           WAM_NATIVE_BENCHMARK_CANDIDATE_ID=candidate, WAM_TEST_BACKGROUND='1',
-           WAM_TEST_MUTED='1', WAM_TEST_ALL_WINDOW_GEOMETRY='1', WAM_TEST_GEOMETRY='480x270+2400+1000',
+env = wam_launch.seam_env(root / 'home',
+           run_id=run_id, asset_sha256=sha(asset),
+           candidate_id=candidate, WAM_TEST_ALL_WINDOW_GEOMETRY='1',
            WAM_TEST_QUIT_AFTER_MS='30000', WAM_PLAYBACK_METRICS_PATH=str(root / 'metrics.jsonl'),
            WAM_TEST_WINDOW_SCRIPT=','.join(steps), WAM_TEST_SEEK_SCRIPT='7@2,1@8,11.390625@2')
 (root / 'environment.json').write_text(json.dumps({k:v for k,v in env.items() if k.startswith('WAM_') or k=='HOME'}, indent=2))

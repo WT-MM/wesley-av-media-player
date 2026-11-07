@@ -2,12 +2,15 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import time
 import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests/support'))
+import wam_launch  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SCRATCH = Path('/private/tmp/wam-late-scratch')
@@ -84,16 +87,10 @@ def launch_rows(rows, output, seconds, sampler, candidate, children, samplers):
         duration = seconds or (float(subprocess.check_output([
             'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
             '-of', 'default=nw=1:nk=1', str(asset)], text=True)) + 8)
-        env = os.environ.copy()
-        for key in list(env):
-            if key.startswith('WAM_'):
-                del env[key]
-        env.update(HOME=str(home), WAM_NATIVE_BENCHMARK_TELEMETRY='1',
-            WAM_NATIVE_BENCHMARK_RUN_ID=subprocess.check_output(['uuidgen'], text=True).strip().lower(),
-            WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),
-            WAM_NATIVE_BENCHMARK_CANDIDATE_ID=candidate,
-            WAM_TEST_BACKGROUND='1', WAM_TEST_MUTED='1',
-            WAM_TEST_GEOMETRY='480x270+2400+1000',
+        env = wam_launch.seam_env(home,
+            run_id=subprocess.check_output(['uuidgen'], text=True).strip().lower(),
+            asset_sha256=sha(asset),
+            candidate_id=candidate,
             WAM_PLAYBACK_METRICS_PATH=str(run / 'metrics.jsonl'),
             WAM_PLAYBACK_METRICS_INTERVAL_MS='1000' if sampler else '100',
             WAM_TEST_QUIT_AFTER_MS=str(int(duration * 1000)))

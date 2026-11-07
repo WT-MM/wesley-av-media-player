@@ -49,6 +49,8 @@ function(wam_add_test_seams_twins)
 endfunction()
 
 wam_add_test_seams_twins(
+  wam_app_core
+  wam_mpv_runtime
   wam_avcodec_worker
   wam_native_core
   wam_macos_native_video_core

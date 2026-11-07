@@ -445,12 +445,6 @@ constexpr double kMaximumStagedAudioSeconds = 0.256;
                         kCMSampleBufferAttachmentKey_PermanentEmptyMedia);
 }
 
-
-#if defined(WAM_NATIVE_TEST_SEAMS)
-std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
-    std::numeric_limits<std::size_t>::max()};
-#endif
-
 [[nodiscard]] bool validAudioChannelLayout(
     const AudioChannelLayout* layout, std::size_t layoutSize,
     std::uint32_t channels,
@@ -1082,10 +1076,6 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
   std::size_t layoutSize = 0;
   const AudioChannelLayout* layout =
       CMAudioFormatDescriptionGetChannelLayout(format, &layoutSize);
-#if defined(WAM_NATIVE_TEST_SEAMS)
-  g_inspectedAudioChannelLayoutSize.store(layoutSize,
-                                          std::memory_order_relaxed);
-#endif
   AudioChannelLayoutTag layoutTag{0};
   if (!validAudioChannelLayout(layout, layoutSize, audio.channels,
                                &layoutTag)) {
@@ -3849,15 +3839,6 @@ bool validAudioChannelLayoutForTesting(const AudioChannelLayout* layout,
                                        std::size_t layoutSize,
                                        std::uint32_t channels) noexcept {
   return validAudioChannelLayout(layout, layoutSize, channels);
-}
-
-void resetInspectedAudioChannelLayoutSizeForTesting() noexcept {
-  g_inspectedAudioChannelLayoutSize.store(
-      std::numeric_limits<std::size_t>::max(), std::memory_order_relaxed);
-}
-
-std::size_t inspectedAudioChannelLayoutSizeForTesting() noexcept {
-  return g_inspectedAudioChannelLayoutSize.load(std::memory_order_relaxed);
 }
 
 media::MediaVideoSampleFormat parseHevcSampleFormatForTesting(

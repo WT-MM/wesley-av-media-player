@@ -1,5 +1,7 @@
 """Identity-bound measurements of the build app; never controls an installed app."""
-import argparse,hashlib,json,os,pathlib,subprocess,uuid
+import argparse,hashlib,json,pathlib,subprocess,sys,uuid
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent/'support'))
+import wam_launch  # noqa: E402
 parser=argparse.ArgumentParser()
 parser.add_argument('--output',required=True)
 parser.add_argument('--sampler',required=True)
@@ -15,10 +17,9 @@ candidate=sha(app);root=pathlib.Path(args.output);root.mkdir(parents=True,exist_
 results=[]
 for index,path in enumerate(args.asset):
     asset=pathlib.Path(path).resolve();run=root/str(index);run.mkdir();(run/'home').mkdir()
-    env=os.environ.copy();run_id=str(uuid.uuid4())
-    env.update(HOME=str(run/'home'),WAM_NATIVE_BENCHMARK_TELEMETRY='1',WAM_NATIVE_BENCHMARK_RUN_ID=run_id,
-        WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),WAM_NATIVE_BENCHMARK_CANDIDATE_ID=candidate,
-        WAM_TEST_BACKGROUND='1',WAM_TEST_MUTED='1',WAM_TEST_GEOMETRY='480x270+2400+1000',
+    run_id=str(uuid.uuid4())
+    env=wam_launch.seam_env(run/'home',run_id=run_id,
+        asset_sha256=sha(asset),candidate_id=candidate,
         WAM_TEST_QUIT_AFTER_MS='14000',WAM_PLAYBACK_METRICS_PATH=str(run/'metrics.jsonl'),WAM_TEST_SEEK_SCRIPT=args.seek)
     if args.no_hardware:env['WAM_TEST_NO_VIDEO_HARDWARE']='1'
     if sha(app)!=candidate:raise RuntimeError('candidate changed')

@@ -231,7 +231,9 @@ private:
   alignas(kCacheLineBytes) std::atomic<std::size_t> unreadPcmBytes_{0};
   std::atomic<std::size_t> peakUnreadPcmBytes_{0};
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativePcmRingTestAccess;
+#endif
   friend struct NativePcmRingLayoutAssertions;
 };
 

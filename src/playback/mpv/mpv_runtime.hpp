@@ -74,7 +74,9 @@ class MpvRuntime final {
 
  private:
   friend class MpvLinkedRuntimeFactory;
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend class MpvRuntimeTestAccess;
+#endif
 
   MpvRuntime(std::unique_ptr<QLibrary> library, MpvApi api,
              unsigned long clientApiVersion, QString loadedPath);

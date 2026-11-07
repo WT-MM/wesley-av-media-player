@@ -2,12 +2,14 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import subprocess
-import uuid
+import sys
 
 from PIL import Image, ImageStat
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'support'))
+import wam_launch  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', type=Path, required=True)
@@ -29,14 +31,9 @@ def sha(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
-env = os.environ.copy()
-env.pop('WAM_TEST_NO_VIDEO_HARDWARE', None)
-env.update(HOME=str(root / 'home'), WAM_NATIVE_BENCHMARK_TELEMETRY='1',
-           WAM_NATIVE_BENCHMARK_RUN_ID=str(uuid.uuid4()),
-           WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),
-           WAM_NATIVE_BENCHMARK_CANDIDATE_ID=sha(app),
-           WAM_TEST_BACKGROUND='1', WAM_TEST_MUTED='1',
-           WAM_TEST_GEOMETRY='480x270+2400+1000',
+env = wam_launch.seam_env(root / 'home',
+           asset_sha256=sha(asset),
+           candidate_id=sha(app),
            WAM_PLAYBACK_METRICS_PATH=str(root / 'metrics.jsonl'),
            WAM_TEST_QUIT_AFTER_MS='5000',
            WAM_TEST_WINDOW_SCRIPT=f'report@1800,videograb:0:{root}/display.png@200,report@600')

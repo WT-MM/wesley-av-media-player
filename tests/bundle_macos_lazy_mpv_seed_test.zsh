@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="${0:A:h:h}"
 bundle_entry="$repo_root/scripts/bundle_macos.zsh"
 bundle_library="$repo_root/scripts/bundle_macos_lib.zsh"
+source "$repo_root/packaging/pins.env"
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/wam-mpv-package-policy.XXXXXX")"
 trap '/bin/rm -rf -- "$fixture_root"' EXIT
 
@@ -539,12 +540,12 @@ old_success_id="$(stat -f '%d:%i' "$success_app")"
 [[ -x "$success_app/Contents/MacOS/WAM" ]]
 [[ -x "$success_app/Contents/Resources/tools/ffmpeg" ]]
 [[ -x "$success_app/Contents/Resources/tools/whisper-cli" ]]
-grep -q '^WAMMpvFallback.dylib$' \
+grep -qxF "$WAM_MPV_FALLBACK_DYLIB" \
   "$success_app/Contents/Resources/wam-media-libraries.manifest"
 grep -q '^LOAD=@executable_path/../Frameworks/libfixture.1.dylib$' \
-  "$success_app/Contents/Frameworks/WAMMpvFallback.dylib"
+  "$success_app/Contents/Frameworks/$WAM_MPV_FALLBACK_DYLIB"
 grep -q '^LOAD=@executable_path/../Frameworks/QtFixture.framework/Versions/A/QtFixture$' \
-  "$success_app/Contents/Frameworks/WAMMpvFallback.dylib"
+  "$success_app/Contents/Frameworks/$WAM_MPV_FALLBACK_DYLIB"
 if find "$success_root" -maxdepth 1 -name '.wam-bundle-stage.*' | grep -q .; then
   print -u2 "successful transaction retained the old app stage"
   exit 1

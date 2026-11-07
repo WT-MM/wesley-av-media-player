@@ -5,8 +5,6 @@
 
 namespace wam::qt {
 
-struct NativePlaybackMetricsTestAccess;
-
 // One periodic playback sample. Every counter is cumulative; a consumer is
 // expected to difference two samples over its own window. The `has*` flags
 // distinguish a genuine zero from an unavailable value, which is emitted as
@@ -112,7 +110,6 @@ private:
   // Allocated once, only when enabled, so formatting never allocates.
   char *line_{nullptr};
 
-  friend struct NativePlaybackMetricsTestAccess;
 };
 
 } // namespace wam::qt

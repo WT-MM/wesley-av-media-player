@@ -19,7 +19,7 @@ class PackagingAuditTest(unittest.TestCase):
         self.exe.parent.mkdir(parents=True)
         self.frameworks = self.app / 'Contents/Frameworks'
         self.frameworks.mkdir()
-        self.compile(self.exe, '13.3')
+        self.compile(self.exe, audit.FLOOR)
         for name in audit.NATIVE_NAMES:
             shutil.copyfile(self.exe, self.frameworks / name)
         notices = self.app / 'Contents/Resources/native-ffmpeg'
@@ -34,14 +34,14 @@ class PackagingAuditTest(unittest.TestCase):
                         '-dynamiclib', str(source), '-o', str(destination)],
                        capture_output=True, check=True)
 
-    def test_clean_13_3_closure_and_high_floor_plugin(self):
+    def test_clean_floor_closure_and_high_floor_plugin(self):
         self.assertTrue(audit.audit(self.app)['clean_machine_ready'])
         plugin = self.app / 'Contents/PlugIns/late.dylib'
         plugin.parent.mkdir()
         self.compile(plugin, '26.0')
         result = audit.audit(self.app)
         self.assertFalse(result['clean_machine_ready'])
-        self.assertFalse(result['bundled_floor_13_3_pass'])
+        self.assertFalse(result['bundled_floor_pass'])
         self.assertEqual([row['minos'] for row in result['bundled_machos'] if row['path'] == str(plugin)], [['26.0']])
         self.assertTrue(result['closure_relocatable'])
 
@@ -55,7 +55,7 @@ class PackagingAuditTest(unittest.TestCase):
             return inspect(path)
         with patch.object(audit, 'inspect', bundled_only):
             result = audit.audit(self.app)
-        self.assertTrue(result['bundled_floor_13_3_pass'])
+        self.assertTrue(result['bundled_floor_pass'])
         self.assertFalse(result['closure_relocatable'])
         self.assertTrue(any('BundlePathEscapes' in value for value in result['errors']))
 
@@ -72,7 +72,7 @@ class PackagingAuditTest(unittest.TestCase):
         source.write_text('extern int test_symbol(void); int main(void) { return test_symbol(); }\n')
         library = self.frameworks / audit.NATIVE_NAMES[0]
         subprocess.run(['/usr/bin/install_name_tool', '-id', '@executable_path/../Frameworks/' + library.name, str(library)], check=True, capture_output=True)
-        subprocess.run(['/usr/bin/clang', '-target', 'arm64-apple-macos13.3', str(source), str(library), '-o', str(self.exe)], check=True, capture_output=True)
+        subprocess.run(['/usr/bin/clang', '-target', 'arm64-apple-macos' + audit.FLOOR, str(source), str(library), '-o', str(self.exe)], check=True, capture_output=True)
         result = audit.audit(self.app)
         self.assertTrue(result['eager_native_ffmpeg'])
         self.assertTrue(result['closure_relocatable'])

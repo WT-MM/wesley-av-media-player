@@ -5,6 +5,7 @@
 #include "platform/macos/mpegts_media_source.hpp"
 
 #include "support/expect.hpp"
+#include "support/process_wait.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -1128,15 +1129,11 @@ NativeMediaSessionObservations waitObservations(
 
 template <typename Predicate>
 void waitUntil(Predicate predicate, const char* message) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (predicate()) {
-      return;
-    }
-    std::this_thread::sleep_for(std::chrono::microseconds(50));
+  if (!::waitUntil(predicate, std::chrono::seconds(5), [] {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+      })) {
+    fail(message);
   }
-  fail(message);
 }
 
 protocol::Prepare prepareCommand(double seconds = 0.5) {

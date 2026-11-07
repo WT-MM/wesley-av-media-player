@@ -125,7 +125,7 @@ find_library(WAM_OPENGL_FRAMEWORK OpenGL REQUIRED)
 find_library(WAM_METAL_FRAMEWORK Metal REQUIRED)
 find_library(WAM_IMAGEIO_FRAMEWORK ImageIO REQUIRED)
 find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing REQUIRED)
-  set(WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES
+  add_library(wam_macos_native_video_core STATIC
     src/platform/macos/native_surface_budget.hpp
     src/platform/macos/native_surface_budget.mm
     src/platform/macos/native_video_codec_capability.hpp
@@ -141,8 +141,6 @@ find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing REQUIRED)
     src/platform/macos/software_vp8_decoder.hpp
     src/platform/macos/software_vp8_decoder.mm
     src/platform/macos/video_decode_lane.hpp)
-  add_library(wam_macos_native_video_core STATIC
-    ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES})
   target_include_directories(wam_macos_native_video_core PUBLIC src)
   target_compile_features(wam_macos_native_video_core PUBLIC cxx_std_20)
   target_compile_options(wam_macos_native_video_core PRIVATE

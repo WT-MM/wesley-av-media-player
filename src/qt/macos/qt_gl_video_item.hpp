@@ -7,9 +7,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <type_traits>
+
+#if defined(WAM_NATIVE_TEST_SEAMS)
+struct _CGLContextObject;
+#endif
 
 namespace wam::macos {
 
@@ -225,13 +230,19 @@ class QtGlVideoItem final : public QQuickItem {
   [[nodiscard]] static bool nativeGlSubsystemPoisonedForTesting() noexcept;
   [[nodiscard]] std::uint64_t
   transferredCoveringFencesForTesting() const noexcept;
-  // Proves VAO names are deleted only in their exact origin CGL context,
-  // including same-share-group and different-share-group collisions.
-  [[nodiscard]] static bool verifyContextLocalVaoPolicyForTesting();
-  // Proves both sampler-capable state preservation and the true-3.2 path that
-  // must not query or bind sampler objects at all.
-  [[nodiscard]] static bool verifyRawGlSamplerStateForTesting(
-      bool forceSamplerObjectsUnsupported = false);
+  // The raw GL helpers the hardware gate drives directly.
+  [[nodiscard]] static bool deleteVertexArrayInExactOriginForTesting(
+      unsigned int* vertexArray, _CGLContextObject* originContext,
+      _CGLContextObject* currentContext) noexcept;
+  [[nodiscard]] static bool samplerObjectsSupportedByContractForTesting(
+      int major, int minor, bool hasArbSamplerObjects) noexcept;
+  [[nodiscard]] static bool
+  currentContextSupportsSamplerObjectsForTesting() noexcept;
+  static void unbindTextureSamplersForTesting(
+      bool samplerObjectsSupported) noexcept;
+  // Runs body inside the item's save/restore guard for raw GL state.
+  static void withRawGlStateForTesting(bool samplerObjectsSupported,
+                                       const std::function<void()>& body);
 #endif
 
  protected:

@@ -1,5 +1,6 @@
 #include "fakes/mpv_runtime/mpv_runtime_test_access.hpp"
 #include "support/expect.hpp"
+#include "wam_pins.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -26,6 +27,8 @@ using wam::playback::mpv::MpvRuntimeLoadError;
 using wam::playback::mpv::MpvRuntimeLoadResult;
 using wam::playback::mpv::MpvRuntimeTestAccess;
 
+const QString kFallbackName = QString::fromLatin1(wam::pins::kMpvFallbackLibrary);
+
 static_assert(std::is_same_v<
               std::remove_const_t<decltype(MpvApi::mpv_create)>,
               decltype(&::mpv_create)>);
@@ -50,8 +53,7 @@ struct Bundle final {
   Bundle bundle{
       QDir(contents).filePath(QStringLiteral("MacOS")),
       QDir(contents).filePath(QStringLiteral("Frameworks")),
-      QDir(contents).filePath(
-          QStringLiteral("Frameworks/WAMMpvFallback.dylib")),
+      QDir(contents).filePath(QStringLiteral("Frameworks/") + kFallbackName),
   };
   expect(QDir().mkpath(bundle.applicationDirectory),
          "create bundle MacOS directory");
@@ -62,7 +64,7 @@ struct Bundle final {
   bundle.frameworksDirectory =
       QFileInfo(bundle.frameworksDirectory).canonicalFilePath();
   bundle.libraryPath = QDir(bundle.frameworksDirectory)
-                           .filePath(QStringLiteral("WAMMpvFallback.dylib"));
+                           .filePath(kFallbackName);
   return bundle;
 }
 
@@ -125,7 +127,7 @@ void testPathRejections(const QString& root, const QString& validLibrary) {
          "create external Frameworks target");
   installLibrary(validLibrary,
                  QDir(external_frameworks)
-                     .filePath(QStringLiteral("WAMMpvFallback.dylib")));
+                     .filePath(kFallbackName));
   expect(QFile::link(external_frameworks,
                      QDir(linked_contents)
                          .filePath(QStringLiteral("Frameworks"))),
@@ -142,7 +144,7 @@ void testPathRejections(const QString& root, const QString& validLibrary) {
   expect(QDir().mkpath(resources), "create Resources directory");
   installLibrary(validLibrary,
                  QDir(resources)
-                     .filePath(QStringLiteral("WAMMpvFallback.dylib")));
+                     .filePath(kFallbackName));
   expectFailure(MpvRuntimeTestAccess::load(
                     wrongPlacement.applicationDirectory),
                 MpvRuntimeLoadError::InvalidBundlePath,

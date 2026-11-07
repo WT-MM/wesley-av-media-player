@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Paired quiet-seam playback/caption proof. Controls only its own child PIDs."""
-import argparse, hashlib, json, os, pathlib, re, subprocess, time, uuid
+import argparse, hashlib, json, os, pathlib, re, subprocess, sys, time, uuid
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'support'))
+import wam_launch  # noqa: E402
 p=argparse.ArgumentParser()
 p.add_argument('--app',type=pathlib.Path,required=True)
 p.add_argument('--asset',type=pathlib.Path,required=True)
@@ -27,11 +29,10 @@ for kind in ('baseline','captions'):
     home=root/('home-'+uuid.uuid4().hex); home.mkdir()
     for generated in ('metrics.jsonl','captions.srt'):
         (root/generated).unlink(missing_ok=True)
-    env=os.environ.copy()
-    env.update(HOME=str(home),WAM_TEST_BACKGROUND='1',WAM_TEST_MUTED='1',
-        WAM_TEST_GEOMETRY='480x270+2400+1000',TMPDIR=str(a.output),WAM_TEST_CAPTION_ENGINE=a.engine, WAM_TEST_QUIT_AFTER_MS='8000',
-        WAM_NATIVE_BENCHMARK_TELEMETRY='1',WAM_NATIVE_BENCHMARK_RUN_ID=str(uuid.uuid4()),
-        WAM_NATIVE_BENCHMARK_CANDIDATE_ID=sha(a.app),WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(a.asset),
+    run_id=str(uuid.uuid4())
+    env=wam_launch.seam_env(home,run_id=run_id,
+        TMPDIR=str(a.output),WAM_TEST_CAPTION_ENGINE=a.engine, WAM_TEST_QUIT_AFTER_MS='8000',
+        candidate_id=sha(a.app),asset_sha256=sha(a.asset),
         WAM_PLAYBACK_METRICS_PATH=str(root/'metrics.jsonl'),WAM_TEST_CAPTION_METRICS='1')
     if kind=='captions': env['WAM_TEST_CAPTION_OUTPUT']=str(root/'captions.srt')
     quiet_gate()
@@ -49,9 +50,9 @@ for kind in ('baseline','captions'):
     identities=[json.loads(line) for line in text.splitlines()
                 if line.startswith('{') and '"record":"stream_header"' in line]
     assert identities and all(s.get('process_id')==child.pid and
-               s.get('run_id')==env['WAM_NATIVE_BENCHMARK_RUN_ID'] and
-               s.get('candidate_id')==env['WAM_NATIVE_BENCHMARK_CANDIDATE_ID'] and
-               s.get('asset_sha256')==env['WAM_NATIVE_BENCHMARK_ASSET_SHA256']
+               s.get('run_id')==run_id and
+               s.get('candidate_id')==sha(a.app) and
+               s.get('asset_sha256')==sha(a.asset)
                for s in identities), 'Telemetry identity mismatch'
     assert playback, 'No playback samples in exclusive per-child metrics file'
     measured=[s for s in playback if s.get('drawn_frames') is not None]

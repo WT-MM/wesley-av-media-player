@@ -212,7 +212,9 @@ public:
   void endFallbackEventDrain();
 
 private:
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativePlaybackOwnerRouterTestAccess;
+#endif
   playback_router::PlaybackRouter router_;
   std::uint64_t tick_{0};
   unsigned executeDepth_{0};

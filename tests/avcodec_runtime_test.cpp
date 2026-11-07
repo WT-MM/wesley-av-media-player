@@ -22,8 +22,8 @@ int main(int argc, char** argv) {
   REQUIRE(!failure);
   REQUIRE(nativeClosurePresent());
   EXPECT(!foreignClosurePresent());
-  EXPECT(api().avcodec_version() == AV_VERSION_INT(63,1,101));
-  EXPECT(api().avutil_version() == AV_VERSION_INT(61,1,101));
+  EXPECT(api().avcodec_version() == LIBAVCODEC_VERSION_INT);
+  EXPECT(api().avutil_version() == LIBAVUTIL_VERSION_INT);
   RuntimeLease second;
   EXPECT(!second.acquire());
   first.release();

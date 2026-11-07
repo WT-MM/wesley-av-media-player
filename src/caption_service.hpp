@@ -148,7 +148,7 @@ private:
   bool download_asked_ = false;
 };
 
-#if defined(WAM_CAPTION_SERVICE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 namespace detail {
 // Added to the GPU watchdog's clock, so a test can expire the no-progress
 // window after a known event instead of racing a real child's startup.

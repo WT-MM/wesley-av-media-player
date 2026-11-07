@@ -198,14 +198,11 @@ wam::CaptionRequest requestFor(const fs::path &directory,
 }
 
 void waitForStage(wam::CaptionService &service, wam::CaptionStage stage) {
-  const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (std::chrono::steady_clock::now() < deadline) {
-    const auto status = service.status();
-    if (status.stage == stage || status.finished)
-      return;
-    std::this_thread::sleep_for(10ms);
-  }
-  throw std::runtime_error("caption service did not reach expected stage");
+  if (!waitUntil([&] {
+        const auto status = service.status();
+        return status.stage == stage || status.finished;
+      }, 3s))
+    throw std::runtime_error("caption service did not reach expected stage");
 }
 
 } // namespace
@@ -337,10 +334,8 @@ int main(int argc, char **argv) {
       expect(service.start(request), "valid caption request should start");
       expect(!service.start(request),
             "a second concurrent request must be refused");
-      const auto deadline = std::chrono::steady_clock::now() + 3s;
-      while (!service.finished() && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(5ms);
-      expect(service.finished(), "caption worker did not publish completion");
+      expect(waitUntil([&] { return service.finished(); }, 3s),
+             "caption worker did not publish completion");
       expect(captionTemporaryCount(temporary.path) == 0,
             "terminal status was published before staging cleanup");
       expect(!fs::exists(fs::path(readFile(wav_log))),

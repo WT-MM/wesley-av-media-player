@@ -56,7 +56,7 @@ struct ProcessResult {
 
 std::chrono::steady_clock::time_point watchdogNow() {
   auto now = std::chrono::steady_clock::now();
-#if defined(WAM_CAPTION_SERVICE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   now += std::chrono::milliseconds(detail::captionWatchdogClockSkewMs.load());
 #endif
   return now;

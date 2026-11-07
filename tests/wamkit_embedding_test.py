@@ -7,7 +7,8 @@ p=argparse.ArgumentParser();p.add_argument('--host',type=pathlib.Path,required=T
 host=a.host.resolve();asset=a.asset.resolve()
 if a.unique:a.output=a.output/subprocess.check_output(['uuidgen'],text=True).strip().lower()
 a.output.mkdir(parents=True,exist_ok=False);home=a.output/'home';home.mkdir();metrics=a.output/'metrics.jsonl'
-env=wam_launch.seam_env(home,WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),WAM_NATIVE_BENCHMARK_CANDIDATE_ID=sha(host),WAM_PLAYBACK_METRICS_PATH=metrics,WAM_TEST_QUIT_AFTER_MS='4000')
+asset_sha=sha(asset);host_sha=sha(host)
+env=wam_launch.seam_env(home,asset_sha256=asset_sha,candidate_id=host_sha,WAM_PLAYBACK_METRICS_PATH=metrics,WAM_TEST_QUIT_AFTER_MS='4000')
 if a.device_recovery:env['WAM_TEST_DEVICE_RECOVERY_SEEK']='1'
 if a.quarantine:env.update(WAM_TEST_RETIRE_STALL='1',WAM_TEST_QUIT_AFTER_MS='1000')
 if a.replace:env['WAM_TEST_REPLACE']='1'
@@ -47,6 +48,6 @@ else:
   seeks=[r for r in rows if r['kind']==2 and r['requested_value']==1001 and r['requested_timescale']==30000 and r['result']==0]
   if not seeks:errors.append('missing exact off-grid seek completion')
   elif any(r['audio_start_value']*8000!=267*r['audio_start_timescale'] for r in seeks):errors.append('audio boundary differs from ceil(T*48000)/48000')
-assert sha(host)==env['WAM_NATIVE_BENCHMARK_CANDIDATE_ID'] and sha(asset)==env['WAM_NATIVE_BENCHMARK_ASSET_SHA256']
+assert sha(host)==host_sha and sha(asset)==asset_sha
 result=dict(host=str(host),asset=str(asset),pid=process.pid,rc=rc,identities={k:v for k,v in env.items() if k.startswith('WAM_NATIVE_BENCHMARK')},errors=errors,passed=not errors)
 (a.output/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result));raise SystemExit(bool(errors))

@@ -525,7 +525,9 @@ private:
   void *after_preflight_context_{nullptr};
   bool fail_next_commit_{false};
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeAudioRenderCoreTestAccess;
+#endif
 };
 
 #if defined(WAM_NATIVE_TEST_SEAMS)

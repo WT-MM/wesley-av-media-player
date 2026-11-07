@@ -2,7 +2,7 @@
 
 The seams (WAM_TEST_*, src/qt/test_seams.hpp) exist only in a telemetry build
 and only when WAM_NATIVE_BENCHMARK_TELEMETRY carries a valid run identity;
-without it every seam is silently off. seam_env() is the one place that
+without it every seam is silently off. identity_env() is the one place that
 identity is spelled.
 """
 import contextlib
@@ -18,17 +18,23 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def seam_env(home, **extra):
+def identity_env(run_id=None, asset_sha256='0' * 64, candidate_id='1' * 64):
+    """The telemetry run identity, on its own (a fresh run id unless given).
+
+    For launchers that pass variables one by one, such as `open --env`."""
+    return dict(WAM_NATIVE_BENCHMARK_TELEMETRY='1',
+                WAM_NATIVE_BENCHMARK_RUN_ID=run_id or str(uuid.uuid4()),
+                WAM_NATIVE_BENCHMARK_ASSET_SHA256=asset_sha256,
+                WAM_NATIVE_BENCHMARK_CANDIDATE_ID=candidate_id)
+
+
+def seam_env(home, run_id=None, asset_sha256='0' * 64, candidate_id='1' * 64, **extra):
     """The environment for a quiet, parked, muted seam launch with HOME=home.
 
     WAM_* variables inherited from the caller are dropped: a stray seam in the
     shell would silently change the run."""
     env = {k: v for k, v in os.environ.items() if not k.startswith('WAM_')}
-    env.update(HOME=str(home),
-               WAM_NATIVE_BENCHMARK_TELEMETRY='1',
-               WAM_NATIVE_BENCHMARK_RUN_ID=str(uuid.uuid4()),
-               WAM_NATIVE_BENCHMARK_ASSET_SHA256='0' * 64,
-               WAM_NATIVE_BENCHMARK_CANDIDATE_ID='1' * 64,
+    env.update(identity_env(run_id, asset_sha256, candidate_id), HOME=str(home),
                WAM_TEST_BACKGROUND='1', WAM_TEST_MUTED='1',
                WAM_TEST_GEOMETRY='480x270+2400+1000')
     env.update({key: str(value) for key, value in extra.items()})

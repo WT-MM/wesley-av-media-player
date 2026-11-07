@@ -2,6 +2,7 @@
 #include "media/avcodec/closure.hpp"
 #include "media/avcodec/runtime.hpp"
 #include "fakes/mpv_runtime/mpv_runtime_test_access.hpp"
+#include "wam_pins.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -18,7 +19,7 @@ int main(int argc,char** argv) {
   QTemporaryDir scratch("/private/tmp/wam-coexistence-XXXXXX");REQUIRE(scratch.isValid());
   const auto contents=scratch.path()+"/Fixture.app/Contents";
   REQUIRE(QDir().mkpath(contents+"/MacOS"));REQUIRE(QDir().mkpath(contents+"/Frameworks"));
-  REQUIRE(QFile::copy(QString::fromLocal8Bit(argv[1]),contents+"/Frameworks/WAMMpvFallback.dylib"));
+  REQUIRE(QFile::copy(QString::fromLocal8Bit(argv[1]),contents+"/Frameworks/"+wam::pins::kMpvFallbackLibrary));
   RuntimeLease first,second;REQUIRE(!first.acquire());REQUIRE(!second.acquire());
   Dl_info symbol{};REQUIRE(dladdr(reinterpret_cast<void*>(api().avcodec_version),&symbol));
   EXPECT(symbol.dli_fname && std::strstr(symbol.dli_fname,"libavcodec-wamnative."));

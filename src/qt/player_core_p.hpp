@@ -32,8 +32,10 @@ class PlayerCoreTestAccess;
 // Private, shared lifetime boundary between the GUI controller and scene-graph
 // render node. It ensures the mpv core cannot disappear while Qt is rendering.
 class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) || defined(WAM_QT_TEST_SEAMS)
   friend class PlayerControllerTestAccess;
   friend class PlayerCoreTestAccess;
+#endif
 
  private:
   enum class State : unsigned char { Dormant, Initializing, Ready, Failed };

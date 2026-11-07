@@ -4,7 +4,14 @@ import json
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'support'))
+from wam_pins import PINS  # noqa: E402
+
+AVCODEC = PINS['WAM_NATIVE_AVCODEC_DYLIB']
+AVUTIL = PINS['WAM_NATIVE_AVUTIL_DYLIB']
 
 p = argparse.ArgumentParser()
 p.add_argument('--binary', required=True)
@@ -24,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='wam-avcodec-runtime-', dir='/private/tm
         results.append(dict(case=name, rc=r.returncode, stdout=r.stdout, stderr=r.stderr))
         assert r.returncode == 0, results[-1]
     check('missing', 'DecoderStageNotBuilt')
-    for name in ['libavcodec-wamnative.63.dylib', 'libavutil-wamnative.61.dylib']:
+    for name in [AVCODEC, AVUTIL]:
         shutil.copy2(pathlib.Path(a.libraries) / name, libs / name)
     check('relocated')
     macos = root / 'Relocated.app/Contents/MacOS'
@@ -36,14 +43,14 @@ with tempfile.TemporaryDirectory(prefix='wam-avcodec-runtime-', dir='/private/tm
     binary = bundle_binary
     check('bundle-layout-relocation')
     binary = standalone_binary
-    util = libs / 'libavutil-wamnative.61.dylib'
+    util = libs / AVUTIL
     outside = root / util.name
     util.rename(outside)
     util.symlink_to(outside)
     check('external-symlink', 'DecoderUnavailable: native FFmpeg library outside bundle')
     util.unlink()
     outside.rename(util)
-    (libs / 'libavcodec-wamnative.63.dylib').write_bytes(b'not a Mach-O library\n')
+    (libs / AVCODEC).write_bytes(b'not a Mach-O library\n')
     check('replaced', 'DecoderUnavailable')
 text = json.dumps(results, indent=2) + '\n'
 if a.output:

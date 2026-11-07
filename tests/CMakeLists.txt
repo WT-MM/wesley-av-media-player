@@ -3,11 +3,6 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
-# Tests compile production sources directly, so they must see the same build
-# configuration as the targets those sources normally belong to.
-if(WAM_NATIVE_BENCHMARK_TELEMETRY)
-  add_compile_definitions(WAM_NATIVE_BENCHMARK_TELEMETRY=1)
-endif()
 
 # The tools that generate and inspect test media. Fixture generation needs GPL
 # encoders, so this is a development FFmpeg, never the one a release ships
@@ -34,15 +29,8 @@ if(APPLE)
     FIXTURES_SETUP wamkit_media TIMEOUT 60)
 endif()
 
-add_executable(wam_caption_test
-  caption_service_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/caption_service.cpp
-  ${PROJECT_SOURCE_DIR}/src/caption_service.hpp
-  ${PROJECT_SOURCE_DIR}/src/jobs.cpp
-  ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
-target_link_libraries(wam_caption_test PRIVATE wam_caption_runtime)
-target_include_directories(wam_caption_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_compile_definitions(wam_caption_test PRIVATE WAM_CAPTION_SERVICE_TESTING=1)
+add_executable(wam_caption_test caption_service_test.cpp)
+target_link_libraries(wam_caption_test PRIVATE wam_app_core_test_seams)
 add_test(NAME caption_service COMMAND wam_caption_test)
 add_executable(wam_caption_backend_test caption_backend_test.cpp)
 target_link_libraries(wam_caption_backend_test PRIVATE wam_caption_runtime)
@@ -52,14 +40,12 @@ if(NOT WAM_HAS_SPEECH_ANALYZER)
   add_test(NAME caption_sdk_absent COMMAND wam_caption_backend_test --expect-unavailable)
 endif()
 if(UNIX)
-  add_executable(wam_caption_flow_test caption_flow_test.cpp ${PROJECT_SOURCE_DIR}/src/caption_service.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp)
-  target_link_libraries(wam_caption_flow_test PRIVATE wam_caption_runtime)
-  target_include_directories(wam_caption_flow_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  add_executable(wam_caption_flow_test caption_flow_test.cpp)
+  target_link_libraries(wam_caption_flow_test PRIVATE wam_app_core)
   add_test(NAME caption_flow COMMAND wam_caption_flow_test)
 endif()
-add_executable(wam_caption_proof caption_engine_proof.cpp ${PROJECT_SOURCE_DIR}/src/caption_service.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp)
-target_link_libraries(wam_caption_proof PRIVATE wam_caption_runtime)
-target_include_directories(wam_caption_proof PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_executable(wam_caption_proof caption_engine_proof.cpp)
+target_link_libraries(wam_caption_proof PRIVATE wam_app_core)
 
 if(NOT WAM_BUILD_APP)
   return()
@@ -71,7 +57,6 @@ endif()
 
 # Source lists shared with the production targets are relative to the root.
 list(TRANSFORM WAM_QUICKLOOK_FRAME_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
-list(TRANSFORM WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
 
 if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
   set(WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES
@@ -89,7 +74,7 @@ if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
   add_test(NAME native_retirement COMMAND wam_native_retirement_test)
   set_tests_properties(native_retirement PROPERTIES TIMEOUT 10)
   add_executable(wam_native_owner_embedding_test native_owner_embedding_test.mm)
-  target_link_libraries(wam_native_owner_embedding_test PRIVATE wam_macos_native_session_system)
+  target_link_libraries(wam_native_owner_embedding_test PRIVATE wam_macos_native_session_system_test_seams)
   add_test(NAME native_owner_embedding COMMAND wam_native_owner_embedding_test)
   add_executable(wam_native_layer_embedding_test native_layer_embedding_test.mm)
   target_compile_options(wam_native_layer_embedding_test PRIVATE -fobjc-arc)
@@ -318,7 +303,7 @@ if(TARGET wam_native_core)
 
   add_executable(wam_native_pcm_ring_test
     native_pcm_ring_test.cpp)
-  target_link_libraries(wam_native_pcm_ring_test PRIVATE wam_native_core)
+  target_link_libraries(wam_native_pcm_ring_test PRIVATE wam_native_core_test_seams)
   add_test(NAME native_pcm_ring COMMAND wam_native_pcm_ring_test)
 
   add_executable(wam_native_audio_render_core_test
@@ -392,30 +377,23 @@ add_executable(wam_playback_policy_test playback_policy_test.cpp)
 target_include_directories(wam_playback_policy_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME playback_policy COMMAND wam_playback_policy_test)
 
-add_executable(wam_launch_rules_test launch_rules_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/media_url.cpp ${PROJECT_SOURCE_DIR}/src/qt/media_url.hpp)
-target_include_directories(wam_launch_rules_test PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/qt)
-target_link_libraries(wam_launch_rules_test PRIVATE Qt6::Core)
+add_executable(wam_launch_rules_test launch_rules_test.cpp)
+target_include_directories(wam_launch_rules_test PRIVATE ${PROJECT_SOURCE_DIR}/src/qt)
+target_link_libraries(wam_launch_rules_test PRIVATE wam_app_test_seams)
 add_test(NAME launch_rules COMMAND wam_launch_rules_test)
 
-add_executable(wam_jobs_test jobs_test.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
-target_include_directories(wam_jobs_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_executable(wam_jobs_test jobs_test.cpp)
+target_link_libraries(wam_jobs_test PRIVATE wam_app_core)
 add_test(NAME jobs COMMAND wam_jobs_test)
 
-add_executable(wam_state_test
-  state_store_test.cpp ${PROJECT_SOURCE_DIR}/src/state_store.cpp ${PROJECT_SOURCE_DIR}/src/state_store.hpp)
-target_include_directories(wam_state_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_executable(wam_state_test state_store_test.cpp)
+target_link_libraries(wam_state_test PRIVATE wam_app_core)
 add_test(NAME state_store COMMAND wam_state_test)
 
-# The pointer-scroll gesture model links no Qt at all, which is exactly why
-# it is its own translation unit: normalization, axis lock and the 100%
-# detent are decided there and proved here without a GUI.
-add_executable(wam_scroll_gesture_test
-  scroll_gesture_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/scroll_gesture.hpp)
-target_include_directories(wam_scroll_gesture_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_compile_features(wam_scroll_gesture_test PRIVATE cxx_std_20)
+# The pointer-scroll gesture model links no Qt at all: normalization, axis
+# lock and the 100% detent are decided there and proved here without a GUI.
+add_executable(wam_scroll_gesture_test scroll_gesture_test.cpp)
+target_link_libraries(wam_scroll_gesture_test PRIVATE wam_app_core)
 target_compile_options(wam_scroll_gesture_test PRIVATE
   -Wall -Wextra -Wpedantic)
 add_test(NAME scroll_gesture COMMAND wam_scroll_gesture_test)
@@ -436,11 +414,12 @@ target_link_libraries(wam_app_test_seams PUBLIC
   Qt6::Qml
   Qt6::Quick
   Qt6::OpenGL
-  wam_mpv_runtime
-  wam_native_core
+  wam_app_core_test_seams
+  wam_mpv_runtime_test_seams
+  wam_native_core_test_seams
   wam_caption_runtime
   $<TARGET_NAME_IF_EXISTS:wam_caption_prompt>
-  $<TARGET_NAME_IF_EXISTS:wam_macos_native_qt_tracked>)
+  $<TARGET_NAME_IF_EXISTS:wam_macos_native_qt_tracked_test_seams>)
 
 add_executable(wam_player_controller_lazy_test player_controller_lazy_test.cpp)
 target_link_libraries(wam_player_controller_lazy_test PRIVATE
@@ -469,8 +448,8 @@ add_test(NAME render_lifecycle COMMAND wam_render_lifecycle_test)
 
 if(WAM_DEV_FFMPEG_EXECUTABLE AND WAM_TEST_FFPROBE)
   add_executable(wam_export_integration_test
-    export_integration_test.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
-  target_include_directories(wam_export_integration_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    export_integration_test.cpp)
+  target_link_libraries(wam_export_integration_test PRIVATE wam_app_core)
   if(APPLE)
     add_test(NAME export_presets COMMAND wam_export_integration_test
       "${WAM_DEV_FFMPEG_EXECUTABLE}" "${WAM_TEST_FFPROBE}" --all-presets)
@@ -821,6 +800,11 @@ if(APPLE)
     target_compile_options(
       wam_native_benchmark_telemetry_test PRIVATE
       -Wall -Wextra -Wpedantic)
+    # The test compiles the telemetry source itself (it is not in a library),
+    # so it arms the seam macro for its own copy.
+    target_compile_definitions(wam_native_benchmark_telemetry_test PRIVATE
+      WAM_NATIVE_TEST_SEAMS=1
+      $<$<BOOL:${WAM_NATIVE_BENCHMARK_TELEMETRY}>:WAM_NATIVE_BENCHMARK_TELEMETRY=1>)
     add_test(NAME macos_native_benchmark_telemetry
       COMMAND wam_native_benchmark_telemetry_test)
     set_tests_properties(macos_native_benchmark_telemetry PROPERTIES
@@ -874,19 +858,14 @@ if(APPLE)
 
     # OpenGL/CGL hardware gate matching the shipping Qt graphics backend.
     add_executable(wam_native_qt_gl_compositor_test
-      native_qt_gl_compositor_test.mm
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.hpp
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.mm)
-    target_include_directories(wam_native_qt_gl_compositor_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      native_qt_gl_compositor_test.mm)
+    # The test drives raw GL (gl3.h) next to Qt's QOpenGLContext (gl.h).
     target_compile_definitions(wam_native_qt_gl_compositor_test PRIVATE
-      WAM_NATIVE_TEST_SEAMS=1
-      GL_SILENCE_DEPRECATION=1)
+      GL_SILENCE_DEPRECATION=1
+      GL_DO_NOT_WARN_IF_MULTI_GL_VERSION_HEADERS_INCLUDED=1)
     target_link_libraries(wam_native_qt_gl_compositor_test PRIVATE
-      wam_macos_native_video_core
-      Qt6::Core
-      Qt6::Gui
+      wam_macos_native_qt_tracked_test_seams
       Qt6::Qml
-      Qt6::Quick
       "${WAM_OPENGL_FRAMEWORK}")
     target_compile_options(wam_native_qt_gl_compositor_test PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
@@ -899,26 +878,14 @@ if(APPLE)
     set_tests_properties(macos_native_qt_gl_compositor PROPERTIES
       TIMEOUT 120 SKIP_RETURN_CODE 77)
 
-    # Scene-graph route adapter gate (WAM_PRESENTATION=scenegraph). The
-    # adapter's fault-injection seams exist only under the testing macro, so
-    # the test compiles the adapter and item privately instead of linking
-    # the production archive.
+    # Scene-graph route adapter gate (WAM_PRESENTATION=scenegraph).
     add_executable(wam_native_qt_gl_output_test
-      native_qt_gl_output_test.mm
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/native_qt_gl_output.hpp
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/native_qt_gl_output.mm
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.hpp
-      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.mm)
-    target_include_directories(wam_native_qt_gl_output_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      native_qt_gl_output_test.mm)
     target_compile_definitions(wam_native_qt_gl_output_test PRIVATE
-      WAM_NATIVE_TEST_SEAMS=1
       GL_SILENCE_DEPRECATION=1)
     target_link_libraries(wam_native_qt_gl_output_test PRIVATE
-      wam_macos_native_video_core
-      Qt6::Core
-      Qt6::Gui
+      wam_macos_native_qt_tracked_test_seams
       Qt6::Qml
-      Qt6::Quick
       "${WAM_OPENGL_FRAMEWORK}")
     target_compile_options(wam_native_qt_gl_output_test PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
@@ -930,35 +897,17 @@ if(APPLE)
       COMMAND wam_native_qt_gl_output_test)
     set_tests_properties(macos_native_qt_gl_output PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
+    # The backend twin carries the video core twin plus core_media_carriage,
+    # which builds the test's sample buffers.
     add_executable(wam_video_toolbox_decoder_test
       video_toolbox_decoder_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
-      ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}
       ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
-    target_include_directories(wam_video_toolbox_decoder_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
-      WAM_NATIVE_TEST_SEAMS=1
       GL_SILENCE_DEPRECATION=1)
-    if(WAM_ENABLE_SOFTWARE_VP8)
-      # This target compiles the core sources directly rather than linking
-      # the library, so it needs the same feature definition and the same
-      # libvpx link the library carries.
-      target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
-        WAM_ENABLE_SOFTWARE_VP8)
-      target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
-        PkgConfig::WAM_LIBVPX)
-    endif()
     target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
-      wam_native_core
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_IOSURFACE_FRAMEWORK}"
+      wam_macos_native_backend_test_seams
       "${WAM_METAL_FRAMEWORK}"
       "${WAM_OPENGL_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}"
       "${WAM_AVFOUNDATION_FRAMEWORK}")
     target_compile_options(wam_video_toolbox_decoder_test PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
@@ -1065,6 +1014,10 @@ add_test(NAME software_color_qualification COMMAND wam_software_color_qualificat
 add_executable(wam_native_late_frame_trace_test native_late_frame_trace_test.cpp)
 target_include_directories(wam_native_late_frame_trace_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME native_late_frame_trace COMMAND wam_native_late_frame_trace_test)
+if(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  target_compile_definitions(wam_native_late_frame_trace_test PRIVATE
+    WAM_NATIVE_BENCHMARK_TELEMETRY=1)
+endif()
 if(WAM_NATIVE_BENCHMARK_TELEMETRY AND TARGET wam_native_video_consumer_test)
   set_tests_properties(macos_native_video_consumer PROPERTIES
     ENVIRONMENT "WAM_NATIVE_BENCHMARK_TELEMETRY=1")
@@ -1132,7 +1085,7 @@ if(APPLE)
     list(APPEND wam_fake_mpv_paths "$<TARGET_FILE:${fake}>")
   endforeach()
   add_executable(wam_mpv_runtime_test mpv_runtime_test.cpp)
-  target_link_libraries(wam_mpv_runtime_test PRIVATE wam_mpv_runtime)
+  target_link_libraries(wam_mpv_runtime_test PRIVATE wam_mpv_runtime_test_seams wam_pins)
   add_test(NAME mpv_runtime COMMAND wam_mpv_runtime_test ${wam_fake_mpv_paths})
   set_tests_properties(mpv_runtime PROPERTIES TIMEOUT 60)
   # The macOS runtime resolves libmpv only at run time: neither it nor this
@@ -1148,13 +1101,10 @@ else()
 endif()
 
 if(APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
-  add_library(wam_coexistence_fake_mpv SHARED fakes/mpv_runtime/fake_mpv.cpp)
-  target_compile_definitions(wam_coexistence_fake_mpv PRIVATE WAM_FAKE_MPV_NEWER_MINOR=1)
-  target_link_libraries(wam_coexistence_fake_mpv PRIVATE wam_mpv_headers)
-  set_target_properties(wam_coexistence_fake_mpv PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME ${WAM_MPV_FALLBACK_DYLIB})
   add_executable(wam_ffmpeg_coexistence_test ffmpeg_coexistence_test.cpp)
-  target_link_libraries(wam_ffmpeg_coexistence_test PRIVATE wam_avcodec_worker wam_mpv_runtime)
-  add_test(NAME ffmpeg_coexistence COMMAND wam_ffmpeg_coexistence_test "$<TARGET_FILE:wam_coexistence_fake_mpv>")
+  target_link_libraries(wam_ffmpeg_coexistence_test PRIVATE
+    wam_avcodec_worker_test_seams wam_mpv_runtime_test_seams)
+  add_test(NAME ffmpeg_coexistence COMMAND wam_ffmpeg_coexistence_test "$<TARGET_FILE:wam_fake_mpv_valid>")
 endif()
 
 if(APPLE)
@@ -1531,6 +1481,16 @@ foreach(label_and_tests IN ITEMS
   foreach(test IN LISTS label_and_tests)
     if(TEST ${test})
       set_property(TEST ${test} APPEND PROPERTY LABELS ${label})
+    else()
+      # Some tests register only on some platforms or with local fixtures,
+      # but every name here must still be one this file registers: a
+      # renamed test must not silently lose its label.
+      file(READ "${CMAKE_CURRENT_LIST_FILE}" wam_tests_list_file)
+      string(FIND "${wam_tests_list_file}" "add_test(NAME ${test}\n" at_newline)
+      string(FIND "${wam_tests_list_file}" "add_test(NAME ${test} " at_space)
+      if(at_newline EQUAL -1 AND at_space EQUAL -1)
+        message(FATAL_ERROR "Test label table names unknown test '${test}'")
+      endif()
     endif()
   endforeach()
 endforeach()
