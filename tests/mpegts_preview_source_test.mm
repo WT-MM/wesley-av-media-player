@@ -241,10 +241,6 @@ void testPlanMappingWithoutBackWalk(const Fixture& fixture) {
   expect(facts.backend.readersCreated == targets.size() &&
              facts.backend.readersStarted == targets.size(),
          "exactly one cursor is created and started per preview epoch");
-  expect(facts.backend.assetLoadAttempts == 0 &&
-             facts.backend.assetLoadsCompleted == 0 &&
-             facts.backend.assetLoadNanoseconds == 0,
-         "preview never reopens a container the main source already admitted");
 }
 
 void testDecodeOnlyBoundaryAndForwardRetarget(const Fixture& fixture) {

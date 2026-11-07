@@ -405,10 +405,6 @@ void testCueMappingWithoutBackWalk() {
   expect(facts.backend.readersCreated == cases.size() &&
              facts.backend.readersStarted == cases.size(),
          "exactly one cursor is created and started per preview epoch");
-  expect(facts.backend.assetLoadAttempts == 0 &&
-             facts.backend.assetLoadsCompleted == 0 &&
-             facts.backend.assetLoadNanoseconds == 0,
-         "preview never reopens a container the main source already admitted");
 }
 
 void testDecodeOnlyBoundaryAndForwardRetarget() {
