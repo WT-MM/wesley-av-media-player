@@ -96,30 +96,11 @@ MediaTime MatroskaSourceTraits::mergeOrderKey(
 
 struct MatroskaMediaSource::Impl final
     : NativeCustomSourceCore<Impl, MatroskaSourceTraits> {
-  using Base = NativeCustomSourceCore<Impl, MatroskaSourceTraits>;
-  using Base::rejectedAudio;
   MatroskaSourceTraits::PrepareOutcome prepareAsset(
       const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
       MatroskaSourceTraits::CancellationToken token) noexcept {
     return media::matroska::prepareMatroskaLocalFile(path, options, token, rejectedAudio);
   }
-  using typename Base::StagedSample;
-  using Base::assetContext;
-  using Base::audioDecodeStart;
-  using Base::audioFormat;
-  using Base::audioFramesPerPacket;
-  using Base::audioHead;
-  using Base::audioProofCeiling;
-  using Base::audioSampleRate;
-  using Base::cancellation;
-  using Base::descriptor;
-  using Base::generation;
-  using Base::limits;
-  using Base::publishCancellation;
-  using Base::resetAudioFacts;
-  using Base::sealSample;
-  using Base::stateAudioPlayoutProofOnce;
-  using Base::videoFormat;
 
   [[nodiscard]] std::optional<StagedSample> makeHead(
       const MatroskaCompressedSample& raw, bool video, std::string* error) {

@@ -150,25 +150,6 @@ MediaTime MpegTsSourceTraits::mergeOrderKey(const MediaSample& sample) noexcept 
 
 struct MpegTsMediaSource::Impl final
     : NativeCustomSourceCore<Impl, MpegTsSourceTraits> {
-  using Base = NativeCustomSourceCore<Impl, MpegTsSourceTraits>;
-  using typename Base::StagedSample;
-  using Base::assetContext;
-  using Base::audioDecodeStart;
-  using Base::audioFormat;
-  using Base::audioFramesPerPacket;
-  using Base::audioHead;
-  using Base::audioProofCeiling;
-  using Base::audioSampleRate;
-  using Base::cancellation;
-  using Base::descriptor;
-  using Base::generation;
-  using Base::limits;
-  using Base::publishCancellation;
-  using Base::requestedTarget;
-  using Base::resetAudioFacts;
-  using Base::sealSample;
-  using Base::stateAudioPlayoutProofOnce;
-  using Base::videoFormat;
 
   MediaCodec videoCodec{MediaCodec::Unknown};
   MediaCodec audioCodec{MediaCodec::Unknown};
