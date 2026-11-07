@@ -163,7 +163,7 @@ ApplicationWindow {
     // the test lives in MacWindowChrome::revealInFinder, deliberately not here:
     // it is a filesystem hit, and no binding would be re-evaluated if the file
     // were deleted mid-playback anyway.
-    readonly property bool titleRevealable: (typeof revealInFinderSupported !== "undefined" && revealInFinderSupported)
+    readonly property bool titleRevealable: revealInFinderSupported
         && controller.hasMedia
         && String(controller.source).startsWith("file:")
     // The source whose aspect ratio the window has already been snapped to,
@@ -621,21 +621,6 @@ ApplicationWindow {
             closeQuickEdit();
         else
             openQuickEdit();
-    }
-
-    // Preferences is app-level -- ONE window for the whole application, bound
-    // to `appSettings`, which every open player follows live (see
-    // WindowManager::showPreferences). A per-window panel would mean N panels
-    // disagreeing about one persisted setting.
-    function showPreferences() {
-        appHost.showPreferences();
-    }
-
-    // The app-level "h" macro: pause every window, then hide the whole
-    // application. Unhiding restores the windows exactly as they were, still
-    // paused -- nothing resumes on its own.
-    function hideAndPauseAll() {
-        appHost.hideAndPauseAll();
     }
 
     // The macOS chrome bridge (src/qt/macos_window_chrome.hpp), or null where

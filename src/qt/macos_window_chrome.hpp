@@ -331,15 +331,12 @@ public:
   // headroom clamp, so QML reports the real number rather than the request.
   // Passing 1.0 turns the mode off and stops the headroom watch.
   Q_INVOKABLE qreal setVividBoost(qreal boost);
-  Q_INVOKABLE qreal vividBoost() const;
-  Q_INVOKABLE qreal edrHeadroom() const;
 
   // --- Theater dim ------------------------------------------------------
   // Shows or hides this window's theater overlay: a borderless, click-through
   // black window on every screen, ordered directly beneath this player window
   // and above everything else. `opacity` is 0..1 black coverage.
   Q_INVOKABLE void setTheaterDim(bool enabled, qreal opacity);
-  Q_INVOKABLE bool theaterDimActive() const;
   // Drives the title band's reveal caret (qml/Main.qml). Returns whether a
   // Finder window was actually asked for, so the caller -- and the log line
   // this leaves behind -- can tell a declined reveal from a completed one.

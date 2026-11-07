@@ -206,12 +206,6 @@ public:
   PlayerController(const PlayerController &) = delete;
   PlayerController &operator=(const PlayerController &) = delete;
 
-  // Compatibility-router handoff. Provisioning retains an already validated
-  // runtime but does not create an mpv handle; initializePlaybackEngine() can
-  // consume it only after the router has explicitly selected fallback.
-  [[nodiscard]] bool provisionMpvFallbackRuntime(
-      std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime);
-
   [[nodiscard]] bool available() const;
   [[nodiscard]] bool loading() const { return loading_; }
   [[nodiscard]] bool hasMedia() const { return !source_.isEmpty(); }

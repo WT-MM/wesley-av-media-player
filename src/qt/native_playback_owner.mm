@@ -740,14 +740,10 @@ void NativePlaybackOwner::sessionCleared() noexcept {
   host_.updateNativeSeekCeiling(0.0);
 }
 
-void NativePlaybackOwner::surfaceNativeError(const QString &detail) {
-  // Native refusals may still recover. Terminal route failures report below.
-  qWarning().noquote() << "WAM:" << detail;
-}
-
 void NativePlaybackOwner::surfaceNativeError(macos::NativeOwnerError,
                                              const char* detail) {
-  surfaceNativeError(QString::fromUtf8(detail));
+  // Native refusals may still recover. Terminal route failures report below.
+  qWarning().noquote() << "WAM:" << QString::fromUtf8(detail);
 }
 void NativePlaybackOwner::ownerError(const char* detail) {
   qWarning() << "WAM:" << detail;

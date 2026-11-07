@@ -1221,7 +1221,6 @@ qreal appliedVividBoost(QWindow *window) {
 @interface WAMTheaterDimController : NSObject
 - (instancetype)initWithPlayerWindow:(NSWindow *)window;
 - (void)setEnabled:(BOOL)enabled opacity:(CGFloat)opacity;
-- (BOOL)active;
 - (void)invalidate;
 @end
 
@@ -1287,10 +1286,6 @@ qreal appliedVividBoost(QWindow *window) {
 
 - (void)dealloc {
   [self invalidate];
-}
-
-- (BOOL)active {
-  return _enabled && _dims.count > 0;
 }
 
 - (void)setEnabled:(BOOL)enabled opacity:(CGFloat)opacity {
@@ -1518,14 +1513,6 @@ void MacWindowChrome::reclampVividBoost() {
   wam::macos_window_chrome::setVividBoost(window_, requestedVividBoost_);
 }
 
-qreal MacWindowChrome::vividBoost() const {
-  return wam::macos_window_chrome::vividBoost(window_);
-}
-
-qreal MacWindowChrome::edrHeadroom() const {
-  return wam::macos_window_chrome::screenEdrHeadroom(window_);
-}
-
 // ------------------------------------------------------------- theater dim
 
 void MacWindowChrome::setTheaterDim(bool enabled, qreal opacity) {
@@ -1545,14 +1532,6 @@ void MacWindowChrome::setTheaterDim(bool enabled, qreal opacity) {
       (__bridge WAMTheaterDimController *)theaterDim_;
   [dim setEnabled:(enabled ? YES : NO)
           opacity:static_cast<CGFloat>(opacity)];
-}
-
-bool MacWindowChrome::theaterDimActive() const {
-  if (theaterDim_ == nullptr)
-    return false;
-  WAMTheaterDimController *dim =
-      (__bridge WAMTheaterDimController *)theaterDim_;
-  return [dim active] == YES;
 }
 
 void MacWindowChrome::hideCursorUntilMouseMoves() {

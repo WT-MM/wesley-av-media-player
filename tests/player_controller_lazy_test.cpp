@@ -46,7 +46,7 @@ class PlayerControllerTestAccess final {
 
   static bool provisionRuntime(PlayerController &controller) {
     return controller.engineReady() || controller.mpv_.provisioned() ||
-           controller.provisionMpvFallbackRuntime(runtime());
+           controller.mpv_.provision(runtime());
   }
 
   static std::shared_ptr<PlayerCore> core(const PlayerController &controller) {

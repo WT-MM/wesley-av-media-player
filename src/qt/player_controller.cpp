@@ -337,12 +337,6 @@ PlayerController::~PlayerController() {
   mpv_.detachOwner();
 }
 
-bool PlayerController::provisionMpvFallbackRuntime(
-    std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime) {
-  Q_ASSERT(QThread::currentThread() == thread());
-  return mpv_.provision(std::move(runtime));
-}
-
 bool PlayerController::available() const {
   // Native playback remains available even when the optional compatibility
   // engine is dormant or a bundle-local fallback failed to initialize.

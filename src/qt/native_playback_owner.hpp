@@ -194,7 +194,6 @@ private:
   void previewAdmitted(const native_protocol::PreviewFrame&) override;
   void commitSubmitted(const native_protocol::CommitSeek&) override;
   std::optional<playback_router::Transition> applyFallbackRunState(const playback_router::Action&) override;
-  void surfaceNativeError(const QString &detail);
   // Both are no-ops unless WAM_PLAYBACK_METRICS_PATH names an absolute path.
   void startPlaybackMetrics();
   void samplePlaybackMetrics();

@@ -323,10 +323,7 @@ void PlayerWindow::wireResumeTracking() {
         tracked_local_source.isEmpty()
             ? 0.0
             : store.positionFor(persistentKey(tracked_local_source));
-    // Native accurate seek serves AAC, so the restore seek keeps the native
-    // session instead of retiring it.
-    constexpr bool kAutoResumeEnabled = true;
-    resume_pending_ = kAutoResumeEnabled && resume_position_ >= 5.0;
+    resume_pending_ = resume_position_ >= 5.0;
     if (resume_pending_)
       applyPendingResume();
   });

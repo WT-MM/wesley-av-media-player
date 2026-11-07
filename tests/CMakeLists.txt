@@ -878,8 +878,6 @@ if(APPLE)
     set_tests_properties(macos_native_video PROPERTIES SKIP_RETURN_CODE 77)
 
     # OpenGL/CGL hardware gate matching the shipping Qt graphics backend.
-    # The item is absent from default application builds; the opt-in
-    # production seam compiles it but does not register or construct it.
     add_executable(wam_native_qt_gl_compositor_test
       native_qt_gl_compositor_test.mm
       ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.hpp
