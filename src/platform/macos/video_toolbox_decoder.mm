@@ -79,9 +79,6 @@ recordLimits() noexcept {
   media::VideoCodecConfigurationLimits limits;
   limits.admitHighDynamicRangeColor = true;
   limits.admitHardwareH264Profiles = true;
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-  limits.admitSoftwareProfiles = true;
-#endif
   return limits;
 }
 
