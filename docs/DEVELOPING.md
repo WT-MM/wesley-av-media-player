@@ -41,12 +41,13 @@ and refused by name on the GL route.
 An additional native decode stage sits behind `WAM_ENABLE_AVCODEC_STAGE`
 (default OFF): a pinned, offline-built LGPL-only FFmpeg 9.0.1 (libavcodec and
 libavutil only — GPL, nonfree, programs, encoders, muxers, filters, and
-devices all disabled) that decodes MPEG-4 Part 2 ASP video and DTS/TrueHD
-audio, neither of which Apple's stack decodes. The stage compiles and its
-decoders are individually tested, but production audio routing and the
-allocation/resource budget qualification are unfinished, so nothing reaches
-it at runtime even when the flag is on in a local build; it must stay off in
-anything bundled and released. See
+devices all disabled) that decodes DTS/TrueHD/MLP audio, VP9 without
+hardware, and the H.264 and MPEG-4 Part 2 profiles VideoToolbox refuses. With
+the flag on, `nativeVideoDecodePlan()` picks libavcodec for video only after
+the VideoToolbox rungs refuse and the stream's colour is qualified for
+software decode. The `macos-avcodec` job in `.github/workflows/build.yml`
+builds the stage and runs its non-GUI suite; it stays off in anything bundled
+and released. See
 [docs/native-coverage/phase2/REPORT.md](native-coverage/phase2/REPORT.md) for
 the current state and remaining gaps, and
 [docs/native-coverage/README.md](native-coverage/README.md) for the rest of
