@@ -165,7 +165,7 @@ PreparedFixture prepare(const Fixture& fixture) {
   prepared.outcome = wam::media::mpegts::prepareMpegTsLocalFile(
       fixture.stream, options, {});
   if (prepared.outcome.asset != nullptr) {
-    prepared.context = wam::macos::adoptPreparedMpegTsAssetContext(
+    prepared.context = wam::macos::MpegTsAssetContext::adopt(
         fixture.stream, options, prepared.outcome.asset);
   }
   return prepared;

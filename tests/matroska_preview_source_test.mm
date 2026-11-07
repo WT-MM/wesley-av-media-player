@@ -314,7 +314,7 @@ PreparedFixture prepare() {
   prepared.outcome = wam::media::matroska::prepareMatroska(
       prepared.reader, kFixturePath, options);
   if (prepared.outcome.asset != nullptr) {
-    prepared.context = wam::macos::adoptPreparedMatroskaAssetContext(
+    prepared.context = wam::macos::MatroskaAssetContext::adopt(
         kFixturePath, options, prepared.outcome.asset);
   }
   return prepared;
