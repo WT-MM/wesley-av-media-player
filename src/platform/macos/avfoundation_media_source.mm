@@ -88,7 +88,7 @@ constexpr std::int64_t kAudioReaderStartSlackAccessUnits{2};
 // Exact audio boundaries an accurate-seek generation needs before it reads.
 // searchFloor is the latest media time the reader may start at; proofCeiling
 // is the latest first-access-unit timestamp that still leaves the full
-// media::kAudioPrimingAccessUnits of decoded-and-discarded audio ahead of the
+// media::audioPrimingFrames of decoded-and-discarded audio ahead of the
 // generation's first audible frame A = ceil(T*R)/R.
 struct AudioPrimingPlan {
   MediaTime searchFloor{};
@@ -126,12 +126,13 @@ struct AudioPrimingPlan {
     return std::nullopt;
   }
   const std::int64_t searchBackoff =
-      media::audioPrimingFrames(framesPerPacket) +
+      media::audioPrimingFrames(audio.codec, framesPerPacket) +
       kAudioReaderStartSlackAccessUnits * framesPerPacket;
   const auto floorFrame = static_cast<std::int64_t>(
       std::max<std::int64_t>(*presentationFrame - searchBackoff, 0));
   const std::int64_t ceilingFrame =
-      media::audioPrimingCeilingFrame(*presentationFrame, framesPerPacket);
+      media::audioPrimingCeilingFrame(*presentationFrame, audio.codec,
+                                     framesPerPacket);
   const auto scale = static_cast<std::int32_t>(sampleRate);
   return AudioPrimingPlan{MediaTime{floorFrame, scale},
                           MediaTime{ceilingFrame, scale}};

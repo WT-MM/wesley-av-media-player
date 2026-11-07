@@ -329,10 +329,6 @@ inline constexpr std::int64_t kMaximumAacGridTickResidual{1};
 // ticks at 20 ms packets), so a genuinely misplaced Block is still rejected.
 inline constexpr std::int64_t kMaximumOpusGridTickResidual{2};
 
-// Whole AAC access units staged before the first audible frame of a non-origin
-// generation. Two is what the decoder needs to reach full precision, and it is
-// the same preroll the AVFoundation backend places for the identical reason.
-inline constexpr std::uint64_t kAacPrimingAccessUnits{2};
 // Hostile-value ceiling on the AAC head trim, not a format fact: every
 // measured encoder delay is under three access units.
 inline constexpr std::uint32_t kAacLcMaximumCodecDelayFrames{
@@ -340,7 +336,7 @@ inline constexpr std::uint32_t kAacLcMaximumCodecDelayFrames{
 
 // Opus states its own decoder warm-up as SeekPreRoll (80 ms from every real
 // encoder). Two 20 ms packets would stage only 40 ms, so the priming is the
-// larger of the AAC floor and whatever the track actually asks for.
+// larger of the shared audioPrimingFrames and whatever the track asks for.
 inline constexpr std::uint64_t kMaximumAudioPrimingAccessUnits{64};
 
 // How far back from the end of file the last audio Block is looked for. The
@@ -1536,7 +1532,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   // access units is still rejected.
   runtime->audioTickResidualTolerance = kMaximumOpusGridTickResidual;
   runtime->audioGridOffsetFrames = fields.codecDelayFrames;
-  runtime->audioPrimingAccessUnits = kAacPrimingAccessUnits;
+  runtime->audioPrimingAccessUnits = kAudioPrimingAccessUnits;
   runtime->audioTailBlockKnown = fields.tailBlockKnown;
   runtime->audioTailBlockOffset = fields.tailBlockOffset;
   runtime->audioTailDiscardPaddingNanoseconds =
@@ -1910,8 +1906,8 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   // what the format needs: one packet is swallowed as the decoder's lead-in and
   // the next primes the overlap-add window, so the first published frame after
   // a seek is fully reconstructed.
-  const std::uint64_t priming = kAacPrimingAccessUnits;
-  static_assert(kAacPrimingAccessUnits <= kMaximumAudioPrimingAccessUnits);
+  const std::uint64_t priming = kAudioPrimingAccessUnits;
+  static_assert(kAudioPrimingAccessUnits <= kMaximumAudioPrimingAccessUnits);
 
   // Presentation-grid origin is one access unit before zero: Vorbis' first
   // packet carries only half an overlap-add window and decodes to no samples,
@@ -2064,11 +2060,12 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
           ? 0U
           : entry.seekPreRollNanoseconds * kOpusOutputSampleRate /
                 UINT64_C(1'000'000'000);
-  const std::uint64_t preRollAccessUnits =
-      (preRollFrames + probe.samplesPerAccessUnit - 1U) /
-      probe.samplesPerAccessUnit;
+  const std::uint64_t primingFrames = std::max<std::uint64_t>(
+      preRollFrames, static_cast<std::uint64_t>(audioPrimingFrames(
+                         MediaCodec::Opus, probe.samplesPerAccessUnit)));
   const std::uint64_t priming =
-      std::max<std::uint64_t>(kAacPrimingAccessUnits, preRollAccessUnits);
+      (primingFrames + probe.samplesPerAccessUnit - 1U) /
+      probe.samplesPerAccessUnit;
   if (priming > kMaximumAudioPrimingAccessUnits) {
     return false;
   }
