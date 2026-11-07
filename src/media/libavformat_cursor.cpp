@@ -201,7 +201,11 @@ struct LibavformatCursor::Impl {
   probe.identity = *identity;
   probe.extent = std::int64_t(identity->size);
   std::string error;
-  return probe.inspectTail(error) && (probe.extent < std::int64_t(identity->size) || probe.fragmented);
+  // A cut box needs libavformat. Fewer than a box header's 8 bytes after the
+  // last complete box cannot hold any media, so such a file is complete and
+  // keeps its ordinary route.
+  return probe.inspectTail(error) &&
+         (probe.extent + 8 <= std::int64_t(identity->size) || probe.fragmented);
   }
   bool inspectTail(std::string &error, MediaRefusalClass *refusal = nullptr) {
     std::array<unsigned char, 16> box{};

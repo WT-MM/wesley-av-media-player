@@ -30,30 +30,32 @@ exactAudioSampleRate(double rate) noexcept {
 }
 
 // Decoder preroll a source guarantees ahead of the first audible frame of an
-// accurate-seek generation, in whole compressed access units.
+// accurate-seek generation. Every route and codec asks this one function.
 //
 // AAC-LC carries no inter-frame dependency beyond the MDCT overlap-add window:
 // each 1024-frame access unit is reconstructed from its own spectral data plus
 // the second half of the previous unit's window, so one decoded predecessor
 // already makes a unit exact. Two units is the conventional decoder preroll
-// and the value used here, which also covers the same overlap structure at the
-// 2048-frame HE-AAC grid and the block-switch history of MP3.
+// and the floor used here, which also covers the same overlap structure at the
+// 2048-frame HE-AAC grid and the block-switch history of MP3. A codec whose
+// facts row states a longer seekPrerollFrames (Opus) gets that instead.
 inline constexpr std::int64_t kAudioPrimingAccessUnits{2};
 // Guards the priming arithmetic against a pathological packet grid.
 inline constexpr std::int64_t kMaximumAudioFramesPerPacket{65'536};
 
 [[nodiscard]] constexpr std::int64_t
-audioPrimingFrames(std::int64_t framesPerPacket) noexcept {
-  return kAudioPrimingAccessUnits * framesPerPacket;
+audioPrimingFrames(MediaCodec codec, std::int64_t framesPerPacket) noexcept {
+  return std::max<std::int64_t>(kAudioPrimingAccessUnits * framesPerPacket,
+                                mediaCodecFacts(codec).seekPrerollFrames);
 }
 
 // The latest first-access-unit frame that still leaves the full priming ahead
 // of presentationFrame, clamped at zero.
 [[nodiscard]] constexpr std::int64_t
-audioPrimingCeilingFrame(std::int64_t presentationFrame,
+audioPrimingCeilingFrame(std::int64_t presentationFrame, MediaCodec codec,
                          std::int64_t framesPerPacket) noexcept {
   return std::max<std::int64_t>(
-      presentationFrame - audioPrimingFrames(framesPerPacket), 0);
+      presentationFrame - audioPrimingFrames(codec, framesPerPacket), 0);
 }
 
 // Bounds an open-time walk over a file's packets.

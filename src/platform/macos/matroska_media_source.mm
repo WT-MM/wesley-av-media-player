@@ -220,7 +220,8 @@ struct MatroskaMediaSource::Impl final
       return false;
     }
     const std::int64_t ceilingFrame =
-        media::audioPrimingCeilingFrame(*presentationFrame, framesPerPacket);
+        media::audioPrimingCeilingFrame(*presentationFrame, track->codec,
+                                        framesPerPacket);
     audioProofCeiling = MediaTime{ceilingFrame, audioSampleRate};
     return true;
   }
