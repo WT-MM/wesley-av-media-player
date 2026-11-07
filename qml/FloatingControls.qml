@@ -261,6 +261,7 @@ FocusScope {
         // the player's frame-rate position notifications. Re-evaluating when it
         // becomes visible snaps directly to the current position.
         mediaPosition: root.visible ? root.player.position : 0
+        source: root.player.source
         accentColor: root.accentColor
         onPreviewSeekRequested: seconds => {
             root.player.previewSeekTo(seconds);

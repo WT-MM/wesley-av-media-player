@@ -47,7 +47,7 @@ Item {
 
         function cleanup() {
             if (scrubber !== null)
-                scrubber.previewPacerActive = false;
+                scrubber.setPhase("idle");
             scrubber = null;
         }
 
@@ -181,7 +181,8 @@ Item {
             fuzzyCompare(scrubber.previewPosition, 90, 0.001,
                          "the committed handle remains under the pointer");
             compare(scrubber.pendingSeek, -1);
-            compare(scrubber.previewPacerActive, false);
+            compare(scrubber.phase, "settling",
+                    "release stops the pacer and waits for the commit");
 
             previews = [];
             commits = [];
@@ -195,6 +196,29 @@ Item {
                     "cancellation emits one authoritative commit");
             fuzzyCompare(commits[0], 70, 0.001,
                          "cancellation commits the last visible handle");
+        }
+
+        function test_mediaChangeEndsSettling() {
+            scrubber.mediaPosition = 10;
+            scrubber.adjustBy(30);
+            compare(scrubber.phase, "settling");
+            fuzzyCompare(scrubber.displayPosition, 40, 0.001,
+                         "a committed seek holds the handle on its target");
+            scrubber.source = "file:///other.mp4";
+            scrubber.mediaPosition = 0;
+            compare(scrubber.phase, "idle",
+                    "a seek committed into the previous media is not awaited");
+            fuzzyCompare(scrubber.displayPosition, 0, 0.001,
+                         "the handle follows the new media at once");
+        }
+
+        function test_settlesWhenPlaybackReachesTheTarget() {
+            scrubber.mediaPosition = 10;
+            scrubber.adjustBy(30);
+            scrubber.mediaPosition = 20;
+            compare(scrubber.phase, "settling");
+            scrubber.mediaPosition = 40.05;
+            compare(scrubber.phase, "idle");
         }
     }
 }
