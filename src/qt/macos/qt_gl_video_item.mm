@@ -382,7 +382,7 @@ struct GlCounters {
   // scene graph imports a frame again, lastError reads empty so a controller
   // can recognise the recovery and consume the still-latched event.
   std::atomic<bool> fatalDiagnosticPending{false};
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   std::atomic<bool> holdRetirements{false};
   std::atomic<bool> holdRetirementCompletion{false};
   std::atomic<bool> retirementCompletionHeld{false};
@@ -804,7 +804,7 @@ class RetirementService final {
     if (job == nullptr) {
       return false;
     }
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (job->counters && job->counters->failNextRetirementEnqueue.exchange(
                              false, std::memory_order_relaxed)) {
       quarantineRetirementJob(job);
@@ -860,7 +860,7 @@ class RetirementService final {
         startedAt_(std::chrono::steady_clock::now()) {}
 
   static bool jobHeldForTesting(const RetirementJob& job) noexcept {
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     return job.counters &&
            job.counters->holdRetirements.load(std::memory_order_relaxed);
 #else
@@ -990,7 +990,7 @@ class RetirementService final {
         RetirementJob* previous = nullptr;
         RetirementJob* current = jobsHead_;
         while (current != nullptr) {
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
           if (current->counters &&
               current->counters->failNextWorkerPoll.exchange(
                   false, std::memory_order_relaxed)) {
@@ -1010,7 +1010,7 @@ class RetirementService final {
             }
             --queuedJobs_;
             current->next = nullptr;
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
             if (current->counters &&
                 current->counters->holdRetirementCompletion.load(
                     std::memory_order_acquire)) {
@@ -1689,7 +1689,7 @@ struct QtGlVideoItem::SharedState {
           QtGlFatalReason::ProgressSequenceExhaustion);
     }
   }
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   std::atomic<bool> failNextImport{false};
   std::atomic<bool> failSecondPlaneImport{false};
   std::atomic<bool> failAfterRetirementServiceCreation{false};
@@ -1826,7 +1826,7 @@ class QtGlVideoNode final : public QSGRenderNode {
     DeferredRetirementGuard retirementGuard(this);
     std::optional<RawGlState> savedState;
 
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (state_->strandRetirementService.exchange(false,
                                                   std::memory_order_relaxed)) {
       savedState.emplace(samplerObjectsSupportedFor(cglContext));
@@ -2075,7 +2075,7 @@ class QtGlVideoNode final : public QSGRenderNode {
       }
     }
     if (service_->state() == RetirementServiceState::Starting
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
         || state_->holdRetirementServiceStarting.load(
             std::memory_order_relaxed)
 #endif
@@ -2099,7 +2099,7 @@ class QtGlVideoNode final : public QSGRenderNode {
     }
     if (!retirementJob_) {
       bool failReservation = false;
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
       failReservation = state_->failNextRetirementJobReservation.exchange(
           false, std::memory_order_relaxed);
 #endif
@@ -2113,7 +2113,7 @@ class QtGlVideoNode final : public QSGRenderNode {
         return false;
       }
     }
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (state_->failAfterRetirementServiceCreation.exchange(
             false, std::memory_order_relaxed)) {
       *fatalReason = QtGlFatalReason::InjectedServiceCreationFailure;
@@ -2313,7 +2313,7 @@ class QtGlVideoNode final : public QSGRenderNode {
   std::optional<FrameLease> cloneForImport(const FrameLease& frame,
                                            QString* error) {
     std::optional<FrameLease> retainedFrame;
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     const bool injectCopyFailure =
         state_->failNextImport.exchange(false, std::memory_order_relaxed);
 #else
@@ -2391,7 +2391,7 @@ class QtGlVideoNode final : public QSGRenderNode {
     const GLenum type = tenBit ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE;
     drainGlErrors();
     for (std::size_t plane = 0; plane < slot.textures.size(); ++plane) {
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
       if (plane == 1 && state_->failSecondPlaneImport.exchange(
                             false, std::memory_order_relaxed)) {
         *error = QStringLiteral("injected second-plane CGL import failure");
@@ -2411,7 +2411,7 @@ class QtGlVideoNode final : public QSGRenderNode {
                         GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_T,
                         GL_CLAMP_TO_EDGE);
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
         counters_->textureParameterCalls.fetch_add(4,
                                                    std::memory_order_relaxed);
 #endif
@@ -2475,7 +2475,7 @@ class QtGlVideoNode final : public QSGRenderNode {
 
     if (!counters_->renderedIntoNonDefaultFramebuffer.load(
             std::memory_order_relaxed)) {
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
       counters_->drawFramebufferBindingQueries.fetch_add(
           1, std::memory_order_relaxed);
 #endif
@@ -2561,7 +2561,7 @@ class QtGlVideoNode final : public QSGRenderNode {
       glDeleteSync(slot.fence);
     }
     slot.fence = replacementFence.release();
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (state_->failAfterFenceCreation.exchange(false,
                                                  std::memory_order_relaxed)) {
       throw std::bad_alloc{};
@@ -2646,7 +2646,7 @@ class QtGlVideoNode final : public QSGRenderNode {
       RetiredSlot& destination = job->retiredSlots[index];
       destination.textures = std::exchange(source.textures, {});
       destination.fence = std::exchange(source.fence, nullptr);
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
       if (destination.fence != nullptr) {
         counters_->transferredCoveringFences.fetch_add(
             1, std::memory_order_relaxed);
@@ -2757,10 +2757,6 @@ QtGlVideoItem::QtGlVideoItem(QQuickItem* parent)
 
 QtGlVideoItem::~QtGlVideoItem() = default;
 
-void QtGlVideoItem::submitFrame(FrameLease frame) {
-  submitTrackedFrame(std::move(frame), {});
-}
-
 void QtGlVideoItem::submitTrackedFrame(FrameLease frame,
                                        QtGlFrameIdentity identity) {
   try {
@@ -2770,8 +2766,7 @@ void QtGlVideoItem::submitTrackedFrame(FrameLease frame,
       state_->counters->setError(QStringLiteral("empty native video frame"));
       return;
     }
-    if ((identity.deliverySequence == 0) !=
-        (identity.frameSequence == 0)) {
+    if (identity.deliverySequence == 0 || identity.frameSequence == 0) {
       state_->counters->rejectedFrames.fetch_add(1,
                                                  std::memory_order_relaxed);
       state_->counters->setError(QStringLiteral(
@@ -2899,7 +2894,7 @@ QtGlVideoItemStats QtGlVideoItem::stats() const {
   result.staleFrames = counters.staleFrames.load(std::memory_order_relaxed);
   result.destroyedResourceSets =
       counters.destroyedResourceSets.load(std::memory_order_relaxed);
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   result.textureParameterCalls =
       counters.textureParameterCalls.load(std::memory_order_relaxed);
   result.drawFramebufferBindingQueries =
@@ -2990,7 +2985,7 @@ std::optional<QString> QtGlVideoItem::takeFatalError() {
   return state_->counters->takeFatalError();
 }
 
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 void QtGlVideoItem::failNextImportForTesting() {
   state_->failNextImport.store(true, std::memory_order_relaxed);
 }
@@ -3320,7 +3315,7 @@ bool QtGlVideoItem::verifyRawGlSamplerStateForTesting(
 QSGNode* QtGlVideoItem::updatePaintNode(QSGNode* oldNode,
                                         UpdatePaintNodeData*) {
   try {
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (state_->failNextUpdatePaintNode.exchange(
             false, std::memory_order_relaxed)) {
       throw std::bad_alloc{};
@@ -3363,7 +3358,7 @@ QSGNode* QtGlVideoItem::updatePaintNode(QSGNode* oldNode,
       } else if (state_->synchronizationRejectedSerial == serial) {
         handoffAlreadyRejected = true;
       } else if (state_->latestFrame) {
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
         const bool injectCopyFailure =
             state_->failNextSynchronization.exchange(
                 false, std::memory_order_relaxed);

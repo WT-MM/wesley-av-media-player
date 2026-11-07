@@ -592,8 +592,6 @@ VideoDecoderStats SoftwareVp8Decoder::stats() const noexcept {
   result.submittedFrames = impl.submittedFrames;
   result.directSampleBufferSubmissions = impl.directSubmissions;
   result.directSampleBufferBytes = impl.directBytes;
-  result.copiedSpanSubmissions = 0;
-  result.copiedSpanBytes = 0;
   result.deliveredFrames = impl.deliveredFrames;
   result.droppedFrames = impl.droppedFrames;
   result.backpressuredSubmissions = impl.backpressuredSubmissions;

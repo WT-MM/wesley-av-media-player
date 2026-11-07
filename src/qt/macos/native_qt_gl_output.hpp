@@ -1,17 +1,15 @@
 #pragma once
 
-#include "platform/macos/native_scheduled_frame_output.hpp"
 #include "platform/macos/native_tracked_video_output.hpp"
 #include "qt_gl_video_item.hpp"
 
 #include <atomic>
-#include <functional>
 #include <memory>
 #include <string>
 
 namespace wam::macos {
 
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct NativeQtGlOutputDeferredWatchdogFacts {
   std::uint64_t armRequests{0};
   std::uint64_t arms{0};
@@ -29,15 +27,11 @@ struct NativeQtGlOutputDeferredWatchdogFacts {
 // GUI thread. The adapter owns at most one pending FrameLease and at most one
 // live GUI-drain request.
 //
-// Render-pass statistics are sampled on bounded bridge activity, not every Qt
+// Presenter facts are sampled on bounded bridge activity, not every Qt
 // redraw; quiescent values can therefore lag until the next
-// start/dispatch/flush/failure/retirement observation.
+// submit/flush/failure/retirement observation.
 class NativeQtGlOutput final : public NativeTrackedVideoOutput {
  public:
-  using FailureHandler = std::function<void(std::string)>;
-  using StartAppliedHandler =
-      std::function<void(NativeScheduledFrameStartAck)>;
-
   static std::shared_ptr<NativeQtGlOutput> createTracked(
       QtGlVideoItem* item, NativeTrackedVideoOutputWakeSeam wake,
       std::string* error = nullptr);
@@ -46,24 +40,6 @@ class NativeQtGlOutput final : public NativeTrackedVideoOutput {
   NativeQtGlOutput& operator=(const NativeQtGlOutput&) = delete;
   ~NativeQtGlOutput() override;
 
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
-  // The untracked scheduling surface beneath the tracked contract, reachable
-  // only from the GL output test: a create() that turns tracking off, direct
-  // dispatch, explicit start/flush/close and the failure handler. The tracked
-  // methods below drive the same machinery.
-  static std::shared_ptr<NativeQtGlOutput> create(
-      QtGlVideoItem* item, std::string* error = nullptr);
-  [[nodiscard]] NativeScheduledFrameDispatchResult dispatch(
-      FrameLease frame, std::string* error = nullptr) noexcept;
-  [[nodiscard]] bool startGeneration(
-      std::uint64_t generation, StartAppliedHandler applied,
-      std::string* error = nullptr) noexcept;
-  [[nodiscard]] bool flush(std::uint64_t nextGeneration,
-                           std::string* error = nullptr) noexcept;
-  void setFailureHandler(FailureHandler handler) noexcept;
-  [[nodiscard]] NativeScheduledFrameOutputStats stats() const noexcept;
-#endif
-  void close(std::uint64_t finalGeneration) noexcept;
 
   [[nodiscard]] NativeTrackedVideoCapacity capacity(
       std::uint64_t generation) const noexcept override;
@@ -93,11 +69,8 @@ class NativeQtGlOutput final : public NativeTrackedVideoOutput {
            displaySize.height.denominator == 1;
   }
 
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
-  void failNextFailureNotificationCopyForTesting() noexcept;
+#if defined(WAM_NATIVE_TEST_SEAMS)
   void failNextGuiInvokeForTesting() noexcept;
-  void throwNextImmediateObservationInvokeForTesting() noexcept;
-  void throwNextTwoImmediateObservationInvokesForTesting() noexcept;
   void throwNextGuiDrainInvokeForTesting() noexcept;
   void throwInNextAcceptedGuiDrainForTesting() noexcept;
   void throwNextObservationPollForTesting() noexcept;
@@ -105,8 +78,6 @@ class NativeQtGlOutput final : public NativeTrackedVideoOutput {
   void failNextFinalFlushInvokeForTesting() noexcept;
   void throwNextFinalFlushInvokeForTesting() noexcept;
   void throwNextGuiContextDeleteLaterForTesting() noexcept;
-  [[nodiscard]] bool immediateObservationQueuedForTesting()
-      const noexcept;
   [[nodiscard]] bool observationPollQueuedForTesting() const noexcept;
   [[nodiscard]] NativeQtGlOutputDeferredWatchdogFacts
   deferredWatchdogFactsForTesting() const noexcept;
@@ -122,8 +93,9 @@ class NativeQtGlOutput final : public NativeTrackedVideoOutput {
   struct State;
   explicit NativeQtGlOutput(std::shared_ptr<State> state) noexcept;
   [[nodiscard]] bool flushImpl(std::uint64_t nextGeneration,
-                               StartAppliedHandler startApplied,
                                std::string* error) noexcept;
+  // The terminal invalidation closeProgress() applies once.
+  void close(std::uint64_t finalGeneration) noexcept;
   std::shared_ptr<State> state_;
 };
 
