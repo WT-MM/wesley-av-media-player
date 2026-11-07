@@ -139,8 +139,17 @@ std::string processFailure(const char *tool, const ProcessResult &result) {
   return message.str();
 }
 
-std::vector<std::string> audioArguments(const fs::path &input,
-                                        const fs::path &wav) {
+unsigned effectiveThreadCount(const CaptionOptions &options) {
+  if (options.threads != 0)
+    return std::clamp(options.threads, 1u, 64u);
+  const auto available = std::thread::hardware_concurrency();
+  return std::clamp(available == 0 ? 4u : available, 1u, 16u);
+}
+
+} // namespace
+
+std::vector<std::string> captionAudioArguments(const fs::path &input,
+                                               const fs::path &wav) {
   return {"-hide_banner",
           "-loglevel",
           "error",
@@ -160,17 +169,10 @@ std::vector<std::string> audioArguments(const fs::path &input,
           pathArgument(wav)};
 }
 
-unsigned effectiveThreadCount(const CaptionOptions &options) {
-  if (options.threads != 0)
-    return std::clamp(options.threads, 1u, 64u);
-  const auto available = std::thread::hardware_concurrency();
-  return std::clamp(available == 0 ? 4u : available, 1u, 16u);
-}
-
-std::vector<std::string> whisperArguments(const fs::path &model,
-                                          const fs::path &wav,
-                                          const fs::path &output_base,
-                                          const CaptionOptions &options) {
+std::vector<std::string> captionWhisperArguments(const fs::path &model,
+                                                 const fs::path &wav,
+                                                 const fs::path &output_base,
+                                                 const CaptionOptions &options) {
   std::vector<std::string> args{"-m",
                                 pathArgument(model),
                                 "-f",
@@ -191,14 +193,7 @@ std::vector<std::string> whisperArguments(const fs::path &model,
   return args;
 }
 
-std::string displayCommand(const fs::path &executable,
-                           const std::vector<std::string> &arguments) {
-  std::ostringstream command;
-  command << quoteArg(pathArgument(executable));
-  for (const auto &argument : arguments)
-    command << ' ' << quoteArg(argument);
-  return command.str();
-}
+namespace {
 
 #ifdef _WIN32
 std::wstring windowsCommandLine(const fs::path &executable,
@@ -484,13 +479,13 @@ public:
     finish();
     std::packaged_task<CaptionBackendResult()> task([this,wav,staging,events] {
       fs::path base = staging; base.replace_extension();
-      auto result = runProcess(tools_.whisper,whisperArguments(tools_.model,wav,base,options_),
+      auto result = runProcess(tools_.whisper,captionWhisperArguments(tools_.model,wav,base,options_),
         cancellation_, {options_.use_gpu ? std::max(100u,options_.gpu_watchdog_ms) : 0,events});
       if (result.timed_out && !cancellation_.requested()) {
         if (events.progress) events.progress(0,"Whisper Metal stopped making progress; retrying on CPU…");
         std::ofstream(staging,std::ios::trunc).close();
         auto cpu = options_; cpu.use_gpu = false;
-        result = runProcess(tools_.whisper,whisperArguments(tools_.model,wav,base,cpu),cancellation_,{0,events});
+        result = runProcess(tools_.whisper,captionWhisperArguments(tools_.model,wav,base,cpu),cancellation_,{0,events});
       }
       return CaptionBackendResult{result.launched && result.exit_code == 0 && !result.cancelled,
                                   processFailure("whisper.cpp",result)};
@@ -740,32 +735,6 @@ bool commitCaptionFile(const fs::path &staging, const fs::path &destination,
 
 } // namespace
 
-const char *captionStageName(CaptionStage stage) noexcept {
-  switch (stage) {
-  case CaptionStage::Idle:
-    return "Idle";
-  case CaptionStage::Validating:
-    return "Validating";
-  case CaptionStage::ExtractingAudio:
-    return "Preparing audio";
-  case CaptionStage::AwaitingDownloadConsent:
-    return "Language download";
-  case CaptionStage::PreparingEngine:
-    return "Preparing caption engine";
-  case CaptionStage::Transcribing:
-    return "Transcribing";
-  case CaptionStage::VerifyingOutput:
-    return "Saving captions";
-  case CaptionStage::Completed:
-    return "Complete";
-  case CaptionStage::Failed:
-    return "Failed";
-  case CaptionStage::Cancelled:
-    return "Cancelled";
-  }
-  return "Unknown";
-}
-
 CaptionTools findCaptionTools(const char *argv0) {
   CaptionTools tools;
 #ifdef _WIN32
@@ -779,20 +748,7 @@ CaptionTools findCaptionTools(const char *argv0) {
   return tools;
 }
 
-std::string buildCaptionAudioCommand(const fs::path &ffmpeg,
-                                     const fs::path &input,
-                                     const fs::path &wav) {
-  return displayCommand(ffmpeg, audioArguments(input, wav));
-}
-
-std::string buildCaptionWhisperCommand(const fs::path &whisper,
-                                       const fs::path &model,
-                                       const fs::path &wav,
-                                       const fs::path &output_base,
-                                       const CaptionOptions &options) {
-  return displayCommand(whisper,
-                        whisperArguments(model, wav, output_base, options));
-}
+CaptionService::CaptionService() = default;
 
 CaptionService::~CaptionService() {
   cancel();
@@ -810,7 +766,10 @@ bool CaptionService::start(CaptionRequest request) {
   if (worker_.joinable())
     worker_.join();
   cancellation_.reset();
-  download_response_.store(0);
+  {
+    std::lock_guard download_lock(download_mutex_);
+    download_response_ = 0;
+  }
   {
     std::lock_guard status_lock(status_mutex_);
     status_ = {};
@@ -850,6 +809,8 @@ void CaptionService::cancel() noexcept {
   // message is best-effort and must never make this noexcept method throw.
   cancellation_.request();
   try {
+    { std::lock_guard download_lock(download_mutex_); }
+    download_changed_.notify_all();
     std::lock_guard status_lock(status_mutex_);
     if (!status_.running)
       return;
@@ -861,7 +822,13 @@ void CaptionService::cancel() noexcept {
 }
 
 void CaptionService::respondToDownload(bool consent) noexcept {
-  download_response_.store(consent ? 1 : -1);
+  try {
+    std::lock_guard download_lock(download_mutex_);
+    download_response_ = consent ? 1 : -1;
+  } catch (...) {
+    return;
+  }
+  download_changed_.notify_all();
 }
 
 void CaptionService::wait() {
@@ -1030,12 +997,17 @@ void CaptionService::run(
         update(CaptionStage::AwaitingDownloadConsent,0.05f,
           "Apple Speech needs a one-time on-device language download (size unknown).");
         { std::lock_guard lock(status_mutex_); status_.needs_download_consent = true; status_.download_locale = caps.locale; }
-        while (download_response_.load() == 0 && !cancellation.requested()) std::this_thread::sleep_for(20ms);
-        consent = download_response_.load() == 1;
+        {
+          std::unique_lock download_lock(download_mutex_);
+          download_changed_.wait(download_lock, [&] {
+            return download_response_ != 0 || cancellation.requested();
+          });
+          consent = download_response_ == 1;
+        }
         { std::lock_guard lock(status_mutex_); status_.needs_download_consent = false; }
       }
       if (!cancellation.requested() && (selectCaptionEngine(caps) == CaptionEngine::Apple || consent)) {
-        static_cast<AppleCaptionBackend*>(apple_.get())->setEvents(events);
+        apple_->setEvents(events);
         update(CaptionStage::PreparingEngine,0.08f,consent ? "Apple Speech: downloading language asset…" : "Preparing Apple Speech on device…");
         auto preparation = apple_->prepare(consent);
         useApple = awaitBackend(preparation,*apple_).succeeded;
@@ -1093,7 +1065,7 @@ void CaptionService::run(
     update(CaptionStage::ExtractingAudio, 0.12f,
            "Preparing clean speech audio with FFmpeg…");
     const auto extraction = runProcess(
-        request.tools.ffmpeg, audioArguments(request.input, *wav),
+        request.tools.ffmpeg, captionAudioArguments(request.input, *wav),
         cancellation);
     if (extraction.cancelled) {
       cancelled();

@@ -443,32 +443,6 @@ std::string formatNumber(double value) {
 
 }  // namespace
 
-std::string quoteArg(const std::string& value) {
-#ifdef _WIN32
-  std::string out = "\"";
-  unsigned slashes = 0;
-  for (char c : value) {
-    if (c == '\\') {
-      ++slashes;
-    } else if (c == '"') {
-      out.append(slashes * 2 + 1, '\\');
-      out += '"';
-      slashes = 0;
-    } else {
-      out.append(slashes, '\\');
-      slashes = 0;
-      out += c;
-    }
-  }
-  out.append(slashes * 2, '\\');
-  return out + '"';
-#else
-  std::string out = "'";
-  for (char c : value) out += (c == '\'' ? "'\\''" : std::string(1, c));
-  return out + "'";
-#endif
-}
-
 std::string atempoFilter(double speed) {
   speed = std::clamp(speed, 0.0625, 16.0);
   std::vector<double> stages;
@@ -696,16 +670,6 @@ ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
   }
   args.push_back(pathArgument(o.output));
   return command;
-}
-
-std::string buildExportCommand(const std::filesystem::path& ffmpeg,
-                               const EditOptions& options) {
-  const ProcessCommand process = buildExportProcess(ffmpeg, options);
-  std::ostringstream command;
-  command << quoteArg(pathArgument(process.executable));
-  for (const auto& argument : process.arguments)
-    command << ' ' << quoteArg(argument);
-  return command.str();
 }
 
 std::filesystem::path reserveExportStagingFile(

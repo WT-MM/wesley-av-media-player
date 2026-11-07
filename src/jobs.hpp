@@ -159,11 +159,8 @@ SupervisedChild superviseChildGroup(pid_t child,
 
 }  // namespace detail
 
-std::string quoteArg(const std::string& value);
 std::string atempoFilter(double speed);
 std::string varispeedFilter(double speed);
-std::string buildExportCommand(const std::filesystem::path& ffmpeg,
-                               const EditOptions& options);
 ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
                                   const EditOptions& options);
 
