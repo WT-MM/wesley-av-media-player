@@ -426,46 +426,20 @@ std::int64_t playlistPositionForEntry(PlayerCore *core, std::int64_t entry_id) {
 }
 
 QUrl playlistEntrySource(PlayerCore *core, std::int64_t entry_id) {
-  if (entry_id < 0)
+  const std::int64_t index = playlistPositionForEntry(core, entry_id);
+  if (index < 0)
     return {};
   const ReadyMpvClient client = readyMpvClient(core);
-  if (!client)
+  const QByteArray filename_property = QByteArrayLiteral("playlist/") +
+                                       QByteArray::number(index) +
+                                       QByteArrayLiteral("/filename");
+  char *filename = client.api->mpv_get_property_string(
+      client.handle, filename_property.constData());
+  if (!filename)
     return {};
-  const std::int64_t count = playlistEntryCount(core);
-  for (std::int64_t index = 0; index < count; ++index) {
-    const QByteArray prefix =
-        QByteArrayLiteral("playlist/") + QByteArray::number(index);
-    const QByteArray id_property = prefix + QByteArrayLiteral("/id");
-    std::int64_t candidate_id = -1;
-    if (client.api->mpv_get_property(client.handle, id_property.constData(),
-                                     MPV_FORMAT_INT64, &candidate_id) < 0 ||
-        candidate_id != entry_id) {
-      continue;
-    }
-    const QByteArray filename_property =
-        prefix + QByteArrayLiteral("/filename");
-    char *filename = client.api->mpv_get_property_string(
-        client.handle, filename_property.constData());
-    if (!filename)
-      return {};
-    const QUrl source = urlFromMpvPath(QString::fromUtf8(filename));
-    client.api->mpv_free(filename);
-    return source;
-  }
-  return {};
-}
-
-std::int64_t currentVideoTrackId(PlayerCore *core) {
-  const ReadyMpvClient client = readyMpvClient(core);
-  if (!client)
-    return -1;
-  std::int64_t track_id = -1;
-  if (client.api->mpv_get_property(client.handle, "vid", MPV_FORMAT_INT64,
-                                   &track_id) < 0 ||
-      track_id <= 0) {
-    return -1;
-  }
-  return track_id;
+  const QUrl source = urlFromMpvPath(QString::fromUtf8(filename));
+  client.api->mpv_free(filename);
+  return source;
 }
 
 std::int64_t currentTrackId(PlayerCore *core, const char *name) {
@@ -481,6 +455,17 @@ std::int64_t currentTrackId(PlayerCore *core, const char *name) {
   return track_id;
 }
 
+// mpv's vid/aid/sid as a selection: 0 for "no", the track id, or -1 when it
+// states neither.
+std::int64_t parseTrackSelection(const QString &text) {
+  const QString value = text.trimmed();
+  if (value.compare(QStringLiteral("no"), Qt::CaseInsensitive) == 0)
+    return 0;
+  bool valid = false;
+  const qlonglong numeric = value.toLongLong(&valid);
+  return valid && numeric > 0 ? static_cast<std::int64_t>(numeric) : -1;
+}
+
 std::int64_t currentTrackSelection(PlayerCore *core, const char *name) {
   const ReadyMpvClient client = readyMpvClient(core);
   if (!client)
@@ -488,13 +473,9 @@ std::int64_t currentTrackSelection(PlayerCore *core, const char *name) {
   char *selection = client.api->mpv_get_property_string(client.handle, name);
   if (!selection)
     return -1;
-  const QString value = QString::fromUtf8(selection).trimmed();
+  const QString value = QString::fromUtf8(selection);
   client.api->mpv_free(selection);
-  if (value.compare(QStringLiteral("no"), Qt::CaseInsensitive) == 0)
-    return 0;
-  bool valid = false;
-  const qlonglong numeric = value.toLongLong(&valid);
-  return valid && numeric > 0 ? static_cast<std::int64_t>(numeric) : -1;
+  return parseTrackSelection(value);
 }
 
 // mpv's display rectangle, read as one pair. dwidth/dheight are the picture
@@ -572,12 +553,7 @@ QString readString(const mpv_event_property *property) {
 }
 
 std::int64_t readTrackSelection(const mpv_event_property *property) {
-  const QString value = readString(property).trimmed();
-  if (value.compare(QStringLiteral("no"), Qt::CaseInsensitive) == 0)
-    return 0;
-  bool valid = false;
-  const qlonglong numeric = value.toLongLong(&valid);
-  return valid && numeric > 0 ? static_cast<std::int64_t>(numeric) : -1;
+  return parseTrackSelection(readString(property));
 }
 
 } // namespace
@@ -1229,7 +1205,7 @@ void PlayerController::dispatchNativePreviewIntent(
   const bool ownsDispatch = scrub.dispatched_preview_request == 0;
   if (ownsDispatch)
     scrub.dispatched_preview_request = intent.request;
-  publishSeekTarget(intent.target);
+  updatePosition(intent.target);
 
   // Publishing the optimistic handle is a synchronous Qt boundary. A signal
   // handler may Stop, Commit, or replace the entire gesture before returning;
@@ -1337,7 +1313,7 @@ PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent,
                                            void *context,
                                            NativeSeekSubmitter submitter) {
   if (submitter == nullptr) {
-    publishSeekTarget(intent.rollback_position);
+    updatePosition(intent.rollback_position);
     return NativeSeekDispatch::Consumed;
   }
   NativeSeekSubmissionState submission_state{
@@ -1358,22 +1334,22 @@ PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent,
   case NativeSeekSubmission::Accepted:
     if (submission_state.terminal == NativeSeekTerminal::None) {
       native_seek_intent_ = intent;
-      publishSeekTarget(intent.target);
+      updatePosition(intent.target);
     } else if (submission_state.terminal == NativeSeekTerminal::Ready) {
-      publishSeekTarget(intent.target);
+      updatePosition(intent.target);
       updateEof(false);
       updateIdle(false);
     } else {
-      publishSeekTarget(intent.rollback_position);
+      updatePosition(intent.rollback_position);
     }
     return NativeSeekDispatch::Consumed;
   case NativeSeekSubmission::Rejected:
-    publishSeekTarget(intent.rollback_position);
+    updatePosition(intent.rollback_position);
     return NativeSeekDispatch::Consumed;
   case NativeSeekSubmission::Compatibility:
     return NativeSeekDispatch::Compatibility;
   }
-  publishSeekTarget(intent.rollback_position);
+  updatePosition(intent.rollback_position);
   return NativeSeekDispatch::Consumed;
 }
 
@@ -1468,7 +1444,7 @@ bool PlayerController::completeNativePreviewPresented(
 
   native_scrub_intent_->dispatched_preview_request = 0;
   if (native_scrub_intent_->latest_preview_request == request) {
-    publishSeekTarget(boundedSeekTarget(actual_presentation_time));
+    updatePosition(boundedSeekTarget(actual_presentation_time));
     return true;
   }
 
@@ -1589,13 +1565,13 @@ void PlayerController::publishNativeMainPosition(double position) {
   // transport position over the user's latest target.
   if (native_scrub_intent_)
     return;
-  publishSeekTarget(position);
+  updatePosition(position);
 }
 
-void PlayerController::publishSeekTarget(double target) {
-  if (!std::isfinite(target) || nearlyEqual(position_, target))
+void PlayerController::updatePosition(double position) {
+  if (!std::isfinite(position) || nearlyEqual(position_, position))
     return;
-  position_ = target;
+  position_ = position;
   emit positionChanged();
 }
 
@@ -1681,8 +1657,7 @@ void PlayerController::seekTo(double seconds) {
     endScrub(seconds);
     return;
   }
-  const double maximum = duration_ > 0.0 ? duration_ : seconds;
-  const double target = std::clamp(seconds, 0.0, std::max(0.0, maximum));
+  const double target = boundedSeekTarget(seconds);
   if (mpv_.lineage.render_recovery && mpv_.lineage.render_recovery->request_serial == request_serial_) {
     mpv_.lineage.render_recovery->position = target;
     mpv_.lineage.render_recovery->transport_restored = false;
@@ -1696,10 +1671,7 @@ void PlayerController::seekTo(double seconds) {
   double value = target;
   mpv_.core->api().mpv_set_property_async(mpv_.core->handle(), 0, "time-pos",
                                       MPV_FORMAT_DOUBLE, &value);
-  if (!nearlyEqual(position_, target)) {
-    position_ = target;
-    emit positionChanged();
-  }
+  updatePosition(target);
 }
 
 void PlayerController::previewSeekTo(double seconds) {
@@ -1726,7 +1698,7 @@ void PlayerController::previewSeekTo(double seconds) {
         return;
       const double target = exactNativeSeekTarget(seconds);
       native_scrub_intent_->target = target;
-      publishSeekTarget(target);
+      updatePosition(target);
       return;
     }
     const auto observeDemand = [](void *context,
@@ -1744,8 +1716,7 @@ void PlayerController::previewSeekTo(double seconds) {
   }
   if (!engineReady() || !std::isfinite(seconds))
     return;
-  const double maximum = duration_ > 0.0 ? duration_ : seconds;
-  const double target = std::clamp(seconds, 0.0, std::max(0.0, maximum));
+  const double target = boundedSeekTarget(seconds);
   if (!scrub_seek_) {
     // Preview calls belong only to an explicitly owned pointer gesture. If
     // startup or render recovery refused ownership, ignore cadence updates;
@@ -1772,10 +1743,7 @@ void PlayerController::previewSeekTo(double seconds) {
   } else {
     dispatchScrubSeek(target, false);
   }
-  if (!nearlyEqual(position_, target)) {
-    position_ = target;
-    emit positionChanged();
-  }
+  updatePosition(target);
 }
 
 void PlayerController::endScrub(double seconds) {
@@ -1804,18 +1772,14 @@ void PlayerController::endScrub(double seconds) {
     finishScrubGesture(true);
     return;
   }
-  const double maximum = duration_ > 0.0 ? duration_ : seconds;
-  const double target = std::clamp(seconds, 0.0, std::max(0.0, maximum));
+  const double target = boundedSeekTarget(seconds);
   scrub_seek_->final = true;
   scrub_seek_->pending_target = target;
   if (scrub_seek_->command == 0) {
     scrub_seek_->pending_target.reset();
     dispatchScrubSeek(target, true);
   }
-  if (!nearlyEqual(position_, target)) {
-    position_ = target;
-    emit positionChanged();
-  }
+  updatePosition(target);
 }
 
 const char *PlayerController::scrubSeekMode(bool exact) {
@@ -3877,7 +3841,7 @@ void PlayerController::handleOpenCommandReply(std::uint64_t attempt_id,
   mpv_.lineage.selected_tracks_playlist_entry_id = -1;
   if (mpv_.lineage.active_event_playlist_entry_id != committed.playlist_entry_id)
     mpv_.lineage.active_event_playlist_entry_id = -1;
-  const std::int64_t video_track = currentVideoTrackId(mpv_.core.get());
+  const std::int64_t video_track = currentTrackId(mpv_.core.get(), "vid");
   if (video_track > 0 && committed.playlist_entry_id >= 0) {
     mpv_.lineage.selected_video_track_id = video_track;
     mpv_.lineage.selected_tracks_playlist_entry_id = committed.playlist_entry_id;
@@ -4331,10 +4295,7 @@ void PlayerController::applyObservedPosition(double position) {
   }
   if (!acceptsPlaybackObservation())
     return;
-  if (!nearlyEqual(position_, value)) {
-    position_ = value;
-    emit positionChanged();
-  }
+  updatePosition(value);
 }
 
 void PlayerController::applyObservedDuration(double duration) {
@@ -4618,10 +4579,7 @@ void PlayerController::restoreRenderRecovery() {
         return;
       }
       recovery.position = std::max(0.0, live_position);
-      if (!nearlyEqual(position_, recovery.position)) {
-        position_ = recovery.position;
-        emit positionChanged();
-      }
+      updatePosition(recovery.position);
       int paused = 0;
       if (!setCoreProperty(mpv_.core.get(), "pause", MPV_FORMAT_FLAG, &paused)) {
         scheduleRenderRecoveryRetry(
@@ -5006,33 +4964,14 @@ void PlayerController::degradeRenderRecovery(const QString &error) {
   mpv_.lineage.render_recovery_attempt.reset();
 
   if (mpv_.core && engineReady()) {
-    int paused = recovery.paused ? 1 : 0;
-    static_cast<void>(mpv_.core->api().mpv_set_property(mpv_.core->handle(), "pause",
-                                                    MPV_FORMAT_FLAG, &paused));
-
-    int live_paused = paused;
-    if (mpv_.core->api().mpv_get_property(mpv_.core->handle(), "pause", MPV_FORMAT_FLAG,
-                                      &live_paused) >= 0) {
-      updatePause(live_paused != 0);
+    static_cast<void>(mpv_.setPausedNow(recovery.paused));
+    if (const auto live = readLivePlaybackState()) {
+      updatePause(live->paused);
+      updateIdle(live->idle);
+      if (live->position)
+        updatePosition(*live->position);
     } else {
       updatePause(recovery.paused);
-    }
-
-    int live_idle = 0;
-    if (mpv_.core->api().mpv_get_property(mpv_.core->handle(), "idle-active",
-                                      MPV_FORMAT_FLAG, &live_idle) >= 0) {
-      updateIdle(live_idle != 0);
-    }
-
-    double live_position = 0.0;
-    if (mpv_.core->api().mpv_get_property(mpv_.core->handle(), "time-pos",
-                                      MPV_FORMAT_DOUBLE, &live_position) >= 0 &&
-        std::isfinite(live_position)) {
-      const double value = std::max(0.0, live_position);
-      if (!nearlyEqual(position_, value)) {
-        position_ = value;
-        emit positionChanged();
-      }
     }
     cacheCurrentTrackSelection();
   }
@@ -5311,10 +5250,7 @@ void PlayerController::updateMediaTitle(const QString &title) {
 }
 
 void PlayerController::resetTimeline() {
-  if (!nearlyEqual(position_, 0.0)) {
-    position_ = 0.0;
-    emit positionChanged();
-  }
+  updatePosition(0.0);
   if (!nearlyEqual(duration_, 0.0)) {
     duration_ = 0.0;
     emit durationChanged();

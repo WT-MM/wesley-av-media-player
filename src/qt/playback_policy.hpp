@@ -22,7 +22,6 @@ struct PlaybackBufferPolicy {
   const char *forward_bytes;
   const char *backward_bytes;
   const char *hysteresis_seconds;
-  std::size_t maximum_packet_bytes;
 };
 
 [[nodiscard]] constexpr PlaybackBufferPolicy
@@ -30,7 +29,7 @@ playbackBufferPolicy(PlaybackSourceClass source_class) {
   if (source_class == PlaybackSourceClass::FastLocal) {
     // Local storage can refill on demand. One second is enough to absorb
     // scheduler jitter without retaining tens of seconds of compressed data.
-    return {"no", "0", "1", "16MiB", "0", "0.25", 16U * 1024U * 1024U};
+    return {"no", "0", "1", "16MiB", "0", "0.25"};
   }
 
   // Slow/network media gets a modest eight-second jitter window, a small
@@ -44,8 +43,7 @@ playbackBufferPolicy(PlaybackSourceClass source_class) {
           "3",
           "32MiB",
           "8MiB",
-          "2",
-          40U * 1024U * 1024U};
+          "2"};
 }
 
 // Mounted network shares arrive as file URLs, so URL syntax alone is not

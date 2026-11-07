@@ -27,14 +27,10 @@ int main() {
   expect(std::string(local.backward_bytes) == "0",
          "local back buffer is disabled");
   expect(std::string(local.hysteresis_seconds) == "0.25", "local hysteresis");
-  expect(local.maximum_packet_bytes == 16U * 1024U * 1024U,
-         "local maximum packet bytes");
 
   const auto mounted = playbackBufferPolicy(PlaybackSourceClass::BufferedLocal);
   expect(std::string(mounted.cache_mode) == "yes",
          "mounted and removable media explicitly enable caching");
-  expect(mounted.maximum_packet_bytes == 40U * 1024U * 1024U,
-         "mounted maximum packet bytes");
 
   const auto remote = playbackBufferPolicy(PlaybackSourceClass::Network);
   expect(std::string(remote.cache_mode) == "auto", "remote cache is automatic");
@@ -46,8 +42,6 @@ int main() {
   expect(std::string(remote.backward_bytes) == "8MiB",
          "remote backward byte ceiling");
   expect(std::string(remote.hysteresis_seconds) == "2", "remote hysteresis");
-  expect(remote.maximum_packet_bytes == 40U * 1024U * 1024U,
-         "remote maximum packet bytes");
 
   expect(isRemoteFilesystemType("smbfs"), "macOS SMB is remote");
   expect(isRemoteFilesystemType("NFS4"),

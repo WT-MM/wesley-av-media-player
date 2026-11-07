@@ -124,7 +124,7 @@ public:
   virtual void publishNativeMainPosition(double position) = 0;
   virtual void publishNativeFrameGeometry(double start_seconds,
                                           double duration_seconds) = 0;
-  virtual void publishSeekTarget(double target) = 0;
+  virtual void updatePosition(double position) = 0;
   virtual void nativePreviewPresented(
       const ::wam::media::native_playback::PreviewPresented &presented) = 0;
   virtual void nativePreviewFailed(

@@ -62,7 +62,6 @@ set(WAM_APP_SOURCES
   src/qt/scroll_gesture.hpp
   src/qt/player_core.cpp
   src/qt/player_core_p.hpp
-  src/qt/mpv_hwdec_interop_policy.hpp
   src/qt/render_lifecycle.hpp
   src/qt/playback_policy.hpp
   src/qt/mpv_video_item.cpp

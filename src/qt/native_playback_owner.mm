@@ -555,7 +555,7 @@ void NativePlaybackOwner::publishLifecycle(
           host_.updateEof(false);
         } else if constexpr (std::is_same_v<Event, native_protocol::Ended>) {
           const double position = std::max(0.0, event.finalPositionSeconds);
-          host_.publishSeekTarget(position);
+          host_.updatePosition(position);
           host_.updatePause(true);
           host_.updateIdle(true);
           host_.updateEof(true);
@@ -630,7 +630,7 @@ void NativePlaybackOwner::publishCommitReady(
   host_.nativeCommitReady(ready);
   host_.updateIdle(false);
   host_.updateEof(false);
-  host_.publishSeekTarget(std::max(0.0, ready.targetSeconds));
+  host_.updatePosition(std::max(0.0, ready.targetSeconds));
   if (telemetry_ != nullptr) {
     static_cast<void>(telemetry_->checkpoint());
   }

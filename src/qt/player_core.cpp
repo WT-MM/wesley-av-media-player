@@ -1,6 +1,6 @@
 #include "player_core_p.hpp"
 
-#include "mpv_hwdec_interop_policy.hpp"
+#include "playback_policy.hpp"
 #include "player_controller.hpp"
 
 #include <QByteArray>
@@ -255,8 +255,14 @@ bool PlayerCore::initialize(
   setOption(api, candidate, "vo", "libmpv");
   setOption(api, candidate, "hwdec", "auto-safe");
   setOption(api, candidate, "vd-lavc-dr", "auto");
-  setOption(api, candidate, "gpu-hwdec-interop",
-            mpvGpuHwdecInterop(kMpvHwdecInteropHostPlatform));
+  // libmpv cannot load hardware-decoder interop backends on demand; "auto"
+  // eagerly probes every backend (Vulkan included) when the render context is
+  // created. The macOS renderer only ever consumes VideoToolbox frames.
+#if defined(__APPLE__)
+  setOption(api, candidate, "gpu-hwdec-interop", "videotoolbox");
+#else
+  setOption(api, candidate, "gpu-hwdec-interop", "auto");
+#endif
   // Keep mpv's backend-specific hardware-frame reserve. A globally reduced
   // pool can starve fixed-allocation decoders such as D3D11VA and VAAPI even
   // when it happens to work with VideoToolbox's dynamic allocation path.
@@ -287,15 +293,17 @@ bool PlayerCore::initialize(
   setOption(api, candidate, "autoload-files", "no");
   setOption(api, candidate, "cover-art-auto", "no");
 
-  // These are conservative fallbacks for a source that bypasses WAM's normal
-  // loadfile path. PlayerController supplies tighter per-file limits for local
-  // files and bounded network limits for URLs.
-  setOption(api, candidate, "cache", "auto");
-  setOption(api, candidate, "cache-secs", "8");
-  setOption(api, candidate, "demuxer-readahead-secs", "3");
-  setOption(api, candidate, "demuxer-max-bytes", "32MiB");
-  setOption(api, candidate, "demuxer-max-back-bytes", "8MiB");
-  setOption(api, candidate, "demuxer-hysteresis-secs", "2");
+  // The network policy is the conservative default for a source that
+  // bypasses WAM's normal loadfile path; PlayerController applies each file's
+  // own policy before loading it.
+  const PlaybackBufferPolicy fallback =
+      playbackBufferPolicy(PlaybackSourceClass::Network);
+  setOption(api, candidate, "cache", fallback.cache_mode);
+  setOption(api, candidate, "cache-secs", fallback.cache_seconds);
+  setOption(api, candidate, "demuxer-readahead-secs", fallback.readahead_seconds);
+  setOption(api, candidate, "demuxer-max-bytes", fallback.forward_bytes);
+  setOption(api, candidate, "demuxer-max-back-bytes", fallback.backward_bytes);
+  setOption(api, candidate, "demuxer-hysteresis-secs", fallback.hysteresis_seconds);
 
   // Prefer the renderer's direct sampler path. Unlike forcing gpu-dumb-mode,
   // these settings still let mpv engage an advanced pipeline when HDR/color

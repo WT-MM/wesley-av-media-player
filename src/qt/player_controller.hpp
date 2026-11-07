@@ -696,7 +696,7 @@ private:
   // frame's start plus this frame's own duration, never a nominal interval.
   void publishNativeFrameGeometry(double start_seconds,
                                   double duration_seconds) override;
-  void publishSeekTarget(double target) override;
+  void updatePosition(double position) override;
   void handleStartFile(std::int64_t playlist_entry_id);
   void handleEndFile(const mpv_event_end_file &end);
   void handlePlaybackReady(bool file_loaded);

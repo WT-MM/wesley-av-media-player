@@ -406,13 +406,6 @@ target_include_directories(wam_launch_rules_test PRIVATE ${PROJECT_SOURCE_DIR}/s
 target_link_libraries(wam_launch_rules_test PRIVATE Qt6::Core)
 add_test(NAME launch_rules COMMAND wam_launch_rules_test)
 
-add_executable(wam_mpv_hwdec_interop_policy_test
-  mpv_hwdec_interop_policy_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/qt/mpv_hwdec_interop_policy.hpp)
-target_include_directories(wam_mpv_hwdec_interop_policy_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-add_test(NAME mpv_hwdec_interop_policy
-  COMMAND wam_mpv_hwdec_interop_policy_test)
-
 add_executable(wam_jobs_test jobs_test.cpp ${PROJECT_SOURCE_DIR}/src/jobs.cpp ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
 target_include_directories(wam_jobs_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME jobs COMMAND wam_jobs_test)
