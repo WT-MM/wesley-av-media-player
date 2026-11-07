@@ -2,6 +2,7 @@
 
 #include "media/audio_track_admission.hpp"
 #include "media/native_media_source.hpp"
+#include "platform/macos/core_media_carriage.hpp"
 #include "platform/macos/core_media_source_support.hpp"
 
 #include <CoreMedia/CoreMedia.h>
@@ -607,7 +608,6 @@ class NativeSourceCore {
 //   noteCursorCreationAttempt(context) / noteCursorStarted(context)
 //   videoOrigin(asset)     the first video access unit's time, or empty when
 //                          the container states none
-//   createVideoFormatDescription(track)
 //   mergeOrderKey(sample)  THE A/V MERGE KEY (see readNext)
 // and Derived supplies:
 //   makeHead(raw, video, error)      one cursor sample -> one staged sample
@@ -947,7 +947,7 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
           media::findMediaTrack(*descriptor, *descriptor->selectedVideo);
       videoFormat = video == nullptr
                         ? nullptr
-                        : Traits::createVideoFormatDescription(*video);
+                        : createVideoFormatDescription(*video);
       if (videoFormat == nullptr) {
         started.status = media::MediaSourceOpenStatus::Unsupported;
         started.error = named(

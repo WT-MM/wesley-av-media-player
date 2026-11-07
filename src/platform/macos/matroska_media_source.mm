@@ -52,23 +52,6 @@ constexpr std::size_t kMaximumLaceFrames{
 
 // ---- Traits ---------------------------------------------------------------
 
-std::shared_ptr<const MatroskaAssetContext> MatroskaSourceTraits::adoptContext(
-    const std::filesystem::path& path,
-    const media::MediaSourceOpenOptions& options,
-    std::shared_ptr<const PreparedAsset> asset) noexcept {
-  return adoptPreparedMatroskaAssetContext(path, options, std::move(asset));
-}
-
-void MatroskaSourceTraits::noteCursorCreationAttempt(
-    const MatroskaAssetContext& context) noexcept {
-  noteMatroskaAssetContextCursorCreationAttempt(context);
-}
-
-void MatroskaSourceTraits::noteCursorStarted(
-    const MatroskaAssetContext& context) noexcept {
-  noteMatroskaAssetContextCursorStarted(context);
-}
-
 std::optional<MediaTime> MatroskaSourceTraits::videoOrigin(
     const PreparedAsset& asset) noexcept {
   const auto cues = asset.cues();
@@ -78,11 +61,6 @@ std::optional<MediaTime> MatroskaSourceTraits::videoOrigin(
   return matroskaTickTime(
       static_cast<std::int64_t>(cues.front().timestampTick),
       asset.timestampScaleNanoseconds());
-}
-
-CMVideoFormatDescriptionRef MatroskaSourceTraits::createVideoFormatDescription(
-    const MediaTrackDescriptor& track) noexcept {
-  return macos::createVideoFormatDescription(track);
 }
 
 MediaTime MatroskaSourceTraits::mergeOrderKey(

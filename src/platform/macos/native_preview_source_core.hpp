@@ -41,8 +41,7 @@ inline void publishPreviewCancellation(
 // route. It owns the epoch algebra, the cancellation latch, the published
 // facts, the begin publication order and the bounded read; the container
 // supplies only what differs through `Traits`, which is the main source's
-// Traits (types, kName, videoOrigin, createVideoFormatDescription, the cursor
-// counters) extended with:
+// Traits (types, kName, videoOrigin, the cursor counters) extended with:
 //
 //   PreviewWorkspace                    per-source scratch for the builder
 //   previewSampleBounded(raw, limits)   the container's bounded-sample rule
@@ -86,7 +85,7 @@ class NativePreviewSourceCore final : public NativePreviewSource {
         return {};
       }
       CMVideoFormatDescriptionRef format =
-          Traits::createVideoFormatDescription(*track);
+          createVideoFormatDescription(*track);
       if (format == nullptr) {
         return {};
       }

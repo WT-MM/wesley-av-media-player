@@ -57,17 +57,13 @@ struct MatroskaSourceTraits {
   // either cap.
   static constexpr std::int64_t kVideoMergeLeadNanoseconds{250'000'000};
 
-  [[nodiscard]] static std::shared_ptr<const AssetContext> adoptContext(
-      const std::filesystem::path& path,
-      const media::MediaSourceOpenOptions& options,
-      std::shared_ptr<const PreparedAsset> asset) noexcept;
-  static void noteCursorCreationAttempt(const AssetContext& context) noexcept;
-  static void noteCursorStarted(const AssetContext& context) noexcept;
+  static constexpr auto adoptContext = &adoptPreparedMatroskaAssetContext;
+  static constexpr auto noteCursorCreationAttempt =
+      &noteMatroskaAssetContextCursorCreationAttempt;
+  static constexpr auto noteCursorStarted = &noteMatroskaAssetContextCursorStarted;
   // The first Cue's exact tick, or empty for a Cue-less asset.
   [[nodiscard]] static std::optional<media::MediaTime> videoOrigin(
       const PreparedAsset& asset) noexcept;
-  [[nodiscard]] static CMVideoFormatDescriptionRef
-  createVideoFormatDescription(const media::MediaTrackDescriptor& track) noexcept;
   // Video sorts on a key that leads its presentation time by
   // kVideoMergeLeadNanoseconds (exact, rounded UP in the timestamp's own
   // timescale so the key never lands short of the reorder window); audio
