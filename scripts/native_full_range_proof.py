@@ -1,6 +1,9 @@
 """Offline full-range ASP/VP9 proof using phase-2g's hardware control projection."""
-import argparse, hashlib, io, json, os, subprocess, time, uuid
+import argparse, hashlib, io, json, os, subprocess, sys, time, uuid
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests/support'))
+import wam_launch  # noqa: E402
 p=argparse.ArgumentParser()
 p.add_argument('--root',type=Path,required=True)
 p.add_argument('--phase',choices=['generate','capture','analyze'],required=True)
@@ -42,8 +45,8 @@ elif a.phase=='capture':
                 gate.write(json.dumps(record)+'\n');gate.flush();print(name,json.dumps(record),flush=True)
                 if record['passed']:break
                 time.sleep(30)
-        env={k:v for k,v in os.environ.items() if not k.startswith('WAM_')}
-        env.update(HOME=str(run/'home'),WAM_TEST_BACKGROUND='1',WAM_TEST_MUTED='1',WAM_TEST_GEOMETRY='480x270+2400+1000',WAM_NATIVE_BENCHMARK_TELEMETRY='1',WAM_NATIVE_BENCHMARK_RUN_ID=str(uuid.uuid4()),WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),WAM_NATIVE_BENCHMARK_CANDIDATE_ID=sha(app),WAM_PLAYBACK_METRICS_PATH=str(run/'metrics.jsonl'),WAM_TEST_QUIT_AFTER_MS='6500',WAM_TEST_WINDOW_SCRIPT=f'pause:0@1000,report@2500,videograb:0:{run}/display.png@500,report@500')
+        run_id=str(uuid.uuid4())
+        env=wam_launch.seam_env(run/'home',run_id=run_id,asset_sha256=sha(asset),candidate_id=sha(app),WAM_PLAYBACK_METRICS_PATH=str(run/'metrics.jsonl'),WAM_TEST_QUIT_AFTER_MS='6500',WAM_TEST_WINDOW_SCRIPT=f'pause:0@1000,report@2500,videograb:0:{run}/display.png@500,report@500')
         if software:env['WAM_TEST_NO_VIDEO_HARDWARE']='1'
         (run/'environment.json').write_text(json.dumps({k:v for k,v in env.items() if k.startswith('WAM_') or k=='HOME'},indent=2))
         with (run/'log.txt').open('w') as log:
@@ -52,7 +55,7 @@ elif a.phase=='capture':
             except subprocess.TimeoutExpired:process.terminate();rc=process.wait(timeout=10)
         text=(run/'log.txt').read_text()
         events=[json.loads(line) for line in text.splitlines() if line.startswith('{') and '"event"' in line]
-        assert all(e.get('run_id')==env['WAM_NATIVE_BENCHMARK_RUN_ID'] and e.get('asset_sha256')==sha(asset) and e.get('candidate_id')==sha(app) and e.get('process_id')==process.pid for e in events)
+        assert all(e.get('run_id')==run_id and e.get('asset_sha256')==sha(asset) and e.get('candidate_id')==sha(app) and e.get('process_id')==process.pid for e in events)
         stage='Libavcodec' if software else 'VideoToolboxHardware'
         passed=rc==0 and ('stage='+stage) in text and 'WAM: native failure' not in text and any(e.get('event')=='first_frame_drawn' for e in events) and not any(e.get('event')=='fallback_selected' for e in events) and (run/'display.png').exists()
         receipt=dict(rc=rc,pid=process.pid,expected_stage=stage,passed=passed)

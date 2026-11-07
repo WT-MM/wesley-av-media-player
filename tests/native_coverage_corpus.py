@@ -1,4 +1,6 @@
-import pathlib,subprocess,os,uuid,hashlib,json,time,argparse
+import pathlib,subprocess,sys,uuid,hashlib,json,time,argparse
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent/'support'))
+import wam_launch  # noqa: E402
 parser=argparse.ArgumentParser()
 parser.add_argument('--list',required=True)
 parser.add_argument('--baseline',required=True)
@@ -13,8 +15,8 @@ def sha(path):
 candidate=sha(app);results=[]
 for i,path in enumerate(paths):
  run=root/f'{i:03}';run.mkdir(exist_ok=True);(run/'home').mkdir(exist_ok=True)
- env={k:v for k,v in os.environ.items() if not k.startswith('WAM_')};runid=str(uuid.uuid4());asset=sha(path)
- env.update(HOME=str(run/'home'),WAM_NATIVE_BENCHMARK_TELEMETRY='1',WAM_NATIVE_BENCHMARK_RUN_ID=runid,WAM_NATIVE_BENCHMARK_ASSET_SHA256=asset,WAM_NATIVE_BENCHMARK_CANDIDATE_ID=candidate,WAM_TEST_BACKGROUND='1',WAM_TEST_MUTED='1',WAM_TEST_GEOMETRY='480x270+2400+1000',WAM_PLAYBACK_METRICS_PATH=str(run/'metrics.jsonl'),WAM_TEST_QUIT_AFTER_MS='6000')
+ runid=str(uuid.uuid4());asset=sha(path)
+ env=wam_launch.seam_env(run/'home',run_id=runid,asset_sha256=asset,candidate_id=candidate,WAM_PLAYBACK_METRICS_PATH=str(run/'metrics.jsonl'),WAM_TEST_QUIT_AFTER_MS='6000')
  (run/'launch.json').write_text(json.dumps(dict(argv=[str(app),path],executable_sha256=candidate,env={k:v for k,v in env.items() if k.startswith('WAM_') or k=='HOME'}),indent=2))
  with (run/'stderr.txt').open('w') as err,(run/'telemetry.jsonl').open('w') as out:
   p=subprocess.Popen([str(app),path],env=env,stderr=err,stdout=out);(run/'pid.txt').write_text(str(p.pid));started=time.monotonic()

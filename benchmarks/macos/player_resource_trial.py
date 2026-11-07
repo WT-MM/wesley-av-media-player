@@ -20,10 +20,12 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from pathlib import Path
 
-PROJECT_ROOT = Path("/Users/wesleymaa/Documents/WAM")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+WAM_EXECUTABLE = PROJECT_ROOT / "build" / "WAM.app" / "Contents" / "MacOS" / "WAM"
+sys.path.insert(0, str(PROJECT_ROOT / "tests" / "support"))
+import wam_launch  # noqa: E402
 STATE_TSV = Path.home() / "Library" / "Application Support" / "WAM" / "state.tsv"
 GPU_CALIBRATION_PATH = PROJECT_ROOT / ".cache" / "benchmarks" / "stress" / "gpu_calibration.json"
 HELPER_BASENAME = "VTDecoderXPCService"
@@ -500,11 +502,11 @@ def check_guards(args, result):
 def launch_player(args, result, metrics_path, telemetry_path):
     """Start the player under test. Returns its AX process name."""
     if args.player == "wam":
-        app = PROJECT_ROOT / "build" / "WAM.app"
+        app = WAM_EXECUTABLE.parents[2]
         quit_after_ms = int((args.lead_in + args.window + 8.0) * 1000)
         env_args = [
-            "--env", "WAM_NATIVE_BENCHMARK_TELEMETRY=1",
-            "--env", f"WAM_NATIVE_BENCHMARK_RUN_ID={uuid.uuid4()}",
+            *(arg for key, value in wam_launch.identity_env().items()
+              for arg in ("--env", f"{key}={value}")),
             "--env", f"WAM_TEST_QUIT_AFTER_MS={quit_after_ms}",
             "--env", f"WAM_PLAYBACK_METRICS_PATH={metrics_path}",
             "--env", "WAM_PLAYBACK_METRICS_INTERVAL_MS=500",
@@ -530,7 +532,7 @@ def resolve_pid(player):
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         if player == "wam":
-            cands = pids_matching("build/WAM.app/Contents/MacOS/WAM")
+            cands = pids_matching(str(WAM_EXECUTABLE))
         elif player == "vlc":
             cands = pids_by_name("VLC")
         else:
@@ -812,20 +814,17 @@ def invalid_park(args, result):
 
 def teardown(player, result):
     if player == "wam":
-        # WAM_TEST_QUIT_AFTER_MS can be vetoed by the app's own quit guard, and
-        # an orderly AppleScript quit is refused too (-128). The metrics JSONL
-        # is flushed per line, so a SIGTERM costs nothing this report reads.
+        # Only this checkout's build is ever signalled, never another WAM. The
+        # metrics JSONL is flushed per line, so a SIGTERM costs nothing this
+        # report reads.
         deadline = time.monotonic() + 12
-        while time.monotonic() < deadline and pids_matching("build/WAM.app/Contents/MacOS/WAM"):
+        while time.monotonic() < deadline and pids_matching(str(WAM_EXECUTABLE)):
             time.sleep(0.5)
-        result["wam_self_quit"] = not pids_matching("build/WAM.app/Contents/MacOS/WAM")
+        result["wam_self_quit"] = not pids_matching(str(WAM_EXECUTABLE))
         if not result["wam_self_quit"]:
-            run(["osascript", "-e", 'tell application "WAM" to quit'])
-            time.sleep(3)
-        if pids_matching("build/WAM.app/Contents/MacOS/WAM"):
-            run(["pkill", "-f", "WAM.app/Contents/MacOS/WAM"])
+            run(["pkill", "-f", str(WAM_EXECUTABLE)])
             time.sleep(2)
-        result["wam_exited_cleanly"] = not pids_matching("build/WAM.app/Contents/MacOS/WAM")
+        result["wam_exited_cleanly"] = not pids_matching(str(WAM_EXECUTABLE))
     elif player == "vlc":
         run(["osascript", "-e", 'tell application "VLC" to quit'])
         time.sleep(3)

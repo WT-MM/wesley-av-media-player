@@ -40,8 +40,8 @@ def main():
         run = root/f'{name}-{uuid.uuid4()}'
         (run/'home').mkdir(parents=True)
         env = wam_launch.seam_env(run/'home',
-                   WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(path),
-                   WAM_NATIVE_BENCHMARK_CANDIDATE_ID=candidate,
+                   asset_sha256=sha(path),
+                   candidate_id=candidate,
                    WAM_TEST_QUIT_AFTER_MS=milliseconds, WAM_TEST_NOTICE_TRACE='1',
                    WAM_PLAYBACK_METRICS_PATH=run/'metrics.jsonl', **(extra or {}))
         receipt = dict(name=name,argv=[str(app),str(path)],executable_sha256=candidate,

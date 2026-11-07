@@ -5,8 +5,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
-import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests/support'))
+import wam_launch  # noqa: E402
 
 p = argparse.ArgumentParser()
 p.add_argument('--asset', type=Path, required=True)
@@ -43,14 +46,10 @@ with (a.output / 'gate.jsonl').open('w') as gate:
 home = a.output / 'home'; home.mkdir()
 asset = a.output / ('asset' + a.asset.suffix)
 os.link(a.asset, asset)
-env = {k: v for k, v in os.environ.items() if not k.startswith('WAM_')}
-env.update(HOME=str(home), WAM_TEST_BACKGROUND='1', WAM_TEST_MUTED='1',
+env = wam_launch.seam_env(home,
            WAM_TEST_CAPTURE_PHYSICAL='1',
-           WAM_TEST_GEOMETRY='480x270+2400+1000',
-           WAM_NATIVE_BENCHMARK_TELEMETRY='1',
-           WAM_NATIVE_BENCHMARK_RUN_ID=str(uuid.uuid4()),
-           WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),
-           WAM_NATIVE_BENCHMARK_CANDIDATE_ID=sha(app),
+           asset_sha256=sha(asset),
+           candidate_id=sha(app),
            WAM_PLAYBACK_METRICS_PATH=str(a.output / 'metrics.jsonl'),
            WAM_TEST_QUIT_AFTER_MS=str(round(a.seconds * 1000)),
            WAM_TEST_WINDOW_SCRIPT=f'report@2500,videograb:0:{a.output}/display.png@500,report@1000')

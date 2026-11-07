@@ -77,6 +77,8 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "tests" / "support"))
+import wam_launch  # noqa: E402
 CACHE_DIR = PROJECT_ROOT / ".cache" / "benchmarks" / "stress"
 
 # ~75% of the machine's cores, the share a training job tends to take while
@@ -1273,10 +1275,10 @@ def run_trial(args: argparse.Namespace) -> dict[str, Any]:
                 f"--startup-grace"
             )
     env_args = [
-        "--env", "WAM_NATIVE_BENCHMARK_TELEMETRY=1",
-        "--env", f"WAM_NATIVE_BENCHMARK_RUN_ID={_uuid4()}",
-        "--env", f"WAM_NATIVE_BENCHMARK_ASSET_SHA256={sha256_file(clip)}",
-        "--env", f"WAM_NATIVE_BENCHMARK_CANDIDATE_ID={sha256_file(executable)}",
+        *(arg for key, value in wam_launch.identity_env(
+            asset_sha256=sha256_file(clip),
+            candidate_id=sha256_file(executable)).items()
+          for arg in ("--env", f"{key}={value}")),
         "--env", f"WAM_TEST_QUIT_AFTER_MS={play_ms}",
         "--env", f"WAM_PLAYBACK_METRICS_PATH={metrics_path}",
         "--env", f"WAM_PLAYBACK_METRICS_INTERVAL_MS={args.metrics_interval_ms}",
@@ -1387,11 +1389,6 @@ def run_trial(args: argparse.Namespace) -> dict[str, Any]:
     if cost_error:
         report["cost_error"] = cost_error
     return report
-
-
-def _uuid4() -> str:
-    import uuid
-    return str(uuid.uuid4())
 
 
 # --------------------------------------------------------------------------

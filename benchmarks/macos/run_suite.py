@@ -31,17 +31,15 @@ from typing import Any, Callable, Mapping, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "tests" / "support"))
+import wam_launch  # noqa: E402
 DEFAULT_COLLECTOR = Path(__file__).with_name("collect.py")
 DEFAULT_VLC_APP = Path("/Applications/VLC.app")
 DEFAULT_QUICKTIME_APP = Path("/System/Applications/QuickTime Player.app")
 DEFAULT_WINDOW = (1180, 720)
 HELPER_BASENAME = "VTDecoderXPCService"
-NATIVE_TELEMETRY_ENV = "WAM_NATIVE_BENCHMARK_TELEMETRY"
-NATIVE_TELEMETRY_RUN_ID_ENV = "WAM_NATIVE_BENCHMARK_RUN_ID"
-NATIVE_TELEMETRY_ASSET_SHA256_ENV = "WAM_NATIVE_BENCHMARK_ASSET_SHA256"
 NATIVE_TELEMETRY_SCHEMA = "wam.native.benchmark.v1"
 NATIVE_TELEMETRY_FRAMED_SCHEMA = "wam.native.benchmark.v2"
-NATIVE_TELEMETRY_CANDIDATE_ID_ENV = "WAM_NATIVE_BENCHMARK_CANDIDATE_ID"
 NATIVE_PROOF_INELIGIBLE_EXIT = 3
 PS_LSTART_FORMAT = "%a %b %d %H:%M:%S %Y"
 # `ps lstart` is only precise to one second. VLC's re-parented Rosetta peer can
@@ -477,20 +475,12 @@ def build_player_command(
             # environment into an application. `open --env` makes this
             # benchmark-only opt-in explicit, while `--stderr` keeps JSONL
             # proof separate from ordinary launcher diagnostics.
-            command.extend(
-                [
-                    "--env",
-                    f"{NATIVE_TELEMETRY_ENV}=1",
-                    "--env",
-                    f"{NATIVE_TELEMETRY_RUN_ID_ENV}={native_run_id}",
-                    "--env",
-                    f"{NATIVE_TELEMETRY_ASSET_SHA256_ENV}={native_asset_sha256}",
-                    "--env",
-                    f"{NATIVE_TELEMETRY_CANDIDATE_ID_ENV}={native_candidate_id}",
-                    "--stderr",
-                    str(native_telemetry_path),
-                ]
+            identity = wam_launch.identity_env(
+                native_run_id, native_asset_sha256, native_candidate_id
             )
+            for key, value in identity.items():
+                command.extend(["--env", f"{key}={value}"])
+            command.extend(["--stderr", str(native_telemetry_path)])
         command.extend(
             [
                 "-a",
