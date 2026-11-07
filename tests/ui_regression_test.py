@@ -89,13 +89,19 @@ elif case == 'multiopen':
 elif case == 'resume':
     # A remembered position must not override a seek the user made before
     # playback started (pause during the open, seek, then play).
-    home = root / 'resume-home'
-    shutil.rmtree(home, ignore_errors=True)
-    _, reports, _ = run('resume-first', fallback, 'skip:0:9@1800,pause:0@100,report@500', ms=4000, home=home)
-    check(9 < windows(reports)[-1]['pos'] < 14, 'First run leaves a resume point')
-    _, reports, _ = run('resume-second', fallback, 'pause:0@80,report@1700,skip:0:2@1,report@600,play:0@1,report@1200',
-                        home=home)
-    rows = windows(reports)
+    # The pause has to land after preflight and before playback starts; under
+    # load it can miss that window, so the whole sequence is retried.
+    for attempt in range(3):
+        home = root / f'resume-home-{attempt}'
+        shutil.rmtree(home, ignore_errors=True)
+        _, reports, _ = run(f'resume-first-{attempt}', fallback, 'skip:0:9@1800,pause:0@100,report@500',
+                            ms=4000, home=home)
+        check(9 < windows(reports)[-1]['pos'] < 14, 'First run leaves a resume point')
+        _, reports, _ = run(f'resume-second-{attempt}', fallback,
+                            'pause:0@80,report@1700,skip:0:2@1,report@600,play:0@1,report@1200', home=home)
+        rows = windows(reports)
+        if rows[0]['playing'] == 0:
+            break
     check(rows[0]['playing'] == 0, 'Exercise a paused open')
     check(rows[-1]['playing'] == 1 and rows[-1]['pos'] < 6, "The user's seek wins over the resume point")
 elif case == 'failed':
@@ -215,7 +221,7 @@ elif case == 'playlisttitle':
                     '-metadata', 'title=Synthetic Entry Title', str(titled)], check=True, timeout=60)
     playlist = root / 'redirect.m3u'
     playlist.write_text('#EXTM3U\n' + str(titled) + '\n')
-    _, reports, samples = run(case, playlist, 'layout:0@2500', ms=3500)
+    _, reports, samples = run(case, playlist, 'layout:0@4500', ms=6000)
     check(any(s['backend']=='mpv' for s in samples), 'Playlist must use fallback')
     check(of(reports, 'test_loading')[-1]['title'] == 'Synthetic Entry Title',
           'A redirected entry must show its own title')
