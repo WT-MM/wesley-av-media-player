@@ -1906,6 +1906,7 @@ NativeAudioConverterStats NativeAudioConverter::stats() const noexcept {
   return result;
 }
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
 bool NativeAudioConverter::resetRetainedPayloadByteHighWater(
     media::MediaGeneration expectedGeneration) noexcept {
   if (expectedGeneration == 0 ||
@@ -1915,5 +1916,6 @@ bool NativeAudioConverter::resetRetainedPayloadByteHighWater(
   impl_->peak_retained_payload_bytes = impl_->retained_payload_bytes;
   return true;
 }
+#endif
 
 } // namespace wam::macos

@@ -585,7 +585,7 @@ if(APPLE)
     add_executable(wam_native_audio_converter_test
       native_audio_converter_test.mm)
     target_link_libraries(wam_native_audio_converter_test PRIVATE
-      wam_macos_native_backend)
+      wam_macos_native_backend_test_seams)
     add_test(NAME macos_native_audio_converter
       COMMAND wam_native_audio_converter_test)
     set_tests_properties(macos_native_audio_converter PROPERTIES
