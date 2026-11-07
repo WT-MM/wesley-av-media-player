@@ -21,12 +21,10 @@
 #endif
 
 #include "support/expect.hpp"
+#include "support/process_wait.hpp"
 
 static_assert(noexcept(std::declval<wam::BackgroundJob&>().cancel()),
               "background cancellation must remain no-throw");
-
-namespace {
-}  // namespace
 
 std::string readFile(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
@@ -41,34 +39,6 @@ void writeFile(const std::filesystem::path& path, const std::string& contents) {
 
 #ifndef _WIN32
 void exitSuccessfullyOnTerm(int) { _exit(0); }
-
-bool waitForFile(const std::filesystem::path& path,
-                 std::chrono::steady_clock::duration timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    std::error_code error;
-    if (std::filesystem::is_regular_file(path, error) &&
-        std::filesystem::file_size(path, error) > 0)
-      return true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return false;
-}
-
-bool processExists(pid_t process) {
-  if (kill(process, 0) == 0) return true;
-  return errno == EPERM;
-}
-
-bool waitForProcessExit(pid_t process,
-                        std::chrono::steady_clock::duration timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (!processExists(process)) return true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return !processExists(process);
-}
 #endif
 
 int main(int argc, char** argv) {
@@ -76,7 +46,10 @@ int main(int argc, char** argv) {
     writeFile(argv[2], argv[3]);
     return 0;
   }
-  if (argc == 2 && std::string(argv[1]) == "--structured-slow-child") {
+  if ((argc == 2 || argc == 3) &&
+      std::string(argv[1]) == "--structured-slow-child") {
+    // Optional started marker: the test cancels only once the child runs.
+    if (argc == 3) writeFile(argv[2], "started");
     std::this_thread::sleep_for(std::chrono::seconds(30));
     return 0;
   }
@@ -385,12 +358,14 @@ int main(int argc, char** argv) {
         wam::reserveExportStagingFile(destination, &staging_error);
     wam::ProcessCommand child;
     child.executable = std::filesystem::absolute(argv[0]);
-    child.arguments = {"--structured-slow-child"};
+    const auto started_marker = directory / "child-started";
+    child.arguments = {"--structured-slow-child", started_marker.string()};
     wam::BackgroundJob job;
-    const auto started_at = std::chrono::steady_clock::now();
     expect(!staging.empty() && job.start("structured cancellation", child),
            "cancellable structured process starts with staging reserved");
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    expect(waitForFile(started_marker, std::chrono::seconds(10)),
+           "structured child starts before cancellation");
+    const auto started_at = std::chrono::steady_clock::now();
     job.cancel();
     job.wait();
     wam::removeExportStagingFile(staging);
@@ -423,15 +398,27 @@ int main(int argc, char** argv) {
     const wam::ProcessCommand long_command{"ping", {"-n", "30", "127.0.0.1"}};
 #else
     // Exercise the force-kill deadline as well as graceful SIGTERM: both the
-    // shell and sleep inherit an ignored TERM disposition.
-    const wam::ProcessCommand long_command{"/bin/sh",
-                                           {"-c", "trap '' TERM; sleep 30"}};
+    // shell and sleep inherit an ignored TERM disposition. The marker is
+    // written only after the trap is installed.
+    const auto started_marker =
+        std::filesystem::temp_directory_path() /
+        ("wam-cancel-started-" +
+         std::to_string(
+             std::chrono::steady_clock::now().time_since_epoch().count()));
+    const wam::ProcessCommand long_command{
+        "/bin/sh",
+        {"-c", "trap '' TERM; echo started > \"$0\"; sleep 30",
+         started_marker.string()}};
 #endif
-    const auto started_at = std::chrono::steady_clock::now();
     expect(job.start("cancellation test", long_command), "background job starts");
     expect(!job.start("overlapping test", long_command),
            "background job refuses overlapping work");
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+#ifndef _WIN32
+    expect(waitForFile(started_marker, std::chrono::seconds(10)),
+           "TERM-ignoring shell starts before cancellation");
+    std::filesystem::remove(started_marker);
+#endif
+    const auto started_at = std::chrono::steady_clock::now();
     job.cancel();
     while (!job.finished() &&
            std::chrono::steady_clock::now() - started_at < std::chrono::seconds(3)) {
@@ -542,16 +529,30 @@ int main(int argc, char** argv) {
 #endif
 
   {
-    const auto started_at = std::chrono::steady_clock::now();
+    auto started_at = std::chrono::steady_clock::now();
     {
+#ifndef _WIN32
+      const auto started_marker =
+          std::filesystem::temp_directory_path() /
+          ("wam-destructor-started-" +
+           std::to_string(started_at.time_since_epoch().count()));
+#endif
       wam::BackgroundJob job;
 #ifdef _WIN32
       expect(job.start("destructor test", {"ping", {"-n", "30", "127.0.0.1"}}),
 #else
-      expect(job.start("destructor test", {"sleep", {"30"}}),
+      expect(job.start("destructor test",
+                       {"/bin/sh",
+                        {"-c", "echo started > \"$0\"; exec sleep 30",
+                         started_marker.string()}}),
 #endif
              "destructor test job starts");
-      std::this_thread::sleep_for(std::chrono::milliseconds(60));
+#ifndef _WIN32
+      expect(waitForFile(started_marker, std::chrono::seconds(10)),
+             "destructor test child starts");
+      std::filesystem::remove(started_marker);
+#endif
+      started_at = std::chrono::steady_clock::now();
     }
     expect(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(3),
            "destructor cancels and joins promptly");

@@ -2,6 +2,8 @@
 
 #include "cancellation.hpp"
 #include "caption_backend.hpp"
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -143,5 +145,13 @@ private:
   std::atomic<bool> transcribing_{false};
   bool download_asked_ = false;
 };
+
+#if defined(WAM_CAPTION_SERVICE_TESTING)
+namespace detail {
+// Added to the GPU watchdog's clock, so a test can expire the no-progress
+// window after a known event instead of racing a real child's startup.
+inline std::atomic<std::int64_t> captionWatchdogClockSkewMs{0};
+} // namespace detail
+#endif
 
 } // namespace wam

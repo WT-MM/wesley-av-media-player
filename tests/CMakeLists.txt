@@ -42,10 +42,8 @@ add_executable(wam_caption_test
   ${PROJECT_SOURCE_DIR}/src/jobs.hpp)
 target_link_libraries(wam_caption_test PRIVATE wam_caption_runtime)
 target_include_directories(wam_caption_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(wam_caption_test PRIVATE WAM_CAPTION_SERVICE_TESTING=1)
 add_test(NAME caption_service COMMAND wam_caption_test)
-# Its 150 ms watchdog deliberately races a real child process; do not let
-# concurrent codec/packaging tests starve that child before it can start.
-set_tests_properties(caption_service PROPERTIES RUN_SERIAL TRUE)
 add_executable(wam_caption_backend_test caption_backend_test.cpp)
 target_link_libraries(wam_caption_backend_test PRIVATE wam_caption_runtime)
 target_include_directories(wam_caption_backend_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
