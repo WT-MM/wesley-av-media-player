@@ -12,7 +12,7 @@
 
 namespace wam::macos {
 
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct VideoToolboxDecoderTestAccess;
 
 // Test-only fault locations at the two callback-owned container insertion
@@ -86,14 +86,13 @@ struct CodecReorderDepth {
 };
 
 // VideoToolbox decoder for every video codec the facts table names except VP8.
-// Input packets must match the supplied codec configuration record
+// Input samples must match the supplied codec configuration record
 // (length-prefixed NAL units for avcC/hvcC); record-less codecs carry none.
-// Generic packet/configuration byte spans are copied before API calls return
-// and are rejected above fixed 8 MiB / 256 KiB bounds. AVFoundation callers may
-// instead submit a ready, single-access-unit CMSampleBuffer directly; that
-// platform-specific path retains the caller's compressed storage only for the
-// duration required by VideoToolbox and performs no application-level payload
-// copy. Decoded frames must exactly match the requested IOSurface-backed
+// The configuration span is copied before configure() returns and is rejected
+// above a fixed 256 KiB bound. Compressed input is a ready, single-access-unit
+// CMSampleBuffer; the decoder retains the caller's compressed storage only for
+// the duration required by VideoToolbox and performs no application-level
+// payload copy. Decoded frames must exactly match the requested IOSurface-backed
 // NV12/P010 format; VideoToolbox substitutions are treated as an asynchronous
 // stream-contract error.
 //
@@ -113,9 +112,7 @@ public:
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
                                DecodedFrameSink &sink,
                                std::string *error);
-  [[nodiscard]] VideoDecodeSubmitResult
-  submit(const CompressedVideoPacket &packet, std::string *error);
-  // Platform-specific zero-copy ingress for AVAssetReader. `sample` must be a
+  // Zero-copy compressed ingress. `sample` must be a
   // ready, single-sample CMSampleBuffer whose block buffer is no larger than
   // 8 MiB. Its configuration atom must be nonempty, no larger than 256 KiB,
   // and byte-for-byte equal to the configured atom (an avcC may differ only
@@ -167,14 +164,14 @@ public:
   [[nodiscard]] std::optional<std::string> takeLastError();
 
 private:
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct VideoToolboxDecoderTestAccess;
 #endif
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
 
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Compiled only into the native decoder test's private source copy. This seam
 // establishes a saturated admission state without relying on VideoToolbox's
 // architecture-dependent callback scheduling.
@@ -203,6 +200,10 @@ struct VideoToolboxDecoderTestAccess {
   releaseInFlightCapacity(VideoToolboxDecoder &decoder, std::string *error);
   [[nodiscard]] static std::uint32_t
   decodeFlags(const VideoToolboxDecoder &decoder) noexcept;
+  // Temporal processing is never enabled in either mode: Apple permits it to
+  // retain frames indefinitely until EOS, defeating finite pre-EOS admission.
+  static void setAsynchronousDecompression(VideoToolboxDecoder &decoder,
+                                           bool enabled) noexcept;
   [[nodiscard]] static std::optional<CodecReorderDepth>
   codecReorderDepth(const VideoStreamConfiguration &configuration);
   [[nodiscard]] static bool setPresentationReorderDepth(
@@ -213,8 +214,7 @@ struct VideoToolboxDecoderTestAccess {
   [[nodiscard]] static VideoDecodeSubmitResult reserveInjectedSubmission(
       VideoToolboxDecoder &decoder, FrameTiming timing,
       std::uint64_t *submissionSequence, std::string *error,
-      std::size_t compressedBytes = 0,
-      bool directCompressedStorage = false);
+      std::size_t compressedBytes = 0);
   [[nodiscard]] static bool rejectInjectedSubmission(
       VideoToolboxDecoder &decoder, std::uint64_t submissionSequence,
       std::int32_t decodeStatus, std::string *error);

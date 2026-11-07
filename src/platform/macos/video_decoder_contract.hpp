@@ -75,8 +75,8 @@ enum class VideoDecoderRetireProgress : std::uint8_t {
 
 // Allocation-free edge notification used by WAM's media owner to retry work
 // when asynchronous decode capacity or lifecycle state changes. `function`
-// may run on a VideoToolbox callback thread or synchronously inside submit(),
-// flush(), retire(), or close(); it must not block, allocate, throw, or
+// may run on a VideoToolbox callback thread or synchronously inside
+// submitCMSampleBuffer(), flush(), retire(), or close(); it must not block, allocate, throw, or
 // re-enter this decoder. `context` must remain valid until retire()/close() has
 // returned Done. The decoder snapshots this pair at construction, and the
 // callback-owned state retains that immutable snapshot until every
@@ -92,8 +92,8 @@ struct VideoDecoderOptions {
   // Counts frames accepted by VideoToolbox whose output has not yet been
   // retired in submission order. This deliberately includes callbacks that
   // completed out of order, so callback scheduling cannot bypass the bound.
-  // submit() returns typed backpressure before allocating or copying compressed
-  // packet storage when this bound is reached.
+  // submitCMSampleBuffer() returns typed backpressure before reading the
+  // compressed payload when this bound is reached.
   std::size_t maxInFlightFrames{3};
   // Hard ceiling for the codec-derived presentation reorder depth. configure()
   // rejects a stream whose SPS DECLARES a depth above this, allowing the caller
@@ -106,14 +106,6 @@ struct VideoDecoderOptions {
   // validates the exact two-plane NV12/P010 layout before delivery.
   VideoDecoderOutputInterop outputInterop{VideoDecoderOutputInterop::Metal};
   VideoDecoderProgressHandler progressHandler{};
-#if defined(WAM_NATIVE_VIDEO_TESTING)
-  // VideoToolbox is allowed to invoke an output handler before submit()
-  // returns even when asynchronous decompression is enabled. This test-only
-  // switch exercises both legal callback modes. Temporal processing is never
-  // enabled: Apple permits it to retain frames indefinitely until EOS, which
-  // is incompatible with finite pre-EOS admission.
-  bool enableAsynchronousDecompression{true};
-#endif
 };
 
 struct VideoDecoderStats {
@@ -132,10 +124,6 @@ struct VideoDecoderStats {
   // application-level payload-sized copy.
   std::uint64_t directSampleBufferSubmissions{0};
   std::uint64_t directSampleBufferBytes{0};
-  // Accepted generic packet-span submissions. VideoToolboxDecoder must copy
-  // these caller-owned bytes into a CoreMedia block before submit() returns.
-  std::uint64_t copiedSpanSubmissions{0};
-  std::uint64_t copiedSpanBytes{0};
   std::uint64_t deliveredFrames{0};
   std::uint64_t droppedFrames{0};
   std::uint64_t backpressuredSubmissions{0};

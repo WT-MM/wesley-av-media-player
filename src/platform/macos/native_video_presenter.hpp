@@ -157,16 +157,6 @@ struct VideoStreamConfiguration {
   std::optional<bool> fullRangeVideo;
 };
 
-struct CompressedVideoPacket {
-  std::span<const std::byte> bytes{};
-  CMTime presentationTime{kCMTimeInvalid};
-  CMTime decodeTime{kCMTimeInvalid};
-  CMTime duration{kCMTimeInvalid};
-  std::uint64_t generation{0};
-  bool keyFrame{false};
-  bool endOfStream{false};
-};
-
 enum class FrameEnqueueResult : std::uint8_t {
   Accepted,
   Backpressure,
@@ -180,7 +170,7 @@ enum class VideoDecodeSubmitResult : std::uint8_t {
 };
 
 // Boundary between a decoder and the presentation queue. VideoToolbox may call
-// enqueue() inline before submit() returns even when asynchronous decode was
+// enqueue() inline before a submission returns even when asynchronous decode was
 // requested, so implementations must return promptly and must not wait on the
 // submitting thread. A sink takes ownership of the lease it accepts.
 // Backpressure is explicit so decode cannot grow memory without bound when the

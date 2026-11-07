@@ -1486,11 +1486,13 @@ if(APPLE)
 
     add_executable(wam_video_toolbox_decoder_test
       video_toolbox_decoder_test.mm
+      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
+      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
       ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}
       ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
     target_include_directories(wam_video_toolbox_decoder_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
-      WAM_NATIVE_VIDEO_TESTING=1
+      WAM_NATIVE_TEST_SEAMS=1
       GL_SILENCE_DEPRECATION=1)
     if(WAM_ENABLE_SOFTWARE_VP8)
       # This target compiles the core sources directly rather than linking
