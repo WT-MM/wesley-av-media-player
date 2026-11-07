@@ -2739,8 +2739,11 @@ struct MatroskaCursor::Impl {
   std::uint64_t startBlockOffset{0};
   std::uint16_t startFrameIndex{0};
   std::uint64_t expectedAudioOrdinal{0};
-  bool startFound{false};
-  bool ended{false};
+  // SeekingStart skips Blocks before the plan's start Block; Ended is final.
+  // A failed or cancelled read is not a phase: it leaves the position
+  // untouched, and the caller decides whether to read again.
+  enum class Phase : std::uint8_t { SeekingStart, Streaming, Ended };
+  Phase phase{Phase::SeekingStart};
   std::vector<TrackConstraint> constraints;
   ParseOptions options;
   std::optional<ClusterChildCursor> clusterCursor;
@@ -2784,7 +2787,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
       return MatroskaCursorFailure{MediaRefusalClass::InvalidRequest,
                                    "cursor is not initialized"};
     }
-    if (impl_->ended) {
+    if (impl_->phase == Impl::Phase::Ended) {
       return MatroskaCursorEnd{};
     }
     if (cancellation.cancelled()) {
@@ -2823,7 +2826,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
         if (!visitor.emitted) {
           continue;
         }
-        if (!impl_->startFound) {
+        if (impl_->phase == Impl::Phase::SeekingStart) {
           if (visitor.header.containerEncoded.offset < impl_->startBlockOffset) {
             continue;
           }
@@ -2831,7 +2834,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             return MatroskaCursorFailure{MediaRefusalClass::InvalidCue,
                                          "generation block was not found"};
           }
-          impl_->startFound = true;
+          impl_->phase = Impl::Phase::Streaming;
         }
         if (!blockFeaturesSupported(visitor, state.audio)) {
           return MatroskaCursorFailure{MediaRefusalClass::UnsupportedTrack,
@@ -3062,7 +3065,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
       impl_->clusterCursor.reset();
       ++impl_->clusterIndex;
     }
-    impl_->ended = true;
+    impl_->phase = Impl::Phase::Ended;
     return MatroskaCursorEnd{};
   } catch (...) {
     return MatroskaCursorFailure{MediaRefusalClass::Io,
@@ -3137,10 +3140,10 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
     }
     return current;
   }
-  // A failure or cancellation while looking ahead is returned as-is. The held
-  // sample is dropped: the generation is failing either way, and surfacing the
-  // fault one sample early is better than emitting a frame from a stream that
-  // has already proven broken.
+  // A failure or cancellation while looking ahead is returned now, and the
+  // held sample goes back to `pending` so a later read resumes with it rather
+  // than skipping it.
+  impl_->pending = std::move(*sample);
   return next;
 }
 
