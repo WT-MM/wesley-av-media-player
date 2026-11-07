@@ -1,4 +1,5 @@
 #include "platform/macos/native_audio_converter.hpp"
+#include "platform/macos/core_media_source_support.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreMedia/CoreMedia.h>
@@ -40,6 +41,7 @@ NativeAudioSubmitResult submit(NativeAudioConverter &converter,
 }
 
 std::atomic<std::uint64_t> allocations{0};
+std::atomic<bool> failNextAllocation{false};
 class SampleStorage final : public MediaPayloadStorage {
 public:
   SampleStorage(CMSampleBufferRef sample, std::size_t size,
@@ -1280,10 +1282,43 @@ void testFlatAllocationAfterStart() {
          "submit, conversion, publish, and stats allocate nothing after start");
 }
 
+void testSampleLeaseKeepsReferenceOnAllocationFailure() {
+  CMSampleBufferRef raw = nullptr;
+  if (CMSampleBufferCreate(kCFAllocatorDefault, nullptr, true, nullptr,
+                           nullptr, nullptr, 0, 0, nullptr, 0, nullptr,
+                           &raw) != noErr) {
+    expect(false, "empty sample buffer fixture");
+    return;
+  }
+  CFRetain(raw);
+  ScopedSampleBuffer owned(raw);
+  bool threw = false;
+  failNextAllocation.store(true, std::memory_order_relaxed);
+  try {
+    static_cast<void>(leaseSampleBuffer(std::move(owned), 0));
+  } catch (const std::bad_alloc &) {
+    threw = true;
+  }
+  failNextAllocation.store(false, std::memory_order_relaxed);
+  expect(threw && owned.get() == raw && CFGetRetainCount(raw) == 2,
+         "a failed sample lease leaves the +1 with its guard");
+  owned.reset();
+  {
+    CFRetain(raw);
+    auto storage = leaseSampleBuffer(ScopedSampleBuffer(raw), 0);
+    expect(CFGetRetainCount(raw) == 2, "a sample lease adopts the +1");
+  }
+  expect(CFGetRetainCount(raw) == 1, "the lease releases the +1");
+  CFRelease(raw);
+}
+
 } // namespace
 
 void *operator new(std::size_t size) {
   allocations.fetch_add(1, std::memory_order_relaxed);
+  if (failNextAllocation.exchange(false, std::memory_order_relaxed)) {
+    throw std::bad_alloc();
+  }
   if (void *memory = std::malloc(size)) {
     return memory;
   }
@@ -1315,6 +1350,7 @@ int main() {
   testRetainedPayloadHighWaterReset();
   testShortBlocksCoalesceToTheSlabFloor();
   testFlatAllocationAfterStart();
+  testSampleLeaseKeepsReferenceOnAllocationFailure();
   if (failures != 0) {
     std::cerr << failures << " native audio converter test(s) failed\n";
     return 1;

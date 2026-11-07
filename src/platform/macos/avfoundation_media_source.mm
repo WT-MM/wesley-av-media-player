@@ -3355,7 +3355,7 @@ struct AVFoundationMediaSource::Impl final
       return std::nullopt;
     }
 
-    auto storage = std::make_shared<CoreMediaSampleStorage>(owned.release(), bytes);
+    auto storage = leaseSampleBuffer(std::move(owned), bytes);
     MediaSample mediaSample;
     mediaSample.generation = generation;
     mediaSample.track = trackId;

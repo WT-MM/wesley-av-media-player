@@ -129,7 +129,7 @@ public:
       if (floorFrame && frame && *floorFrame-*frame>=audioPrimingFrames(track.codec,track.audio->framesPerPacket))
         static_cast<void>(statedImmediatePlayoutFrame(owned.get()));
     }
-    *free = std::make_shared<CoreMediaSampleStorage>(owned.release(), size);
+    *free = leaseSampleBuffer(std::move(owned), size);
     out.generation = generation;
     out.track = track.id;
     out.kind = track.audio ? MediaSampleKind::EncodedAudio

@@ -289,8 +289,7 @@ struct MpegTsMediaSource::Impl final
       assignError(error, "mpeg-ts CoreMedia block does not carry the unit");
       return std::nullopt;
     }
-    auto storage = std::make_shared<CoreMediaSampleStorage>(owned.release(),
-                                                            retainedBytes);
+    auto storage = leaseSampleBuffer(std::move(owned), retainedBytes);
     MediaSample sample;
     sample.generation = generation;
     sample.track = *selected;

@@ -106,12 +106,7 @@ using media::MediaTrackKind;
   if (!decodeOnly) {
     return std::nullopt;
   }
-  // Keep the +1 CoreMedia reference in the scope guard until make_shared has
-  // allocated and completed its noexcept storage construction. Releasing it
-  // as a function argument would leak if allocation threw first.
-  auto storage =
-      std::make_shared<CoreMediaSampleStorage>(owned.get(), bytes);
-  static_cast<void>(owned.release());
+  auto storage = leaseSampleBuffer(std::move(owned), bytes);
   MediaSample result;
   result.generation = epoch;
   result.track = track.id;

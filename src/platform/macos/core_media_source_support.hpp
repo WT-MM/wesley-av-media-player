@@ -237,6 +237,16 @@ class CoreMediaSampleStorage final : public media::MediaPayloadStorage {
   std::size_t byte_size_{0};
 };
 
+// The guard keeps the +1 until allocation has succeeded: passing
+// owned.release() straight to make_shared would leak it on bad_alloc.
+[[nodiscard]] inline std::shared_ptr<CoreMediaSampleStorage>
+leaseSampleBuffer(ScopedSampleBuffer&& owned, std::size_t byteSize) {
+  auto storage =
+      std::make_shared<CoreMediaSampleStorage>(owned.get(), byteSize);
+  static_cast<void>(owned.release());
+  return storage;
+}
+
 // The converter compares every ASBD field, the magic cookie bytes, and the
 // channel layout tag against the admitted descriptor, so all three are
 // restated from the descriptor rather than re-derived from the cookie.
