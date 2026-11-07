@@ -212,14 +212,6 @@ class FakeOutput final : public NativeTrackedVideoOutput {
     wake_.signal(wake_.context);
   }
 
-  void invalidateEvent(std::uint64_t generation) noexcept {
-    expect(!event_, "fake lifecycle event mailbox must be empty");
-    event_ = NativeTrackedVideoEvent{
-        NativeTrackedVideoEventKind::GenerationInvalidated,
-        ++eventSequence_, {}, generation, {}};
-    wake_.signal(wake_.context);
-  }
-
   void failFrame() noexcept {
     expect(admitted_.valid() && !event_,
            "fake failure needs one admission");
@@ -416,20 +408,6 @@ void testArmContract() {
   expect(fixture.consumer->armFirstGeneration(7) ==
              NativeVideoConsumerArmProgress::Failed,
          "a consumed arm cannot be replayed after configure");
-}
-
-void testDelayedLifecycleDiagnostic() {
-  Fixture fixture;
-  expect(fixture.consumer->armFirstGeneration(7) ==
-             NativeVideoConsumerArmProgress::Done,
-         "lifecycle diagnostic fixture arms");
-  fixture.output->invalidateEvent(7);
-  expect(NativeVideoConsumerTestAccess::installSchedulerGeneration(
-             *fixture.consumer, timeline(7, {0, 1})),
-         "a legal delayed lifecycle diagnostic does not invalidate configure");
-  expect(fixture.consumer->capacity(7) ==
-             media::NativeMediaConsumeResult::Draining,
-         "the exact delayed generation diagnostic is consumed as progress");
 }
 
 void testCloseRetiresQuiescingArm() {
@@ -1334,7 +1312,6 @@ int main() {
   testRationalPausedBoundary();
   testPresentationBackstop();
   testArmContract();
-  testDelayedLifecycleDiagnostic();
   testCloseRetiresQuiescingArm();
   testExactRetirementGapAndPairOwnership();
   testArmOnlyAndPendingArmRetirement();

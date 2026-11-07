@@ -130,8 +130,6 @@ enum class NativeTrackedVideoOutputProgress : std::uint8_t {
 enum class NativeTrackedVideoEventKind : std::uint8_t {
   FrameDrawn,
   FrameSuperseded,
-  GenerationInvalidated,
-  Closed,
   Failed,
 };
 
@@ -144,9 +142,8 @@ enum class NativeTrackedVideoEventKind : std::uint8_t {
 // and neither is inferred from a stats delta. FrameSuperseded is the only
 // non-failure way an accepted tracked delivery can terminate without a draw.
 //
-// Frame events carry a nonzero frameSequence and the exact immutable timing
-// submitted for that identity. Lifecycle events carry a zero frameSequence;
-// generation is the exact invalidation/final generation they acknowledge.
+// Every event carries a nonzero frameSequence and the exact immutable timing
+// submitted for that identity.
 struct NativeTrackedVideoEvent {
   NativeTrackedVideoEventKind kind{NativeTrackedVideoEventKind::Failed};
   std::uint64_t eventSequence{0};
@@ -417,8 +414,6 @@ struct NativeTrackedOutputProtocol {
 // render side can no longer draw retired-generation content. closeProgress() is
 // repeatable for one exact final generation strictly newer than the currently
 // accepted generation, and Done proves terminal render-side invalidation.
-// Neither Done result depends on consuming an optional lifecycle diagnostic
-// event.
 class NativeTrackedVideoOutput {
  public:
   virtual ~NativeTrackedVideoOutput() = default;

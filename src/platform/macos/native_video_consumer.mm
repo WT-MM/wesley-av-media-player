@@ -920,33 +920,6 @@ struct NativeVideoConsumer::Impl {
       awaitingTiming = {};
       lastTerminalEvent = event;
       return PumpStatus::Progress;
-    case NativeTrackedVideoEventKind::GenerationInvalidated:
-      if (event->frameSequence.valid()) {
-        return protocolFailure(
-            "tracked video output invalidated a generation with a frame "
-            "sequence");
-      }
-      if (event->generation == 0 ||
-          (event->generation != armGeneration &&
-           event->generation != generation &&
-           event->generation != flushTarget &&
-           event->generation != retirementRetired &&
-           event->generation != terminalGeneration &&
-           (!completedFlush ||
-            event->generation != completedFlushTarget))) {
-        return protocolFailure(
-            "tracked video output invalidated an unrecognised generation");
-      }
-      return PumpStatus::Progress;
-    case NativeTrackedVideoEventKind::Closed:
-      if (event->frameSequence.valid() || terminalGeneration == 0 ||
-          event->generation != terminalGeneration ||
-          (lifecycle != Lifecycle::Retire &&
-           lifecycle != Lifecycle::Cancel && lifecycle != Lifecycle::Close)) {
-        return protocolFailure(
-            "tracked video output closed outside a terminal lifecycle");
-      }
-      return PumpStatus::Progress;
     case NativeTrackedVideoEventKind::Failed:
       if (!awaitingDraw.valid() || event->frameSequence != awaitingDraw ||
           event->generation != awaitingTiming.generation ||
