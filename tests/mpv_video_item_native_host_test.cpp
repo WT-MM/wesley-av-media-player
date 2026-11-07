@@ -4,7 +4,7 @@
 #error "mpv_video_item_native_host_test is a macOS-only contract gate"
 #endif
 
-#include "platform/macos/qt_gl_video_item.hpp"
+#include "qt/macos/qt_gl_video_item.hpp"
 
 #include <QGuiApplication>
 #include <QPointer>

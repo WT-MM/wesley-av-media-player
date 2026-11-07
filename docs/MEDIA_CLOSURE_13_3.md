@@ -127,8 +127,8 @@ WAM_DEV_FFMPEG_EXECUTABLE=<closure>/bin/ffmpeg
 
 The separate, existing WAM-patched native FFmpeg SDK remains in
 `third_party/ffmpeg-lgpl`. GPL fixture generation uses the existing Homebrew
-test tool; **export tests use the rebuilt closure's ffmpeg and ffprobe** via
-`WAM_EXPORT_FFMPEG_EXECUTABLE` and `WAM_EXPORT_FFPROBE_EXECUTABLE`.
+test tool; **export tests use the rebuilt closure's ffmpeg** via
+`WAM_DEV_FFMPEG_EXECUTABLE`.
 Cached pkg-config results were cleared; mpv headers/test linkage and libvpx
 resolve to the rebuilt scratch closure. The full build used `--parallel 4`.
 A WAMKit packaging invocation initially misparsed an otool header as a library

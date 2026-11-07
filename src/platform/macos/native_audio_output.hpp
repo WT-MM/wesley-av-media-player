@@ -1,6 +1,6 @@
 #pragma once
 
-#include "native_audio_render_core.hpp"
+#include "media/native_audio_render_core.hpp"
 #include "native_audio_stretch_stage.hpp"
 #include "native_audio_test_mute.hpp"
 #include "native_test_seams.hpp"
@@ -65,7 +65,7 @@ struct NativeAudioOutputConfiguration {
   // Container-declared silence for this generation, in generation-local
   // frames. See NativeAudioRenderCore::activate(). Default-constructed for
   // every source that declares none.
-  NativeAudioDeclaredSilence declaredSilence{};
+  media::NativeAudioDeclaredSilence declaredSilence{};
 };
 
 using NativeAudioOutputWake = void (*)(void *context) noexcept;
@@ -325,9 +325,9 @@ class NativeAudioOutput final
     : public std::enable_shared_from_this<NativeAudioOutput> {
  public:
   static constexpr std::uint32_t kChannels =
-      static_cast<std::uint32_t>(NativePcmRing::kChannels);
+      static_cast<std::uint32_t>(media::NativePcmRing::kChannels);
   static constexpr std::uint32_t kMaximumFramesPerSlice =
-      static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab);
+      static_cast<std::uint32_t>(media::NativePcmRing::kFramesPerSlab);
 
   // Frames a completely full ring is *guaranteed* to hold. Deliberately not
   // kSlabCount * kFramesPerSlab: that is the ring's storage, not its reachable
@@ -335,8 +335,8 @@ class NativeAudioOutput final
   // The producer guarantees NativePcmRing::kMinimumFramesPerPublishedSlab per
   // slab, except a generation's last.
   static constexpr std::uint32_t kGuaranteedRingFrames =
-      static_cast<std::uint32_t>(NativePcmRing::kSlabCount *
-                                 NativePcmRing::kMinimumFramesPerPublishedSlab);
+      static_cast<std::uint32_t>(media::NativePcmRing::kSlabCount *
+                                 media::NativePcmRing::kMinimumFramesPerPublishedSlab);
 
   // Device periods of producer headroom the ring must carry. The producer is
   // rearmed by the slab-retirement edge that this render callback raises, so it
@@ -377,15 +377,15 @@ class NativeAudioOutput final
                 kGuaranteedRingFrames);
   // The guaranteed occupancy can never exceed the storage that backs it.
   static_assert(kGuaranteedRingFrames <=
-                static_cast<std::uint32_t>(NativePcmRing::kSlabCount) *
-                    static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab));
+                static_cast<std::uint32_t>(media::NativePcmRing::kSlabCount) *
+                    static_cast<std::uint32_t>(media::NativePcmRing::kFramesPerSlab));
   // Non-zero, and a power of two so the HAL accepts it verbatim on every
   // device whose range covers it.
   static_assert(kDeviceBufferFrames != 0 &&
                 (kDeviceBufferFrames & (kDeviceBufferFrames - 1)) == 0);
 
   [[nodiscard]] static std::shared_ptr<NativeAudioOutput> create(
-      NativeAudioRenderCore &renderCore,
+      media::NativeAudioRenderCore &renderCore,
       NativeAudioUnitCallTable calls,
       NativeAudioOutputWakeSeam wake) noexcept;
   ~NativeAudioOutput();
@@ -405,7 +405,7 @@ class NativeAudioOutput final
   activate(std::uint64_t generation, std::uint64_t streamFrameCursor,
            media::MediaTime mediaOrigin,
            media::MediaTime pausedClockPosition,
-           NativeAudioDeclaredSilence declaredSilence = {}) noexcept;
+           media::NativeAudioDeclaredSilence declaredSilence = {}) noexcept;
 
   // Publishes an exact rational playback rate. Owner-thread only, and safe
   // while the render callback runs: the pitch-preserving stage is created
@@ -414,8 +414,8 @@ class NativeAudioOutput final
   // path pays nothing for rate support.
   // Failure means the stage could not be created or the rate is outside the
   // admitted window; the previously accepted rate stays in force.
-  [[nodiscard]] bool setRate(NativePlaybackRate rate) noexcept;
-  [[nodiscard]] NativePlaybackRate rate() const noexcept;
+  [[nodiscard]] bool setRate(media::NativePlaybackRate rate) noexcept;
+  [[nodiscard]] media::NativePlaybackRate rate() const noexcept;
   // Live "Preserve pitch at other speeds" preference. Never fails and never
   // needs a stretch unit of its own: it is stored in the render core and the
   // stage picks it up at the next callback boundary, at the unit rate as a
@@ -467,7 +467,7 @@ class NativeAudioOutput final
 
  private:
   [[nodiscard]] NativeAudioOutputProgress stopImpl(bool keepUnitRunning) noexcept;
-  explicit NativeAudioOutput(NativeAudioRenderCore &renderCore,
+  explicit NativeAudioOutput(media::NativeAudioRenderCore &renderCore,
                              NativeAudioUnitCallTable calls,
                              NativeAudioOutputWakeSeam wake) noexcept;
 
@@ -515,7 +515,7 @@ class NativeAudioOutput final
   [[nodiscard]] AudioStreamBasicDescription clientFormat() const noexcept;
   [[nodiscard]] bool callbackInput(
       const AudioTimeStamp &timestamp, std::uint32_t frameCount,
-      NativeAudioRenderInput *input,
+      media::NativeAudioRenderInput *input,
       __uint128_t *nextRemainder,
       __uint128_t *nextDenominator,
       std::uint64_t *nextRateScalarBits) noexcept;
@@ -563,7 +563,7 @@ class NativeAudioOutput final
   [[nodiscard]] OSStatus removeDeviceListener() noexcept;
   [[nodiscard]] double hostClockFrequency() noexcept;
 
-  NativeAudioRenderCore &render_core_;
+  media::NativeAudioRenderCore &render_core_;
   const NativeAudioUnitCallTable calls_;
   const NativeAudioOutputWakeSeam wake_;
   // Test-only silent output; see native_audio_test_mute.hpp. Snapshotted once

@@ -132,7 +132,7 @@ struct LibavformatCursor::Impl {
       return false;
     }
     const auto libraries = avcodec::libraryDirectory(reinterpret_cast<const void*>(&LibavformatCursor::runtimeFailure));
-    const auto path = libraries / "libavformat-wamnative.63.dylib";
+    const auto path = libraries / pins::kNativeAvformatLibrary;
     if (!std::filesystem::is_regular_file(path)) {
       error = "LibavformatStageNotBuilt";
       return false;

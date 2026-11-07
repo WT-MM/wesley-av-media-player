@@ -6,8 +6,10 @@
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
 #include <filesystem>
+#include <string>
 #include <mach-o/dyld.h>
 #include <unistd.h>
 namespace wam::media::avcodec {
@@ -38,17 +40,19 @@ const char* validate() noexcept {
 }
 const char* load() {
   const auto libraries = libraryDirectory(reinterpret_cast<const void*>(&load));
-  const auto util = libraries / "libavutil-wamnative.61.dylib";
-  const auto codec = libraries / "libavcodec-wamnative.63.dylib";
+  const auto util = libraries / pins::kNativeAvutilLibrary;
+  const auto codec = libraries / pins::kNativeAvcodecLibrary;
   if (!std::filesystem::is_regular_file(util) || !std::filesystem::is_regular_file(codec))
     return "DecoderStageNotBuilt: native FFmpeg libraries missing";
   if (std::filesystem::canonical(util).parent_path()!=std::filesystem::canonical(libraries) ||
       std::filesystem::canonical(codec).parent_path()!=std::filesystem::canonical(libraries))
     return "DecoderUnavailable: native FFmpeg library outside bundle";
   utilHandle = dlopen(util.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_FIRST);
-  if (!utilHandle) return "DecoderUnavailable: libavutil-wamnative.61.dylib";
+  static const std::string utilUnavailable = std::string("DecoderUnavailable: ") + pins::kNativeAvutilLibrary;
+  static const std::string codecUnavailable = std::string("DecoderUnavailable: ") + pins::kNativeAvcodecLibrary;
+  if (!utilHandle) return utilUnavailable.c_str();
   codecHandle = dlopen(codec.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_FIRST);
-  if (!codecHandle) return "DecoderUnavailable: libavcodec-wamnative.63.dylib";
+  if (!codecHandle) return codecUnavailable.c_str();
   table.avcodec_version = reinterpret_cast<decltype(table.avcodec_version)>(dlsym(codecHandle, "avcodec_version"));
   if (!table.avcodec_version) return "DecoderUnavailable: missing avcodec_version";
   table.avutil_version = reinterpret_cast<decltype(table.avutil_version)>(dlsym(utilHandle, "avutil_version"));

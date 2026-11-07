@@ -820,7 +820,7 @@ struct NativeVideoConsumer::Impl {
   }
 
   [[nodiscard]] bool refreshClock() noexcept {
-    const NativeMediaClockSnapshot sampled = clock.sample(clock.context);
+    const media::NativeMediaClockSnapshot sampled = clock.sample(clock.context);
     if (sampled.publicationCurrent && sampled.valid &&
         sampled.generation == generation &&
         std::isfinite(sampled.mediaSeconds) && sampled.mediaSeconds >= 0.0 &&
@@ -1250,7 +1250,7 @@ struct NativeVideoConsumer::Impl {
   // so a controller that ignores telemetry can never stall demux or EOS.
   std::optional<NativeTrackedVideoEvent> lastTerminalEvent;
   std::optional<NativeTrackedVideoOutputFacts> retiredOutputFacts;
-  std::optional<NativeMediaClockSnapshot> currentClock;
+  std::optional<media::NativeMediaClockSnapshot> currentClock;
   NativeTrackedFrameSequence nextFrameSequence{1};
   NativeTrackedFrameSequence awaitingDraw{};
   FrameTiming awaitingTiming{};

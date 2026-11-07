@@ -30,9 +30,9 @@ class SessionClockAuthority {
   // Exact rate plus the preserve-pitch preference (true = time-stretched,
   // false = varispeed). An authority with no audio ignores the preference.
   [[nodiscard]] virtual NativeAudioSessionProgress setRate(
-      NativePlaybackRate rate, bool preservePitch) noexcept = 0;
+      media::NativePlaybackRate rate, bool preservePitch) noexcept = 0;
   [[nodiscard]] virtual NativeAudioSessionProgress stop() noexcept = 0;
-  [[nodiscard]] virtual NativeMediaClockSnapshot visibleClock()
+  [[nodiscard]] virtual media::NativeMediaClockSnapshot visibleClock()
       const noexcept = 0;
   [[nodiscard]] virtual media::MediaGeneration highestExposedGeneration()
       const noexcept = 0;
@@ -45,7 +45,7 @@ class SessionClockAuthority {
     return NativeAudioSessionProgress::Invalid;
   }
   // Diagnostic counters; empty when the authority has no render callback.
-  [[nodiscard]] virtual std::optional<NativeAudioRenderStats> renderStats()
+  [[nodiscard]] virtual std::optional<media::NativeAudioRenderStats> renderStats()
       const noexcept {
     return std::nullopt;
   }

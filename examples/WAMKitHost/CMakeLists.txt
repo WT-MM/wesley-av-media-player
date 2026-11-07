@@ -17,5 +17,5 @@ if(BUILD_TESTING)
   add_test(NAME wamkit_host_packaging COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/audit_wamkit.py"
     --framework "$<TARGET_BUNDLE_DIR:WAMKitHost>/Contents/Frameworks/WAMKit.framework"
     --exports "${PROJECT_SOURCE_DIR}/src/wamkit/exports.txt"
-    --output "/private/tmp/wam-wamkit-scratch/host-packaging-audit.json")
+    --output "${PROJECT_BINARY_DIR}/wamkit-test-scratch/host-packaging-audit.json")
 endif()

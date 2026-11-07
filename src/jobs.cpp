@@ -29,12 +29,7 @@
 
 namespace wam {
 
-namespace {
-
-using namespace std::chrono_literals;
-
-constexpr auto kProcessPollInterval = 20ms;
-constexpr auto kGracefulShutdownTimeout = 750ms;
+namespace detail {
 
 std::string pathArgument(const std::filesystem::path& path) {
 #ifdef _WIN32
@@ -47,13 +42,14 @@ std::string pathArgument(const std::filesystem::path& path) {
 
 #ifdef _WIN32
 
-std::wstring widenUtf8(const std::string& value) {
+std::wstring widenUtf8(const std::string& value, bool reject_invalid) {
   if (value.empty()) return {};
-  const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(),
+  const DWORD flags = reject_invalid ? MB_ERR_INVALID_CHARS : 0;
+  const int size = MultiByteToWideChar(CP_UTF8, flags, value.data(),
                                        static_cast<int>(value.size()), nullptr, 0);
   if (size <= 0) return std::wstring(value.begin(), value.end());
   std::wstring result(static_cast<size_t>(size), L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+  MultiByteToWideChar(CP_UTF8, flags, value.data(), static_cast<int>(value.size()),
                       result.data(), size);
   return result;
 }
@@ -78,6 +74,84 @@ std::wstring quoteWindowsArgument(const std::wstring& value) {
   result.push_back(L'\"');
   return result;
 }
+
+#else
+
+int normalizedExitCode(int status) {
+  if (WIFEXITED(status)) return WEXITSTATUS(status);
+  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+  return 1;
+}
+
+bool establishProcessGroup(pid_t child, int* error) {
+  if (setpgid(child, child) == 0) return true;
+
+  const int setup_error = errno ? errno : 1;
+  // The child can win the setpgid/exec race. EACCES alone is not proof that
+  // the numeric group belongs to it, so verify the group before any negative
+  // PID signal is allowed.
+  if (setup_error == EACCES && getpgid(child) == child) return true;
+  if (error) *error = setup_error;
+  return false;
+}
+
+void signalVerifiedProcessGroup(pid_t group, int signal) {
+  int result = 0;
+  do {
+    result = kill(-group, signal);
+  } while (result != 0 && errno == EINTR);
+}
+
+bool reapPosixChild(pid_t child, int* status, int* error) {
+  pid_t waited = -1;
+  do {
+    waited = waitpid(child, status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (waited == child) return true;
+  if (error) *error = errno ? errno : 1;
+  return false;
+}
+
+ChildObservation observePosixChild(pid_t child, int* error) {
+  siginfo_t information{};
+  int observed = -1;
+  do {
+    observed = waitid(P_PID, static_cast<id_t>(child), &information,
+                      WEXITED | WNOHANG | WNOWAIT);
+  } while (observed != 0 && errno == EINTR);
+  if (observed != 0) {
+    if (error) *error = errno ? errno : 1;
+    return ChildObservation::Error;
+  }
+  return information.si_pid == child ? ChildObservation::Exited
+                                     : ChildObservation::Running;
+}
+
+int terminateUnisolatedChild(pid_t child, int error) {
+  int killed = 0;
+  do {
+    killed = kill(child, SIGKILL);
+  } while (killed != 0 && errno == EINTR);
+  int ignored_status = 0;
+  int ignored_error = 0;
+  reapPosixChild(child, &ignored_status, &ignored_error);
+  return error ? error : 1;
+}
+
+#endif
+
+}  // namespace detail
+
+using namespace detail;
+
+namespace {
+
+using namespace std::chrono_literals;
+
+constexpr auto kProcessPollInterval = 20ms;
+constexpr auto kGracefulShutdownTimeout = 750ms;
+
+#ifdef _WIN32
 
 std::filesystem::path resolveWindowsExecutable(
     const std::filesystem::path& executable) {
@@ -179,14 +253,6 @@ int runWindowsChild(const detail::CancellationFlag& cancellation,
   return cancellation_started ? 130 : static_cast<int>(exit_code);
 }
 
-int runCommand(const detail::CancellationFlag& cancellation,
-               const std::string& command) {
-  // Test-only shell route. Production exports use runProcessCommand().
-  std::wstring command_line =
-      L"cmd.exe /D /S /C \"" + widenUtf8(command) + L"\"";
-  return runWindowsChild(cancellation, nullptr, std::move(command_line));
-}
-
 int runProcessCommand(const detail::CancellationFlag& cancellation,
                       const ProcessCommand& command) {
   if (command.executable.empty()) return ERROR_FILE_NOT_FOUND;
@@ -202,69 +268,6 @@ int runProcessCommand(const detail::CancellationFlag& cancellation,
 }
 
 #else
-
-int normalizedExitCode(int status) {
-  if (WIFEXITED(status)) return WEXITSTATUS(status);
-  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
-  return 1;
-}
-
-bool establishProcessGroup(pid_t child, int* error) {
-  if (setpgid(child, child) == 0) return true;
-
-  const int setup_error = errno ? errno : 1;
-  // The child can win the setpgid/exec race. EACCES alone is not proof that
-  // the numeric group belongs to it, so verify the group before any negative
-  // PID signal is allowed.
-  if (setup_error == EACCES && getpgid(child) == child) return true;
-  if (error) *error = setup_error;
-  return false;
-}
-
-void signalVerifiedProcessGroup(pid_t group, int signal) {
-  int result = 0;
-  do {
-    result = kill(-group, signal);
-  } while (result != 0 && errno == EINTR);
-}
-
-bool reapPosixChild(pid_t child, int* status, int* error) {
-  pid_t waited = -1;
-  do {
-    waited = waitpid(child, status, 0);
-  } while (waited < 0 && errno == EINTR);
-  if (waited == child) return true;
-  if (error) *error = errno ? errno : 1;
-  return false;
-}
-
-enum class ChildObservation { Running, Exited, Error };
-
-ChildObservation observePosixChild(pid_t child, int* error) {
-  siginfo_t information{};
-  int observed = -1;
-  do {
-    observed = waitid(P_PID, static_cast<id_t>(child), &information,
-                      WEXITED | WNOHANG | WNOWAIT);
-  } while (observed != 0 && errno == EINTR);
-  if (observed != 0) {
-    if (error) *error = errno ? errno : 1;
-    return ChildObservation::Error;
-  }
-  return information.si_pid == child ? ChildObservation::Exited
-                                     : ChildObservation::Running;
-}
-
-int terminateUnisolatedChild(pid_t child, int error) {
-  int killed = 0;
-  do {
-    killed = kill(child, SIGKILL);
-  } while (killed != 0 && errno == EINTR);
-  int ignored_status = 0;
-  int ignored_error = 0;
-  reapPosixChild(child, &ignored_status, &ignored_error);
-  return error ? error : 1;
-}
 
 int waitForPosixChild(const detail::CancellationFlag& cancellation,
                       pid_t child) {
@@ -343,22 +346,6 @@ int waitForPosixChild(const detail::CancellationFlag& cancellation,
     }
     std::this_thread::sleep_for(kProcessPollInterval);
   }
-}
-
-int runCommand(const detail::CancellationFlag& cancellation,
-               const std::string& command) {
-  if (cancellation.requested()) return 130;
-
-  const pid_t child = fork();
-  if (child < 0) return errno ? errno : 1;
-  if (child == 0) {
-    // A dedicated process group lets cancellation reach the shell and every
-    // command it spawned.
-    if (setpgid(0, 0) != 0) _exit(125);
-    execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
-    _exit(127);
-  }
-  return waitForPosixChild(cancellation, child);
 }
 
 int runProcessCommand(const detail::CancellationFlag& cancellation,
@@ -821,15 +808,6 @@ void removeExportStagingFile(const std::filesystem::path& staging) noexcept {
 BackgroundJob::~BackgroundJob() {
   cancel();
   wait();
-}
-
-bool BackgroundJob::start(std::string label, std::string command) {
-  return startWorker(
-      std::move(label),
-      [command = std::move(command)](
-          const detail::CancellationFlag& cancellation) {
-        return runCommand(cancellation, command);
-      });
 }
 
 bool BackgroundJob::start(std::string label, ProcessCommand command) {

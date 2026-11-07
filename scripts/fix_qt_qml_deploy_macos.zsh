@@ -10,8 +10,7 @@ set -euo pipefail
 # `../../../../Cellar/qtdeclarative/6.11.1/share/qt/qml/QtQuick/qmldir`, which
 # only resolves from inside the Homebrew prefix. In the app it dangles, so the
 # bundle carries no QML plugin code at all and the QML engine cannot start.
-# (Qt's own checksum-pinned SDK layout has regular files there, which is why
-# `.github/workflows/release-macos.yml` never hit this.)
+# (Qt's own installer SDK has regular files there.)
 #
 # Materialize those links from the Cellar, then run `macdeployqt` over the app
 # so the now-real plugin binaries get the work Qt's deployment skipped: their
@@ -100,7 +99,12 @@ fi
 # Native FFmpeg uses distinct install names from the export/compatibility closure.
 if [[ -f "$APP_PATH/Contents/Resources/native-ffmpeg/stage-built" ]]; then
   native_prefix="${WAM_FFMPEG_LGPL_ROOT:-${0:A:h:h}/third_party/ffmpeg-lgpl}"
-  for native_library in libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib; do
+  pins="${0:A:h:h}/packaging/pins.env"
+  native_libraries=($(sed -nE 's/^WAM_NATIVE_AV(CODEC|UTIL)_DYLIB=//p' "$pins"))
+  if [[ -f "$APP_PATH/Contents/Resources/native-ffmpeg/demux-stage-built" ]]; then
+    native_libraries+=($(sed -n 's/^WAM_NATIVE_AVFORMAT_DYLIB=//p' "$pins"))
+  fi
+  for native_library in "${native_libraries[@]}"; do
     native_destination="$APP_PATH/Contents/Frameworks/$native_library"
     if [[ ! -f "$native_destination" ]]; then
       [[ -f "$native_prefix/lib/$native_library" ]] || {

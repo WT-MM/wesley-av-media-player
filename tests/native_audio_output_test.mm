@@ -57,7 +57,7 @@ void operator delete[](void *memory, std::size_t) noexcept {
   std::free(memory);
 }
 
-namespace wam::macos {
+namespace wam::media {
 
 struct NativeAudioRenderCoreTestAccess {
   static void setAfterPreflightHook(NativeAudioRenderCore &core,
@@ -67,6 +67,10 @@ struct NativeAudioRenderCoreTestAccess {
     core.after_preflight_context_ = context;
   }
 };
+
+}  // namespace wam::media
+
+namespace wam::macos {
 
 struct NativeAudioOutputTestAccess {
   static void setBeforeAdmissionHook(NativeAudioOutput &output,
@@ -112,7 +116,7 @@ struct NativeAudioOutputTestAccess {
 
   [[nodiscard]] static bool callbackInput(
       NativeAudioOutput &output, const AudioTimeStamp &timestamp,
-      std::uint32_t frameCount, NativeAudioRenderInput *input,
+      std::uint32_t frameCount, media::NativeAudioRenderInput *input,
       __uint128_t *nextRemainder, __uint128_t *nextDenominator,
       std::uint64_t *nextRateScalarBits) noexcept {
     return output.callbackInput(timestamp, frameCount, input, nextRemainder,
@@ -137,14 +141,14 @@ using wam::macos::NativeAudioOutputProgress;
 using wam::macos::NativeAudioOutputState;
 using wam::macos::NativeAudioOutputTestAccess;
 using wam::macos::NativeAudioOutputWakeSeam;
-using wam::macos::NativeAudioRenderCore;
-using wam::macos::NativeAudioRenderCoreTestAccess;
-using wam::macos::NativeAudioRenderInput;
-using wam::macos::NativeAudioRenderStats;
+using wam::media::NativeAudioRenderCore;
+using wam::media::NativeAudioRenderCoreTestAccess;
+using wam::media::NativeAudioRenderInput;
+using wam::media::NativeAudioRenderStats;
 using wam::macos::NativeAudioUnitCallTable;
-using wam::macos::NativeMediaClock;
-using wam::macos::NativeMediaHostClock;
-using wam::macos::NativePcmRing;
+using wam::media::NativeMediaClock;
+using wam::media::NativeMediaHostClock;
+using wam::media::NativePcmRing;
 using wam::media::MediaTime;
 
 static_assert(std::is_trivially_copyable_v<NativeAudioOutputConfiguration>);
@@ -1952,7 +1956,7 @@ void testPauseSuspendKeepsStreamPositionAcrossRestart() {
              !fixture.clock.sample().running,
          "paused callback silences its buffer and publishes the pause "
          "boundary");
-  const wam::macos::NativeMediaClockSnapshot pausedClock = fixture.clock.sample();
+  const wam::media::NativeMediaClockSnapshot pausedClock = fixture.clock.sample();
   const NativeAudioOutputFacts pausedFacts = fixture.output->facts();
   expect(pausedFacts.frameCursor == kFrames,
          "a paused callback advances no stream frames");
@@ -1979,7 +1983,7 @@ void testPauseSuspendKeepsStreamPositionAcrossRestart() {
   fixture.host.ticks.store(kFrames * 8, std::memory_order_relaxed);
   expect(fixture.clock.pause(1) && fixture.core.settlePausedAfterStop(1),
          "the stopped output settles the clock and the callback-local run");
-  const wam::macos::NativeMediaClockSnapshot settledClock = fixture.clock.sample();
+  const wam::media::NativeMediaClockSnapshot settledClock = fixture.clock.sample();
   expect(settledClock.publicationSerial == pausedClock.publicationSerial &&
              settledClock.mediaSeconds == pausedClock.mediaSeconds &&
              settledClock.anchorHostTicks == pausedClock.anchorHostTicks &&
@@ -2034,13 +2038,13 @@ void testPauseSuspendKeepsStreamPositionAcrossRestart() {
              samples[(kFrames - 1) * NativePcmRing::kChannels] == 1.0F,
          "the first callback after the restart plays the retained PCM at the "
          "gain the pause left behind -- no re-ramp, so no pop");
-  const wam::macos::NativeMediaClockSnapshot resumedClock = fixture.clock.sample();
+  const wam::media::NativeMediaClockSnapshot resumedClock = fixture.clock.sample();
   expect(resumedClock.running && resumedClock.generation == 1 &&
              resumedClock.anchorMediaSeconds == pausedClock.mediaSeconds &&
              fixture.output->facts().frameCursor == kFrames * 2,
          "the resumed segment starts at exactly the media position and "
          "stream frame the pause froze");
-  expect(fixture.core.stats().failure == wam::macos::NativeAudioRenderFailure::None &&
+  expect(fixture.core.stats().failure == wam::media::NativeAudioRenderFailure::None &&
              fixture.output->facts().failure ==
                  NativeAudioOutputFailure::None,
          "a full pause/suspend/resume cycle latches no failure");

@@ -7,7 +7,7 @@
 #include <span>
 #include <type_traits>
 
-namespace wam::macos {
+namespace wam::media {
 
 struct NativePcmRingTestAccess;
 struct NativePcmRingLayoutAssertions;
@@ -251,4 +251,4 @@ struct NativePcmRingLayoutAssertions {
                 NativePcmRing::kCacheLineBytes);
 };
 
-} // namespace wam::macos
+} // namespace wam::media

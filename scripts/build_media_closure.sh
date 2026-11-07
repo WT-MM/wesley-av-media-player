@@ -4,10 +4,11 @@ set -euo pipefail
 # source archive is pinned in third_party/media-source/SHA256SUMS and fetched from
 # upstream only when absent, so a pre-staged tree builds fully offline.
 repo=$(cd "$(dirname "$0")/.." && pwd)
+source "$repo/packaging/pins.env"
 source_dir="$repo/third_party/media-source"
 prefix=${1:-$repo/third_party/media-closure}
 [[ $(uname -m) == arm64 ]] || { echo 'MediaArchitectureUnsupported: arm64 required' >&2; exit 1; }
-archives=(freetype-2.13.3.tar.xz fribidi-1.0.16.tar.xz harfbuzz-11.3.2.tar.xz libass-0.17.4.tar.xz libvpx-1.17.0.tar.gz opus-1.5.2.tar.gz ffmpeg-9.0.1.tar.xz mpv-0.36.0.tar.gz)
+archives=(freetype-2.13.3.tar.xz fribidi-1.0.16.tar.xz harfbuzz-11.3.2.tar.xz libass-0.17.4.tar.xz libvpx-1.17.0.tar.gz opus-1.5.2.tar.gz ffmpeg-$WAM_FFMPEG_VERSION.tar.xz mpv-0.36.0.tar.gz)
 fetch_missing() {  # fetch_missing NAME URL [MIRROR...]: no-op when the archive is staged
   local name=$1; shift
   [[ -s "$source_dir/$name" ]] && return 0
@@ -26,7 +27,7 @@ fetch_missing harfbuzz-11.3.2.tar.xz https://github.com/harfbuzz/harfbuzz/releas
 fetch_missing libass-0.17.4.tar.xz https://github.com/libass/libass/releases/download/0.17.4/libass-0.17.4.tar.xz
 fetch_missing libvpx-1.17.0.tar.gz https://github.com/webmproject/libvpx/archive/refs/tags/v1.17.0.tar.gz
 fetch_missing opus-1.5.2.tar.gz https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz
-fetch_missing ffmpeg-9.0.1.tar.xz https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz
+fetch_missing "ffmpeg-$WAM_FFMPEG_VERSION.tar.xz" "https://ffmpeg.org/releases/ffmpeg-$WAM_FFMPEG_VERSION.tar.xz"
 fetch_missing mpv-0.36.0.tar.gz https://github.com/mpv-player/mpv/archive/refs/tags/v0.36.0.tar.gz
 # Require exactly the pinned manifest, including every input used below.
 [[ $(wc -l < "$source_dir/SHA256SUMS") -eq ${#archives[@]} ]]
@@ -48,14 +49,14 @@ cp "$source_dir/SHA256SUMS" "$receipt/"
 # Use Apple cctools rather than any host package manager archiver/linker.
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
-export MACOSX_DEPLOYMENT_TARGET=13.3
+export MACOSX_DEPLOYMENT_TARGET=$WAM_MACOS_DEPLOYMENT_TARGET
 # Avoid libtool probing sysctl kern.argmax, which restricted builders deny.
 export lt_cv_sys_max_cmd_len=262144
 export CC=$(xcrun --find clang) CXX=$(xcrun --find clang++)
 export OBJC="$CC" OBJCXX="$CXX"
-export CFLAGS="-O2 -mmacosx-version-min=13.3" CXXFLAGS="-O2 -mmacosx-version-min=13.3"
+export CFLAGS="-O2 -mmacosx-version-min=$WAM_MACOS_DEPLOYMENT_TARGET" CXXFLAGS="-O2 -mmacosx-version-min=$WAM_MACOS_DEPLOYMENT_TARGET"
 export OBJCFLAGS="$CFLAGS" OBJCXXFLAGS="$CXXFLAGS"
-export LDFLAGS="-mmacosx-version-min=13.3 -Wl,-headerpad_max_install_names -L$prefix/lib"
+export LDFLAGS="-mmacosx-version-min=$WAM_MACOS_DEPLOYMENT_TARGET -Wl,-headerpad_max_install_names -L$prefix/lib"
 export CPPFLAGS="-I$prefix/include"
 export PKG_CONFIG_PATH="$prefix/lib/pkgconfig" PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig"
 unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH DYLD_LIBRARY_PATH CMAKE_PREFIX_PATH || true
@@ -119,7 +120,7 @@ for archive in "${archives[@]}"; do
 done
 # Measure every installed Mach-O, not just the libraries expected by name.
 python3 - "$prefix" > "$receipt/machos.tsv" <<'PY'
-import pathlib, subprocess, sys, re
+import os, pathlib, subprocess, sys, re
 root = pathlib.Path(sys.argv[1])
 print('path\tarchitecture\tminos\tsha256')
 for p in sorted(root.rglob('*')):
@@ -127,7 +128,7 @@ for p in sorted(root.rglob('*')):
     if 'Mach-O' not in subprocess.check_output(['file', '-b', str(p)], text=True): continue
     lines = subprocess.check_output(['/usr/bin/otool', '-l', str(p)], text=True).splitlines()
     versions = [l.split()[1] for l in lines if l.strip().startswith('minos ')]
-    assert versions and all(v == '13.3' for v in versions), (p, versions)
+    assert versions and all(v == os.environ['MACOSX_DEPLOYMENT_TARGET'] for v in versions), (p, versions)
     loads = subprocess.check_output(['/usr/bin/otool', '-L', str(p)], text=True)
     for line in loads.splitlines()[1:]:
         dep = line.strip().split(' (compatibility')[0]
@@ -160,7 +161,7 @@ assert lib.mpv_client_api_version() == (2 << 16 | 1)
     'client_api=2.1\n' + '\n'.join(required) + '\n')
 PYVERIFY
 {
-  printf 'architecture=arm64\ndeployment_target=13.3\nlt_cv_sys_max_cmd_len=262144\nbuild_seconds=%s\n' "$((SECONDS-start))"
+  printf 'architecture=arm64\ndeployment_target=%s\nlt_cv_sys_max_cmd_len=262144\nbuild_seconds=%s\n' "$WAM_MACOS_DEPLOYMENT_TARGET" "$((SECONDS-start))"
   cat "$source_dir/SHA256SUMS" "$receipt/machos.tsv"
   shasum -a 256 "$repo/scripts/build_media_closure.sh" "$repo/scripts/media-patches/mpv-0.36-ffmpeg9.patch"
   "$CC" --version

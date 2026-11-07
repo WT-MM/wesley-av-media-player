@@ -3,7 +3,7 @@
 #include "media/native_media_dispatcher.hpp"
 #include "native_audio_converter.hpp"
 #include "native_audio_output.hpp"
-#include "native_media_clock.hpp"
+#include "media/native_media_clock.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -18,7 +18,7 @@ namespace wam::macos {
 // The token must own outputWake.pending as well as every referenced context.
 struct NativeAudioSessionDependencies {
   std::shared_ptr<void> externalLifetime;
-  NativeMediaHostClock hostClock{};
+  media::NativeMediaHostClock hostClock{};
   NativeAudioUnitCallTable outputCalls{};
   NativeAudioOutputWakeSeam outputWake{};
   std::unique_ptr<NativeAudioConverterBackend> converterBackend;
@@ -224,7 +224,7 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   // function of the pair, so they can never be seen to disagree. True keeps
   // the original pitch at every speed; false is classic varispeed.
   [[nodiscard]] NativeAudioSessionProgress
-  setRate(NativePlaybackRate rate, bool preservePitch) noexcept;
+  setRate(media::NativePlaybackRate rate, bool preservePitch) noexcept;
   // Stops the output AudioUnit for a pause that has already settled, so a
   // paused session pays no periodic real-time wake at all. Every render
   // callback is such a wake, and a paused callback does nothing but memset
@@ -251,13 +251,13 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   // the first attempt onward.
   [[nodiscard]] NativeAudioSessionProgress suspendOutputForPause() noexcept;
   [[nodiscard]] NativeAudioSessionProgress stop() noexcept;
-  [[nodiscard]] NativeMediaClockSnapshot visibleClock() const noexcept;
+  [[nodiscard]] media::NativeMediaClockSnapshot visibleClock() const noexcept;
   // Diagnostic-only view of the render callback's cumulative counters. Every
   // field is a plain relaxed atomic owned by the callback, so this read is
   // allocation-, lock- and wait-free and may race render() exactly like
   // visibleClock(). It exists so an owner can sample underrun/late-frame
   // facts without adding any work to the real-time callback itself.
-  [[nodiscard]] NativeAudioRenderStats renderStats() const noexcept;
+  [[nodiscard]] media::NativeAudioRenderStats renderStats() const noexcept;
   [[nodiscard]] NativeAudioSessionFacts facts() const noexcept;
 
  private:

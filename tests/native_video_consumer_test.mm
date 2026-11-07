@@ -41,9 +41,9 @@ void wake(void* context) noexcept {
 }
 
 struct FakeClock {
-  NativeMediaClockSnapshot snapshot{};
+  media::NativeMediaClockSnapshot snapshot{};
 
-  [[nodiscard]] static NativeMediaClockSnapshot sample(
+  [[nodiscard]] static media::NativeMediaClockSnapshot sample(
       void* context) noexcept {
     return static_cast<FakeClock*>(context)->snapshot;
   }

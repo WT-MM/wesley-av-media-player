@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <span>
 
-namespace wam::macos {
+namespace wam::media {
 
 struct NativeAudioRenderCoreTestAccess;
 
@@ -528,4 +528,4 @@ private:
   friend struct NativeAudioRenderCoreTestAccess;
 };
 
-} // namespace wam::macos
+} // namespace wam::media

@@ -5,7 +5,7 @@
 #include "player_core_p.hpp"
 
 #if defined(Q_OS_MACOS)
-#include "platform/macos/qt_gl_video_item.hpp"
+#include "qt/macos/qt_gl_video_item.hpp"
 #endif
 
 #include <QOpenGLContext>

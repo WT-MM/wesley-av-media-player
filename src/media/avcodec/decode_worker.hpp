@@ -1,7 +1,6 @@
 #pragma once
 #include "media/native_media_source.hpp"
 #include "media/software_decoder_reservation.hpp"
-#include "platform/macos/native_surface_budget.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -32,11 +31,11 @@ struct Configuration {
 class DecodeWorker final {
 public:
   // Four queue slots and 32 provenance slots bound queued and decoder-held packets.
-  static constexpr std::size_t kPacketBytes = macos::kNativeSoftwarePacketBytes;
-  static constexpr std::size_t kPacketSlots = macos::kNativeSoftwarePacketSlots;
+  static constexpr std::size_t kPacketBytes = kNativeSoftwarePacketBytes;
+  static constexpr std::size_t kPacketSlots = kNativeSoftwarePacketSlots;
   static constexpr std::size_t kProvenanceSlots = 32;
   // Coded geometry remains bounded before private byte reservation.
-  static constexpr std::uint64_t kMaximumSoftwarePixels = macos::kNativeSoftwareMaximumPicturePixels;
+  static constexpr std::uint64_t kMaximumSoftwarePixels = kNativeSoftwareMaximumPicturePixels;
   explicit DecodeWorker(FrameHandler handler, WakeHandler wake = {});
   ~DecodeWorker();
   DecodeWorker(const DecodeWorker&) = delete;

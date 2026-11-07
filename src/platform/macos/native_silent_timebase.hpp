@@ -1,7 +1,7 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
-#include "native_media_clock.hpp"
+#include "media/native_media_clock.hpp"
 #include "native_session_ports.hpp"
 
 #include <memory>
@@ -37,7 +37,7 @@ namespace wam::macos {
 class NativeSilentTimebase final : public SessionClockAuthority {
  public:
   [[nodiscard]] static std::unique_ptr<NativeSilentTimebase> create(
-      NativeMediaHostClock hostClock) noexcept;
+      media::NativeMediaHostClock hostClock) noexcept;
 
   NativeSilentTimebase(const NativeSilentTimebase&) = delete;
   NativeSilentTimebase& operator=(const NativeSilentTimebase&) = delete;
@@ -64,14 +64,14 @@ class NativeSilentTimebase final : public SessionClockAuthority {
   // as its running slope, and there is no pitch to preserve. A rate set while
   // paused is cached and takes effect at the next resume, which is the same
   // discipline the audio route uses.
-  NativeAudioSessionProgress setRate(NativePlaybackRate rate,
+  NativeAudioSessionProgress setRate(media::NativePlaybackRate rate,
                                      bool preservePitch) noexcept override;
   // Freezes the timebase at its current position and closes admission. The
   // session samples visibleClock() immediately afterwards for the Ended
   // position, so this must leave a valid, paused, current publication.
   NativeAudioSessionProgress stop() noexcept override;
 
-  NativeMediaClockSnapshot visibleClock() const noexcept override;
+  media::NativeMediaClockSnapshot visibleClock() const noexcept override;
   media::MediaGeneration highestExposedGeneration() const noexcept override;
   // Terminal invalidation, mirroring NativeAudioSession::retire(). The clock
   // publication moves to the invalidation generation and no later activation
@@ -80,11 +80,11 @@ class NativeSilentTimebase final : public SessionClockAuthority {
       media::MediaGeneration invalidationGeneration) noexcept;
 
  private:
-  explicit NativeSilentTimebase(NativeMediaHostClock hostClock) noexcept;
+  explicit NativeSilentTimebase(media::NativeMediaHostClock hostClock) noexcept;
 
-  NativeMediaClock clock_;
+  media::NativeMediaClock clock_;
   media::MediaGeneration generation_{0};
-  NativePlaybackRate rate_{};
+  media::NativePlaybackRate rate_{};
   bool running_{false};
   bool retired_{false};
 };

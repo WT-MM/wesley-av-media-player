@@ -1,6 +1,6 @@
 #pragma once
 
-#include "native_video_presenter.hpp"
+#include "platform/macos/native_video_presenter.hpp"
 
 #include <QQuickItem>
 #include <QString>
