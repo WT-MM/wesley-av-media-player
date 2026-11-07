@@ -3,6 +3,7 @@
 #include "cancellation.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -127,6 +128,33 @@ ChildObservation observePosixChild(pid_t child, int* error);
 // SIGKILLs and reaps a child that never got its own group; returns `error`,
 // or 1 when it is zero.
 int terminateUnisolatedChild(pid_t child, int error);
+// Reaps a child that was just sent SIGKILL, waiting at most `bound`. A driver
+// can defer SIGKILL indefinitely, so an unfinished reap continues on a
+// detached thread and the caller is never blocked past the bound.
+bool reapKilledChild(pid_t child, int* status,
+                     std::chrono::milliseconds bound);
+
+struct SupervisedChild {
+  // `status` holds the leader's wait status.
+  bool exited{false};
+  int status{0};
+  // The group was signalled because of cancellation or `stopRequested`.
+  bool terminated{false};
+  bool cancelled{false};
+  bool stopped{false};
+  // False when no verified process group could be established.
+  bool isolated{true};
+  // Nonzero when the child could not be isolated, observed or reaped.
+  int error{0};
+};
+// The one wait loop for a forked child that called setpgid(0, 0): isolates
+// its group, polls every 20 ms, and on cancellation (or when `stopRequested`,
+// called once per poll, returns true) sends the group SIGTERM, then SIGKILL
+// after `grace`, then reaps with a bound. `stopRequested` may be empty.
+SupervisedChild superviseChildGroup(pid_t child,
+                                    const CancellationFlag& cancellation,
+                                    std::chrono::milliseconds grace,
+                                    const std::function<bool()>& stopRequested);
 #endif
 
 }  // namespace detail

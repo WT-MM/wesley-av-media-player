@@ -338,7 +338,6 @@ ProcessResult runProcess(const fs::path &executable,
 
 #else
 
-constexpr auto kCaptionProcessPollInterval = 20ms;
 constexpr auto kCaptionGracefulShutdownTimeout = 500ms;
 
 void drainPosixPipe(int pipe, std::string &output, ProcessMonitor* monitor = nullptr) {
@@ -436,115 +435,35 @@ ProcessResult runProcess(const fs::path &executable,
   result.launched = true;
   close(diagnostic_pipe[1]); diagnostics.write = -1;
   close(output_pipe[1]);
-  int setup_error = 0;
-  if (!establishProcessGroup(pid, &setup_error)) {
-    int observation_error = 0;
-    const auto observation =
-        observePosixChild(pid, &observation_error);
-    int status = 0;
-    int reap_error = 0;
-    const bool exited = observation == ChildObservation::Exited &&
-                        reapPosixChild(pid, &status, &reap_error);
-    if (observation == ChildObservation::Running ||
-        (observation == ChildObservation::Error &&
-         observation_error != ECHILD))
-      terminateUnisolatedChild(pid, 0);
-    drainPosixPipe(output_pipe[0], result.output, &monitor);
-    drainPosixPipe(diagnostic_pipe[0], result.output);
-    close(output_pipe[0]);
-    result.cancelled = cancellation.requested();
-    if (exited) {
-      result.exit_code = result.cancelled ? 130 : normalizedExitCode(status);
-    } else {
-      result.launched = false;
-      result.exit_code = result.cancelled ? 130 : setup_error;
-      result.launch_error =
-          std::string("could not establish an isolated process group: ") +
-          std::strerror(setup_error);
-    }
-    return result;
-  }
-
-  bool termination_sent = false;
-  auto force_at = std::chrono::steady_clock::time_point::max();
-  int status = 0;
-  bool status_valid = false;
-  for (;;) {
-    drainPosixPipe(output_pipe[0], result.output, &monitor);
-    drainPosixPipe(diagnostic_pipe[0], result.output);
-    const bool stalled = monitor.stalled();
-    if (!termination_sent) {
-      if (cancellation.requested() || stalled) {
-        result.cancelled = cancellation.requested();
-        result.timed_out = stalled && !result.cancelled;
-        termination_sent = true;
-        force_at = std::chrono::steady_clock::now() +
-                   kCaptionGracefulShutdownTimeout;
-        signalVerifiedProcessGroup(pid, SIGTERM);
-      } else {
-        int observation_error = 0;
-        const auto observation =
-            observePosixChild(pid, &observation_error);
-        if (observation == ChildObservation::Error) {
-          // After ECHILD the PID may already be reusable. Do not direct a
-          // process-group signal at that numeric identity.
-          if (observation_error != ECHILD) {
-            signalVerifiedProcessGroup(pid, SIGKILL);
-            int ignored_error = 0;
-            status_valid = reapPosixChild(pid, &status, &ignored_error);
-          }
-          if (!status_valid)
-            result.exit_code = observation_error ? observation_error : 1;
-          break;
-        }
-        if (observation == ChildObservation::Exited) {
-          // waitid(WNOWAIT) leaves the leader unreaped. Re-check cancellation
-          // before choosing between a normal reap and whole-group cleanup.
-          if (cancellation.requested()) {
-            result.cancelled = true;
-            termination_sent = true;
-            force_at = std::chrono::steady_clock::now() +
-                       kCaptionGracefulShutdownTimeout;
-            signalVerifiedProcessGroup(pid, SIGTERM);
-          } else {
-            int reap_error = 0;
-            status_valid = reapPosixChild(pid, &status, &reap_error);
-            if (!status_valid)
-              result.exit_code = reap_error ? reap_error : 1;
-            break;
-          }
-        }
-      }
-    }
-
-    if (termination_sent &&
-        std::chrono::steady_clock::now() >= force_at) {
-      // Keep the leader waitable until this final group signal. Its unreaped
-      // PID prevents the process-group number from being reused underneath us.
-      signalVerifiedProcessGroup(pid, SIGKILL);
-      int reap_error = 0;
-      const auto reap_deadline = std::chrono::steady_clock::now()+500ms;
-      while (observePosixChild(pid,&reap_error)==ChildObservation::Running &&
-             std::chrono::steady_clock::now()<reap_deadline)
-        std::this_thread::sleep_for(kCaptionProcessPollInterval);
-      if (observePosixChild(pid,&reap_error)==ChildObservation::Exited) {
-        status_valid = reapPosixChild(pid, &status, &reap_error);
-      } else if (reap_error != ECHILD) {
-        // A driver can defer SIGKILL indefinitely. Reap eventually off-job;
-        // the caption worker can retry on CPU and cancellation stays bounded.
-        std::thread([pid] { int ignored=0,error=0; reapPosixChild(pid,&ignored,&error); }).detach();
-      }
-      if (!status_valid) result.exit_code = 130;
-      break;
-    }
-    std::this_thread::sleep_for(kCaptionProcessPollInterval);
-  }
+  const auto supervised = superviseChildGroup(
+      pid, cancellation, kCaptionGracefulShutdownTimeout, [&] {
+        drainPosixPipe(output_pipe[0], result.output, &monitor);
+        drainPosixPipe(diagnostic_pipe[0], result.output);
+        return monitor.stalled();
+      });
   drainPosixPipe(output_pipe[0], result.output, &monitor);
   drainPosixPipe(diagnostic_pipe[0], result.output);
   monitor.finish();
   close(output_pipe[0]);
-  if (status_valid)
-    result.exit_code = normalizedExitCode(status);
+  if (!supervised.isolated) {
+    result.cancelled = cancellation.requested();
+    if (supervised.exited) {
+      result.exit_code =
+          result.cancelled ? 130 : normalizedExitCode(supervised.status);
+    } else {
+      result.launched = false;
+      result.exit_code = result.cancelled ? 130 : supervised.error;
+      result.launch_error =
+          std::string("could not establish an isolated process group: ") +
+          std::strerror(supervised.error);
+    }
+    return result;
+  }
+  result.cancelled = supervised.cancelled;
+  result.timed_out = supervised.stopped;
+  result.exit_code = supervised.exited ? normalizedExitCode(supervised.status)
+                     : supervised.terminated ? 130
+                                             : supervised.error;
   return result;
 }
 
