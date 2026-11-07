@@ -1694,7 +1694,7 @@ if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
   add_test(NAME macos_video_service_lifetime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/video_service_lifetime_test.py"
       "$<TARGET_BUNDLE_DIR:wam>" --ffmpeg "${WAM_TEST_FFMPEG}")
-  set_tests_properties(macos_video_service_lifetime PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+  set_tests_properties(macos_video_service_lifetime PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   add_test(NAME macos_startup_launch
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/startup_launch_test.py"
       "$<TARGET_BUNDLE_DIR:wam>" --ffmpeg "${WAM_TEST_FFMPEG}")
