@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <new>
+#include <type_traits>
 #include <vector>
 
 #ifdef Q_OS_WIN
@@ -31,6 +32,15 @@ namespace {
 
 constexpr double kScrubConvergenceToleranceSeconds = 0.050;
 constexpr int kScrubSeekTimeoutMs = 750;
+// Restore and startup-sync retries: three, at these delays.
+constexpr std::array<int, 3> kRetryDelaysMs{0, 16, 50};
+
+// Advances `counter` to its next nonzero value and returns it.
+std::uint64_t nextToken(std::uint64_t &counter) noexcept {
+  if (++counter == 0)
+    ++counter;
+  return counter;
+}
 
 using ::wam::playback::mpv::MpvApi;
 
@@ -902,31 +912,34 @@ bool MpvEngine::flushRenderRecovery(std::uint64_t render_stamp) {
   if (!core->validateRenderTicket(ticket))
     return true;
 
-  if (lineage.render_recovery->accepted_render_stamp == render_stamp)
-    return true;
-  if (lineage.render_recovery_attempt &&
-      lineage.render_recovery_attempt->request_serial == host_.requestSerial() &&
-      lineage.render_recovery_attempt->render_stamp == render_stamp) {
+  RenderRecovery &recovery = *lineage.render_recovery;
+  if (const RecoveryRestoring *restoring = recovery.restoring();
+      restoring && restoring->stamp == render_stamp) {
     return true;
   }
-  if (lineage.render_recovery->command_failed)
-    return false;
+  if (const RenderRecoveryAttempt *attempt = recovery.attempt();
+      attempt && attempt->request_serial == host_.requestSerial() &&
+      attempt->render_stamp == render_stamp) {
+    return true;
+  }
 
-  if (lineage.render_recovery->mode == RenderRecoveryMode::NoReselection) {
-    lineage.render_recovery->accepted_render_stamp = render_stamp;
+  switch (recovery.mode) {
+  case RenderRecoveryMode::NoReselection:
+    recovery.acceptGeneration(render_stamp);
     lineage.committed_open->render_stamp = render_stamp;
     restoreRenderRecovery();
     return true;
-  }
-
-  if (lineage.render_recovery->mode == RenderRecoveryMode::VideoReselect &&
-      (lineage.render_recovery->video_track_id <= 0 ||
-       lineage.committed_open->playlist_entry_id < 0)) {
-    lineage.render_recovery->accepted_render_stamp = render_stamp;
-    lineage.committed_open->render_stamp = render_stamp;
-    degradeRenderRecovery(QStringLiteral(
-        "Unable to restore video output without changing media state."));
-    return false;
+  case RenderRecoveryMode::VideoReselect:
+    if (recovery.video_track_id <= 0 ||
+        lineage.committed_open->playlist_entry_id < 0) {
+      lineage.committed_open->render_stamp = render_stamp;
+      degradeRenderRecovery(QStringLiteral(
+          "Unable to restore video output without changing media state."));
+      return false;
+    }
+    break;
+  case RenderRecoveryMode::FullReload:
+    break;
   }
 
   const std::uint64_t reply_userdata = mpvReplyUserdata(
@@ -972,22 +985,21 @@ bool MpvEngine::flushRenderRecovery(std::uint64_t render_stamp) {
     }
   }
   if (result < 0) {
-    lineage.render_recovery->accepted_render_stamp = render_stamp;
     lineage.committed_open->render_stamp = render_stamp;
     degradeRenderRecovery(QStringLiteral("Unable to restore video output: %1")
                               .arg(mpvErrorDetail(result)));
     return false;
   }
 
-  lineage.render_recovery_attempt =
+  recovery.phase = RecoveryCommandInFlight{
       RenderRecoveryAttempt{next_render_recovery_attempt_id_,
                             host_.requestSerial(),
                             render_stamp,
                             lineage.committed_open->playlist_entry_id,
-                            lineage.render_recovery->video_track_id,
-                            lineage.render_recovery->mode,
+                            recovery.mode,
                             -1,
-                            restarted_playlist_entry};
+                            restarted_playlist_entry},
+      recovery.fileLoaded()};
   host_.setLastError({});
 
   if (!core->validateRenderTicket(ticket))
@@ -997,19 +1009,24 @@ bool MpvEngine::flushRenderRecovery(std::uint64_t render_stamp) {
 
 void MpvEngine::handleRenderRecoveryCommandReply(
     std::uint64_t attempt_id, int error) {
-  if (!lineage.render_recovery_attempt || lineage.render_recovery_attempt->id != attempt_id) {
+  if (!lineage.render_recovery)
     return;
-  }
+  auto *in_flight =
+      std::get_if<RecoveryCommandInFlight>(&lineage.render_recovery->phase);
+  if (!in_flight || in_flight->attempt.id != attempt_id)
+    return;
 
-  const RenderRecoveryAttempt attempt = *lineage.render_recovery_attempt;
+  const RecoveryCommandInFlight command = *in_flight;
+  const RenderRecoveryAttempt &attempt = command.attempt;
+  lineage.render_recovery->phase =
+      RecoveryAwaitingGeneration{command.file_loaded};
   const bool current_request =
-      lineage.render_recovery && lineage.committed_open &&
+      lineage.committed_open &&
       attempt.request_serial == host_.requestSerial() &&
       lineage.render_recovery->request_serial == host_.requestSerial() &&
       lineage.committed_open->request_serial == host_.requestSerial();
   const bool current_renderer =
       core && core->validateRenderTicket({attempt.render_stamp});
-  lineage.render_recovery_attempt.reset();
 
   if (!current_request)
     return;
@@ -1018,7 +1035,6 @@ void MpvEngine::handleRenderRecoveryCommandReply(
     return;
   }
   if (error < 0) {
-    lineage.render_recovery->accepted_render_stamp = attempt.render_stamp;
     lineage.committed_open->render_stamp = attempt.render_stamp;
     degradeRenderRecovery(QStringLiteral("Unable to restore video output: %1")
                               .arg(mpvErrorDetail(error)));
@@ -1030,7 +1046,6 @@ void MpvEngine::handleRenderRecoveryCommandReply(
     const std::int64_t reloaded_entry = authoritativePlaylistEntry(
         current_entry, attempt.started_playlist_entry_id);
     if (reloaded_entry < 0) {
-      lineage.render_recovery->accepted_render_stamp = attempt.render_stamp;
       lineage.committed_open->render_stamp = attempt.render_stamp;
       degradeRenderRecovery(QStringLiteral(
           "Unable to identify the reloaded video playlist entry."));
@@ -1055,7 +1070,9 @@ void MpvEngine::handleRenderRecoveryCommandReply(
     return;
   }
 
-  lineage.render_recovery->accepted_render_stamp = attempt.render_stamp;
+  lineage.render_recovery->acceptGeneration(attempt.render_stamp);
+  if (RecoveryRestoring *restoring = lineage.render_recovery->restoring())
+    restoring->playback_restarted = command.playback_restarted;
   lineage.committed_open->render_stamp = attempt.render_stamp;
   host_.setLastError({});
   restoreRenderRecovery();
@@ -1065,106 +1082,105 @@ void MpvEngine::restoreRenderRecovery() {
   if (!lineage.render_recovery || !lineage.committed_open || !core || !ready() ||
       lineage.render_recovery->request_serial != host_.requestSerial() ||
       lineage.committed_open->request_serial != host_.requestSerial() ||
-      lineage.render_recovery->accepted_render_stamp == 0 ||
-      !core->validateRenderTicket({lineage.render_recovery->accepted_render_stamp}) ||
       lineage.committed_open->playlist_entry_id < 0 ||
       lineage.committed_open->playlist_entry_id != lineage.active_event_playlist_entry_id) {
     return;
   }
-
   RenderRecovery &recovery = *lineage.render_recovery;
-  if (recovery.mode == RenderRecoveryMode::FullReload) {
-    if (!recovery.file_loaded)
-      return;
+  RecoveryRestoring *const restoring = recovery.restoring();
+  if (!restoring || !core->validateRenderTicket({restoring->stamp}))
+    return;
+  if (recovery.mode == RenderRecoveryMode::FullReload && !restoring->file_loaded)
+    return;
 
-    if (!recovery.external_subtitles_restored) {
-      for (std::size_t index = recovery.external_subtitles_restored_count;
-           index < recovery.external_subtitles.size(); ++index) {
-        const QByteArray path =
-            displayPath(recovery.external_subtitles[index]).toUtf8();
-        const bool select_last =
-            recovery.subtitle_track_id > 0 &&
-            index + 1 == recovery.external_subtitles.size();
-        std::array<const char *, 4> arguments{"sub-add", path.constData(),
-                                              select_last ? "select" : "auto",
-                                              nullptr};
-        if (commandNow(arguments.data()) < 0) {
-          scheduleRenderRecoveryRetry(
-              QStringLiteral("Unable to restore external subtitles."));
-          return;
-        }
-        recovery.external_subtitles_restored_count = index + 1;
-      }
-      recovery.external_subtitles_restored = true;
-    }
-
-    if (!recovery.per_file_state_restored) {
-      if (!setTrackSelection("vid", recovery.video_track_id) ||
-          !setTrackSelection("aid", recovery.audio_track_id)) {
+  if (restoring->step == RestoreStep::Subtitles) {
+    for (std::size_t index = restoring->subtitles_restored;
+         index < recovery.external_subtitles.size(); ++index) {
+      const QByteArray path =
+          displayPath(recovery.external_subtitles[index]).toUtf8();
+      const bool select_last =
+          recovery.subtitle_track_id > 0 &&
+          index + 1 == recovery.external_subtitles.size();
+      std::array<const char *, 4> arguments{"sub-add", path.constData(),
+                                            select_last ? "select" : "auto",
+                                            nullptr};
+      if (commandNow(arguments.data()) < 0) {
         scheduleRenderRecoveryRetry(
-            QStringLiteral("Unable to restore selected media tracks."));
+            QStringLiteral("Unable to restore external subtitles."));
         return;
       }
-      if (recovery.subtitle_track_id == 0 ||
-          (recovery.subtitle_track_id > 0 &&
-           recovery.external_subtitles.empty())) {
-        if (!setTrackSelection("sid",
-                               recovery.subtitle_track_id)) {
-          scheduleRenderRecoveryRetry(
-              QStringLiteral("Unable to restore the selected subtitle."));
-          return;
-        }
-      }
-      // Pinned off: WAM draws subtitles itself on both routes, so a recovered
-      // render context must not start compositing mpv's own text under ours.
-      int visible = 0;
-      if (!setCoreProperty("sub-visibility", MPV_FORMAT_FLAG,
-                           &visible)) {
-        scheduleRenderRecoveryRetry(
-            QStringLiteral("Unable to restore subtitle visibility."));
-        return;
-      }
-      recovery.per_file_state_restored = true;
+      restoring->subtitles_restored = index + 1;
     }
+    restoring->step = RestoreStep::PerFileState;
   }
 
-  if (!recovery.track_snapshot_proven) {
-    if (!recovery.file_loaded ||
-        (recovery.mode != RenderRecoveryMode::NoReselection &&
-         !recovery.playback_restarted))
-      return;
-    const auto has_video = currentFileHasTrackType("video");
-    const auto has_audio = currentFileHasTrackType("audio");
-    const auto has_subtitle = currentFileHasTrackType("sub");
-    if (!has_video || !has_audio || !has_subtitle) {
+  if (restoring->step == RestoreStep::PerFileState) {
+    if (!setTrackSelection("vid", recovery.video_track_id) ||
+        !setTrackSelection("aid", recovery.audio_track_id)) {
       scheduleRenderRecoveryRetry(
-          QStringLiteral("Unable to read the restored media tracks."));
+          QStringLiteral("Unable to restore selected media tracks."));
       return;
     }
-    std::int64_t video = currentTrackSelection("vid");
-    std::int64_t audio = currentTrackSelection("aid");
-    std::int64_t subtitle = currentTrackSelection("sid");
-    if ((*has_video && video < 0) || (*has_audio && audio < 0) ||
-        (*has_subtitle && subtitle < 0)) {
+    if (recovery.subtitle_track_id == 0 ||
+        (recovery.subtitle_track_id > 0 &&
+         recovery.external_subtitles.empty())) {
+      if (!setTrackSelection("sid", recovery.subtitle_track_id)) {
+        scheduleRenderRecoveryRetry(
+            QStringLiteral("Unable to restore the selected subtitle."));
+        return;
+      }
+    }
+    // Pinned off: WAM draws subtitles itself on both routes, so a recovered
+    // render context must not start compositing mpv's own text under ours.
+    int visible = 0;
+    if (!setCoreProperty("sub-visibility", MPV_FORMAT_FLAG, &visible)) {
       scheduleRenderRecoveryRetry(
-          QStringLiteral("Restored media tracks are not ready."));
+          QStringLiteral("Unable to restore subtitle visibility."));
       return;
     }
-    if (!*has_video && video < 0)
-      video = 0;
-    if (!*has_audio && audio < 0)
-      audio = 0;
-    if (!*has_subtitle && subtitle < 0)
-      subtitle = 0;
-    recovery.video_track_id = video;
-    recovery.audio_track_id = audio;
-    recovery.subtitle_track_id = subtitle;
-    recovery.file_has_audio_track = *has_audio;
-    recovery.track_snapshot_proven = true;
+    restoring->step = RestoreStep::TrackSnapshot;
+  }
+
+  if (restoring->step == RestoreStep::TrackSnapshot) {
+    if (!recovery.track_snapshot_proven) {
+      if (!restoring->file_loaded ||
+          (recovery.mode != RenderRecoveryMode::NoReselection &&
+           !restoring->playback_restarted))
+        return;
+      const auto has_video = currentFileHasTrackType("video");
+      const auto has_audio = currentFileHasTrackType("audio");
+      const auto has_subtitle = currentFileHasTrackType("sub");
+      if (!has_video || !has_audio || !has_subtitle) {
+        scheduleRenderRecoveryRetry(
+            QStringLiteral("Unable to read the restored media tracks."));
+        return;
+      }
+      std::int64_t video = currentTrackSelection("vid");
+      std::int64_t audio = currentTrackSelection("aid");
+      std::int64_t subtitle = currentTrackSelection("sid");
+      if ((*has_video && video < 0) || (*has_audio && audio < 0) ||
+          (*has_subtitle && subtitle < 0)) {
+        scheduleRenderRecoveryRetry(
+            QStringLiteral("Restored media tracks are not ready."));
+        return;
+      }
+      if (!*has_video && video < 0)
+        video = 0;
+      if (!*has_audio && audio < 0)
+        audio = 0;
+      if (!*has_subtitle && subtitle < 0)
+        subtitle = 0;
+      recovery.video_track_id = video;
+      recovery.audio_track_id = audio;
+      recovery.subtitle_track_id = subtitle;
+      recovery.file_has_audio_track = *has_audio;
+      recovery.track_snapshot_proven = true;
+    }
+    restoring->step = RestoreStep::Transport;
   }
 
   if (recovery.mode != RenderRecoveryMode::NoReselection) {
-    if (!recovery.playback_restarted)
+    if (!restoring->playback_restarted)
       return;
     const std::int64_t live_entry = playingPlaylistEntryId();
     const bool live_video =
@@ -1178,20 +1194,14 @@ void MpvEngine::restoreRenderRecovery() {
     }
   }
 
-  if (!recovery.transport_restored) {
-    if (recovery.mode == RenderRecoveryMode::NoReselection) {
-      // Audio-only playback never stopped when the visual renderer vanished.
-      // Re-apply only the latest pause intent; adopting the generation must
-      // never rewind continuously playing audio.
-      int paused = recovery.paused ? 1 : 0;
-      if (!setCoreProperty("pause", MPV_FORMAT_FLAG, &paused)) {
-        scheduleRenderRecoveryRetry(
-            QStringLiteral("Unable to restore the playback state."));
-        return;
-      }
-      recovery.transport_restored = true;
-    } else if (recovery.mode == RenderRecoveryMode::VideoReselect &&
-               !recovery.paused && !recovery.position_overridden) {
+  if (restoring->step == RestoreStep::Transport) {
+    // Audio-only playback (NoReselection) never stopped when the visual
+    // renderer vanished, and a playing reselect resumes from wherever the
+    // audio clock is now: neither may rewind to the captured position. Every
+    // other recovery re-seeks to it. All end by re-applying the pause intent.
+    const bool resume_live = recovery.mode == RenderRecoveryMode::VideoReselect &&
+                             !recovery.paused && !recovery.position_overridden;
+    if (resume_live) {
       const auto live_position = doubleProperty("time-pos");
       if (!live_position || !std::isfinite(*live_position)) {
         scheduleRenderRecoveryRetry(
@@ -1200,85 +1210,72 @@ void MpvEngine::restoreRenderRecovery() {
       }
       recovery.position = std::max(0.0, *live_position);
       host_.updatePosition(recovery.position);
-      int paused = 0;
-      if (!setCoreProperty("pause", MPV_FORMAT_FLAG, &paused)) {
-        scheduleRenderRecoveryRetry(
-            QStringLiteral("Unable to restore the playback state."));
-        return;
-      }
-      recovery.transport_restored = true;
-    } else if (recovery.position > 0.01) {
+    } else if (recovery.mode != RenderRecoveryMode::NoReselection &&
+               recovery.position > 0.01) {
       double position = recovery.position;
-      if (!setCoreProperty("time-pos", MPV_FORMAT_DOUBLE,
-                           &position)) {
+      if (!setCoreProperty("time-pos", MPV_FORMAT_DOUBLE, &position)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to restore the playback position."));
         return;
       }
-      int paused = recovery.paused ? 1 : 0;
-      if (!setCoreProperty("pause", MPV_FORMAT_FLAG, &paused)) {
-        scheduleRenderRecoveryRetry(
-            QStringLiteral("Unable to restore the playback state."));
-        return;
-      }
-      recovery.transport_restored = true;
-    } else {
-      int paused = recovery.paused ? 1 : 0;
-      if (!setCoreProperty("pause", MPV_FORMAT_FLAG, &paused)) {
-        scheduleRenderRecoveryRetry(
-            QStringLiteral("Unable to restore the playback state."));
-        return;
-      }
-      recovery.transport_restored = true;
     }
+    int paused = recovery.paused ? 1 : 0;
+    if (!setCoreProperty("pause", MPV_FORMAT_FLAG, &paused)) {
+      scheduleRenderRecoveryRetry(
+          QStringLiteral("Unable to restore the playback state."));
+      return;
+    }
+    restoring->step = RestoreStep::Done;
   }
 
   queueRenderRecoveryCompletion();
 }
 
 void MpvEngine::queueRenderRecoveryCompletion() {
-  if (!lineage.render_recovery || !lineage.committed_open || !core ||
-      lineage.render_recovery->completion_token != 0 ||
-      !lineage.render_recovery->transport_restored) {
+  if (!lineage.render_recovery || !lineage.committed_open || !core)
+    return;
+  RecoveryRestoring *const restoring = lineage.render_recovery->restoring();
+  if (!restoring || restoring->completion_token ||
+      restoring->step != RestoreStep::Done) {
     return;
   }
 
-  ++next_render_recovery_completion_token_;
-  if (next_render_recovery_completion_token_ == 0)
-    ++next_render_recovery_completion_token_;
-  const std::uint64_t completion_token = next_render_recovery_completion_token_;
-  const std::uint64_t request_serial = lineage.render_recovery->request_serial;
-  const std::uint64_t render_stamp = lineage.render_recovery->accepted_render_stamp;
+  const std::uint64_t completion_token = nextToken(next_render_recovery_token_);
+  const std::uint64_t render_stamp = restoring->stamp;
   const std::int64_t playlist_entry_id = lineage.committed_open->playlist_entry_id;
-  lineage.render_recovery->completion_token = completion_token;
+  restoring->completion_token = completion_token;
 
   // mpv can enqueue transient pause/idle/eof property changes while replacing
   // video-only media. Keep the recovery gate through the remainder of the
   // current event drain, then discard those transitions and publish one live,
   // coherent transport snapshot before observations are accepted again.
   QTimer::singleShot(0, owner_,
-                     [this, completion_token, request_serial, render_stamp,
-                      playlist_entry_id] {
+                     [this, completion_token, render_stamp, playlist_entry_id] {
                        finishRenderRecoveryCompletion(
-                           completion_token, request_serial, render_stamp,
-                           playlist_entry_id);
+                           completion_token, render_stamp, playlist_entry_id);
                      });
 }
 
-void MpvEngine::finishRenderRecoveryCompletion(
-    std::uint64_t completion_token, std::uint64_t request_serial,
-    std::uint64_t render_stamp, std::int64_t playlist_entry_id) {
-  const auto completion_is_current = [this, completion_token, request_serial,
-                                      render_stamp, playlist_entry_id] {
-    return lineage.render_recovery && lineage.committed_open && core &&
-           lineage.render_recovery->completion_token == completion_token &&
-           lineage.render_recovery->request_serial == request_serial &&
-           lineage.render_recovery->accepted_render_stamp == render_stamp &&
-           lineage.committed_open->request_serial == request_serial &&
-           lineage.committed_open->render_stamp == render_stamp &&
-           lineage.committed_open->playlist_entry_id == playlist_entry_id &&
-           lineage.active_event_playlist_entry_id == playlist_entry_id &&
-           core->validateRenderTicket({render_stamp});
+bool MpvEngine::committedOutputIs(std::uint64_t request_serial,
+                                  std::uint64_t render_stamp,
+                                  std::int64_t playlist_entry_id) const {
+  return lineage.committed_open && core &&
+         lineage.committed_open->request_serial == request_serial &&
+         lineage.committed_open->render_stamp == render_stamp &&
+         lineage.committed_open->playlist_entry_id == playlist_entry_id &&
+         lineage.active_event_playlist_entry_id == playlist_entry_id &&
+         core->validateRenderTicket({render_stamp});
+}
+
+void MpvEngine::finishRenderRecoveryCompletion(std::uint64_t completion_token,
+                                               std::uint64_t render_stamp,
+                                               std::int64_t playlist_entry_id) {
+  const auto completion_is_current = [&] {
+    RecoveryRestoring *const restoring =
+        lineage.render_recovery ? lineage.render_recovery->restoring() : nullptr;
+    return restoring && restoring->completion_token == completion_token &&
+           committedOutputIs(lineage.render_recovery->request_serial,
+                             render_stamp, playlist_entry_id);
   };
 
   if (!completion_is_current())
@@ -1291,15 +1288,16 @@ void MpvEngine::finishRenderRecoveryCompletion(
   if (!completion_is_current())
     return;
 
-  lineage.render_recovery->completion_token = 0;
-  if (!lineage.render_recovery->transport_restored) {
+  RecoveryRestoring &restoring = *lineage.render_recovery->restoring();
+  restoring.completion_token.reset();
+  if (restoring.step != RestoreStep::Done) {
     restoreRenderRecovery();
     return;
   }
 
   const auto live_state = readLivePlaybackState();
   if (!live_state ||
-      !livePlaybackStateMatchesRecovery(*lineage.render_recovery, *live_state)) {
+      !livePlaybackStateMatches(lineage.render_recovery->paused, *live_state)) {
     scheduleRenderRecoveryRetry(
         QStringLiteral("Unable to refresh the restored playback state."));
     return;
@@ -1328,20 +1326,13 @@ MpvEngine::readLivePlaybackState() const {
                            nonnegative(doubleProperty("duration"))};
 }
 
-bool MpvEngine::livePlaybackStateMatchesRecovery(
-    const RenderRecovery &recovery, const LivePlaybackState &live_state) {
+bool MpvEngine::livePlaybackStateMatches(bool intended_paused,
+                                         const LivePlaybackState &live_state) {
   // Reaching EOF can make mpv pause itself before END_FILE is observable.
   // Likewise, an idle engine is already terminal. Both live terminal states
   // must win over the captured play intent instead of resurrecting playback.
   return live_state.eof_reached.value_or(false) || live_state.idle ||
-         live_state.paused == recovery.paused;
-}
-
-bool MpvEngine::livePlaybackStateMatchesStartupSync(
-    const StartupPlaybackSync &startup_sync,
-    const LivePlaybackState &live_state) {
-  return live_state.eof_reached.value_or(false) || live_state.idle ||
-         live_state.paused == startup_sync.intended_paused;
+         live_state.paused == intended_paused;
 }
 
 void MpvEngine::commitRenderRecovery(
@@ -1428,7 +1419,8 @@ void MpvEngine::finishStartupPlaybackSync(
   const auto live_state = readLivePlaybackState();
   const bool live_state_matches =
       live_state &&
-      livePlaybackStateMatchesStartupSync(*lineage.startup_playback_sync, *live_state);
+      livePlaybackStateMatches(lineage.startup_playback_sync->intended_paused,
+                               *live_state);
   if (!live_state_matches) {
     if (lineage.startup_playback_sync->retry_count < 3) {
       constexpr std::array<int, 3> kRetryDelaysMs{0, 16, 50};
@@ -1506,28 +1498,26 @@ void MpvEngine::commitStartupPlaybackSync(
 void MpvEngine::scheduleRenderRecoveryRetry(const QString &error) {
   if (!lineage.render_recovery || !core)
     return;
-  lineage.render_recovery->restore_failure = error;
-  if (lineage.render_recovery->restore_retry_queued)
+  RecoveryRestoring *const restoring = lineage.render_recovery->restoring();
+  if (!restoring || restoring->retry_token)
     return;
-  if (lineage.render_recovery->restore_retry_count >= 3) {
+  if (lineage.render_recovery->restore_retries >= 3) {
     degradeRenderRecovery(error);
     return;
   }
 
-  constexpr std::array<int, 3> kRetryDelaysMs{0, 16, 50};
-  const int retry_index = lineage.render_recovery->restore_retry_count++;
-  lineage.render_recovery->restore_retry_queued = true;
-  const std::uint64_t request_serial = lineage.render_recovery->request_serial;
-  const std::uint64_t render_stamp = lineage.render_recovery->accepted_render_stamp;
+  const int retry_index = lineage.render_recovery->restore_retries++;
+  const std::uint64_t retry_token = nextToken(next_render_recovery_token_);
+  restoring->retry_token = retry_token;
   QTimer::singleShot(kRetryDelaysMs[static_cast<std::size_t>(retry_index)],
-                     owner_, [this, request_serial, render_stamp] {
-                       if (!lineage.render_recovery ||
-                           lineage.render_recovery->request_serial != request_serial ||
-                           lineage.render_recovery->accepted_render_stamp !=
-                               render_stamp) {
+                     owner_, [this, retry_token] {
+                       RecoveryRestoring *const current =
+                           lineage.render_recovery
+                               ? lineage.render_recovery->restoring()
+                               : nullptr;
+                       if (!current || current->retry_token != retry_token)
                          return;
-                       }
-                       lineage.render_recovery->restore_retry_queued = false;
+                       current->retry_token.reset();
                        restoreRenderRecovery();
                      });
 }
@@ -1537,7 +1527,6 @@ void MpvEngine::degradeRenderRecovery(const QString &error) {
     return;
   const RenderRecovery recovery = *lineage.render_recovery;
   lineage.render_recovery.reset();
-  lineage.render_recovery_attempt.reset();
 
   if (core && ready()) {
     static_cast<void>(setPausedNow(recovery.paused));
@@ -1581,9 +1570,9 @@ void MpvEngine::handleRenderInvalidated(
   }
 
   const bool retired_recovery_attempt =
-      lineage.render_recovery_attempt &&
-      lineage.render_recovery_attempt->request_serial == host_.requestSerial() &&
-      lineage.render_recovery_attempt->render_stamp == retired_render_stamp;
+      lineage.recoveryAttempt() &&
+      lineage.recoveryAttempt()->request_serial == host_.requestSerial() &&
+      lineage.recoveryAttempt()->render_stamp == retired_render_stamp;
   const bool retired_committed_output =
       lineage.committed_open && lineage.committed_open->request_serial == host_.requestSerial() &&
       lineage.committed_open->render_stamp == retired_render_stamp;
@@ -1686,7 +1675,6 @@ void MpvEngine::handleRenderInvalidated(
       lineage.render_recovery->restartForNewRenderContext();
     }
 
-    lineage.render_recovery_attempt.reset();
     if (lineage.committed_open)
       lineage.committed_open->render_stamp = 0;
     needs_retry = true;
@@ -1872,7 +1860,6 @@ void MpvEngine::handleOpenCommandReply(std::uint64_t attempt_id,
       playlistPositionForEntry(committed.playlist_entry_id);
   lineage.terminal_playlist_entry_id = -1;
   lineage.redirect_ranges.clear();
-  lineage.render_recovery_attempt.reset();
   lineage.render_recovery.reset();
   lineage.attached_subtitle_files.clear();
   lineage.current_file_has_audio_track.reset();
@@ -1927,10 +1914,10 @@ void MpvEngine::handleStartFile(std::int64_t playlist_entry_id) {
     lineage.active_event_playlist_entry_id = -1;
     return;
   }
-  if (lineage.render_recovery_attempt &&
-      lineage.render_recovery_attempt->request_serial == host_.requestSerial() &&
-      lineage.render_recovery_attempt->mode == RenderRecoveryMode::FullReload) {
-    lineage.render_recovery_attempt->started_playlist_entry_id = playlist_entry_id;
+  if (lineage.recoveryAttempt() &&
+      lineage.recoveryAttempt()->request_serial == host_.requestSerial() &&
+      lineage.recoveryAttempt()->mode == RenderRecoveryMode::FullReload) {
+    lineage.recoveryAttempt()->started_playlist_entry_id = playlist_entry_id;
     lineage.active_event_playlist_entry_id = playlist_entry_id;
     lineage.terminal_playlist_entry_id = -1;
     return;
@@ -1982,27 +1969,25 @@ void MpvEngine::handleStartFile(std::int64_t playlist_entry_id) {
   lineage.terminal_playlist_entry_id = -1;
   host_.updateEof(false);
   if (!lineage.render_recovery && lineage.committed_open->render_stamp == 0) {
-    RenderRecovery adoption;
-    adoption.request_serial = host_.requestSerial();
-    adoption.mode = RenderRecoveryMode::NoReselection;
+    std::uint64_t stamp = 0;
     if (core) {
       if (const auto ready = core->readyRenderTicket()) {
-        adoption.accepted_render_stamp = ready->stamp;
+        stamp = ready->stamp;
         lineage.committed_open->render_stamp = ready->stamp;
       }
     }
-    lineage.render_recovery = std::move(adoption);
+    lineage.render_recovery =
+        RenderRecovery::adoption(host_.requestSerial(), true, stamp);
   }
   if (lineage.render_recovery && lineage.render_recovery->request_serial == host_.requestSerial()) {
-    if (lineage.render_recovery->accepted_render_stamp != 0 && core &&
-        core->validateRenderTicket(
-            {lineage.render_recovery->accepted_render_stamp})) {
-      lineage.committed_open->render_stamp = lineage.render_recovery->accepted_render_stamp;
+    if (const RecoveryRestoring *restoring = lineage.render_recovery->restoring();
+        restoring && core && core->validateRenderTicket({restoring->stamp})) {
+      lineage.committed_open->render_stamp = restoring->stamp;
     }
-    if (lineage.render_recovery_attempt &&
-        lineage.render_recovery_attempt->request_serial == host_.requestSerial() &&
-        lineage.render_recovery_attempt->mode == RenderRecoveryMode::VideoReselect) {
-      lineage.render_recovery_attempt->playlist_entry_id = playlist_entry_id;
+    if (lineage.recoveryAttempt() &&
+        lineage.recoveryAttempt()->request_serial == host_.requestSerial() &&
+        lineage.recoveryAttempt()->mode == RenderRecoveryMode::VideoReselect) {
+      lineage.recoveryAttempt()->playlist_entry_id = playlist_entry_id;
     }
   }
   if (entry_changed) {
@@ -2048,9 +2033,9 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
 
   // A video-only full reload first stops the retained old entry. That stop is
   // part of recovery, not a terminal event for the user's current request.
-  if (lineage.render_recovery_attempt &&
-      lineage.render_recovery_attempt->mode == RenderRecoveryMode::FullReload &&
-      lineage.render_recovery_attempt->playlist_entry_id == end.playlist_entry_id) {
+  if (lineage.recoveryAttempt() &&
+      lineage.recoveryAttempt()->mode == RenderRecoveryMode::FullReload &&
+      lineage.recoveryAttempt()->playlist_entry_id == end.playlist_entry_id) {
     return;
   }
 
@@ -2061,7 +2046,6 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
     // Preserve the captured per-file state and escalate this one recovery to
     // the guarded full-reload path.
     lineage.render_recovery->escalateToFullReload();
-    lineage.render_recovery_attempt.reset();
     lineage.committed_open->render_stamp = 0;
     continuePendingOpen();
     return;
@@ -2082,20 +2066,16 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
       // replacement render generation: a redirect sibling may start next.
       // Carry only generation adoption so the sibling establishes a fresh
       // FILE_LOADED track snapshot instead of replaying the old child.
-      std::uint64_t adoption_stamp = lineage.render_recovery->accepted_render_stamp;
+      const RecoveryRestoring *restoring = lineage.render_recovery->restoring();
+      std::uint64_t adoption_stamp = restoring ? restoring->stamp : 0;
       if ((!core || !core->validateRenderTicket({adoption_stamp})) && core) {
         if (const auto ready = core->readyRenderTicket())
           adoption_stamp = ready->stamp;
         else
           adoption_stamp = 0;
       }
-      RenderRecovery adoption;
-      adoption.request_serial = host_.requestSerial();
-      adoption.paused = host_.paused();
-      adoption.mode = RenderRecoveryMode::NoReselection;
-      adoption.accepted_render_stamp = adoption_stamp;
-      lineage.render_recovery = std::move(adoption);
-      lineage.render_recovery_attempt.reset();
+      lineage.render_recovery = RenderRecovery::adoption(
+          host_.requestSerial(), host_.paused(), adoption_stamp);
       lineage.committed_open->render_stamp = adoption_stamp;
       host_.updateEof(true);
       if (adoption_stamp == 0)
@@ -2110,17 +2090,15 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
             lineage.render_recovery->mode != RenderRecoveryMode::NoReselection) {
           return;
         }
-        const std::uint64_t adoption_stamp =
-            lineage.render_recovery->accepted_render_stamp;
+        const RecoveryRestoring *restoring = lineage.render_recovery->restoring();
+        const std::uint64_t adoption_stamp = restoring ? restoring->stamp : 0;
         lineage.render_recovery.reset();
-        lineage.render_recovery_attempt.reset();
         lineage.committed_open->render_stamp = adoption_stamp;
         lineage.terminal_playlist_entry_id = terminal_entry;
       });
       return;
     }
     lineage.render_recovery.reset();
-    lineage.render_recovery_attempt.reset();
     lineage.terminal_playlist_entry_id = end.playlist_entry_id;
     host_.updateEof(true);
     return;
@@ -2128,7 +2106,6 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
   if (end.reason == MPV_END_FILE_REASON_ERROR) {
     lineage.startup_playback_sync.reset();
     lineage.render_recovery.reset();
-    lineage.render_recovery_attempt.reset();
     host_.updatePause(true);
     host_.updateIdle(true);
     host_.updateEof(false);
@@ -2172,21 +2149,18 @@ void MpvEngine::handlePlaybackReady(bool file_loaded) {
         lineage.committed_open->playlist_entry_id == lineage.active_event_playlist_entry_id) {
       matching_lineage = true;
     }
-    if (lineage.render_recovery_attempt &&
-        lineage.render_recovery_attempt->mode == RenderRecoveryMode::FullReload &&
-        lineage.render_recovery_attempt->started_playlist_entry_id >= 0 &&
-        lineage.render_recovery_attempt->started_playlist_entry_id ==
+    if (lineage.recoveryAttempt() &&
+        lineage.recoveryAttempt()->mode == RenderRecoveryMode::FullReload &&
+        lineage.recoveryAttempt()->started_playlist_entry_id >= 0 &&
+        lineage.recoveryAttempt()->started_playlist_entry_id ==
             lineage.active_event_playlist_entry_id) {
       matching_lineage = true;
     }
     if (matching_lineage) {
       if (file_loaded)
-        lineage.render_recovery->file_loaded = true;
-      else if (lineage.render_recovery->accepted_render_stamp != 0 &&
-               !lineage.render_recovery_attempt && core &&
-               core->validateRenderTicket(
-                   {lineage.render_recovery->accepted_render_stamp}))
-        lineage.render_recovery->playback_restarted = true;
+        lineage.render_recovery->noteFileLoaded();
+      else
+        notePlaybackRestartForRecovery();
     }
   } else if (lineage.startup_playback_sync && lineage.committed_open &&
              lineage.startup_playback_sync->request_serial == host_.requestSerial() &&
@@ -2219,6 +2193,25 @@ void MpvEngine::handlePlaybackReady(bool file_loaded) {
   restoreRenderRecovery();
 }
 
+void MpvEngine::notePlaybackRestartForRecovery() {
+  RenderRecovery &recovery = *lineage.render_recovery;
+  if (RecoveryRestoring *const restoring = recovery.restoring()) {
+    if (core && core->validateRenderTicket({restoring->stamp}))
+      restoring->playback_restarted = true;
+    return;
+  }
+  // A full reload's own START_FILE precedes this restart, so the restart is
+  // the reload's even when its command reply has not been read yet. A video
+  // reselect has no such marker: a restart before its reply may predate it.
+  if (auto *const in_flight = std::get_if<RecoveryCommandInFlight>(&recovery.phase);
+      in_flight && in_flight->attempt.mode == RenderRecoveryMode::FullReload &&
+      in_flight->attempt.started_playlist_entry_id >= 0 &&
+      in_flight->attempt.started_playlist_entry_id ==
+          lineage.active_event_playlist_entry_id) {
+    in_flight->playback_restarted = true;
+  }
+}
+
 void MpvEngine::abandonPendingOpen() {
   host_.setRequestedSource(host_.source());
   lineage.observed_current_path = !host_.source().isEmpty();
@@ -2226,7 +2219,6 @@ void MpvEngine::abandonPendingOpen() {
   lineage.pending_request_serial = 0;
   lineage.open_attempt.reset();
   lineage.render_recovery.reset();
-  lineage.render_recovery_attempt.reset();
   if (lineage.committed_open && !host_.requestedSource().isEmpty()) {
     // The previous source remains authoritative when a replacement command
     // could not be accepted. Associate it with the now-current request serial
@@ -2276,45 +2268,69 @@ void MpvEngine::notifyRoutedFallbackOpenFailed() {
   native->fallbackOpenFailed(routed.attempt, routed.serial, routed.source_key);
 }
 
+MpvEngine::RenderRecovery
+MpvEngine::RenderRecovery::adoption(std::uint64_t request_serial, bool paused,
+                                    std::uint64_t render_stamp) {
+  RenderRecovery adoption;
+  adoption.request_serial = request_serial;
+  adoption.paused = paused;
+  adoption.mode = RenderRecoveryMode::NoReselection;
+  if (render_stamp != 0)
+    adoption.acceptGeneration(render_stamp);
+  return adoption;
+}
+
+bool MpvEngine::RenderRecovery::fileLoaded() const noexcept {
+  return std::visit([](const auto &phase) { return phase.file_loaded; }, phase);
+}
+
+void MpvEngine::RenderRecovery::noteFileLoaded() noexcept {
+  std::visit([](auto &phase) { phase.file_loaded = true; }, phase);
+}
+
+void MpvEngine::RenderRecovery::acceptGeneration(std::uint64_t stamp) {
+  RecoveryRestoring restoring;
+  restoring.stamp = stamp;
+  restoring.step = mode == RenderRecoveryMode::FullReload
+                       ? RestoreStep::Subtitles
+                       : RestoreStep::TrackSnapshot;
+  restoring.file_loaded = fileLoaded();
+  phase = restoring;
+}
+
 void MpvEngine::RenderRecovery::restartForNewRenderContext() {
-  accepted_render_stamp = 0;
-  command_failed = false;
-  file_loaded = false;
-  playback_restarted = false;
-  external_subtitles_restored = false;
-  external_subtitles_restored_count = 0;
-  per_file_state_restored = false;
-  transport_restored = false;
-  completion_token = 0;
-  restore_retry_count = 0;
-  restore_retry_queued = false;
-  restore_failure.clear();
+  phase = RecoveryAwaitingGeneration{};
+  restore_retries = 0;
 }
 
 void MpvEngine::RenderRecovery::escalateToFullReload() {
   mode = RenderRecoveryMode::FullReload;
-  accepted_render_stamp = 0;
-  command_failed = false;
-  file_loaded = false;
-  playback_restarted = false;
-  external_subtitles_restored = false;
-  external_subtitles_restored_count = 0;
-  per_file_state_restored = false;
-  transport_restored = false;
-  completion_token = 0;
+  phase = RecoveryAwaitingGeneration{};
 }
 
 void MpvEngine::RenderRecovery::restartForNewPlaylistEntry() {
   position = 0.0;
   position_overridden = false;
-  file_loaded = false;
-  playback_restarted = false;
   track_snapshot_proven = false;
-  transport_restored = false;
-  completion_token = 0;
-  restore_retry_count = 0;
-  restore_retry_queued = false;
-  restore_failure.clear();
+  restore_retries = 0;
+  std::visit(
+      [](auto &phase) {
+        using Phase = std::decay_t<decltype(phase)>;
+        phase.file_loaded = false;
+        if constexpr (!std::is_same_v<Phase, RecoveryAwaitingGeneration>)
+          phase.playback_restarted = false;
+        if constexpr (std::is_same_v<Phase, RecoveryRestoring>) {
+          phase.step = std::min(phase.step, RestoreStep::TrackSnapshot);
+          phase.retry_token.reset();
+          phase.completion_token.reset();
+        }
+      },
+      phase);
+}
+
+void MpvEngine::RenderRecovery::reopenTransport() noexcept {
+  if (RecoveryRestoring *const current = restoring())
+    current->step = std::min(current->step, RestoreStep::Transport);
 }
 
 void MpvEngine::observeProperties() {
@@ -2655,7 +2671,6 @@ bool MpvEngine::beginOpen(const QUrl &source) {
   lineage.pending_request_serial = host_.requestSerial();
   lineage.open_attempt.reset();
   lineage.render_recovery.reset();
-  lineage.render_recovery_attempt.reset();
   lineage.startup_playback_sync.reset();
   lineage.observed_current_path = false;
   lineage.terminal_playlist_entry_id = -1;
@@ -2692,7 +2707,7 @@ void MpvEngine::overrideIntendedPause(bool paused) {
         lineage.render_recovery->position = std::max(0.0, *live_position);
     }
     lineage.render_recovery->paused = paused;
-    lineage.render_recovery->transport_restored = false;
+    lineage.render_recovery->reopenTransport();
   }
   if (lineage.startup_playback_sync &&
       lineage.startup_playback_sync->request_serial == request_serial) {
@@ -2704,7 +2719,7 @@ void MpvEngine::overrideIntendedPosition(double target) {
   const std::uint64_t request_serial = host_.requestSerial();
   if (lineage.render_recovery && lineage.render_recovery->request_serial == request_serial) {
     lineage.render_recovery->position = target;
-    lineage.render_recovery->transport_restored = false;
+    lineage.render_recovery->reopenTransport();
     lineage.render_recovery->position_overridden = true;
   }
   if (lineage.startup_playback_sync &&

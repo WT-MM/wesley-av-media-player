@@ -17,6 +17,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 namespace wam::playback::mpv {
@@ -229,10 +230,63 @@ public:
     FullReload,
   };
 
+  struct RenderRecoveryAttempt {
+    std::uint64_t id = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t render_stamp = 0;
+    std::int64_t playlist_entry_id = -1;
+    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
+    std::int64_t started_playlist_entry_id = -1;
+    bool restarted_playlist_entry = false;
+  };
+
+  // The restore ladder, in order. Only a full reload re-attaches subtitles
+  // and per-file state; the other modes start at the track snapshot.
+  enum class RestoreStep : std::uint8_t {
+    Subtitles,
+    PerFileState,
+    TrackSnapshot,
+    Transport,
+    Done,
+  };
+
+  // Waiting for a Ready render generation to recover onto.
+  struct RecoveryAwaitingGeneration {
+    // No initializer, so the enclosing class can default-construct the
+    // phase variant; the variant value-initializes it to false.
+    bool file_loaded;
+  };
+  // A vid reselect or reload command is queued against `attempt`'s
+  // generation and its reply is outstanding.
+  struct RecoveryCommandInFlight {
+    RenderRecoveryAttempt attempt;
+    bool file_loaded = false;
+    bool playback_restarted = false;
+  };
+  // The generation `stamp` is accepted; the ladder restores per-file state
+  // and transport, then one queued completion publishes the live snapshot.
+  struct RecoveryRestoring {
+    std::uint64_t stamp = 0;
+    RestoreStep step = RestoreStep::Subtitles;
+    std::size_t subtitles_restored = 0;
+    bool file_loaded = false;
+    bool playback_restarted = false;
+    // A queued retry or completion runs only while its token is current, so
+    // leaving this phase retires both.
+    std::optional<std::uint64_t> retry_token;
+    std::optional<std::uint64_t> completion_token;
+  };
+  using RecoveryPhase =
+      std::variant<RecoveryAwaitingGeneration, RecoveryCommandInFlight,
+                   RecoveryRestoring>;
+
   struct RenderRecovery {
+    // What the recovery restores: the transport intent and the per-file
+    // state captured when the render context was lost.
     std::uint64_t request_serial = 0;
     double position = 0.0;
     bool paused = true;
+    bool position_overridden = false;
     RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
     std::int64_t video_track_id = -1;
     std::int64_t audio_track_id = -1;
@@ -243,21 +297,30 @@ public:
     QUrl reload_source;
     std::int64_t playlist_position = -1;
     bool preserve_playlist_context = false;
-    std::uint64_t accepted_render_stamp = 0;
-    bool command_failed = false;
-    bool file_loaded = false;
-    bool playback_restarted = false;
-    bool external_subtitles_restored = false;
-    std::size_t external_subtitles_restored_count = 0;
-    bool per_file_state_restored = false;
-    bool transport_restored = false;
-    bool position_overridden = false;
-    std::uint64_t completion_token = 0;
-    int restore_retry_count = 0;
-    bool restore_retry_queued = false;
-    QString restore_failure;
+    // Restore retries spent; an escalation keeps the budget.
+    int restore_retries = 0;
+    RecoveryPhase phase;
 
-    // Three restarts, each clearing exactly the progress its event voids.
+    [[nodiscard]] RenderRecoveryAttempt *attempt() noexcept {
+      auto *in_flight = std::get_if<RecoveryCommandInFlight>(&phase);
+      return in_flight ? &in_flight->attempt : nullptr;
+    }
+    [[nodiscard]] RecoveryRestoring *restoring() noexcept {
+      return std::get_if<RecoveryRestoring>(&phase);
+    }
+    [[nodiscard]] const RecoveryRestoring *restoring() const noexcept {
+      return std::get_if<RecoveryRestoring>(&phase);
+    }
+    [[nodiscard]] const RenderRecoveryAttempt *attempt() const noexcept {
+      const auto *in_flight = std::get_if<RecoveryCommandInFlight>(&phase);
+      return in_flight ? &in_flight->attempt : nullptr;
+    }
+    [[nodiscard]] bool fileLoaded() const noexcept;
+    void noteFileLoaded() noexcept;
+
+    // Named transitions.
+    // A Ready generation was accepted (directly, or by the command reply).
+    void acceptGeneration(std::uint64_t stamp);
     // A second render-context loss: re-run the restore from the top, with
     // the captured position and its override kept.
     void restartForNewRenderContext();
@@ -267,17 +330,13 @@ public:
     // The reload started a different playlist entry (a redirect child):
     // its position and track snapshot are no longer this recovery's.
     void restartForNewPlaylistEntry();
-  };
-
-  struct RenderRecoveryAttempt {
-    std::uint64_t id = 0;
-    std::uint64_t request_serial = 0;
-    std::uint64_t render_stamp = 0;
-    std::int64_t playlist_entry_id = -1;
-    std::int64_t video_track_id = -1;
-    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
-    std::int64_t started_playlist_entry_id = -1;
-    bool restarted_playlist_entry = false;
+    // A newer user transport intent: restore transport again.
+    void reopenTransport() noexcept;
+    // A NoReselection recovery that only binds a render generation: after
+    // EOF, or for a redirect child started while no generation was bound.
+    [[nodiscard]] static RenderRecovery
+    adoption(std::uint64_t request_serial, bool paused,
+             std::uint64_t render_stamp);
   };
 
   struct StartupPlaybackSync {
@@ -307,7 +366,6 @@ public:
     QUrl committed_entry_source;
     std::int64_t committed_playlist_position = -1;
     std::optional<RenderRecovery> render_recovery;
-    std::optional<RenderRecoveryAttempt> render_recovery_attempt;
     std::optional<StartupPlaybackSync> startup_playback_sync;
     std::optional<RoutedFallbackOpen> routed_fallback_open;
     std::vector<PlaylistEntryRange> redirect_ranges;
@@ -322,6 +380,13 @@ public:
     std::int64_t selected_tracks_playlist_entry_id = -1;
     std::optional<bool> current_file_has_audio_track;
     std::vector<std::filesystem::path> attached_subtitle_files;
+
+    [[nodiscard]] RenderRecoveryAttempt *recoveryAttempt() noexcept {
+      return render_recovery ? render_recovery->attempt() : nullptr;
+    }
+    [[nodiscard]] const RenderRecoveryAttempt *recoveryAttempt() const noexcept {
+      return render_recovery ? render_recovery->attempt() : nullptr;
+    }
   };
 
   MpvEngine(PlayerController *owner, MpvEngineHost &host);
@@ -491,16 +556,21 @@ public:
   void restoreRenderRecovery();
   void queueRenderRecoveryCompletion();
   void finishRenderRecoveryCompletion(std::uint64_t completion_token,
-                                      std::uint64_t request_serial,
                                       std::uint64_t render_stamp,
                                       std::int64_t playlist_entry_id);
+  // True when the committed open is `request_serial`'s, bound to the live
+  // render generation `render_stamp`, and its entry `playlist_entry_id` is
+  // the active one.
+  [[nodiscard]] bool committedOutputIs(std::uint64_t request_serial,
+                                       std::uint64_t render_stamp,
+                                       std::int64_t playlist_entry_id) const;
+  void notePlaybackRestartForRecovery();
   [[nodiscard]] std::optional<LivePlaybackState> readLivePlaybackState() const;
+  // Whether the live engine state agrees with an intended pause, or is
+  // terminal (idle, EOF), which outranks the intent.
   [[nodiscard]] static bool
-  livePlaybackStateMatchesRecovery(const RenderRecovery &recovery,
-                                   const LivePlaybackState &live_state);
-  [[nodiscard]] static bool
-  livePlaybackStateMatchesStartupSync(const StartupPlaybackSync &startup_sync,
-                                      const LivePlaybackState &live_state);
+  livePlaybackStateMatches(bool intended_paused,
+                           const LivePlaybackState &live_state);
   void commitRenderRecovery(const RenderRecovery &recovery,
                             const LivePlaybackState &live_state);
   void queueStartupPlaybackSync();
@@ -602,7 +672,7 @@ private:
   std::uint64_t next_scrub_command_id_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;
-  std::uint64_t next_render_recovery_completion_token_ = 0;
+  std::uint64_t next_render_recovery_token_ = 0;
   std::uint64_t next_startup_playback_sync_token_ = 0;
   QTimer *scrub_timeout_timer_ = nullptr;
   std::uint64_t scrub_timeout_gesture_ = 0;

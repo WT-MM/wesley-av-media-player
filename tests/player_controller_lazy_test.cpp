@@ -19,6 +19,8 @@
 #include <cmath>
 #include <utility>
 #include <vector>
+#include <variant>
+#include <type_traits>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -177,8 +179,8 @@ class PlayerControllerTestAccess final {
       std::optional<bool> eof_reached) {
     if (!controller.mpv_.lineage.startup_playback_sync)
       return false;
-    return MpvEngine::livePlaybackStateMatchesStartupSync(
-        *controller.mpv_.lineage.startup_playback_sync,
+    return MpvEngine::livePlaybackStateMatches(
+        controller.mpv_.lineage.startup_playback_sync->intended_paused,
         MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             std::nullopt, std::nullopt});
   }
@@ -203,20 +205,32 @@ class PlayerControllerTestAccess final {
 
   static bool recoveryPlaybackRestarted(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->playback_restarted;
+    if (!controller.mpv_.lineage.render_recovery)
+      return false;
+    return std::visit(
+        [](const auto &phase) {
+          if constexpr (std::is_same_v<std::decay_t<decltype(phase)>,
+                                       MpvEngine::RecoveryAwaitingGeneration>)
+            return false;
+          else
+            return phase.playback_restarted;
+        },
+        controller.mpv_.lineage.render_recovery->phase);
   }
 
   static bool recoveryCompletionQueued(
       const PlayerController &controller) {
     return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->completion_token != 0;
+           controller.mpv_.lineage.render_recovery->restoring() &&
+           controller.mpv_.lineage.render_recovery->restoring()->completion_token;
   }
 
   static bool recoveryTransportRestored(
       const PlayerController &controller) {
     return controller.mpv_.lineage.render_recovery &&
-           controller.mpv_.lineage.render_recovery->transport_restored;
+           controller.mpv_.lineage.render_recovery->restoring() &&
+           controller.mpv_.lineage.render_recovery->restoring()->step ==
+               MpvEngine::RestoreStep::Done;
   }
 
   static bool recoveryIsVideoReselect(const PlayerController &controller) {
@@ -272,27 +286,27 @@ class PlayerControllerTestAccess final {
   }
 
   static bool hasRecoveryAttempt(const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery_attempt.has_value();
+    return controller.mpv_.lineage.recoveryAttempt() != nullptr;
   }
 
   static bool recoveryAttemptIsVideoReselect(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery_attempt &&
-           controller.mpv_.lineage.render_recovery_attempt->mode ==
+    return controller.mpv_.lineage.recoveryAttempt() &&
+           controller.mpv_.lineage.recoveryAttempt()->mode ==
                PlayerController::RenderRecoveryMode::VideoReselect;
   }
 
   static bool recoveryAttemptIsFullReload(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery_attempt &&
-           controller.mpv_.lineage.render_recovery_attempt->mode ==
+    return controller.mpv_.lineage.recoveryAttempt() &&
+           controller.mpv_.lineage.recoveryAttempt()->mode ==
                PlayerController::RenderRecoveryMode::FullReload;
   }
 
   static std::uint64_t recoveryAttemptId(
       const PlayerController &controller) {
-    return controller.mpv_.lineage.render_recovery_attempt
-               ? controller.mpv_.lineage.render_recovery_attempt->id
+    return controller.mpv_.lineage.recoveryAttempt()
+               ? controller.mpv_.lineage.recoveryAttempt()->id
                : 0;
   }
 
@@ -388,16 +402,16 @@ class PlayerControllerTestAccess final {
     if (!controller.mpv_.lineage.render_recovery)
       return 0;
     constexpr std::uint64_t attempt_id = 991;
-    controller.mpv_.lineage.render_recovery_attempt =
-        PlayerController::RenderRecoveryAttempt{
-            attempt_id,
-            controller.request_serial_,
-            ticket.stamp,
-            playlist_entry_id,
-            controller.mpv_.lineage.render_recovery->video_track_id,
-            PlayerController::RenderRecoveryMode::FullReload,
-            playlist_entry_id,
-            restarted_playlist_entry};
+    controller.mpv_.lineage.render_recovery->phase =
+        MpvEngine::RecoveryCommandInFlight{
+            MpvEngine::RenderRecoveryAttempt{
+                attempt_id,
+                controller.request_serial_,
+                ticket.stamp,
+                playlist_entry_id,
+                PlayerController::RenderRecoveryMode::FullReload,
+                playlist_entry_id,
+                restarted_playlist_entry}};
     return attempt_id;
   }
 
@@ -406,7 +420,6 @@ class PlayerControllerTestAccess final {
     if (controller.mpv_.lineage.committed_open)
       controller.mpv_.lineage.committed_open->render_stamp = ticket.stamp;
     controller.mpv_.lineage.render_recovery.reset();
-    controller.mpv_.lineage.render_recovery_attempt.reset();
   }
 
   static std::int64_t authoritativePlaylistEntry(
@@ -428,7 +441,7 @@ class PlayerControllerTestAccess final {
     recovery.position = position;
     recovery.paused = paused;
     recovery.track_snapshot_proven = true;
-    recovery.accepted_render_stamp = ticket.stamp;
+    recovery.acceptGeneration(ticket.stamp);
     controller.mpv_.lineage.render_recovery = std::move(recovery);
     controller.position_ = position;
     controller.updatePause(paused);
@@ -987,17 +1000,18 @@ class PlayerControllerTestAccess final {
   static void queueRecoveryCompletion(PlayerController &controller) {
     if (!controller.mpv_.lineage.render_recovery)
       return;
-    controller.mpv_.lineage.render_recovery->transport_restored = true;
+    if (auto *restoring = controller.mpv_.lineage.render_recovery->restoring())
+      restoring->step = MpvEngine::RestoreStep::Done;
     controller.mpv_.queueRenderRecoveryCompletion();
   }
 
   static void finishQueuedRecoveryCompletion(PlayerController &controller) {
     if (!controller.mpv_.lineage.render_recovery || !controller.mpv_.lineage.committed_open)
       return;
+    const auto *restoring = controller.mpv_.lineage.render_recovery->restoring();
     controller.mpv_.finishRenderRecoveryCompletion(
-        controller.mpv_.lineage.render_recovery->completion_token,
-        controller.mpv_.lineage.render_recovery->request_serial,
-        controller.mpv_.lineage.render_recovery->accepted_render_stamp,
+        restoring && restoring->completion_token ? *restoring->completion_token : 0,
+        restoring ? restoring->stamp : 0,
         controller.mpv_.lineage.committed_open->playlist_entry_id);
   }
 
@@ -1042,8 +1056,8 @@ class PlayerControllerTestAccess final {
       bool eof_reached) {
     if (!controller.mpv_.lineage.render_recovery)
       return false;
-    return MpvEngine::livePlaybackStateMatchesRecovery(
-        *controller.mpv_.lineage.render_recovery,
+    return MpvEngine::livePlaybackStateMatches(
+        controller.mpv_.lineage.render_recovery->paused,
         MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             std::nullopt, std::nullopt});
   }
@@ -1103,10 +1117,11 @@ class PlayerControllerTestAccess final {
     controller.mpv_.lineage.selected_tracks_playlist_entry_id =
         controller.mpv_.lineage.committed_open->playlist_entry_id;
     controller.mpv_.lineage.current_file_has_audio_track = has_audio_track;
+    const auto *restoring = controller.mpv_.lineage.render_recovery->restoring();
+    std::uint64_t stamp = restoring ? restoring->stamp : 0;
     if (const auto ready = controller.mpv_.core->readyRenderTicket())
-      controller.mpv_.lineage.render_recovery->accepted_render_stamp = ready->stamp;
-    controller.mpv_.lineage.committed_open->render_stamp =
-        controller.mpv_.lineage.render_recovery->accepted_render_stamp;
+      stamp = ready->stamp;
+    controller.mpv_.lineage.committed_open->render_stamp = stamp;
     controller.mpv_.lineage.render_recovery.reset();
   }
 
@@ -1114,7 +1129,7 @@ class PlayerControllerTestAccess final {
                                    const QString &error) {
     if (!controller.mpv_.lineage.render_recovery)
       return;
-    controller.mpv_.lineage.render_recovery->restore_retry_count = 3;
+    controller.mpv_.lineage.render_recovery->restore_retries = 3;
     controller.mpv_.scheduleRenderRecoveryRetry(error);
   }
 
@@ -1132,8 +1147,7 @@ class PlayerControllerTestAccess final {
   static void acceptRecoveryGeneration(PlayerController &controller,
                                        RenderTicket ticket) {
     if (controller.mpv_.lineage.render_recovery)
-      controller.mpv_.lineage.render_recovery->accepted_render_stamp =
-          ticket.stamp;
+      controller.mpv_.lineage.render_recovery->acceptGeneration(ticket.stamp);
   }
 
   static void startNewLineage(PlayerController &controller) {
@@ -2000,6 +2014,37 @@ int main(int argc, char **argv) {
            "degraded recovery accepts live observations again");
   }
 
+  {
+    // A video reselect whose entry fails escalates to a full reload while a
+    // restore retry is queued; that stale retry must not strand the budget.
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    const auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://tickets/escalated-retry"));
+    Access::seedCommittedRecovery(controller, source, 66, ready, 966, 12.0,
+                                  false);
+    Access::setRecoveryVideoReselect(controller);
+    Access::scheduleRecoveryRetry(
+        controller, QStringLiteral("Restored video output did not become ready."));
+    Access::endFile(controller, MPV_END_FILE_REASON_ERROR, 966,
+                    MPV_ERROR_LOADING_FAILED);
+    expect(Access::recoveryIsFullReload(controller),
+           "an unloaded reselect escalates to a full reload");
+    QCoreApplication::processEvents();
+    Access::acceptRecoveryGeneration(controller, ready);
+    for (int attempt = 0; attempt < 8 && Access::hasRenderRecovery(controller);
+         ++attempt) {
+      Access::scheduleRecoveryRetry(
+          controller, QStringLiteral("Unable to restore selected media tracks."));
+      // Long enough for the slowest (50 ms) retry timer to fire.
+      static_cast<void>(processEventsUntil([] { return false; },
+                                           std::chrono::milliseconds(80)));
+    }
+    expect(!Access::hasRenderRecovery(controller) &&
+               !controller.lastError().isEmpty(),
+           "restore failures after escalation still retry, then degrade");
+  }
+
 
   {
     using Access = wam::qt::PlayerControllerTestAccess;
@@ -2115,6 +2160,26 @@ int main(int argc, char **argv) {
     expect(Access::recoveryIsVideoReselect(controller) &&
                Access::recoveryTrackSnapshotProven(controller),
            "a second invalidation uses the proven live A/V snapshot");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    const auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://tickets/reload-restart-order"));
+    Access::seedCommittedMedia(controller, source, 74, ready, 474, 1, 0, 0,
+                               false);
+    Access::clearTrackSnapshot(controller);
+    Access::renderInvalidated(controller, Access::invalidateRenderer(controller));
+    const auto replacement = Access::makeRendererReady(controller);
+    const std::uint64_t reload = Access::seedFullReloadAttempt(
+        controller, replacement, 475, false);
+    Access::startFile(controller, 475);
+    Access::playbackReady(controller);
+    Access::completeRecoveryAttempt(controller, reload);
+    expect(Access::hasRenderRecovery(controller) &&
+               Access::recoveryPlaybackRestarted(controller),
+           "a reload's restart that beats its command reply still counts");
   }
 
   {
