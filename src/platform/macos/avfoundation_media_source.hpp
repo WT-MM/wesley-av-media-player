@@ -76,6 +76,8 @@ struct AVFoundationCopiedSample {
   AVFoundationSampleReadStatus status{
       AVFoundationSampleReadStatus::Failed};
   std::string error;
+  // See MediaSample::aacPiecewiseTimeline.
+  bool aacPiecewiseTimeline{false};
 };
 
 class AVFoundationGeneration {

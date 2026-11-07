@@ -2538,6 +2538,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
     }
     ScopedSampleBuffer read(copied.sample);
     copied.sample = restatedOnMediaTimeline(read.get());
+    copied.aacPiecewiseTimeline = aac_timeline_ != nullptr;
     if (copied.sample == nullptr) {
       copied.status = AVFoundationSampleReadStatus::Failed;
       copied.error =
@@ -2933,8 +2934,6 @@ class ProductionGeneration final : public AVFoundationGeneration {
       CFRelease(restated);
       return nullptr;
     }
-    if (aac_timeline_) CMSetAttachment(restated, aacPiecewiseTimelineAttachmentKey(),
-        kCFBooleanTrue, kCMAttachmentMode_ShouldPropagate);
     return restated;
   }
 
@@ -3249,7 +3248,7 @@ struct AVFoundationMediaSource::Impl final
 
   [[nodiscard]] std::optional<StagedSample> makeHead(
       ScopedSampleBuffer owned, MediaTrackId trackId, MediaSampleKind kind,
-      std::string* error) {
+      bool aacPiecewiseTimeline, std::string* error) {
     CMSampleBufferRef sample = owned.get();
     if (sample == nullptr || !CMSampleBufferIsValid(sample) ||
         !CMSampleBufferDataIsReady(sample)) {
@@ -3365,6 +3364,7 @@ struct AVFoundationMediaSource::Impl final
     mediaSample.duration = duration;
     mediaSample.keyFrame = keyFrame;
     mediaSample.sampleCount = sampleCount;
+    mediaSample.aacPiecewiseTimeline = aacPiecewiseTimeline;
     mediaSample.payload = MediaPayloadLease(std::move(storage));
     if (kind == MediaSampleKind::EncodedVideo && requestedTarget &&
         seekMode == media::MediaSeekMode::Accurate) {
@@ -3422,7 +3422,7 @@ struct AVFoundationMediaSource::Impl final
       auto head = makeHead(std::move(owned), *selected,
                            video ? MediaSampleKind::EncodedVideo
                                  : MediaSampleKind::EncodedAudio,
-                           error);
+                           copied.aacPiecewiseTimeline, error);
       if (!head) {
         return false;
       }

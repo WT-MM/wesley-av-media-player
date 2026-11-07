@@ -124,7 +124,6 @@ public:
                                      shape, "libavformat", &owned, &error))
       return false;
     if (track.codec == MediaCodec::Aac) {
-      CMSetAttachment(owned.get(), aacPiecewiseTimelineAttachmentKey(), kCFBooleanTrue, kCMAttachmentMode_ShouldPropagate);
       const auto floor=audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track.audio->sampleRate));
       const auto frame=exactAudioFrameIndex(packet.pts,static_cast<std::uint32_t>(track.audio->sampleRate));
       const auto floorFrame=floor ? exactAudioFrameIndex(*floor,static_cast<std::uint32_t>(track.audio->sampleRate)) : std::nullopt;
@@ -141,6 +140,7 @@ public:
     out.duration = duration;
     out.keyFrame = packet.key;
     out.decodeOnly = *decodeOnly;
+    out.aacPiecewiseTimeline = track.codec == MediaCodec::Aac;
     out.payload = MediaPayloadLease(*free);
     return true;
   }

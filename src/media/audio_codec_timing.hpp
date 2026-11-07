@@ -56,11 +56,6 @@ audioPrimingCeilingFrame(std::int64_t presentationFrame,
       presentationFrame - audioPrimingFrames(framesPerPacket), 0);
 }
 
-// The CoreMedia sample attachment that switches the converter to the AAC
-// piecewise timeline. Spelled once; the platform wraps it in a CFString.
-inline constexpr char kAacPiecewiseTimelineAttachmentKey[] =
-    "WAMAacPiecewiseTimeline";
-
 // Bounds an open-time walk over a file's packets.
 inline constexpr std::uint64_t kMaximumAudioIndexScanPackets{2'000'000};
 
