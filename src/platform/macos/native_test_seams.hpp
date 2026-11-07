@@ -9,7 +9,9 @@
 // native tests, and WAMKit configured with WAMKIT_ENABLE_TEST_SUPPORT (whose
 // identity-gated environment variables are the only production-binary
 // producers of these seams). Shipping builds compile none of it: no hook
-// storage, no hook call on the real-time path, no test-only global.
+// storage, no hook call on the real-time path, no test-only global. The Qt
+// layer's one equivalent switch is WAM_QT_TEST_SEAMS (wam_app_test_seams in
+// tests/CMakeLists.txt).
 //
 // Seams that stay compiled in shipping builds, deliberately:
 //   * WAM_TEST_MUTED (native_audio_test_mute.hpp): output-copy mute for
