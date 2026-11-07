@@ -42,3 +42,7 @@ inline void require(bool condition, const std::string& message) {
 #define WAM_EXPECT_LOCATION_(line) __FILE__ ":" WAM_EXPECT_STRINGIFY_(line)
 #define EXPECT(x) expect(static_cast<bool>(x), WAM_EXPECT_LOCATION_(__LINE__) ": " #x)
 #define REQUIRE(x) require(static_cast<bool>(x), WAM_EXPECT_LOCATION_(__LINE__) ": " #x)
+#define REQUIRE_DETAIL(x, detail)                                              \
+  require(static_cast<bool>(x),                                                \
+          std::string(WAM_EXPECT_LOCATION_(__LINE__) ": " #x " (") + (detail) + \
+              ")")

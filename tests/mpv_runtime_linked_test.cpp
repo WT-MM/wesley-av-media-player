@@ -1,21 +1,8 @@
 #include "playback/mpv/mpv_runtime.hpp"
+#include "support/expect.hpp"
 
 #include <cstdlib>
 #include <iostream>
-
-namespace {
-
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (condition) {
-    return;
-  }
-  ++failures;
-  std::cerr << "FAIL: " << message << '\n';
-}
-
-}  // namespace
 
 int main() {
   using wam::playback::mpv::MpvLinkedRuntimeFactory;

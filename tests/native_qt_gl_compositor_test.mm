@@ -1,3 +1,4 @@
+#include "support/expect.hpp"
 #include "qt/macos/qt_gl_video_item.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -36,17 +37,6 @@
 #include <vector>
 
 namespace {
-
-void check(bool condition, const char* expression, int line) {
-  if (!condition) {
-    std::cerr << "CHECK failed at line " << line << ": " << expression
-              << '\n';
-    std::exit(EXIT_FAILURE);
-  }
-}
-
-#define WAM_CHECK(expression)                                                  \
-  check(static_cast<bool>(expression), #expression, __LINE__)
 
 // Every frame carries a distinct output identity, as the native output
 // adapter supplies one for each delivery.
@@ -110,7 +100,7 @@ bool isTenBit(OSType format) {
 
 void attachColorMetadata(CVPixelBufferRef buffer, CFStringRef matrix,
                          CFStringRef chromaLocation) {
-  WAM_CHECK(buffer != nullptr);
+  REQUIRE(buffer != nullptr);
   CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, matrix,
                         kCVAttachmentMode_ShouldPropagate);
   CVBufferSetAttachment(buffer, kCVImageBufferChromaLocationTopFieldKey,
@@ -140,7 +130,7 @@ bool fillSolid(CVPixelBufferRef buffer, PixelCodes codes) {
       CVPixelBufferGetBaseAddressOfPlane(buffer, 0));
   auto* chroma = static_cast<std::byte*>(
       CVPixelBufferGetBaseAddressOfPlane(buffer, 1));
-  WAM_CHECK(luma != nullptr && chroma != nullptr);
+  REQUIRE(luma != nullptr && chroma != nullptr);
   if (tenBit) {
     const std::uint16_t yCode = static_cast<std::uint16_t>(codes.y << 6U);
     const std::uint16_t cbCode = static_cast<std::uint16_t>(codes.cb << 6U);
@@ -196,7 +186,7 @@ bool fillAlternatingChroma(CVPixelBufferRef buffer) {
       CVPixelBufferGetBaseAddressOfPlane(buffer, 0));
   auto* chroma = static_cast<std::uint8_t*>(
       CVPixelBufferGetBaseAddressOfPlane(buffer, 1));
-  WAM_CHECK(luma != nullptr && chroma != nullptr);
+  REQUIRE(luma != nullptr && chroma != nullptr);
   for (std::size_t y = 0; y < lumaHeight; ++y) {
     std::fill_n(luma + y * lumaStride, lumaWidth,
                 static_cast<std::uint8_t>(126));
@@ -274,7 +264,7 @@ PixelBufferCreation solidBuffer(OSType format, PixelCodes codes,
   PixelBufferCreation result =
       tryCreateIOSurfacePixelBuffer(format, width, height);
   if (result.status == kCVReturnSuccess && result.buffer != nullptr) {
-    WAM_CHECK(fillSolid(result.buffer, codes));
+    REQUIRE(fillSolid(result.buffer, codes));
     attachColorMetadata(result.buffer, matrix,
                         kCVImageBufferChromaLocation_Center);
   }
@@ -285,7 +275,7 @@ QImage submitOwnedBufferAndGrab(wam::macos::QtGlVideoItem* video,
                                 QQuickWindow* window,
                                 CVPixelBufferRef ownedBuffer,
                                 std::uint64_t generation = 0) {
-  WAM_CHECK(video != nullptr && window != nullptr && ownedBuffer != nullptr);
+  REQUIRE(video != nullptr && window != nullptr && ownedBuffer != nullptr);
   const auto before = video->stats();
   wam::macos::FrameTiming timing;
   timing.generation = generation;
@@ -312,7 +302,7 @@ QImage submitOwnedBufferAndGrab(wam::macos::QtGlVideoItem* video,
     std::exit(EXIT_FAILURE);
   }
   QImage image = window->grabWindow();
-  WAM_CHECK(!image.isNull());
+  REQUIRE(!image.isNull());
   return image;
 }
 
@@ -324,9 +314,9 @@ void submitOwnedBufferExpectRejected(wam::macos::QtGlVideoItem* video,
   submitFrame(video, wam::macos::FrameLease(ownedBuffer));
   CVPixelBufferRelease(ownedBuffer);
   window->requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return video->stats().lastError.contains(expectedError); }, 5000));
-  WAM_CHECK(video->stats().importedFrames == before.importedFrames);
+  REQUIRE(video->stats().importedFrames == before.importedFrames);
 }
 
 void setHostGeometry(QQuickItem* host, qreal x, qreal y, qreal width,
@@ -376,13 +366,13 @@ int main(int argc, char** argv) {
       child.setProcessChannelMode(QProcess::ForwardedChannels);
       child.start(QCoreApplication::applicationFilePath(),
                   {faultPrefix + isolatedCase});
-      WAM_CHECK(child.waitForStarted(5000));
-      WAM_CHECK(child.waitForFinished(30000));
-      WAM_CHECK(child.exitStatus() == QProcess::NormalExit);
-      WAM_CHECK(child.exitCode() == EXIT_SUCCESS);
+      REQUIRE(child.waitForStarted(5000));
+      REQUIRE(child.waitForFinished(30000));
+      REQUIRE(child.exitStatus() == QProcess::NormalExit);
+      REQUIRE(child.exitCode() == EXIT_SUCCESS);
     }
   }
-  WAM_CHECK(
+  REQUIRE(
       wam::macos::QtGlVideoItem::verifyContextLocalVaoPolicyForTesting());
 
   QQuickWindow window;
@@ -425,7 +415,7 @@ Item {
   }
   auto* root = qobject_cast<QQuickItem*>(rootObject.get());
   auto* host = rootObject->findChild<QQuickItem*>(QStringLiteral("host"));
-  WAM_CHECK(root != nullptr && host != nullptr);
+  REQUIRE(root != nullptr && host != nullptr);
   root->setParentItem(window.contentItem());
 
   auto videoOwner = std::make_unique<wam::macos::QtGlVideoItem>();
@@ -434,17 +424,17 @@ Item {
   video->setSize(QSizeF(400, 300));
 
   if (!faultCase.isEmpty()) {
-    WAM_CHECK(faultCase == QStringLiteral("post-fence") ||
+    REQUIRE(faultCase == QStringLiteral("post-fence") ||
               faultCase == QStringLiteral("worker-poll") ||
               faultCase == QStringLiteral("synchronization") ||
               faultCase == QStringLiteral("update-callback"));
     window.show();
     window.requestUpdate();
-    WAM_CHECK(spinUntil([&] { return window.isSceneGraphInitialized(); },
+    REQUIRE(spinUntil([&] { return window.isSceneGraphInitialized(); },
                         5000));
-    WAM_CHECK(window.rendererInterface()->graphicsApi() ==
+    REQUIRE(window.rendererInterface()->graphicsApi() ==
               QSGRendererInterface::OpenGL);
-    WAM_CHECK(verifyRawGlSamplerStateOnRenderThread(window));
+    REQUIRE(verifyRawGlSamplerStateOnRenderThread(window));
 
     if (faultCase == QStringLiteral("post-fence")) {
       const std::size_t quarantineBefore =
@@ -462,9 +452,9 @@ Item {
       submitFrame(video, wam::macos::FrameLease(frame.buffer));
       CVPixelBufferRelease(frame.buffer);
       window.requestUpdate();
-      WAM_CHECK(spinUntil(
+      REQUIRE(spinUntil(
           [&] { return video->stats().fatalErrorSerial == 1; }, 5000));
-      WAM_CHECK(spinUntil(
+      REQUIRE(spinUntil(
           [&] {
             const auto current = video->stats();
             return current.activeResourceSets == 0 &&
@@ -474,19 +464,19 @@ Item {
           },
           5000));
       const auto failed = video->stats();
-      WAM_CHECK(failed.importedFrames == 1);
-      WAM_CHECK(failed.renderedFrames == 0);
-      WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
+      REQUIRE(failed.importedFrames == 1);
+      REQUIRE(failed.renderedFrames == 0);
+      REQUIRE(wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
                 quarantineBefore);
-      WAM_CHECK(
+      REQUIRE(
           wam::macos::QtGlVideoItem::quarantinedResourceSetsForTesting() ==
           quarantinedResourceSetsBefore);
-      WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
+      REQUIRE(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
                 quarantinedFramesBefore);
-      WAM_CHECK(
+      REQUIRE(
           wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
-      WAM_CHECK(video->takeFatalError().has_value());
-      WAM_CHECK(!video->takeFatalError().has_value());
+      REQUIRE(video->takeFatalError().has_value());
+      REQUIRE(!video->takeFatalError().has_value());
     } else if (faultCase == QStringLiteral("worker-poll")) {
       PixelBufferCreation frame = solidBuffer(
           kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
@@ -501,7 +491,7 @@ Item {
       video->failNextRetirementWorkerPollForTesting();
       video->setParentItem(nullptr);
       window.requestUpdate();
-      WAM_CHECK(spinUntil(
+      REQUIRE(spinUntil(
           [&] {
             const auto current = video->stats();
             return wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
@@ -515,19 +505,19 @@ Item {
           },
           5000));
       const auto failed = video->stats();
-      WAM_CHECK(failed.pendingRetirements == 0);
-      WAM_CHECK(failed.activeResourceSets > 0);
-      WAM_CHECK(failed.retirementFailed);
-      WAM_CHECK(failed.fatalErrorSerial == 1);
-      WAM_CHECK(
+      REQUIRE(failed.pendingRetirements == 0);
+      REQUIRE(failed.activeResourceSets > 0);
+      REQUIRE(failed.retirementFailed);
+      REQUIRE(failed.fatalErrorSerial == 1);
+      REQUIRE(
           wam::macos::QtGlVideoItem::quarantinedResourceSetsForTesting() ==
           quarantinedResourceSetsBefore + 1);
-      WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
+      REQUIRE(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
                 quarantinedFramesBefore + 1);
-      WAM_CHECK(
+      REQUIRE(
           wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
-      WAM_CHECK(video->takeFatalError().has_value());
-      WAM_CHECK(!video->takeFatalError().has_value());
+      REQUIRE(video->takeFatalError().has_value());
+      REQUIRE(!video->takeFatalError().has_value());
     } else if (faultCase == QStringLiteral("synchronization")) {
       PixelBufferCreation baseline = solidBuffer(
           kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
@@ -545,20 +535,20 @@ Item {
           kCVImageBufferYCbCrMatrix_ITU_R_709_2);
       IOSurfaceRef replacementSurface =
           CVPixelBufferGetIOSurface(replacement.buffer);
-      WAM_CHECK(replacementSurface != nullptr);
+      REQUIRE(replacementSurface != nullptr);
       const std::uint64_t replacementBytes = static_cast<std::uint64_t>(
           IOSurfaceGetAllocSize(replacementSurface));
       wam::macos::FrameLease replacementLease(replacement.buffer);
-      WAM_CHECK(replacementLease);
+      REQUIRE(replacementLease);
       const auto budgetCharged = wam::macos::NativeSurfaceBudget::stats();
-      WAM_CHECK(budgetCharged.currentSurfaces ==
+      REQUIRE(budgetCharged.currentSurfaces ==
                 budgetBefore.currentSurfaces + 1);
-      WAM_CHECK(budgetCharged.currentBytes ==
+      REQUIRE(budgetCharged.currentBytes ==
                 budgetBefore.currentBytes + replacementBytes);
       CVPixelBufferRelease(replacement.buffer);
       submitFrame(video, std::move(replacementLease));
       window.requestUpdate();
-      WAM_CHECK(spinUntil(
+      REQUIRE(spinUntil(
           [&] {
             const auto currentBudget =
                 wam::macos::NativeSurfaceBudget::stats();
@@ -572,26 +562,26 @@ Item {
           },
           5000));
       const auto failed = video->stats();
-      WAM_CHECK(failed.importedFrames == before.importedFrames);
-      WAM_CHECK(failed.activeResourceSets == before.activeResourceSets);
-      WAM_CHECK(failed.peakActiveResourceSets ==
+      REQUIRE(failed.importedFrames == before.importedFrames);
+      REQUIRE(failed.activeResourceSets == before.activeResourceSets);
+      REQUIRE(failed.peakActiveResourceSets ==
                 before.peakActiveResourceSets);
-      WAM_CHECK(failed.rejectedFrames == before.rejectedFrames + 1);
-      WAM_CHECK(
+      REQUIRE(failed.rejectedFrames == before.rejectedFrames + 1);
+      REQUIRE(
           !wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
-      WAM_CHECK(!video->takeFatalError().has_value());
+      REQUIRE(!video->takeFatalError().has_value());
       for (int retry = 0; retry < 3; ++retry) {
         window.requestUpdate();
-        WAM_CHECK(!window.grabWindow().isNull());
+        REQUIRE(!window.grabWindow().isNull());
       }
       const auto bounded = video->stats();
-      WAM_CHECK(bounded.fatalErrorSerial == failed.fatalErrorSerial);
-      WAM_CHECK(bounded.rejectedFrames == failed.rejectedFrames);
-      WAM_CHECK(bounded.importedFrames == failed.importedFrames);
-      WAM_CHECK(bounded.activeResourceSets == failed.activeResourceSets);
-      WAM_CHECK(bounded.renderedFrames > renderedBefore);
+      REQUIRE(bounded.fatalErrorSerial == failed.fatalErrorSerial);
+      REQUIRE(bounded.rejectedFrames == failed.rejectedFrames);
+      REQUIRE(bounded.importedFrames == failed.importedFrames);
+      REQUIRE(bounded.activeResourceSets == failed.activeResourceSets);
+      REQUIRE(bounded.renderedFrames > renderedBefore);
       const QImage preservedImage = window.grabWindow();
-      WAM_CHECK(!preservedImage.isNull());
+      REQUIRE(!preservedImage.isNull());
       checkColorNear(sampleLogicalPixel(preservedImage, window, 200, 150),
                      baselinePixel, 2,
                      "frame after CGL synchronization token-copy failure");
@@ -614,11 +604,11 @@ Item {
       nextGenerationTiming.generation = 1;
       wam::macos::FrameLease nextGenerationLease(nextGeneration.buffer,
                                                  nextGenerationTiming);
-      WAM_CHECK(nextGenerationLease);
+      REQUIRE(nextGenerationLease);
       CVPixelBufferRelease(nextGeneration.buffer);
       submitFrame(video, std::move(nextGenerationLease));
       window.requestUpdate();
-      WAM_CHECK(spinUntil(
+      REQUIRE(spinUntil(
           [&] {
             const auto current = video->stats();
             return current.acceptedGeneration == 1 &&
@@ -632,20 +622,20 @@ Item {
           },
           5000));
       const auto generationFailure = video->stats();
-      WAM_CHECK(generationFailure.importedFrames ==
+      REQUIRE(generationFailure.importedFrames ==
                 beforeGenerationFailure.importedFrames);
-      WAM_CHECK(generationFailure.acceptedRenderedFrames ==
+      REQUIRE(generationFailure.acceptedRenderedFrames ==
                 beforeGenerationFailure.acceptedRenderedFrames);
-      WAM_CHECK(generationFailure.renderedFrames ==
+      REQUIRE(generationFailure.renderedFrames ==
                 renderedBeforeGenerationFailure);
-      WAM_CHECK(generationFailure.fatalErrorSerial ==
+      REQUIRE(generationFailure.fatalErrorSerial ==
                 beforeGenerationFailure.fatalErrorSerial);
-      WAM_CHECK(budgetBeforeGenerationFailure.currentSurfaces > 0);
-      WAM_CHECK(budgetBeforeGenerationFailure.currentBytes > 0);
-      WAM_CHECK(!video->takeFatalError().has_value());
+      REQUIRE(budgetBeforeGenerationFailure.currentSurfaces > 0);
+      REQUIRE(budgetBeforeGenerationFailure.currentBytes > 0);
+      REQUIRE(!video->takeFatalError().has_value());
       video->setParentItem(nullptr);
       window.requestUpdate();
-      WAM_CHECK(spinUntil(
+      REQUIRE(spinUntil(
           [&] {
             const auto current = video->stats();
             return current.activeResourceSets == 0 &&
@@ -670,25 +660,25 @@ Item {
       submitFrame(video, wam::macos::FrameLease(frame.buffer));
       CVPixelBufferRelease(frame.buffer);
       window.requestUpdate();
-      WAM_CHECK(spinUntil(
+      REQUIRE(spinUntil(
           [&] { return video->stats().fatalErrorSerial == 1; }, 5000));
       const auto failed = video->stats();
-      WAM_CHECK(failed.importedFrames == 0);
-      WAM_CHECK(failed.activeResourceSets == 0);
-      WAM_CHECK(failed.pendingRetirements == 0);
-      WAM_CHECK(failed.lastError.contains(
+      REQUIRE(failed.importedFrames == 0);
+      REQUIRE(failed.activeResourceSets == 0);
+      REQUIRE(failed.pendingRetirements == 0);
+      REQUIRE(failed.lastError.contains(
           QStringLiteral("scene-graph synchronization")));
-      WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
+      REQUIRE(wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
                 quarantineBefore);
-      WAM_CHECK(
+      REQUIRE(
           wam::macos::QtGlVideoItem::quarantinedResourceSetsForTesting() ==
           quarantinedResourceSetsBefore);
-      WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
+      REQUIRE(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
                 quarantinedFramesBefore);
-      WAM_CHECK(
+      REQUIRE(
           wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
-      WAM_CHECK(video->takeFatalError().has_value());
-      WAM_CHECK(!video->takeFatalError().has_value());
+      REQUIRE(video->takeFatalError().has_value());
+      REQUIRE(!video->takeFatalError().has_value());
     }
 
     videoOwner.reset();
@@ -702,41 +692,41 @@ Item {
 
   window.show();
   window.requestUpdate();
-  WAM_CHECK(spinUntil([&] { return window.isSceneGraphInitialized(); }, 5000));
-  WAM_CHECK(window.rendererInterface()->graphicsApi() ==
+  REQUIRE(spinUntil([&] { return window.isSceneGraphInitialized(); }, 5000));
+  REQUIRE(window.rendererInterface()->graphicsApi() ==
             QSGRendererInterface::OpenGL);
-  WAM_CHECK(verifyRawGlSamplerStateOnRenderThread(window));
-  WAM_CHECK(wam::macos::QtGlFatalErrorSerialToken{}.load() == 0);
+  REQUIRE(verifyRawGlSamplerStateOnRenderThread(window));
+  REQUIRE(wam::macos::QtGlFatalErrorSerialToken{}.load() == 0);
   const auto blankStats = video->stats();
   const auto blankMemory = video->memoryFacts();
   const auto fatalSerialToken = video->fatalErrorSerialToken();
-  WAM_CHECK(blankStats.submittedFrames == 0);
-  WAM_CHECK(blankStats.renderedFrames == 0);
-  WAM_CHECK(blankStats.lastRenderedGeneration == 0);
-  WAM_CHECK(blankStats.acceptedGeneration == 0);
-  WAM_CHECK(blankStats.acceptedRenderedFrames == 0);
-  WAM_CHECK(blankStats.fatalErrorSerial == 0);
-  WAM_CHECK(fatalSerialToken.load() == 0);
-  WAM_CHECK(blankStats.textureParameterCalls == 0);
-  WAM_CHECK(blankStats.drawFramebufferBindingQueries == 0);
-  WAM_CHECK(blankStats.activeResourceSets == 0);
-  WAM_CHECK(blankMemory.latestFrames == 0);
-  WAM_CHECK(blankMemory.currentResourceSets == 0);
-  WAM_CHECK(blankMemory.peakResourceSets == 0);
-  WAM_CHECK(blankMemory.currentRetirementJobs == 0);
-  WAM_CHECK(blankMemory.peakRetirementJobs == 0);
-  WAM_CHECK(blankMemory.quarantinedFrames == 0);
-  WAM_CHECK(blankMemory.quarantinedResourceSets == 0);
-  WAM_CHECK(blankMemory.quarantinedJobs == 0);
-  WAM_CHECK(blankMemory.poisonedSubsystems == 0);
-  WAM_CHECK(!blankStats.textureRectangleSupported);
-  WAM_CHECK(!blankStats.acceleratedContext);
-  WAM_CHECK(!video->takeFatalError().has_value());
-  WAM_CHECK(wam::macos::QtGlVideoItem::retirementServiceCountForTesting() <=
+  REQUIRE(blankStats.submittedFrames == 0);
+  REQUIRE(blankStats.renderedFrames == 0);
+  REQUIRE(blankStats.lastRenderedGeneration == 0);
+  REQUIRE(blankStats.acceptedGeneration == 0);
+  REQUIRE(blankStats.acceptedRenderedFrames == 0);
+  REQUIRE(blankStats.fatalErrorSerial == 0);
+  REQUIRE(fatalSerialToken.load() == 0);
+  REQUIRE(blankStats.textureParameterCalls == 0);
+  REQUIRE(blankStats.drawFramebufferBindingQueries == 0);
+  REQUIRE(blankStats.activeResourceSets == 0);
+  REQUIRE(blankMemory.latestFrames == 0);
+  REQUIRE(blankMemory.currentResourceSets == 0);
+  REQUIRE(blankMemory.peakResourceSets == 0);
+  REQUIRE(blankMemory.currentRetirementJobs == 0);
+  REQUIRE(blankMemory.peakRetirementJobs == 0);
+  REQUIRE(blankMemory.quarantinedFrames == 0);
+  REQUIRE(blankMemory.quarantinedResourceSets == 0);
+  REQUIRE(blankMemory.quarantinedJobs == 0);
+  REQUIRE(blankMemory.poisonedSubsystems == 0);
+  REQUIRE(!blankStats.textureRectangleSupported);
+  REQUIRE(!blankStats.acceleratedContext);
+  REQUIRE(!video->takeFatalError().has_value());
+  REQUIRE(wam::macos::QtGlVideoItem::retirementServiceCountForTesting() <=
             wam::macos::QtGlVideoItem::retirementServiceCapacityForTesting());
-  WAM_CHECK(
+  REQUIRE(
       wam::macos::QtGlVideoItem::retirementServiceCapacityForTesting() == 4);
-  WAM_CHECK(!wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
+  REQUIRE(!wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
 
   // Retirement-context startup is observed asynchronously. Mask readiness
   // after service creation and prove the render path returns without
@@ -753,7 +743,7 @@ Item {
   submitFrame(startingItem, wam::macos::FrameLease(startingFrame.buffer));
   CVPixelBufferRelease(startingFrame.buffer);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         return wam::macos::QtGlVideoItem::retirementServiceCountForTesting() >
                0;
@@ -763,14 +753,14 @@ Item {
     window.requestUpdate();
     QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
   }
-  WAM_CHECK(startingItem->stats().importedFrames == 0);
-  WAM_CHECK(startingItem->stats().activeResourceSets == 0);
+  REQUIRE(startingItem->stats().importedFrames == 0);
+  REQUIRE(startingItem->stats().activeResourceSets == 0);
   startingItem->holdRetirementServiceStartingForTesting(false);
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return startingItem->stats().importedFrames == 1; }, 5000));
   startingItem->setParentItem(nullptr);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = startingItem->stats();
         return current.activeResourceSets == 0 &&
@@ -790,7 +780,7 @@ Item {
   submitFrame(video, wam::macos::FrameLease(emptyInitFailure.buffer));
   CVPixelBufferRelease(emptyInitFailure.buffer);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return current.fatalErrorSerial ==
@@ -800,49 +790,49 @@ Item {
       },
       5000));
   const auto emptyInitFailureStats = video->stats();
-  WAM_CHECK(fatalSerialToken.load() ==
+  REQUIRE(fatalSerialToken.load() ==
             emptyInitFailureStats.fatalErrorSerial);
-  WAM_CHECK(emptyInitFailureStats.activeResourceSets == 0);
-  WAM_CHECK(emptyInitFailureStats.importedFrames == 0);
-  WAM_CHECK(emptyInitFailureStats.renderedFrames ==
+  REQUIRE(emptyInitFailureStats.activeResourceSets == 0);
+  REQUIRE(emptyInitFailureStats.importedFrames == 0);
+  REQUIRE(emptyInitFailureStats.renderedFrames ==
             beforeEmptyInitFailure.renderedFrames);
-  WAM_CHECK(emptyInitFailureStats.lastRenderedGeneration ==
+  REQUIRE(emptyInitFailureStats.lastRenderedGeneration ==
             beforeEmptyInitFailure.lastRenderedGeneration);
   auto fatalError = video->takeFatalError();
-  WAM_CHECK(fatalError.has_value());
-  WAM_CHECK(fatalError->contains(
+  REQUIRE(fatalError.has_value());
+  REQUIRE(fatalError->contains(
       QStringLiteral("retirement service creation")));
-  WAM_CHECK(!video->takeFatalError().has_value());
-  WAM_CHECK(video->stats().fatalErrorSerial ==
+  REQUIRE(!video->takeFatalError().has_value());
+  REQUIRE(video->stats().fatalErrorSerial ==
             emptyInitFailureStats.fatalErrorSerial);
-  WAM_CHECK(fatalSerialToken.load() ==
+  REQUIRE(fatalSerialToken.load() ==
             emptyInitFailureStats.fatalErrorSerial);
   // Taking an event must not make the same terminal node failure look new on
   // subsequent render requests.
   for (int repeat = 0; repeat < 3; ++repeat) {
     window.requestUpdate();
-    WAM_CHECK(!window.grabWindow().isNull());
+    REQUIRE(!window.grabWindow().isNull());
   }
-  WAM_CHECK(video->stats().fatalErrorSerial ==
+  REQUIRE(video->stats().fatalErrorSerial ==
             emptyInitFailureStats.fatalErrorSerial);
-  WAM_CHECK(!video->takeFatalError().has_value());
+  REQUIRE(!video->takeFatalError().has_value());
   video->setParentItem(nullptr);
   window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
+  REQUIRE(!window.grabWindow().isNull());
   video->setParentItem(host);
   video->setSize(QSizeF(400, 300));
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return current.importedFrames == 1 && current.renderedFrames > 0 &&
                current.lastError.isEmpty();
       },
       5000));
-  WAM_CHECK(video->stats().lastRenderedGeneration == 0);
-  WAM_CHECK(video->stats().fatalErrorSerial ==
+  REQUIRE(video->stats().lastRenderedGeneration == 0);
+  REQUIRE(video->stats().fatalErrorSerial ==
             emptyInitFailureStats.fatalErrorSerial);
-  WAM_CHECK(!video->takeFatalError().has_value());
+  REQUIRE(!video->takeFatalError().has_value());
 
   // The retirement node for the next GL resource lifetime is allocated
   // before any shader, texture, fence, or FrameLease can exist. Failure to
@@ -859,7 +849,7 @@ Item {
                            reservationFrame.buffer);
   reservationItem->flush(1);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = reservationItem->stats();
         return current.activeResourceSets == 0 &&
@@ -882,7 +872,7 @@ Item {
       reservationRetry.buffer, reservationRetryTiming));
   CVPixelBufferRelease(reservationRetry.buffer);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = reservationItem->stats();
         return current.fatalErrorSerial == 1 &&
@@ -891,26 +881,26 @@ Item {
                    QStringLiteral("retirement ownership"));
       },
       5000));
-  WAM_CHECK(reservationItem->takeFatalError().has_value());
-  WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
+  REQUIRE(reservationItem->takeFatalError().has_value());
+  REQUIRE(wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
             reservationQuarantineBefore);
-  WAM_CHECK(
+  REQUIRE(
       wam::macos::QtGlVideoItem::quarantinedResourceSetsForTesting() ==
       reservationResourceSetsBefore);
-  WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
+  REQUIRE(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
             reservationFramesBefore);
   reservationItem->setParentItem(nullptr);
   window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
+  REQUIRE(!window.grabWindow().isNull());
   reservationItem->setParentItem(host);
   reservationItem->setSize(QSizeF(400, 300));
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return reservationItem->stats().lastRenderedGeneration == 1; },
       5000));
   reservationItem->setParentItem(nullptr);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = reservationItem->stats();
         return current.activeResourceSets == 0 &&
@@ -975,13 +965,13 @@ Item {
       ++p010FullCases;
     }
   }
-  WAM_CHECK(p010VideoCases == 2);
-  WAM_CHECK(p010FullCases == 0 || p010FullCases == 2);
+  REQUIRE(p010VideoCases == 2);
+  REQUIRE(p010FullCases == 0 || p010FullCases == 2);
 
   PixelBufferCreation white = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  WAM_CHECK(white.buffer != nullptr);
+  REQUIRE(white.buffer != nullptr);
   QImage image = submitOwnedBufferAndGrab(video, &window, white.buffer);
   checkColorNear(sampleLogicalPixel(image, window, 20, 15), QColor(0, 0, 0),
                  4, "letterbox");
@@ -993,14 +983,14 @@ Item {
   video->setOpacity(0.5);
   window.requestUpdate();
   image = window.grabWindow();
-  WAM_CHECK(!image.isNull());
+  REQUIRE(!image.isNull());
   checkColorNear(sampleLogicalPixel(image, window, 40, 100),
                  QColor(128, 128, 128), 6, "premultiplied item opacity");
   video->setOpacity(1.0);
 
   PixelBufferCreation centered = tryCreateIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 8, 4);
-  WAM_CHECK(centered.buffer != nullptr && fillAlternatingChroma(centered.buffer));
+  REQUIRE(centered.buffer != nullptr && fillAlternatingChroma(centered.buffer));
   attachColorMetadata(centered.buffer,
                       kCVImageBufferYCbCrMatrix_ITU_R_709_2,
                       kCVImageBufferChromaLocation_Center);
@@ -1010,7 +1000,7 @@ Item {
 
   PixelBufferCreation left = tryCreateIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 8, 4);
-  WAM_CHECK(left.buffer != nullptr && fillAlternatingChroma(left.buffer));
+  REQUIRE(left.buffer != nullptr && fillAlternatingChroma(left.buffer));
   attachColorMetadata(left.buffer, kCVImageBufferYCbCrMatrix_ITU_R_709_2,
                       kCVImageBufferChromaLocation_Left);
   image = submitOwnedBufferAndGrab(video, &window, left.buffer);
@@ -1032,7 +1022,7 @@ Item {
   const auto beforeMetadataFailure = video->stats();
   submitOwnedBufferExpectRejected(video, &window, unknownMatrix.buffer,
                                   QStringLiteral("YCbCr matrix"));
-  WAM_CHECK(video->stats().fatalErrorSerial ==
+  REQUIRE(video->stats().fatalErrorSerial ==
             beforeMetadataFailure.fatalErrorSerial);
   PixelBufferCreation topLeft = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
@@ -1045,18 +1035,18 @@ Item {
                                   QStringLiteral("chroma siting"));
   // Unsupported per-frame metadata is recoverable input rejection rather
   // than a terminal presenter failure.
-  WAM_CHECK(video->stats().fatalErrorSerial ==
+  REQUIRE(video->stats().fatalErrorSerial ==
             beforeMetadataFailure.fatalErrorSerial);
-  WAM_CHECK(!video->takeFatalError().has_value());
+  REQUIRE(!video->takeFatalError().has_value());
 
   // Restore a known good frame after the deliberate metadata failures.
   PixelBufferCreation restoredWhite = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitOwnedBufferAndGrab(video, &window, restoredWhite.buffer);
-  WAM_CHECK(video->stats().fatalErrorSerial ==
+  REQUIRE(video->stats().fatalErrorSerial ==
             beforeMetadataFailure.fatalErrorSerial);
-  WAM_CHECK(!video->takeFatalError().has_value());
+  REQUIRE(!video->takeFatalError().has_value());
 
   // Parent translation proves projection * item transform rather than a draw
   // in window coordinates.
@@ -1082,7 +1072,7 @@ Item {
                  QColor(255, 255, 255), 5, "scissor clip interior");
   checkColorNear(sampleLogicalPixel(image, window, 60, 130), QColor(0, 0, 0),
                  5, "scissor clip exterior");
-  WAM_CHECK(video->stats().sawScissorClip);
+  REQUIRE(video->stats().sawScissorClip);
 
   // A rotated clipping ancestor forces Qt's stencil clip path.
   setHostGeometry(host, 140, 90, 120, 100, true, 25);
@@ -1095,35 +1085,35 @@ Item {
                  QColor(255, 255, 255), 7, "stencil clip interior");
   checkColorNear(sampleLogicalPixel(image, window, 110, 65), QColor(0, 0, 0),
                  7, "stencil clip exterior");
-  WAM_CHECK(video->stats().sawStencilClip);
+  REQUIRE(video->stats().sawStencilClip);
 
   setHostGeometry(host, 0, 0, 400, 300, false, 0);
   video->setX(0);
   video->setY(0);
   video->setSize(QSizeF(400, 300));
-  WAM_CHECK(root->setProperty("layerActive", true));
+  REQUIRE(root->setProperty("layerActive", true));
   window.requestUpdate();
   image = window.grabWindow();
-  WAM_CHECK(!image.isNull());
+  REQUIRE(!image.isNull());
   auto stats = video->stats();
-  WAM_CHECK(stats.textureRectangleSupported);
-  WAM_CHECK(stats.textureRgSupported);
-  WAM_CHECK(stats.acceleratedContext);
-  WAM_CHECK(stats.exactSourceIOSurface);
-  WAM_CHECK(stats.renderedIntoNonDefaultFramebuffer);
-  WAM_CHECK(!stats.retirementFailed);
-  WAM_CHECK(stats.peakActiveResourceSets <= 2);
-  WAM_CHECK(root->setProperty("layerActive", false));
+  REQUIRE(stats.textureRectangleSupported);
+  REQUIRE(stats.textureRgSupported);
+  REQUIRE(stats.acceleratedContext);
+  REQUIRE(stats.exactSourceIOSurface);
+  REQUIRE(stats.renderedIntoNonDefaultFramebuffer);
+  REQUIRE(!stats.retirementFailed);
+  REQUIRE(stats.peakActiveResourceSets <= 2);
+  REQUIRE(root->setProperty("layerActive", false));
   window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
+  REQUIRE(!window.grabWindow().isNull());
 
   // Two simultaneous items must retain and sample distinct IOSurfaces.
   // Keep the layer active so the fresh item's first draw observes a known
   // non-default target. Its persistent texture parameters and framebuffer
   // proof must then remain latched across retained-frame redraws.
-  WAM_CHECK(root->setProperty("layerActive", true));
+  REQUIRE(root->setProperty("layerActive", true));
   window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
+  REQUIRE(!window.grabWindow().isNull());
   video->setWidth(200);
   auto secondOwner = std::make_unique<wam::macos::QtGlVideoItem>();
   auto* second = secondOwner.get();
@@ -1139,15 +1129,15 @@ Item {
   checkColorNear(sampleLogicalPixel(image, window, 280, 150),
                  QColor(232, 31, 41), 5, "second native GL item");
   const auto secondInitialStats = second->stats();
-  WAM_CHECK(secondInitialStats.textureParameterCalls == 8);
-  WAM_CHECK(secondInitialStats.drawFramebufferBindingQueries == 1);
-  WAM_CHECK(secondInitialStats.renderedIntoNonDefaultFramebuffer);
+  REQUIRE(secondInitialStats.textureParameterCalls == 8);
+  REQUIRE(secondInitialStats.drawFramebufferBindingQueries == 1);
+  REQUIRE(secondInitialStats.renderedIntoNonDefaultFramebuffer);
   PixelBufferCreation secondRefresh = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitFrame(second, wam::macos::FrameLease(secondRefresh.buffer));
   CVPixelBufferRelease(secondRefresh.buffer);
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         // A retained render node is otherwise clean; drive a real geometry
         // update until the newly submitted surface has been imported.
@@ -1159,10 +1149,10 @@ Item {
       },
       5000));
   const auto secondRedrawStats = second->stats();
-  WAM_CHECK(secondRedrawStats.importedFrames ==
+  REQUIRE(secondRedrawStats.importedFrames ==
             secondInitialStats.importedFrames + 1);
-  WAM_CHECK(secondRedrawStats.textureParameterCalls == 16);
-  WAM_CHECK(secondRedrawStats.drawFramebufferBindingQueries == 1);
+  REQUIRE(secondRedrawStats.textureParameterCalls == 16);
+  REQUIRE(secondRedrawStats.drawFramebufferBindingQueries == 1);
 
   // Wait for one of the two persistent slots to become reusable, then submit
   // another real surface. Import/draw must advance without configuring a
@@ -1172,7 +1162,7 @@ Item {
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitFrame(second, wam::macos::FrameLease(secondReuse.buffer));
   CVPixelBufferRelease(secondReuse.buffer);
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         second->setOpacity(second->opacity() == 1.0 ? 0.999 : 1.0);
         window.requestUpdate();
@@ -1182,14 +1172,14 @@ Item {
       },
       5000));
   const auto secondReuseStats = second->stats();
-  WAM_CHECK(secondReuseStats.importedFrames ==
+  REQUIRE(secondReuseStats.importedFrames ==
             secondRedrawStats.importedFrames + 1);
-  WAM_CHECK(secondReuseStats.textureParameterCalls == 16);
-  WAM_CHECK(secondReuseStats.drawFramebufferBindingQueries == 1);
+  REQUIRE(secondReuseStats.textureParameterCalls == 16);
+  REQUIRE(secondReuseStats.drawFramebufferBindingQueries == 1);
 
   second->setParentItem(nullptr);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = second->stats();
         return current.activeResourceSets == 0 &&
@@ -1198,9 +1188,9 @@ Item {
       5000));
   secondOwner.reset();
   video->setWidth(400);
-  WAM_CHECK(root->setProperty("layerActive", false));
+  REQUIRE(root->setProperty("layerActive", false));
   window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
+  REQUIRE(!window.grabWindow().isNull());
 
   // Rapid distinct surfaces exercise the two persistent slots. A third frame
   // may backpressure briefly but no third imported texture set or lease is
@@ -1212,32 +1202,32 @@ Item {
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
         {static_cast<std::uint16_t>(32 + index * 12), 128, 128},
         kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-    WAM_CHECK(gray.buffer != nullptr);
+    REQUIRE(gray.buffer != nullptr);
     IOSurfaceRef surface = CVPixelBufferGetIOSurface(gray.buffer);
-    WAM_CHECK(surface != nullptr);
-    WAM_CHECK(surfaceIds.insert(IOSurfaceGetID(surface)).second);
+    REQUIRE(surface != nullptr);
+    REQUIRE(surfaceIds.insert(IOSurfaceGetID(surface)).second);
     CVPixelBufferRetain(gray.buffer);
     retainedDistinctBuffers.push_back(gray.buffer);
     submitOwnedBufferAndGrab(video, &window, gray.buffer);
     const auto current = video->stats();
     const auto currentMemory = video->memoryFacts();
-    WAM_CHECK(current.activeResourceSets <= 2);
-    WAM_CHECK(current.pendingRetirements == 0);
-    WAM_CHECK(currentMemory.latestFrames == 1);
-    WAM_CHECK(currentMemory.currentResourceSets ==
+    REQUIRE(current.activeResourceSets <= 2);
+    REQUIRE(current.pendingRetirements == 0);
+    REQUIRE(currentMemory.latestFrames == 1);
+    REQUIRE(currentMemory.currentResourceSets ==
               current.activeResourceSets);
-    WAM_CHECK(currentMemory.peakResourceSets <= 2);
-    WAM_CHECK(currentMemory.currentRetirementJobs == 0);
+    REQUIRE(currentMemory.peakResourceSets <= 2);
+    REQUIRE(currentMemory.currentRetirementJobs == 0);
   }
   for (CVPixelBufferRef retained : retainedDistinctBuffers) {
     CVPixelBufferRelease(retained);
   }
-  WAM_CHECK(video->stats().peakActiveResourceSets <= 2);
+  REQUIRE(video->stats().peakActiveResourceSets <= 2);
 
   // Deterministic frame rejection remains recoverable and does not replace
   // the current good frame, grow the resource ring, or publish a fatal event.
   const QImage beforeFailureImage = window.grabWindow();
-  WAM_CHECK(!beforeFailureImage.isNull());
+  REQUIRE(!beforeFailureImage.isNull());
   const QColor beforeFailurePixel =
       sampleLogicalPixel(beforeFailureImage, window, 200, 150);
   const auto beforeFailure = video->stats();
@@ -1248,16 +1238,16 @@ Item {
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   IOSurfaceRef failedSurface = CVPixelBufferGetIOSurface(failed.buffer);
-  WAM_CHECK(failedSurface != nullptr);
+  REQUIRE(failedSurface != nullptr);
   const std::uint64_t failedSurfaceBytes =
       static_cast<std::uint64_t>(IOSurfaceGetAllocSize(failedSurface));
   wam::macos::FrameLease failedLease(failed.buffer);
-  WAM_CHECK(failedLease);
+  REQUIRE(failedLease);
   const auto chargedFailureBudget =
       wam::macos::NativeSurfaceBudget::stats();
-  WAM_CHECK(chargedFailureBudget.currentSurfaces ==
+  REQUIRE(chargedFailureBudget.currentSurfaces ==
             budgetBeforeFailure.currentSurfaces + 1);
-  WAM_CHECK(chargedFailureBudget.currentBytes ==
+  REQUIRE(chargedFailureBudget.currentBytes ==
             budgetBeforeFailure.currentBytes + failedSurfaceBytes);
   CVPixelBufferRelease(failed.buffer);
   submitFrame(video, std::move(failedLease));
@@ -1290,44 +1280,44 @@ Item {
               << budget.currentBytes << '/' << budgetBeforeFailure.currentBytes
               << " error='" << current.lastError.toStdString() << "'\n";
   }
-  WAM_CHECK(injectedImportObserved);
+  REQUIRE(injectedImportObserved);
   video->setWidth(400.0);
   const auto failedImportStats = video->stats();
-  WAM_CHECK(failedImportStats.importedFrames ==
+  REQUIRE(failedImportStats.importedFrames ==
             beforeFailure.importedFrames);
-  WAM_CHECK(failedImportStats.lastRenderedGeneration ==
+  REQUIRE(failedImportStats.lastRenderedGeneration ==
             beforeFailure.lastRenderedGeneration);
-  WAM_CHECK(failedImportStats.activeResourceSets ==
+  REQUIRE(failedImportStats.activeResourceSets ==
             beforeFailure.activeResourceSets);
-  WAM_CHECK(failedImportStats.peakActiveResourceSets ==
+  REQUIRE(failedImportStats.peakActiveResourceSets ==
             beforeFailure.peakActiveResourceSets);
-  WAM_CHECK(failedImportStats.rejectedFrames ==
+  REQUIRE(failedImportStats.rejectedFrames ==
             beforeFailure.rejectedFrames + 1);
-  WAM_CHECK(!video->takeFatalError().has_value());
-  WAM_CHECK(video->stats().fatalErrorSerial ==
+  REQUIRE(!video->takeFatalError().has_value());
+  REQUIRE(video->stats().fatalErrorSerial ==
             beforeFailure.fatalErrorSerial);
   for (int retry = 0; retry < 3; ++retry) {
     window.requestUpdate();
-    WAM_CHECK(!window.grabWindow().isNull());
+    REQUIRE(!window.grabWindow().isNull());
   }
   const auto boundedImportStats = video->stats();
-  WAM_CHECK(boundedImportStats.importedFrames ==
+  REQUIRE(boundedImportStats.importedFrames ==
             failedImportStats.importedFrames);
-  WAM_CHECK(boundedImportStats.rejectedFrames ==
+  REQUIRE(boundedImportStats.rejectedFrames ==
             failedImportStats.rejectedFrames);
-  WAM_CHECK(boundedImportStats.activeResourceSets ==
+  REQUIRE(boundedImportStats.activeResourceSets ==
             failedImportStats.activeResourceSets);
   const QImage afterFailureImage = window.grabWindow();
-  WAM_CHECK(!afterFailureImage.isNull());
+  REQUIRE(!afterFailureImage.isNull());
   checkColorNear(sampleLogicalPixel(afterFailureImage, window, 200, 150),
                  beforeFailurePixel, 2,
                  "frame after CGL import token-copy failure");
 
   const auto beforePartialFailure = video->stats();
   const auto renderProgress = video->renderProgressToken();
-  WAM_CHECK(!renderProgress.drawAfter(beforePartialFailure.lastDrawSequence)
+  REQUIRE(!renderProgress.drawAfter(beforePartialFailure.lastDrawSequence)
                  .has_value());
-  WAM_CHECK(!renderProgress
+  REQUIRE(!renderProgress
                  .rejectionAfter(beforePartialFailure.renderRejectionSequence)
                  .has_value());
   video->failSecondPlaneImportForTesting();
@@ -1339,7 +1329,7 @@ Item {
       wam::macos::QtGlFrameIdentity{1, 101});
   CVPixelBufferRelease(partialFailure.buffer);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return current.fatalErrorSerial ==
@@ -1348,57 +1338,57 @@ Item {
                    QStringLiteral("second-plane CGL import failure"));
       },
       5000));
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return current.activeResourceSets == 0 &&
                current.pendingRetirements == 0;
       },
       5000));
-  WAM_CHECK(video->stats().importedFrames ==
+  REQUIRE(video->stats().importedFrames ==
             beforePartialFailure.importedFrames);
-  WAM_CHECK(video->stats().lastRenderedGeneration ==
+  REQUIRE(video->stats().lastRenderedGeneration ==
             beforePartialFailure.lastRenderedGeneration);
   const auto rejected = renderProgress.rejectionAfter(
       beforePartialFailure.renderRejectionSequence);
-  WAM_CHECK(rejected.has_value());
-  WAM_CHECK(rejected->deliverySequence == 1);
-  WAM_CHECK(rejected->frameSequence == 101);
-  WAM_CHECK(rejected->generation == 0);
-  WAM_CHECK(!renderProgress.drawAfter(beforePartialFailure.lastDrawSequence)
+  REQUIRE(rejected.has_value());
+  REQUIRE(rejected->deliverySequence == 1);
+  REQUIRE(rejected->frameSequence == 101);
+  REQUIRE(rejected->generation == 0);
+  REQUIRE(!renderProgress.drawAfter(beforePartialFailure.lastDrawSequence)
                  .has_value());
-  WAM_CHECK(!video->takeFatalError().has_value());
+  REQUIRE(!video->takeFatalError().has_value());
   PixelBufferCreation afterPartialFailure = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitOwnedBufferAndGrab(video, &window, afterPartialFailure.buffer);
-  WAM_CHECK(!video->takeFatalError().has_value());
+  REQUIRE(!video->takeFatalError().has_value());
 
   // Hold teardown to make generation invalidation and recreated-node
   // backpressure deterministic. The stale callback is rejected before it can
   // enter the capacity-one latest-frame mailbox.
   video->holdRetirementsForTesting(true);
   const auto beforeFlush = video->stats();
-  WAM_CHECK(beforeFlush.acceptedGeneration == 0);
+  REQUIRE(beforeFlush.acceptedGeneration == 0);
   video->flush(1);
-  WAM_CHECK(video->stats().acceptedGeneration == 1);
+  REQUIRE(video->stats().acceptedGeneration == 1);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return video->stats().pendingRetirements == 1; }, 5000));
   const auto generationOneBaseline = video->stats();
   const auto generationOneMemory = video->memoryFacts();
-  WAM_CHECK(generationOneBaseline.acceptedGeneration == 1);
-  WAM_CHECK(generationOneMemory.latestFrames == 0);
-  WAM_CHECK(generationOneMemory.currentResourceSets ==
+  REQUIRE(generationOneBaseline.acceptedGeneration == 1);
+  REQUIRE(generationOneMemory.latestFrames == 0);
+  REQUIRE(generationOneMemory.currentResourceSets ==
             generationOneBaseline.activeResourceSets);
-  WAM_CHECK(generationOneMemory.currentRetirementJobs == 1);
-  WAM_CHECK(generationOneMemory.peakRetirementJobs >= 1);
+  REQUIRE(generationOneMemory.currentRetirementJobs == 1);
+  REQUIRE(generationOneMemory.peakRetirementJobs >= 1);
   for (int redraw = 0; redraw < 3; ++redraw) {
     window.requestUpdate();
-    WAM_CHECK(!window.grabWindow().isNull());
+    REQUIRE(!window.grabWindow().isNull());
   }
-  WAM_CHECK(video->stats().acceptedGeneration == 1);
-  WAM_CHECK(video->stats().acceptedRenderedFrames ==
+  REQUIRE(video->stats().acceptedGeneration == 1);
+  REQUIRE(video->stats().acceptedRenderedFrames ==
             generationOneBaseline.acceptedRenderedFrames);
   PixelBufferCreation stale = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
@@ -1407,10 +1397,10 @@ Item {
   staleTiming.generation = 0;
   submitFrame(video, wam::macos::FrameLease(stale.buffer, staleTiming));
   CVPixelBufferRelease(stale.buffer);
-  WAM_CHECK(video->stats().staleFrames == beforeFlush.staleFrames + 1);
-  WAM_CHECK(video->stats().lastRenderedGeneration ==
+  REQUIRE(video->stats().staleFrames == beforeFlush.staleFrames + 1);
+  REQUIRE(video->stats().lastRenderedGeneration ==
             beforeFlush.lastRenderedGeneration);
-  WAM_CHECK(video->stats().acceptedRenderedFrames ==
+  REQUIRE(video->stats().acceptedRenderedFrames ==
             generationOneBaseline.acceptedRenderedFrames);
 
   PixelBufferCreation currentRed = solidBuffer(
@@ -1421,12 +1411,12 @@ Item {
   submitFrame(video, wam::macos::FrameLease(currentRed.buffer, currentTiming));
   CVPixelBufferRelease(currentRed.buffer);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return video->stats().backpressuredImports > 0; }, 5000));
-  WAM_CHECK(video->stats().importedFrames == beforeFlush.importedFrames);
-  WAM_CHECK(video->stats().lastRenderedGeneration ==
+  REQUIRE(video->stats().importedFrames == beforeFlush.importedFrames);
+  REQUIRE(video->stats().lastRenderedGeneration ==
             beforeFlush.lastRenderedGeneration);
-  WAM_CHECK(video->stats().acceptedRenderedFrames ==
+  REQUIRE(video->stats().acceptedRenderedFrames ==
             generationOneBaseline.acceptedRenderedFrames);
 
   // Explicitly destroy and recreate the QSG node while the old share-group
@@ -1434,34 +1424,34 @@ Item {
   // may not import it until the retirement worker clears the old ring.
   video->setParentItem(nullptr);
   window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
+  REQUIRE(!window.grabWindow().isNull());
   video->setParentItem(host);
   video->setX(0);
   video->setY(0);
   video->setSize(QSizeF(400, 300));
   window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
-  WAM_CHECK(video->stats().importedFrames == beforeFlush.importedFrames);
+  REQUIRE(!window.grabWindow().isNull());
+  REQUIRE(video->stats().importedFrames == beforeFlush.importedFrames);
 
   window.hide();
   window.releaseResources();
   QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
   video->holdRetirementCompletionForTesting(true);
   video->holdRetirementsForTesting(false);
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return video->retirementCompletionHeldForTesting(); }, 5000));
   const auto completionHeldStats = video->stats();
   const auto completionHeldMemory = video->memoryFacts();
-  WAM_CHECK(completionHeldStats.pendingRetirements == 1);
-  WAM_CHECK(completionHeldMemory.currentRetirementJobs == 1);
-  WAM_CHECK(completionHeldMemory.peakRetirementJobs >=
+  REQUIRE(completionHeldStats.pendingRetirements == 1);
+  REQUIRE(completionHeldMemory.currentRetirementJobs == 1);
+  REQUIRE(completionHeldMemory.peakRetirementJobs >=
             completionHeldMemory.currentRetirementJobs);
-  WAM_CHECK(completionHeldMemory.peakResourceSets >=
+  REQUIRE(completionHeldMemory.peakResourceSets >=
             completionHeldMemory.currentResourceSets);
   video->holdRetirementCompletionForTesting(false);
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return !video->retirementCompletionHeldForTesting(); }, 5000));
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return video->stats().pendingRetirements == 0; }, 5000));
   if (retirementAccountingOnly) {
     std::cout << "Qt OpenGL ordered retirement accounting passed\n";
@@ -1469,7 +1459,7 @@ Item {
   }
   window.show();
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return window.isSceneGraphInitialized() &&
@@ -1481,25 +1471,25 @@ Item {
   checkColorNear(sampleLogicalPixel(image, window, 40, 100),
                  QColor(232, 31, 41), 5,
                  "post-flush retained current-generation frame");
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return video->stats().lastRenderedGeneration == 1; }, 5000));
   const auto generationOnePresented = video->stats();
-  WAM_CHECK(generationOnePresented.acceptedGeneration == 1);
-  WAM_CHECK(generationOnePresented.acceptedRenderedFrames >
+  REQUIRE(generationOnePresented.acceptedGeneration == 1);
+  REQUIRE(generationOnePresented.acceptedRenderedFrames >
             generationOneBaseline.acceptedRenderedFrames);
 
   // A regressed/same generation argument advances fail-closed instead of
   // reopening the just-flushed timeline to a delayed callback.
   const auto beforeRegressedFlush = video->stats();
-  WAM_CHECK(beforeRegressedFlush.acceptedGeneration == 1);
+  REQUIRE(beforeRegressedFlush.acceptedGeneration == 1);
   video->flush(1);
-  WAM_CHECK(video->stats().acceptedGeneration == 2);
+  REQUIRE(video->stats().acceptedGeneration == 2);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return video->stats().activeResourceSets == 0; }, 5000));
   const auto generationTwoBaseline = video->stats();
-  WAM_CHECK(generationTwoBaseline.acceptedGeneration == 2);
-  WAM_CHECK(generationTwoBaseline.acceptedRenderedFrames >=
+  REQUIRE(generationTwoBaseline.acceptedGeneration == 2);
+  REQUIRE(generationTwoBaseline.acceptedRenderedFrames >=
             generationOnePresented.acceptedRenderedFrames);
   PixelBufferCreation regressedStale = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
@@ -1509,19 +1499,19 @@ Item {
   submitFrame(video,
       wam::macos::FrameLease(regressedStale.buffer, regressedTiming));
   CVPixelBufferRelease(regressedStale.buffer);
-  WAM_CHECK(video->stats().staleFrames ==
+  REQUIRE(video->stats().staleFrames ==
             beforeRegressedFlush.staleFrames + 1);
-  WAM_CHECK(video->stats().lastRenderedGeneration == 1);
-  WAM_CHECK(video->stats().acceptedRenderedFrames ==
+  REQUIRE(video->stats().lastRenderedGeneration == 1);
+  REQUIRE(video->stats().acceptedRenderedFrames ==
             generationTwoBaseline.acceptedRenderedFrames);
   PixelBufferCreation generationTwo = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitOwnedBufferAndGrab(video, &window, generationTwo.buffer, 2);
-  WAM_CHECK(video->stats().lastRenderedGeneration == 2);
+  REQUIRE(video->stats().lastRenderedGeneration == 2);
   const auto generationTwoPresented = video->stats();
-  WAM_CHECK(generationTwoPresented.acceptedGeneration == 2);
-  WAM_CHECK(generationTwoPresented.acceptedRenderedFrames >
+  REQUIRE(generationTwoPresented.acceptedGeneration == 2);
+  REQUIRE(generationTwoPresented.acceptedRenderedFrames >
             generationTwoBaseline.acceptedRenderedFrames);
 
   // The tracked seam publishes exactly the first accepted fence-created draw
@@ -1541,22 +1531,22 @@ Item {
       wam::macos::QtGlFrameIdentity{2, 202});
   CVPixelBufferRelease(tracked.buffer);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return video->stats().lastDrawSequence > drawBaseline; }, 5000));
   const auto draw = renderProgress.drawAfter(drawBaseline);
-  WAM_CHECK(draw.has_value());
-  WAM_CHECK(draw->deliverySequence == 2);
-  WAM_CHECK(draw->frameSequence == 202);
-  WAM_CHECK(draw->generation == 2);
-  WAM_CHECK(CMTimeCompare(draw->presentationTime,
+  REQUIRE(draw.has_value());
+  REQUIRE(draw->deliverySequence == 2);
+  REQUIRE(draw->frameSequence == 202);
+  REQUIRE(draw->generation == 2);
+  REQUIRE(CMTimeCompare(draw->presentationTime,
                           trackedTiming.presentationTime) == 0);
-  WAM_CHECK(CMTimeCompare(draw->duration, trackedTiming.duration) == 0);
+  REQUIRE(CMTimeCompare(draw->duration, trackedTiming.duration) == 0);
   for (int redraw = 0; redraw < 3; ++redraw) {
     window.requestUpdate();
-    WAM_CHECK(!window.grabWindow().isNull());
+    REQUIRE(!window.grabWindow().isNull());
   }
-  WAM_CHECK(video->stats().lastDrawSequence == draw->drawSequence);
-  WAM_CHECK(!renderProgress.drawAfter(draw->drawSequence).has_value());
+  REQUIRE(video->stats().lastDrawSequence == draw->drawSequence);
+  REQUIRE(!renderProgress.drawAfter(draw->drawSequence).has_value());
 
   // A taken fatal reason re-arms the latch. A terminal init failure on the
   // first frame of a new generation must not advertise that generation as
@@ -1565,7 +1555,7 @@ Item {
   const auto beforeReinvalidatedFailure = video->stats();
   video->flush(3);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return current.activeResourceSets == 0 &&
@@ -1573,8 +1563,8 @@ Item {
       },
       5000));
   const auto invalidation = renderProgress.invalidationAfter(0);
-  WAM_CHECK(invalidation.has_value());
-  WAM_CHECK(invalidation->generation == 3);
+  REQUIRE(invalidation.has_value());
+  REQUIRE(invalidation->generation == 3);
   video->failAfterRetirementServiceCreationForTesting();
   PixelBufferCreation generationThree = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
@@ -1585,7 +1575,7 @@ Item {
       wam::macos::FrameLease(generationThree.buffer, generationThreeTiming));
   CVPixelBufferRelease(generationThree.buffer);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return current.fatalErrorSerial ==
@@ -1595,22 +1585,22 @@ Item {
       },
       5000));
   const auto generationThreeFailureStats = video->stats();
-  WAM_CHECK(generationThreeFailureStats.fatalErrorSerial ==
+  REQUIRE(generationThreeFailureStats.fatalErrorSerial ==
             emptyInitFailureStats.fatalErrorSerial + 1);
-  WAM_CHECK(fatalSerialToken.load() ==
+  REQUIRE(fatalSerialToken.load() ==
             generationThreeFailureStats.fatalErrorSerial);
-  WAM_CHECK(generationThreeFailureStats.importedFrames ==
+  REQUIRE(generationThreeFailureStats.importedFrames ==
             beforeReinvalidatedFailure.importedFrames);
-  WAM_CHECK(generationThreeFailureStats.lastRenderedGeneration == 2);
+  REQUIRE(generationThreeFailureStats.lastRenderedGeneration == 2);
   const auto submittedBeforeGenerationThreeRecovery =
       generationThreeFailureStats.submittedFrames;
   video->setParentItem(nullptr);
   window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
+  REQUIRE(!window.grabWindow().isNull());
   video->setParentItem(host);
   video->setSize(QSizeF(400, 300));
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         video->setWidth(video->width() == 400.0 ? 399.0 : 400.0);
         window.requestUpdate();
@@ -1623,16 +1613,16 @@ Item {
       },
       5000));
   video->setWidth(400.0);
-  WAM_CHECK(video->stats().submittedFrames ==
+  REQUIRE(video->stats().submittedFrames ==
             submittedBeforeGenerationThreeRecovery);
-  WAM_CHECK(video->stats().fatalErrorSerial ==
+  REQUIRE(video->stats().fatalErrorSerial ==
             generationThreeFailureStats.fatalErrorSerial);
   fatalError = video->takeFatalError();
-  WAM_CHECK(fatalError.has_value());
-  WAM_CHECK(fatalError->contains(
+  REQUIRE(fatalError.has_value());
+  REQUIRE(fatalError->contains(
       QStringLiteral("retirement service creation")));
-  WAM_CHECK(!video->takeFatalError().has_value());
-  WAM_CHECK(fatalSerialToken.load() ==
+  REQUIRE(!video->takeFatalError().has_value());
+  REQUIRE(fatalSerialToken.load() ==
             generationThreeFailureStats.fatalErrorSerial);
 
   // Moving the paused frame to another live window creates another node and
@@ -1644,7 +1634,7 @@ Item {
   migrationWindow.setPersistentGraphics(false);
   migrationWindow.show();
   migrationWindow.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return migrationWindow.isSceneGraphInitialized(); }, 5000));
   const auto beforeMigration = video->stats();
   video->setParentItem(migrationWindow.contentItem());
@@ -1653,14 +1643,14 @@ Item {
   video->setSize(QSizeF(400, 300));
   window.requestUpdate();
   migrationWindow.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return current.importedFrames >= beforeMigration.importedFrames + 1 &&
                current.lastError.isEmpty();
       },
       5000));
-  WAM_CHECK(video->stats().submittedFrames == beforeMigration.submittedFrames);
+  REQUIRE(video->stats().submittedFrames == beforeMigration.submittedFrames);
   image = migrationWindow.grabWindow();
   checkColorNear(sampleLogicalPixel(image, migrationWindow, 40, 100),
                  QColor(232, 31, 41), 5,
@@ -1668,7 +1658,7 @@ Item {
 
   video->setParentItem(nullptr);
   migrationWindow.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         const auto current = video->stats();
         return current.activeResourceSets == 0 &&
@@ -1676,12 +1666,12 @@ Item {
       },
       5000));
   stats = video->stats();
-  WAM_CHECK(stats.peakActiveResourceSets <= 2);
-  WAM_CHECK(!stats.retirementFailed);
+  REQUIRE(stats.peakActiveResourceSets <= 2);
+  REQUIRE(!stats.retirementFailed);
   const std::uint64_t fatalSerialBeforeItemDestruction =
       fatalSerialToken.load();
   videoOwner.reset();
-  WAM_CHECK(fatalSerialToken.load() == fatalSerialBeforeItemDestruction);
+  REQUIRE(fatalSerialToken.load() == fatalSerialBeforeItemDestruction);
 
   // A retirement-queue failure occurs after GL names and the IOSurface lease
   // have moved out of the node. The intrusive job must therefore enter the
@@ -1705,7 +1695,7 @@ Item {
   quarantineItem->failNextRetirementEnqueueForTesting();
   quarantineItem->setParentItem(nullptr);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] {
         return quarantineItem->stats().retirementFailed &&
                wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
@@ -1714,28 +1704,28 @@ Item {
       5000));
   const auto quarantineStats = quarantineItem->stats();
   const auto quarantineMemory = quarantineItem->memoryFacts();
-  WAM_CHECK(quarantineStats.fatalErrorSerial == 1);
-  WAM_CHECK(quarantineStats.pendingRetirements == 0);
+  REQUIRE(quarantineStats.fatalErrorSerial == 1);
+  REQUIRE(quarantineStats.pendingRetirements == 0);
   fatalError = quarantineItem->takeFatalError();
-  WAM_CHECK(fatalError.has_value());
-  WAM_CHECK(!quarantineItem->takeFatalError().has_value());
-  WAM_CHECK(quarantineItem->stats().activeResourceSets > 0);
-  WAM_CHECK(
+  REQUIRE(fatalError.has_value());
+  REQUIRE(!quarantineItem->takeFatalError().has_value());
+  REQUIRE(quarantineItem->stats().activeResourceSets > 0);
+  REQUIRE(
       wam::macos::QtGlVideoItem::quarantinedResourceSetsForTesting() ==
       quarantinedResourceSetsBefore + 1);
-  WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
+  REQUIRE(wam::macos::QtGlVideoItem::quarantinedFramesForTesting() ==
             quarantinedFramesBefore + 1);
-  WAM_CHECK(quarantineMemory.currentResourceSets ==
+  REQUIRE(quarantineMemory.currentResourceSets ==
             quarantineStats.activeResourceSets);
-  WAM_CHECK(quarantineMemory.currentRetirementJobs == 0);
-  WAM_CHECK(quarantineMemory.quarantinedJobs == quarantineBefore + 1);
-  WAM_CHECK(quarantineMemory.quarantinedResourceSets ==
+  REQUIRE(quarantineMemory.currentRetirementJobs == 0);
+  REQUIRE(quarantineMemory.quarantinedJobs == quarantineBefore + 1);
+  REQUIRE(quarantineMemory.quarantinedResourceSets ==
             quarantinedResourceSetsBefore + 1);
-  WAM_CHECK(quarantineMemory.quarantinedFrames ==
+  REQUIRE(quarantineMemory.quarantinedFrames ==
             quarantinedFramesBefore + 1);
-  WAM_CHECK(quarantineMemory.poisonedSubsystems == 1);
-  WAM_CHECK(wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
-  WAM_CHECK(wam::macos::QtGlVideoItem::retirementServiceCountForTesting() <=
+  REQUIRE(quarantineMemory.poisonedSubsystems == 1);
+  REQUIRE(wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
+  REQUIRE(wam::macos::QtGlVideoItem::retirementServiceCountForTesting() <=
             wam::macos::QtGlVideoItem::retirementServiceCapacityForTesting());
   quarantineOwner.reset();
 
@@ -1749,10 +1739,10 @@ Item {
   submitFrame(blockedItem, wam::macos::FrameLease(blockedFrame.buffer));
   CVPixelBufferRelease(blockedFrame.buffer);
   window.requestUpdate();
-  WAM_CHECK(spinUntil(
+  REQUIRE(spinUntil(
       [&] { return blockedItem->stats().fatalErrorSerial == 1; }, 5000));
-  WAM_CHECK(blockedItem->stats().activeResourceSets == 0);
-  WAM_CHECK(blockedItem->stats().importedFrames == 0);
+  REQUIRE(blockedItem->stats().activeResourceSets == 0);
+  REQUIRE(blockedItem->stats().importedFrames == 0);
   blockedItem->setParentItem(nullptr);
   window.requestUpdate();
   blockedOwner.reset();
