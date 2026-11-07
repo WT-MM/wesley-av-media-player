@@ -26,10 +26,6 @@ inline constexpr std::size_t kMaximumSyncCursorSteps{100'000};
 [[nodiscard]] media::MediaTrackId stableTrackId(
     AVAssetTrack* track, media::MediaTrackId fallback) noexcept;
 
-// The container's sync attachment; false when the attachments are malformed.
-[[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample,
-                                    bool* keyFrame) noexcept;
-
 // The exact reader range [decodeStart, duration), or empty when any bound is
 // inexact or out of order.
 [[nodiscard]] std::optional<CMTimeRange> exactReaderTimeRangeFacts(

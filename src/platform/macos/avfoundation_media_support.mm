@@ -37,37 +37,6 @@ std::string describeNSError(NSError* error, const char* fallback) {
   return raw > 0 ? static_cast<MediaTrackId>(raw) : fallback;
 }
 
-[[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample,
-                                    bool* keyFrame) noexcept {
-  if (sample == nullptr || keyFrame == nullptr) {
-    return false;
-  }
-  CFArrayRef attachments =
-      CMSampleBufferGetSampleAttachmentsArray(sample, false);
-  if (attachments == nullptr || CFArrayGetCount(attachments) == 0) {
-    *keyFrame = true;
-    return true;
-  }
-  if (CFArrayGetCount(attachments) != 1) {
-    return false;
-  }
-  CFTypeRef value = CFArrayGetValueAtIndex(attachments, 0);
-  if (value == nullptr || CFGetTypeID(value) != CFDictionaryGetTypeID()) {
-    return false;
-  }
-  CFTypeRef notSync = CFDictionaryGetValue(
-      static_cast<CFDictionaryRef>(value), kCMSampleAttachmentKey_NotSync);
-  if (notSync == nullptr) {
-    *keyFrame = true;
-    return true;
-  }
-  if (CFGetTypeID(notSync) != CFBooleanGetTypeID()) {
-    return false;
-  }
-  *keyFrame = !CFBooleanGetValue(static_cast<CFBooleanRef>(notSync));
-  return true;
-}
-
 [[nodiscard]] std::optional<CMTimeRange> exactReaderTimeRangeFacts(
     CMTime duration, CMTime decodeStart) noexcept {
   if (!CMTIME_IS_NUMERIC(duration) || !CMTIME_IS_NUMERIC(decodeStart) ||
@@ -402,14 +371,9 @@ CMTime fullSyncStart(AVAssetTrack* track, CMTime target,
   if (value == nullptr) {
     return media::MediaColorPrimaries::Unknown;
   }
-  if (stringEquals(value, kCMFormatDescriptionColorPrimaries_ITU_R_709_2)) {
-    return media::MediaColorPrimaries::Bt709;
-  }
   // BT.2020 primaries are a MODELLED fact, not an opaque "unsupported
   // metadata" bit. mediaVideoColorAdmitted() owns the decision.
-  if (stringEquals(value, kCMFormatDescriptionColorPrimaries_ITU_R_2020)) {
-    return media::MediaColorPrimaries::Bt2020;
-  }
+  //
   // SD-era primaries are a modelled fact on THIS route, not an opaque bit.
   // VideoToolbox attaches SMPTE_C / EBU_3213 verbatim to the decoded surface
   // (measured), the decoded-surface validator admits both, and the display
@@ -429,8 +393,8 @@ CMTime fullSyncStart(AVAssetTrack* track, CMTime target,
   // admitting it would mean emitting SMPTE-C for a stream that said 625, which
   // is a wrong-colour failure. Distinguishing them needs an appended
   // enumerator.
-  if (stringEquals(value, kCMFormatDescriptionColorPrimaries_SMPTE_C)) {
-    return media::MediaColorPrimaries::Bt601;
+  if (const auto modelled = wam::macos::colorPrimariesForExtension(value)) {
+    return *modelled;
   }
   *unsupported = true;
   if (stringEquals(value, kCMFormatDescriptionColorPrimaries_EBU_3213)) {
@@ -446,19 +410,11 @@ CMTime fullSyncStart(AVAssetTrack* track, CMTime target,
   if (value == nullptr) {
     return media::MediaTransferFunction::Unknown;
   }
-  if (stringEquals(value, kCMFormatDescriptionTransferFunction_ITU_R_709_2)) {
-    return media::MediaTransferFunction::Bt709;
-  }
   // PQ and HLG are modelled facts. VideoToolbox resolves each to
   // a real CGColorSpace on the decoded surface ("Rec. ITU-R BT.2100 PQ" /
   // "... HLG", measured), which is what the display layer presents from.
-  if (stringEquals(value,
-                   kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ)) {
-    return media::MediaTransferFunction::Pq;
-  }
-  if (stringEquals(value,
-                   kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG)) {
-    return media::MediaTransferFunction::Hlg;
+  if (const auto modelled = wam::macos::transferFunctionForExtension(value)) {
+    return *modelled;
   }
   *unsupported = true;
   if (stringEquals(value, kCMFormatDescriptionTransferFunction_sRGB)) {
@@ -474,20 +430,8 @@ CMTime fullSyncStart(AVAssetTrack* track, CMTime target,
   if (value == nullptr) {
     return media::MediaMatrixCoefficients::Unknown;
   }
-  if (stringEquals(value, kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2)) {
-    return media::MediaMatrixCoefficients::Bt709;
-  }
-  if (stringEquals(value, kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4)) {
-    return media::MediaMatrixCoefficients::Bt601;
-  }
-  // The BT.2020 non-constant-luminance matrix is a modelled fact.
-  if (stringEquals(value, kCMFormatDescriptionYCbCrMatrix_ITU_R_2020)) {
-    return media::MediaMatrixCoefficients::Bt2020Ncl;
-  }
-  // matrix_coefficients 5 is the same matrix as 6, spelled the way CoreMedia
-  // spells a value it has no constant for. See bt470bgYCbCrMatrixSpelling().
-  if (stringEquals(value, wam::macos::bt470bgYCbCrMatrixSpelling())) {
-    return media::MediaMatrixCoefficients::Bt601;
+  if (const auto modelled = wam::macos::ycbcrMatrixForExtension(value)) {
+    return *modelled;
   }
   *unsupported = true;
   return media::MediaMatrixCoefficients::OtherExplicit;

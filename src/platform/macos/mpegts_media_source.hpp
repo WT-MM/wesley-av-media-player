@@ -39,18 +39,14 @@ struct MpegTsSourceTraits {
       const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,
       CancellationToken cancellation) noexcept;
-  [[nodiscard]] static std::shared_ptr<const AssetContext> adoptContext(
-      const std::filesystem::path& path,
-      const media::MediaSourceOpenOptions& options,
-      std::shared_ptr<const PreparedAsset> asset) noexcept;
-  static void noteCursorCreationAttempt(const AssetContext& context) noexcept;
-  static void noteCursorStarted(const AssetContext& context) noexcept;
+  static constexpr auto adoptContext = &adoptPreparedMpegTsAssetContext;
+  static constexpr auto noteCursorCreationAttempt =
+      &noteMpegTsAssetContextCursorCreationAttempt;
+  static constexpr auto noteCursorStarted = &noteMpegTsAssetContextCursorStarted;
   // The first video access unit's exact time, or empty when the asset states
   // none.
   [[nodiscard]] static std::optional<media::MediaTime> videoOrigin(
       const PreparedAsset& asset) noexcept;
-  [[nodiscard]] static CMVideoFormatDescriptionRef
-  createVideoFormatDescription(const media::MediaTrackDescriptor& track) noexcept;
   // THE MERGE KEY: `dts.valid() ? dts : pts`, the AVFoundation shape. A PES
   // header states an explicit decode timestamp, so the two lanes are ordered
   // by the times the decoders will actually consume them and there is NO

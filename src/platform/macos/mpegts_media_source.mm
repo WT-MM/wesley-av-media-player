@@ -110,23 +110,6 @@ MpegTsSourceTraits::PrepareOutcome MpegTsSourceTraits::prepare(
   return media::mpegts::prepareMpegTsLocalFile(path, options, cancellation);
 }
 
-std::shared_ptr<const MpegTsAssetContext> MpegTsSourceTraits::adoptContext(
-    const std::filesystem::path& path,
-    const media::MediaSourceOpenOptions& options,
-    std::shared_ptr<const PreparedAsset> asset) noexcept {
-  return adoptPreparedMpegTsAssetContext(path, options, std::move(asset));
-}
-
-void MpegTsSourceTraits::noteCursorCreationAttempt(
-    const MpegTsAssetContext& context) noexcept {
-  noteMpegTsAssetContextCursorCreationAttempt(context);
-}
-
-void MpegTsSourceTraits::noteCursorStarted(
-    const MpegTsAssetContext& context) noexcept {
-  noteMpegTsAssetContextCursorStarted(context);
-}
-
 std::optional<MediaTime> MpegTsSourceTraits::videoOrigin(
     const PreparedAsset& asset) noexcept {
   const MediaTime origin = asset.videoOriginTime();
@@ -134,11 +117,6 @@ std::optional<MediaTime> MpegTsSourceTraits::videoOrigin(
     return std::nullopt;
   }
   return origin;
-}
-
-CMVideoFormatDescriptionRef MpegTsSourceTraits::createVideoFormatDescription(
-    const MediaTrackDescriptor& track) noexcept {
-  return macos::createVideoFormatDescription(track);
 }
 
 MediaTime MpegTsSourceTraits::mergeOrderKey(const MediaSample& sample) noexcept {
@@ -150,25 +128,6 @@ MediaTime MpegTsSourceTraits::mergeOrderKey(const MediaSample& sample) noexcept 
 
 struct MpegTsMediaSource::Impl final
     : NativeCustomSourceCore<Impl, MpegTsSourceTraits> {
-  using Base = NativeCustomSourceCore<Impl, MpegTsSourceTraits>;
-  using typename Base::StagedSample;
-  using Base::assetContext;
-  using Base::audioDecodeStart;
-  using Base::audioFormat;
-  using Base::audioFramesPerPacket;
-  using Base::audioHead;
-  using Base::audioProofCeiling;
-  using Base::audioSampleRate;
-  using Base::cancellation;
-  using Base::descriptor;
-  using Base::generation;
-  using Base::limits;
-  using Base::publishCancellation;
-  using Base::requestedTarget;
-  using Base::resetAudioFacts;
-  using Base::sealSample;
-  using Base::stateAudioPlayoutProofOnce;
-  using Base::videoFormat;
 
   MediaCodec videoCodec{MediaCodec::Unknown};
   MediaCodec audioCodec{MediaCodec::Unknown};

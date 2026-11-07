@@ -257,15 +257,6 @@ static_assert(media::kCoreAudioMonoLayoutTag == kAudioChannelLayoutTag_Mono &&
 static_assert(media::codec::kMpegLayer2FormatTag == kAudioFormatMPEGLayer2,
               "the neutral Layer II tag is CoreAudio's");
 
-// media::kAacPiecewiseTimelineAttachmentKey as a CFString. CFSTR() accepts only
-// a literal, hence the wrapper; the string lives for the process.
-[[nodiscard]] inline CFStringRef aacPiecewiseTimelineAttachmentKey() noexcept {
-  static const CFStringRef key = CFStringCreateWithCString(
-      nullptr, media::kAacPiecewiseTimelineAttachmentKey,
-      kCFStringEncodingASCII);
-  return key;
-}
-
 // Mono and stereo must state their canonical tag or none at all, and a
 // multichannel track may state a tag only when that tag expands to a stereo
 // fold this player can perform exactly. An unrecognised label makes the whole
