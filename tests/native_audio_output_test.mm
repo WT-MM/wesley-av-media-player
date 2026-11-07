@@ -57,19 +57,6 @@ void operator delete[](void *memory, std::size_t) noexcept {
   std::free(memory);
 }
 
-namespace wam::media {
-
-struct NativeAudioRenderCoreTestAccess {
-  static void setAfterPreflightHook(NativeAudioRenderCore &core,
-                                    NativeAudioRenderCore::TestHook hook,
-                                    void *context) noexcept {
-    core.after_preflight_hook_ = hook;
-    core.after_preflight_context_ = context;
-  }
-};
-
-}  // namespace wam::media
-
 namespace wam::macos {
 
 struct NativeAudioOutputTestAccess {

@@ -47,34 +47,6 @@ void operator delete[](void *memory, std::size_t) noexcept {
   std::free(memory);
 }
 
-namespace wam::media {
-
-struct NativeAudioRenderCoreTestAccess {
-  static void setAfterPreflightHook(NativeAudioRenderCore &core,
-                                    NativeAudioRenderCore::TestHook hook,
-                                    void *context) noexcept {
-    core.after_preflight_hook_ = hook;
-    core.after_preflight_context_ = context;
-  }
-
-  static void failNextCommit(NativeAudioRenderCore &core) noexcept {
-    core.fail_next_commit_ = true;
-  }
-
-  static void forceCallbackState(NativeAudioRenderCore &core,
-                                 std::uint64_t cursor,
-                                 std::uint64_t segmentSerial,
-                                 bool running) noexcept {
-    core.cursor_frame_ = cursor;
-    core.output_cursor_frame_ = cursor;
-    core.prior_end_frame_ = cursor;
-    core.segment_serial_ = segmentSerial;
-    core.running_ = running;
-  }
-};
-
-} // namespace wam::media
-
 namespace {
 
 using wam::media::NativeAudioRenderCore;

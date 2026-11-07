@@ -1,13 +1,20 @@
 if(NOT APPLE)
   message(FATAL_ERROR "WAMKit requires macOS")
 endif()
+option(WAMKIT_ENABLE_TEST_SUPPORT "Enable private identity-gated quiet proof seams" OFF)
+# Test support links the seam-enabled twins of the native libraries
+# (cmake/TestSeams.cmake), which its identity-gated proof seams drive.
+set(wamkit_native "")
+if(WAMKIT_ENABLE_TEST_SUPPORT)
+  set(wamkit_native "_test_seams")
+endif()
 add_library(wamkit_public_layer STATIC
   ../platform/macos/native_layer_video_output.mm ../platform/macos/native_layer_host_view.mm
   ../platform/macos/native_embedding_support.mm)
 target_include_directories(wamkit_public_layer PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_compile_options(wamkit_public_layer PRIVATE -fobjc-arc)
 target_compile_definitions(wamkit_public_layer PRIVATE WAM_PUBLIC_PRESENTATION_API=1)
-target_link_libraries(wamkit_public_layer PUBLIC wam_macos_native_video_core
+target_link_libraries(wamkit_public_layer PUBLIC wam_macos_native_video_core${wamkit_native}
   "-framework AppKit" "-framework AVFoundation" "-framework QuartzCore" "-framework CoreImage")
 add_library(WAMKit SHARED wamkit.mm include/WAMKit/WAMKit.h include/WAMKit/WAMKitObjC.h include/WAMKit/WAMCaption.h)
 set_target_properties(WAMKit PROPERTIES FRAMEWORK TRUE FRAMEWORK_VERSION A
@@ -17,7 +24,7 @@ set_target_properties(WAMKit PROPERTIES FRAMEWORK TRUE FRAMEWORK_VERSION A
   INSTALL_NAME_DIR "@rpath" BUILD_WITH_INSTALL_NAME_DIR YES)
 target_include_directories(WAMKit PRIVATE "${PROJECT_SOURCE_DIR}/src" include)
 target_compile_options(WAMKit PRIVATE -fobjc-arc -Wall -Wextra)
-target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system wamkit_public_layer
+target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system${wamkit_native} wamkit_public_layer
   wam_caption_runtime "-framework AppKit")
 target_link_options(WAMKit PRIVATE "LINKER:-u,_wam_caption_create_v1" "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.txt")
 set_property(TARGET WAMKit APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/exports.txt" "${PROJECT_SOURCE_DIR}/scripts/package_wamkit.py")
@@ -37,12 +44,8 @@ if(BUILD_TESTING)
   set_tests_properties(wamkit_headers PROPERTIES ENVIRONMENT "WAM_TEST_SCRATCH=${PROJECT_BINARY_DIR}/wamkit-test-scratch")
 endif()
 
-option(WAMKIT_ENABLE_TEST_SUPPORT "Enable private identity-gated quiet proof seams" OFF)
 if(WAMKIT_ENABLE_TEST_SUPPORT)
   target_compile_definitions(WAMKit PRIVATE WAMKIT_ENABLE_TEST_SUPPORT=1)
-  # The native seams WAMKit's test support drives (native_test_seams.hpp).
-  # PUBLIC, so every target sharing these objects sees one class layout.
-  target_compile_definitions(wam_macos_native_backend PUBLIC WAM_NATIVE_TEST_SEAMS=1)
 endif()
 option(WAMKIT_BUILD_HOST "Build the non-Qt AppKit embedding example" ${APPLE})
 if(WAMKIT_BUILD_HOST)
@@ -75,10 +78,6 @@ if(BUILD_TESTING AND WAMKIT_BUILD_HOST AND WAMKIT_ENABLE_TEST_SUPPORT)
     set_tests_properties(wamkit_host_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30 LABELS gui
       FIXTURES_REQUIRED wamkit_media)
   endforeach()
-endif()
-
-if(BUILD_TESTING)
-  add_test(NAME wamkit_device_recovery COMMAND sh "${PROJECT_SOURCE_DIR}/tests/run_wamkit_device_recovery_test.sh")
 endif()
 
 find_program(WAMKIT_SWIFT swift)

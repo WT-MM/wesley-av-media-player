@@ -319,17 +319,9 @@ if(TARGET wam_native_core)
   target_link_libraries(wam_playback_router_test PRIVATE wam_native_core)
   add_test(NAME playback_router COMMAND wam_playback_router_test)
 
-  # The clock's bounded publication-token domain is a compile-time test
-  # seam; compile a complete private implementation rather than mixing it
-  # with the production wam_native_core object.
-  add_executable(wam_native_media_clock_test
-    native_media_clock_test.cpp
-    ${PROJECT_SOURCE_DIR}/src/media/native_media_clock.hpp
-    ${PROJECT_SOURCE_DIR}/src/media/native_media_clock.cpp)
-  target_include_directories(wam_native_media_clock_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  target_link_libraries(wam_native_media_clock_test PRIVATE wam_native_core)
-  target_compile_definitions(wam_native_media_clock_test PRIVATE
-    WAM_NATIVE_MEDIA_CLOCK_TESTING=1)
+  add_executable(wam_native_media_clock_test native_media_clock_test.cpp)
+  target_link_libraries(wam_native_media_clock_test PRIVATE
+    wam_native_core_test_seams)
   add_test(NAME native_media_clock COMMAND wam_native_media_clock_test)
 
   add_executable(wam_native_pcm_ring_test
@@ -337,17 +329,10 @@ if(TARGET wam_native_core)
   target_link_libraries(wam_native_pcm_ring_test PRIVATE wam_native_core)
   add_test(NAME native_pcm_ring COMMAND wam_native_pcm_ring_test)
 
-  # The render core's test hooks are compiled in only with
-  # WAM_NATIVE_TEST_SEAMS; compile a private render core with them, as the
-  # clock test does for its token domain.
   add_executable(wam_native_audio_render_core_test
-    native_audio_render_core_test.cpp
-    ${PROJECT_SOURCE_DIR}/src/media/native_audio_render_core.cpp)
-  target_include_directories(wam_native_audio_render_core_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  target_compile_definitions(wam_native_audio_render_core_test PRIVATE
-    WAM_NATIVE_TEST_SEAMS=1)
-  target_link_libraries(
-    wam_native_audio_render_core_test PRIVATE wam_native_core)
+    native_audio_render_core_test.cpp)
+  target_link_libraries(wam_native_audio_render_core_test PRIVATE
+    wam_native_core_test_seams)
   add_test(NAME native_audio_render_core
     COMMAND wam_native_audio_render_core_test)
 
@@ -755,49 +740,35 @@ if(APPLE)
     set_tests_properties(macos_native_phase0b_integration PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
 
     add_executable(wam_native_audio_converter_test
-      native_audio_converter_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_converter.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_converter.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_converter_backends.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_converter_backends.mm)
-    target_include_directories(wam_native_audio_converter_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      native_audio_converter_test.mm)
     target_link_libraries(wam_native_audio_converter_test PRIVATE
-      wam_native_core
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}")
+      wam_macos_native_backend)
     add_test(NAME macos_native_audio_converter
       COMMAND wam_native_audio_converter_test)
     set_tests_properties(macos_native_audio_converter PROPERTIES
       TIMEOUT 20)
 
-    # The audio session test builds its own strict-flag translation units in
-    # a temporary directory rather than linking a CMake target, which is why
-    # it is a script. Registering the script is what puts it in ctest; it
-    # needs no target of its own and stays runnable by hand.
+    add_executable(wam_native_audio_session_test native_audio_session_test.mm)
+    target_link_libraries(wam_native_audio_session_test PRIVATE
+      wam_macos_native_backend_test_seams)
+    target_compile_options(wam_native_audio_session_test PRIVATE
+      -Werror -Wconversion -Wsign-conversion -Wshadow -Wundef -Wcast-align
+      -Wformat=2 -Wimplicit-fallthrough)
     add_test(NAME macos_native_audio_session
-      COMMAND sh
-      "${PROJECT_SOURCE_DIR}/tests/run_native_audio_session_test.sh")
-    set_tests_properties(macos_native_audio_session PROPERTIES
-      TIMEOUT 600)
+      COMMAND wam_native_audio_session_test)
+    set_tests_properties(macos_native_audio_session PROPERTIES TIMEOUT 60)
+    # A device format change overlapping a seek; WAMKit's host replays the
+    # same notification through its device-recovery seam.
+    add_test(NAME wamkit_device_recovery
+      COMMAND wam_native_audio_session_test --device-recovery)
+    set_tests_properties(wamkit_device_recovery PROPERTIES TIMEOUT 60)
 
     # New Opus behaviour lives alongside the frozen converter contract
     # rather than inside it.
     add_executable(wam_native_audio_converter_opus_test
-      native_audio_converter_opus_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_converter.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_converter.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_converter_backends.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_converter_backends.mm)
-    target_include_directories(wam_native_audio_converter_opus_test
-      PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      native_audio_converter_opus_test.mm)
     target_link_libraries(wam_native_audio_converter_opus_test PRIVATE
-      wam_native_core
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}")
+      wam_macos_native_backend)
     add_test(NAME macos_native_audio_converter_opus
       COMMAND wam_native_audio_converter_opus_test)
     set_tests_properties(macos_native_audio_converter_opus PROPERTIES
@@ -820,17 +791,9 @@ if(APPLE)
       TIMEOUT 20)
 
     add_executable(wam_native_audio_stretch_stage_test
-      native_audio_stretch_stage_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_stretch_stage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_stretch_stage.mm)
-    target_include_directories(wam_native_audio_stretch_stage_test
-      PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      native_audio_stretch_stage_test.mm)
     target_link_libraries(wam_native_audio_stretch_stage_test PRIVATE
-      wam_native_core
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_COREAUDIO_FRAMEWORK}")
+      wam_macos_native_backend)
     add_test(NAME macos_native_audio_stretch_stage
       COMMAND wam_native_audio_stretch_stage_test)
     set_tests_properties(macos_native_audio_stretch_stage PROPERTIES
@@ -851,22 +814,9 @@ if(APPLE)
     set_tests_properties(macos_native_audio_output_converter PROPERTIES
       TIMEOUT 120)
 
-    add_executable(wam_native_audio_output_test
-      native_audio_output_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_output.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_output.mm
-      ${PROJECT_SOURCE_DIR}/src/media/native_audio_render_core.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_stretch_stage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_stretch_stage.mm)
-    target_include_directories(wam_native_audio_output_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(wam_native_audio_output_test PRIVATE
-      WAM_NATIVE_TEST_SEAMS=1)
+    add_executable(wam_native_audio_output_test native_audio_output_test.mm)
     target_link_libraries(wam_native_audio_output_test PRIVATE
-      wam_native_core
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_COREAUDIO_FRAMEWORK}")
+      wam_macos_native_backend_test_seams)
     add_test(NAME macos_native_audio_output
       COMMAND wam_native_audio_output_test)
     set_tests_properties(macos_native_audio_output PROPERTIES TIMEOUT 30)
@@ -1379,6 +1329,7 @@ if(APPLE)
         wam_native_custom_source_traits_test
         wam_native_audio_converter_test
         wam_native_audio_output_test
+        wam_native_audio_session_test
         wam_native_audio_output_converter_test
         wam_native_audio_stretch_stage_test
         wam_native_surface_budget_test

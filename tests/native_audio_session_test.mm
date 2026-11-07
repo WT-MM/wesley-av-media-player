@@ -1,5 +1,3 @@
-#define WAM_NATIVE_TEST_SEAMS 1
-
 #include "media/native_media_dispatcher.hpp"
 #include "platform/macos/native_audio_session.hpp"
 #include "platform/macos/native_concurrency_limits.hpp"
@@ -21,6 +19,7 @@
 #include <new>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -1777,9 +1776,62 @@ void testBoundedSessionEnvelope() {
          "draining every window empties the whole envelope");
 }
 
+// A device format notification overlapping a seek: an unchanged format is
+// reconciled before the seek activates, a changed sample rate stays refused.
+void testDeviceRecoveryAcrossSeek() {
+  for (int iteration = 0; iteration < 30; ++iteration) {
+    auto platform = std::make_shared<FakePlatform>();
+    auto backend = std::make_shared<BackendState>();
+    auto session = NativeAudioSession::create(
+        1, dependencies(platform, std::make_unique<FakeBackend>(backend)));
+    expect(session->configure(audioTrack(), 1, timeline(1, 0), nullptr) ==
+               NativeMediaConsumeResult::Accepted, "recovery fixture configured");
+    platform->listener(platform->listenerContext,
+        reinterpret_cast<AudioUnit>(&platform->unitToken),
+        kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0);
+    auto target = timeline(2, 1602);
+    target.requestedTarget = {1001, 30000};
+    target.presentationFloor = target.requestedTarget;
+    expect(session->flush(1, 2, target) ==
+               NativeMediaConsumerProgress::Done,
+           "seek reconciles unchanged device format before activation");
+    expect(session->close() == NativeMediaConsumerProgress::Done,
+           "recovery seek closes cleanly");
+  }
+  auto platform = std::make_shared<FakePlatform>();
+  auto backend = std::make_shared<BackendState>();
+  auto seams = dependencies(platform, std::make_unique<FakeBackend>(backend));
+  static bool changed = false;
+  seams.outputCalls.getProperty = [](void* context, AudioUnit unit,
+      AudioUnitPropertyID property, AudioUnitScope scope, AudioUnitElement element,
+      void* data, UInt32* size) -> OSStatus {
+    const auto status = FakePlatform::getProperty(context, unit, property, scope,
+                                                  element, data, size);
+    if (status == noErr && changed && property == kAudioUnitProperty_StreamFormat &&
+        scope == kAudioUnitScope_Output) {
+      static_cast<AudioStreamBasicDescription*>(data)->mSampleRate = 44100.0;
+    }
+    return status;
+  };
+  auto session = NativeAudioSession::create(1, std::move(seams));
+  expect(session->configure(audioTrack(), 1, timeline(1, 0), nullptr) ==
+             NativeMediaConsumeResult::Accepted, "changed-rate fixture configured");
+  changed = true;
+  platform->listener(platform->listenerContext,
+      reinterpret_cast<AudioUnit>(&platform->unitToken),
+      kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0);
+  expect(session->flush(1, 2, timeline(2, 1602)) == NativeMediaConsumerProgress::Failed,
+         "a changed device rate remains refused");
+  static_cast<void>(session->close());
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--device-recovery") {
+    testDeviceRecoveryAcrossSeek();
+    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
   testCachedGainMuteControls();
   testTerminalGainMuteRejection();
   testPreflightAndPostResourceFailure();

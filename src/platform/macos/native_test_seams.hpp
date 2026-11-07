@@ -4,12 +4,12 @@
 
 // The native layer's test seams, and the one switch that compiles them in.
 //
-// WAM_NATIVE_TEST_SEAMS is defined only for test builds: the focused native
-// test targets and scripts, and WAMKit configured with
-// WAMKIT_ENABLE_TEST_SUPPORT (whose identity-gated environment variables are
-// the only production-binary producers of these seams). Shipping builds
-// compile none of it: no hook storage, no hook call on the real-time path, no
-// test-only global.
+// WAM_NATIVE_TEST_SEAMS is defined only on the seam-enabled twins of the
+// production libraries (cmake/TestSeams.cmake) and whatever links them: the
+// native tests, and WAMKit configured with WAMKIT_ENABLE_TEST_SUPPORT (whose
+// identity-gated environment variables are the only production-binary
+// producers of these seams). Shipping builds compile none of it: no hook
+// storage, no hook call on the real-time path, no test-only global.
 //
 // Seams that stay compiled in shipping builds, deliberately:
 //   * WAM_TEST_MUTED (native_audio_test_mute.hpp): output-copy mute for

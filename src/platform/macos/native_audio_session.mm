@@ -542,22 +542,6 @@ struct NativeAudioSessionControl final {
 
 
 #if defined(WAM_NATIVE_TEST_SEAMS)
-}  // namespace wam::macos
-
-namespace wam::media {
-struct NativeAudioRenderCoreTestAccess {
-  static void setAfterPreflightHook(
-      NativeAudioRenderCore& core,
-      NativeAudioRenderCore::TestHook hook,
-      void* context) noexcept {
-    core.after_preflight_hook_ = hook;
-    core.after_preflight_context_ = context;
-  }
-};
-}  // namespace wam::media
-
-namespace wam::macos {
-
 std::unique_ptr<NativeAudioSession>
 NativeAudioSessionTestAccess::recoverQuarantined() noexcept {
   std::lock_guard<std::mutex> lock(gSessionMutex);
