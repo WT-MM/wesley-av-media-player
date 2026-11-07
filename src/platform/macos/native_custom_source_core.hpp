@@ -126,6 +126,22 @@ class NativeSourceCore {
     }
   }
 
+  // The accurate-seek decodeOnly verdict and the neutral validation, applied to
+  // a sample whose timing fields are final.
+  [[nodiscard]] bool sealSample(media::MediaSample& sample, bool video,
+                                std::string* error) const {
+    if (video && requestedTarget &&
+        seekMode == media::MediaSeekMode::Accurate) {
+      const auto decodeOnly = accurateVideoDecodeOnly(
+          sample.presentationTime, sample.duration, *requestedTarget, error);
+      if (!decodeOnly) {
+        return false;
+      }
+      sample.decodeOnly = *decodeOnly;
+    }
+    return media::validateMediaSample(sample, *descriptor, limits, error);
+  }
+
   // ---- derived hooks with defaults ---------------------------------------
 
   void cancellationPublished(media::MediaGeneration) noexcept {}
@@ -733,22 +749,6 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
     if (order && *order != media::MediaTimeOrder::Greater) {
       static_cast<void>(statedImmediatePlayoutFrame(sample));
     }
-  }
-
-  // The accurate-seek decodeOnly verdict and the neutral validation, applied to
-  // a sample whose timing fields are final.
-  [[nodiscard]] bool sealSample(media::MediaSample& sample, bool video,
-                                std::string* error) const {
-    if (video && requestedTarget &&
-        seekMode == media::MediaSeekMode::Accurate) {
-      const auto decodeOnly = accurateVideoDecodeOnly(
-          sample.presentationTime, sample.duration, *requestedTarget, error);
-      if (!decodeOnly) {
-        return false;
-      }
-      sample.decodeOnly = *decodeOnly;
-    }
-    return media::validateMediaSample(sample, *descriptor, limits, error);
   }
 
   // ---- staging ------------------------------------------------------------

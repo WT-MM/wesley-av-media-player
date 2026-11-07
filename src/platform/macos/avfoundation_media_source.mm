@@ -3367,16 +3367,8 @@ struct AVFoundationMediaSource::Impl final
     mediaSample.sampleCount = sampleCount;
     mediaSample.aacPiecewiseTimeline = aacPiecewiseTimeline;
     mediaSample.payload = MediaPayloadLease(std::move(storage));
-    if (kind == MediaSampleKind::EncodedVideo && requestedTarget &&
-        seekMode == media::MediaSeekMode::Accurate) {
-      const auto decodeOnly = accurateVideoDecodeOnly(
-          *pts, duration, *requestedTarget, error);
-      if (!decodeOnly) {
-        return std::nullopt;
-      }
-      mediaSample.decodeOnly = *decodeOnly;
-    }
-    if (!media::validateMediaSample(mediaSample, *descriptor, limits, error)) {
+    if (!sealSample(mediaSample, kind == MediaSampleKind::EncodedVideo,
+                    error)) {
       return std::nullopt;
     }
     return StagedSample{trackId, order, std::move(mediaSample), bytes};
