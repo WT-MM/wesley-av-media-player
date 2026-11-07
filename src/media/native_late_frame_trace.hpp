@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media/environment_truth.hpp"
+
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -34,10 +36,8 @@ template <typename T, std::size_t Capacity> struct Ring {
 };
 
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-inline const bool enabled = [] {
-  const char* value = std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY");
-  return value && std::strcmp(value, "1") == 0;
-}();
+inline const bool enabled =
+    wamEnvironmentTruth("WAM_NATIVE_BENCHMARK_TELEMETRY");
 struct WorkerContext {
   std::uint64_t videoDepth{}, audioDepth{}, stepTicks{}, previousStepTicks{};
   std::uint64_t openTicks{}, lastSeekLanding{};

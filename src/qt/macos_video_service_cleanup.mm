@@ -1,5 +1,6 @@
 #include "macos_video_service_cleanup.hpp"
 #include "macos_video_service_identity.hpp"
+#include "media/environment_truth.hpp"
 
 #include <libproc.h>
 #include <sys/proc_info.h>
@@ -119,8 +120,7 @@ void finishMacosVideoServices() noexcept {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       if (info(pid, current) && sameProcess(peer, current)) {
         std::fprintf(stderr, "WAM: owned VideoToolbox service %d did not terminate\n", pid);
-      } else if (const char* trace = std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY");
-                 trace && std::strcmp(trace, "1") == 0) {
+      } else if (wamEnvironmentTruth("WAM_NATIVE_BENCHMARK_TELEMETRY")) {
         std::fprintf(stderr, "WAM: retired owned VideoToolbox service %d after media teardown\n", pid);
       }
     } catch (...) {

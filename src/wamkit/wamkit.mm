@@ -1,4 +1,5 @@
 #import "include/WAMKit/WAMKitObjC.h"
+#include "media/environment_truth.hpp"
 #include "platform/macos/native_playback_owner.hpp"
 #include "platform/macos/native_open_preflight.hpp"
 #include "platform/macos/native_layer_host_view.hpp"
@@ -74,9 +75,7 @@ public:
 #if defined(WAMKIT_ENABLE_TEST_SUPPORT)
     const auto hex=[](const char* value,std::size_t count){if(!value||std::strlen(value)!=count)return false;for(std::size_t i=0;i<count;++i)if(!((value[i]>='0'&&value[i]<='9')||(value[i]>='a'&&value[i]<='f')))return false;return true;};
     const char* run=std::getenv("WAM_NATIVE_BENCHMARK_RUN_ID");
-    const char* enabled=std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY");
-    const char* quiet=std::getenv("WAM_TEST_MUTED");
-    if(enabled && !std::strcmp(enabled,"1") && quiet && !std::strcmp(quiet,"1") &&
+    if(wam::wamEnvironmentTruth("WAM_NATIVE_BENCHMARK_TELEMETRY") && wam::wamEnvironmentTruth("WAM_TEST_MUTED") &&
        run && [[NSUUID alloc] initWithUUIDString:@(run)] &&
        hex(std::getenv("WAM_NATIVE_BENCHMARK_ASSET_SHA256"),64) &&
        hex(std::getenv("WAM_NATIVE_BENCHMARK_CANDIDATE_ID"),64)){
