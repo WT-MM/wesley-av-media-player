@@ -719,17 +719,15 @@ class PlayerControllerTestAccess final {
   }
 
   static std::uint64_t nativePreviewRequest(
-      const PlayerController &controller) {
-    return controller.native_scrub_intent_
-               ? controller.native_scrub_intent_->latest_preview_request
-               : 0;
+      PlayerController &controller) {
+    const auto *scrub = controller.nativeScrub();
+    return scrub ? scrub->latest_preview_request : 0;
   }
 
   static std::uint64_t nativeDispatchedPreviewRequest(
-      const PlayerController &controller) {
-    return controller.native_scrub_intent_
-               ? controller.native_scrub_intent_->dispatched_preview_request
-               : 0;
+      PlayerController &controller) {
+    const auto *scrub = controller.nativeScrub();
+    return scrub ? scrub->in_flight_preview.value_or(0) : 0;
   }
 
   static bool endNativeScrub(PlayerController &controller, double target) {
@@ -769,6 +767,10 @@ class PlayerControllerTestAccess final {
     double nested_target{0.0};
     NativeSeekProbe *nested_probe{nullptr};
   };
+
+  static void acceptNativeSubmission(NativeSeekProbe &probe) {
+    probe.result = PlayerController::NativeSeekSubmission::Accepted;
+  }
 
   static void rejectNativeSubmission(NativeSeekProbe &probe) {
     probe.result = PlayerController::NativeSeekSubmission::Rejected;
@@ -895,43 +897,67 @@ class PlayerControllerTestAccess final {
     controller.nativeCommitFailed(gesture, request);
   }
 
+  static const PlayerController::NativeScrubIntent *
+  scrubOf(const PlayerController &controller) {
+    const auto *scrubbing =
+        std::get_if<PlayerController::NativeScrubbing>(&controller.native_gesture_);
+    return scrubbing ? &scrubbing->scrub : nullptr;
+  }
+
   static bool hasNativeScrub(const PlayerController &controller) {
-    return controller.native_scrub_intent_.has_value();
+    return scrubOf(controller) != nullptr;
   }
 
   static bool hasNativeSeek(const PlayerController &controller) {
-    return controller.native_seek_intent_.has_value();
+    return controller.nativeCommit() != nullptr;
   }
 
   static std::uint64_t nativeScrubGesture(
       const PlayerController &controller) {
-    return controller.native_scrub_intent_
-               ? controller.native_scrub_intent_->gesture
-               : 0;
+    return scrubOf(controller) ? scrubOf(controller)->gesture : 0;
   }
 
   static std::uint64_t nativeSeekGesture(const PlayerController &controller) {
-    return controller.native_seek_intent_
-               ? controller.native_seek_intent_->gesture
-               : 0;
+    return controller.nativeCommit() ? controller.nativeCommit()->gesture : 0;
   }
 
   static std::uint64_t nativeSeekRequest(const PlayerController &controller) {
-    return controller.native_seek_intent_
-               ? controller.native_seek_intent_->request
-               : 0;
+    return controller.nativeCommit() ? controller.nativeCommit()->request : 0;
   }
 
   static double nativeScrubTarget(const PlayerController &controller) {
-    return controller.native_scrub_intent_
-               ? controller.native_scrub_intent_->target
-               : -1.0;
+    return scrubOf(controller) ? scrubOf(controller)->target : -1.0;
   }
 
   static double nativeSeekTarget(const PlayerController &controller) {
-    return controller.native_seek_intent_
-               ? controller.native_seek_intent_->target
-               : -1.0;
+    return controller.nativeCommit() ? controller.nativeCommit()->target : -1.0;
+  }
+
+  // A frame step through the native branch, against an injected commit
+  // submitter, and the step it leaves armed for its settling commit.
+  static void stepNativeFrame(PlayerController &controller, bool forward,
+                              NativeSeekProbe &probe) {
+    controller.stepNativeFrame(
+        forward, &probe,
+        [](void *context,
+           const PlayerController::NativeSeekIntent &request) noexcept {
+          auto &capture = *static_cast<NativeSeekProbe *>(context);
+          ++capture.submissions;
+          capture.gesture = request.gesture;
+          capture.request = request.request;
+          capture.target = request.target;
+          capture.intended_paused = request.intended_paused;
+          return capture.result;
+        });
+  }
+
+  static bool frameStepArmed(const PlayerController &controller) {
+    return controller.pending_frame_step_.has_value();
+  }
+
+  static void publishFrameGeometry(PlayerController &controller, double start,
+                                   double duration) {
+    controller.publishNativeFrameGeometry(start, duration);
   }
 
   // Frame stepping's whole exactness argument lives in this one function, so
@@ -943,10 +969,7 @@ class PlayerControllerTestAccess final {
   }
 
   static bool nativeIntendsPause(const PlayerController &controller) {
-    if (controller.native_scrub_intent_)
-      return controller.native_scrub_intent_->intended_paused;
-    return controller.native_seek_intent_ &&
-           controller.native_seek_intent_->intended_paused;
+    return controller.nativeSeekInFlight() && controller.nativeIntendedPaused();
   }
 
   static void setNativePauseIntent(PlayerController &controller, bool paused) {
@@ -3246,6 +3269,31 @@ int main(int argc, char **argv) {
     Access::failNativeSeek(controller, nested.gesture, nested.request);
   }
 
+  {
+    // A frame step pressed before the frame on screen was proved stays armed
+    // only while its own settling commit converges. A refused or failed
+    // settle used to leave it armed, and the next drawn frame (the first one
+    // after Play) fired it, pausing playback by itself.
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::NativeSeekProbe probe;
+    Access::rejectNativeSubmission(probe);
+    Access::stepNativeFrame(controller, true, probe);
+    expect(probe.submissions == 1, "an unproved frame step settles first");
+    expect(!Access::frameStepArmed(controller),
+           "a refused settle leaves no frame step armed");
+
+    Access::acceptNativeSubmission(probe);
+    Access::stepNativeFrame(controller, true, probe);
+    expect(Access::frameStepArmed(controller),
+           "an accepted settle arms the step for its own landing");
+    Access::publishFrameGeometry(controller, 5.0, 0.04);
+    expect(Access::frameStepArmed(controller),
+           "a main-draw proof does not spend the step");
+    Access::failNativeSeek(controller, probe.gesture, probe.request);
+    expect(!Access::frameStepArmed(controller) && !Access::hasNativeSeek(controller),
+           "a failed settle disarms its step");
+  }
   {
     // ------------------------------------------------------------------
     // Frame stepping: the exactness property, against real sample timing.

@@ -400,23 +400,25 @@ bool PlayerController::resetRoutedFallbackCoreAfterRelease(
 
 void PlayerController::play() {
   if (native_) {
-    if (nativeRouteActive() && native_scrub_intent_) {
-      // A native seek converges while physically paused. Keep play/pause as
-      // logical post-seek intent; the owner applies the latest value only after
-      // exact CommitReady proof.
-      setNativeScrubPauseIntent(false);
-      updatePause(false);
-      return;
-    }
-    if (nativeRouteActive() && native_seek_intent_) {
-      setNativeScrubPauseIntent(false);
-      updatePause(false);
+    if (nativeRouteActive()) {
+      if (std::holds_alternative<NativeScrubbing>(native_gesture_)) {
+        // A native seek converges while physically paused. Keep play/pause
+        // as logical post-seek intent; the owner applies the latest value
+        // only after exact CommitReady proof.
+        setNativeScrubPauseIntent(false);
+        updatePause(false);
+        return;
+      }
+      if (std::holds_alternative<NativeCommitting>(native_gesture_)) {
+        setNativeScrubPauseIntent(false);
+        updatePause(false);
+      }
     }
     const auto disposition = native_->setPaused(false);
     if (disposition == NativeEngine::PauseDisposition::NativeHandled ||
         disposition == NativeEngine::PauseDisposition::NotOwned) {
       if (disposition == NativeEngine::PauseDisposition::NativeHandled &&
-          atEndForReplay(native_frame_duration_) && !native_seek_intent_) {
+          atEndForReplay(nativeFrameDuration()) && nativeCommit() == nullptr) {
         // Native Ended retains its graph. Replay is one ordinary exact seek
         // to zero; CommitReady then restores the retained playing intent.
         updatePause(false);
@@ -431,14 +433,16 @@ void PlayerController::play() {
 
 void PlayerController::pause() {
   if (native_) {
-    if (nativeRouteActive() && native_scrub_intent_) {
-      setNativeScrubPauseIntent(true);
-      updatePause(true);
-      return;
-    }
-    if (nativeRouteActive() && native_seek_intent_) {
-      setNativeScrubPauseIntent(true);
-      updatePause(true);
+    if (nativeRouteActive()) {
+      if (std::holds_alternative<NativeScrubbing>(native_gesture_)) {
+        setNativeScrubPauseIntent(true);
+        updatePause(true);
+        return;
+      }
+      if (std::holds_alternative<NativeCommitting>(native_gesture_)) {
+        setNativeScrubPauseIntent(true);
+        updatePause(true);
+      }
     }
     const auto disposition = native_->setPaused(true);
     if (disposition == NativeEngine::PauseDisposition::NativeHandled ||
@@ -617,26 +621,85 @@ double PlayerController::frameStepSeekTarget(double seconds,
 }
 
 bool PlayerController::beginNativeScrubIntent() {
-  if (native_scrub_intent_)
+  if (std::holds_alternative<NativeScrubbing>(native_gesture_))
     return true;
   const auto gesture = reserveNativeSeekIdentity(next_native_seek_gesture_id_);
   if (!gesture)
     return false;
-  const bool intended_paused =
-      native_seek_intent_ ? native_seek_intent_->intended_paused : paused_;
-  native_scrub_intent_ = NativeScrubIntent{
-      *gesture, position_, position_, 0, 0, intended_paused};
+  const NativeScrubIntent scrub{*gesture, position_, position_, 0, {}, true};
+  if (auto *committing = std::get_if<NativeCommitting>(&native_gesture_)) {
+    const NativeSeekIntent converging = committing->commit;
+    native_gesture_ =
+        NativeScrubbing{scrub, converging, converging.intended_paused};
+  } else {
+    native_gesture_ = NativeScrubbing{scrub, std::nullopt, paused_};
+  }
   return true;
+}
+
+PlayerController::NativeScrubIntent *PlayerController::nativeScrub() noexcept {
+  auto *scrubbing = std::get_if<NativeScrubbing>(&native_gesture_);
+  return scrubbing != nullptr ? &scrubbing->scrub : nullptr;
+}
+
+const PlayerController::NativeSeekIntent *
+PlayerController::nativeCommit() const noexcept {
+  if (const auto *committing = std::get_if<NativeCommitting>(&native_gesture_))
+    return &committing->commit;
+  if (const auto *scrubbing = std::get_if<NativeScrubbing>(&native_gesture_))
+    return scrubbing->converging ? &*scrubbing->converging : nullptr;
+  return nullptr;
+}
+
+bool PlayerController::nativeIntendedPaused() const noexcept {
+  if (const auto *scrubbing = std::get_if<NativeScrubbing>(&native_gesture_))
+    return scrubbing->intended_paused;
+  if (const auto *committing = std::get_if<NativeCommitting>(&native_gesture_))
+    return committing->commit.intended_paused;
+  return paused_;
+}
+
+void PlayerController::adoptNativeCommit(const NativeSeekIntent &intent) {
+  if (auto *scrubbing = std::get_if<NativeScrubbing>(&native_gesture_)) {
+    scrubbing->converging = intent;
+    return;
+  }
+  native_gesture_ = NativeCommitting{intent};
+}
+
+bool PlayerController::retireNativeCommit(std::uint64_t gesture,
+                                          std::uint64_t request,
+                                          const double *target) noexcept {
+  const NativeSeekIntent *commit = nativeCommit();
+  if (commit == nullptr || commit->gesture != gesture ||
+      commit->request != request ||
+      (target != nullptr && commit->target != *target)) {
+    return false;
+  }
+  if (auto *scrubbing = std::get_if<NativeScrubbing>(&native_gesture_))
+    scrubbing->converging.reset();
+  else
+    native_gesture_ = NativeGestureIdle{};
+  return true;
+}
+
+bool PlayerController::ownsNativePreview(std::uint64_t gesture,
+                                         std::uint64_t request) noexcept {
+  const NativeScrubIntent *scrub = nativeScrub();
+  return scrub != nullptr && request != 0 && scrub->gesture == gesture &&
+         scrub->in_flight_preview == request;
 }
 
 std::optional<PlayerController::NativePreviewIntent>
 PlayerController::makeNativePreviewIntent(double seconds) {
-  if (!native_scrub_intent_ || !std::isfinite(seconds))
+  const NativeScrubIntent *scrub = nativeScrub();
+  if (scrub == nullptr || !std::isfinite(seconds))
     return std::nullopt;
+  const std::uint64_t gesture = scrub->gesture;
   const auto request = reserveNativeSeekIdentity(next_native_seek_request_id_);
   if (!request)
     return std::nullopt;
-  return NativePreviewIntent{native_scrub_intent_->gesture, *request,
+  return NativePreviewIntent{gesture, *request,
                              exactNativeSeekTarget(seconds)};
 }
 
@@ -652,9 +715,9 @@ PlayerController::makeObservedNativePreviewIntent(
 void PlayerController::dispatchNativePreviewIntent(
     const NativePreviewIntent &intent, void *context,
     NativePreviewSubmitter submitter) {
-  if (!native_scrub_intent_ ||
-      native_scrub_intent_->gesture != intent.gesture || intent.request == 0 ||
-      !std::isfinite(intent.target)) {
+  NativeScrubIntent *scrub = nativeScrub();
+  if (scrub == nullptr || scrub->gesture != intent.gesture ||
+      intent.request == 0 || !std::isfinite(intent.target)) {
     return;
   }
 
@@ -662,31 +725,21 @@ void PlayerController::dispatchNativePreviewIntent(
   // before publishing the optimistic target. positionChanged handlers may
   // synchronously request another preview; that movement must coalesce behind
   // this exact request instead of recursively issuing another media command.
-  NativeScrubIntent &scrub = *native_scrub_intent_;
-  scrub.latest_preview_request = intent.request;
-  scrub.target = intent.target;
-  const bool ownsDispatch = scrub.dispatched_preview_request == 0;
+  scrub->latest_preview_request = intent.request;
+  scrub->target = intent.target;
+  const bool ownsDispatch = !scrub->in_flight_preview;
   if (ownsDispatch)
-    scrub.dispatched_preview_request = intent.request;
+    scrub->in_flight_preview = intent.request;
   updatePosition(intent.target);
 
   // Publishing the optimistic handle is a synchronous Qt boundary. A signal
   // handler may Stop, Commit, or replace the entire gesture before returning;
   // never submit media work for an identity that no longer owns the slot.
-  if (!native_scrub_intent_ ||
-      native_scrub_intent_->gesture != intent.gesture ||
-      native_scrub_intent_->dispatched_preview_request != intent.request) {
-    return;
-  }
-  if (!ownsDispatch)
+  if (!ownsNativePreview(intent.gesture, intent.request) || !ownsDispatch)
     return;
 
   if (submitter == nullptr) {
-    if (native_scrub_intent_ &&
-        native_scrub_intent_->gesture == intent.gesture &&
-        native_scrub_intent_->dispatched_preview_request == intent.request) {
-      native_scrub_intent_->dispatched_preview_request = 0;
-    }
+    nativeScrub()->in_flight_preview.reset();
     return;
   }
 
@@ -694,11 +747,8 @@ void PlayerController::dispatchNativePreviewIntent(
   // The owner may synchronously drain a terminal observation while accepting
   // this command. Such a completion has already released or replaced the
   // slot; never recreate its ownership after returning from client code.
-  if (!native_scrub_intent_ ||
-      native_scrub_intent_->gesture != intent.gesture ||
-      native_scrub_intent_->dispatched_preview_request != intent.request) {
+  if (!ownsNativePreview(intent.gesture, intent.request))
     return;
-  }
 
   switch (submission) {
   case NativePreviewSubmission::Accepted:
@@ -713,22 +763,28 @@ void PlayerController::dispatchNativePreviewIntent(
   // newest request as a freshness barrier. If client reentrancy staged a newer
   // desire while this request was being submitted, give that exact latest
   // target one immediate opportunity instead of leaving it stranded.
-  native_scrub_intent_->dispatched_preview_request = 0;
-  if (native_scrub_intent_->latest_preview_request != intent.request) {
-    const NativePreviewIntent latest{
-        native_scrub_intent_->gesture,
-        native_scrub_intent_->latest_preview_request,
-        native_scrub_intent_->target};
-    dispatchNativePreviewIntent(latest, context, submitter);
-  }
+  releaseNativePreviewSlot(intent.request, context, submitter);
+}
+
+void PlayerController::releaseNativePreviewSlot(
+    std::uint64_t request, void *context, NativePreviewSubmitter submitter) {
+  NativeScrubIntent &scrub = *nativeScrub();
+  scrub.in_flight_preview.reset();
+  if (scrub.latest_preview_request == request)
+    return;
+  const NativePreviewIntent latest{scrub.gesture, scrub.latest_preview_request,
+                                   scrub.target};
+  dispatchNativePreviewIntent(latest, context, submitter);
 }
 
 std::optional<PlayerController::NativeSeekIntent>
 PlayerController::finishNativeScrubIntent(double seconds) {
-  if (!native_scrub_intent_)
+  auto *scrubbing = std::get_if<NativeScrubbing>(&native_gesture_);
+  if (scrubbing == nullptr)
     return std::nullopt;
-  const NativeScrubIntent scrub = *native_scrub_intent_;
-  native_scrub_intent_.reset();
+  const NativeScrubIntent scrub = scrubbing->scrub;
+  const bool intended_paused = scrubbing->intended_paused;
+  invalidateNativeScrubIntent();
   if (!std::isfinite(seconds))
     return std::nullopt;
   const auto request = reserveNativeSeekIdentity(next_native_seek_request_id_);
@@ -736,7 +792,7 @@ PlayerController::finishNativeScrubIntent(double seconds) {
     return std::nullopt;
   return NativeSeekIntent{scrub.gesture, *request,
                           exactNativeSeekTarget(seconds), scrub.origin,
-                          scrub.intended_paused};
+                          intended_paused};
 }
 
 std::optional<PlayerController::NativeSeekIntent>
@@ -749,10 +805,8 @@ PlayerController::makeNativeSeekIntent(double seconds) {
   const auto request = reserveNativeSeekIdentity(next_native_seek_request_id_);
   if (!request)
     return std::nullopt;
-  const bool intended_paused =
-      native_seek_intent_ ? native_seek_intent_->intended_paused : paused_;
   return NativeSeekIntent{*gesture, *request, exactNativeSeekTarget(seconds),
-                          position_, intended_paused};
+                          position_, nativeIntendedPaused()};
 }
 
 std::optional<PlayerController::NativeSeekIntent>
@@ -796,7 +850,7 @@ PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent,
   switch (submission) {
   case NativeSeekSubmission::Accepted:
     if (submission_state.terminal == NativeSeekTerminal::None) {
-      native_seek_intent_ = intent;
+      adoptNativeCommit(intent);
       updatePosition(intent.target);
     } else if (submission_state.terminal == NativeSeekTerminal::Ready) {
       updatePosition(intent.target);
@@ -855,24 +909,26 @@ void PlayerController::nativePreviewFailed(
       &submitNativePreviewFrame));
 }
 
+PlayerController::NativeSeekSubmission
+PlayerController::submitNativeCommit(void *context,
+                                     const NativeSeekIntent &request) noexcept {
+  auto &owner = *static_cast<NativeEngine *>(context);
+  switch (owner.commitSeek(request.target, request.gesture, request.request,
+                           request.intended_paused)) {
+  case NativeEngine::SeekDisposition::NativeHandled:
+    return NativeSeekSubmission::Accepted;
+  case NativeEngine::SeekDisposition::NativeRejected:
+    return NativeSeekSubmission::Rejected;
+  case NativeEngine::SeekDisposition::NotOwned:
+  case NativeEngine::SeekDisposition::FallbackHandled:
+    return NativeSeekSubmission::Compatibility;
+  }
+  return NativeSeekSubmission::Rejected;
+}
+
 PlayerController::NativeSeekDispatch
 PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent) {
-  const auto submit = [](void *context,
-                         const NativeSeekIntent &request) noexcept {
-    auto &owner = *static_cast<NativeEngine *>(context);
-    switch (owner.commitSeek(request.target, request.gesture, request.request,
-                             request.intended_paused)) {
-    case NativeEngine::SeekDisposition::NativeHandled:
-      return NativeSeekSubmission::Accepted;
-    case NativeEngine::SeekDisposition::NativeRejected:
-      return NativeSeekSubmission::Rejected;
-    case NativeEngine::SeekDisposition::NotOwned:
-    case NativeEngine::SeekDisposition::FallbackHandled:
-      return NativeSeekSubmission::Compatibility;
-    }
-    return NativeSeekSubmission::Rejected;
-  };
-  return dispatchNativeSeekIntent(intent, native_.get(), submit);
+  return dispatchNativeSeekIntent(intent, native_.get(), &submitNativeCommit);
 }
 
 void PlayerController::nativeCommitReady(
@@ -880,6 +936,12 @@ void PlayerController::nativeCommitReady(
   if (!acceptNativeCommitReady(ready.gesture.value, ready.request.value,
                                ready.targetSeconds)) {
     return;
+  }
+  std::optional<PendingFrameStep> step;
+  if (pending_frame_step_ &&
+      pending_frame_step_->gesture == ready.gesture.value &&
+      pending_frame_step_->request == ready.request.value) {
+    step.swap(pending_frame_step_);
   }
   // Every commit lands paused on a proved covering frame, so its embedded
   // draw proof is the authoritative frame geometry for the picture now on
@@ -892,59 +954,45 @@ void PlayerController::nativeCommitReady(
   }
   updateEof(false);
   updateIdle(false);
+  // A settling commit for a frame step has landed and proved the covering
+  // frame; spend the remembered direction now. Deferred, not immediate: this
+  // runs inside the owner's observation drain, and dispatching the next
+  // commit from underneath it would re-enter the session command path
+  // mid-drain. Zero-delay queued is the same idiom the rest of this class
+  // uses for exactly that reason.
+  if (step && std::holds_alternative<NativeFrame>(native_frame_)) {
+    const int direction = step->direction;
+    QTimer::singleShot(0, this, [this, direction] { stepFrame(direction); });
+  }
 }
 
 bool PlayerController::completeNativePreviewPresented(
     std::uint64_t gesture, std::uint64_t request,
     double actual_presentation_time, void *context,
     NativePreviewSubmitter submitter) {
-  if (!native_scrub_intent_ || gesture == 0 || request == 0 ||
-      native_scrub_intent_->gesture != gesture ||
-      native_scrub_intent_->dispatched_preview_request != request ||
+  if (!ownsNativePreview(gesture, request) ||
       !std::isfinite(actual_presentation_time)) {
     return false;
   }
-
-  native_scrub_intent_->dispatched_preview_request = 0;
-  if (native_scrub_intent_->latest_preview_request == request) {
-    updatePosition(boundedSeekTarget(actual_presentation_time));
-    return true;
-  }
-
   // The frame really reached the screen and therefore completes the admitted
-  // work, but a newer pointer target owns the handle. Do not visually regress
-  // it to this older PTS; immediately spend the newly free slot on the single
-  // latest desired request instead.
-  const NativePreviewIntent latest{
-      native_scrub_intent_->gesture,
-      native_scrub_intent_->latest_preview_request,
-      native_scrub_intent_->target};
-  dispatchNativePreviewIntent(latest, context, submitter);
+  // work. When a newer pointer target owns the handle, do not visually regress
+  // it to this older PTS; the release spends the newly free slot on the
+  // single latest desired request instead.
+  if (nativeScrub()->latest_preview_request == request)
+    updatePosition(boundedSeekTarget(actual_presentation_time));
+  releaseNativePreviewSlot(request, context, submitter);
   return true;
 }
 
 bool PlayerController::completeNativePreviewFailed(
     std::uint64_t gesture, std::uint64_t request, void *context,
     NativePreviewSubmitter submitter) {
-  if (!native_scrub_intent_ || gesture == 0 || request == 0 ||
-      native_scrub_intent_->gesture != gesture ||
-      native_scrub_intent_->dispatched_preview_request != request) {
+  if (!ownsNativePreview(gesture, request))
     return false;
-  }
-
-  native_scrub_intent_->dispatched_preview_request = 0;
-  if (native_scrub_intent_->latest_preview_request == request) {
-    return true;
-  }
-
   // Failure retires only the exact admitted work. The newest pointer target
   // still owns the visible handle and gets the newly free slot once; no stale
   // PTS or rollback is published at this boundary.
-  const NativePreviewIntent latest{
-      native_scrub_intent_->gesture,
-      native_scrub_intent_->latest_preview_request,
-      native_scrub_intent_->target};
-  dispatchNativePreviewIntent(latest, context, submitter);
+  releaseNativePreviewSlot(request, context, submitter);
   return true;
 }
 
@@ -959,17 +1007,15 @@ bool PlayerController::acceptNativeCommitReady(std::uint64_t gesture,
       return true;
     }
   }
-  if (!native_seek_intent_ || native_seek_intent_->gesture != gesture ||
-      native_seek_intent_->request != request ||
-      native_seek_intent_->target != target) {
-    return false;
-  }
-  native_seek_intent_.reset();
-  return true;
+  return retireNativeCommit(gesture, request, &target);
 }
 
 void PlayerController::nativeCommitFailed(std::uint64_t gesture,
                                           std::uint64_t request) noexcept {
+  if (pending_frame_step_ && pending_frame_step_->gesture == gesture &&
+      pending_frame_step_->request == request) {
+    pending_frame_step_.reset();
+  }
   for (NativeSeekSubmissionState *submission = native_seek_submission_;
        submission != nullptr; submission = submission->previous) {
     if (submission->gesture == gesture && submission->request == request) {
@@ -977,34 +1023,36 @@ void PlayerController::nativeCommitFailed(std::uint64_t gesture,
       return;
     }
   }
-  if (!native_seek_intent_ || native_seek_intent_->gesture != gesture ||
-      native_seek_intent_->request != request) {
-    return;
-  }
-  native_seek_intent_.reset();
+  static_cast<void>(retireNativeCommit(gesture, request, nullptr));
 }
 
 void PlayerController::setNativeScrubPauseIntent(bool paused) {
-  if (native_scrub_intent_) {
-    native_scrub_intent_->intended_paused = paused;
-  } else if (native_seek_intent_) {
-    native_seek_intent_->intended_paused = paused;
-  }
+  if (auto *scrubbing = std::get_if<NativeScrubbing>(&native_gesture_))
+    scrubbing->intended_paused = paused;
+  else if (auto *committing = std::get_if<NativeCommitting>(&native_gesture_))
+    committing->commit.intended_paused = paused;
 }
 
 void PlayerController::invalidateNativeScrubIntent() noexcept {
-  native_scrub_intent_.reset();
+  auto *scrubbing = std::get_if<NativeScrubbing>(&native_gesture_);
+  if (scrubbing == nullptr)
+    return;
+  if (!scrubbing->converging) {
+    native_gesture_ = NativeGestureIdle{};
+    return;
+  }
+  NativeSeekIntent converging = *scrubbing->converging;
+  converging.intended_paused = scrubbing->intended_paused;
+  native_gesture_ = NativeCommitting{converging};
 }
 
 void PlayerController::invalidateNativeSeekIntents() noexcept {
-  native_scrub_intent_.reset();
-  native_seek_intent_.reset();
+  native_gesture_ = NativeGestureIdle{};
   // Frame geometry belongs to one generation's picture. Carrying it across a
   // stop or a new open would let the first "." step relative to the previous
   // file's last frame.
-  native_frame_start_ = -1.0;
-  native_frame_duration_ = 0.0;
-  pending_frame_step_ = 0;
+  native_frame_ = NativeFrameUnknown{};
+  pending_frame_step_.reset();
   for (NativeSeekSubmissionState *submission = native_seek_submission_;
        submission != nullptr; submission = submission->previous) {
     submission->terminal = NativeSeekTerminal::Failed;
@@ -1026,7 +1074,7 @@ void PlayerController::publishNativeMainPosition(double position) {
   // presentation own the visible playhead. Main audio/draw proofs still
   // advance their owner-side high-water marks, but cannot repaint an older
   // transport position over the user's latest target.
-  if (native_scrub_intent_)
+  if (std::holds_alternative<NativeScrubbing>(native_gesture_))
     return;
   updatePosition(position);
 }
@@ -1051,8 +1099,8 @@ void PlayerController::beginScrub() {
       // only) is remembered for the whole gesture, so motion samples publish
       // the time readout without demanding a thumbnail that cannot exist.
       const auto handoff = native_->preparePreviewHandoff();
-      if (native_scrub_intent_) {
-        native_scrub_intent_->preview_available =
+      if (NativeScrubIntent *scrub = nativeScrub()) {
+        scrub->preview_available =
             handoff !=
             NativeEngine::PreviewHandoffDisposition::Unsupported;
       }
@@ -1075,7 +1123,7 @@ void PlayerController::seekTo(double seconds) {
     if (!std::isfinite(seconds))
       return;
     seconds = exactNativeSeekTarget(seconds);
-    if (native_scrub_intent_) {
+    if (std::holds_alternative<NativeScrubbing>(native_gesture_)) {
       endScrub(seconds);
       return;
     }
@@ -1114,11 +1162,12 @@ void PlayerController::previewSeekTo(double seconds) {
     // picture -- and demand nothing. No preview identity is reserved, no
     // demand is published, and no PreviewFailed can follow, so an audio scrub
     // leaves the telemetry stream and the log exactly as clean as no scrub.
-    if (native_scrub_intent_ && !native_scrub_intent_->preview_available) {
+    if (NativeScrubIntent *scrub = nativeScrub();
+        scrub != nullptr && !scrub->preview_available) {
       if (!std::isfinite(seconds))
         return;
       const double target = exactNativeSeekTarget(seconds);
-      native_scrub_intent_->target = target;
+      scrub->target = target;
       updatePosition(target);
       return;
     }
@@ -1143,7 +1192,7 @@ void PlayerController::previewSeekTo(double seconds) {
 void PlayerController::endScrub(double seconds) {
   if (nativeRouteActive()) {
     std::optional<NativeSeekIntent> intent;
-    if (native_scrub_intent_) {
+    if (std::holds_alternative<NativeScrubbing>(native_gesture_)) {
       intent = finishNativeScrubIntent(seconds);
     } else {
       // Timeline keyboard/click seeks intentionally use the same exact commit
@@ -1208,54 +1257,7 @@ void PlayerController::stepFrame(int direction) {
   }
 
   if (nativeRouteActive()) {
-    // An audio-only generation proves no frame geometry and has nothing to
-    // step; say so rather than seeking by a made-up interval.
-    if (native_frame_start_ >= 0.0 && native_frame_duration_ <= 0.0)
-      return;
-
-    const bool geometry_covers_position =
-        native_frame_start_ >= 0.0 && native_frame_duration_ > 0.0 &&
-        position_ >= native_frame_start_ &&
-        position_ - native_frame_start_ < native_frame_duration_;
-
-    if (!geometry_covers_position) {
-      // No proof yet for the frame actually on screen (nothing has been drawn
-      // since the last open, or the position moved by a route the draw proof
-      // did not narrate). Spend this press on one settling commit at the
-      // current position -- which by definition lands on, and proves, the
-      // covering frame -- and remember the direction for the proof's arrival.
-      pending_frame_step_ = forward ? 1 : -1;
-      const double settle = frameStepSeekTarget(position_, false);
-      if (auto intent = makeNativeExactSeekIntent(settle)) {
-        if (dispatchNativeSeekIntent(*intent) == NativeSeekDispatch::Consumed)
-          return;
-      }
-      pending_frame_step_ = 0;
-      return;
-    }
-
-    // The exact neighbour, from this frame's own duration -- never a nominal
-    // frame interval, so a variable-frame-rate source steps onto its real
-    // sample times.
-    double raw = 0.0;
-    if (forward) {
-      raw = native_frame_start_ + native_frame_duration_;
-      if (duration_ > 0.0 && raw >= duration_)
-        return; // Already on the last frame.
-    } else {
-      if (native_frame_start_ <= 0.0)
-        return; // Already on the first frame.
-      raw = native_frame_start_;
-    }
-    // Forward rounds UP so the target reaches the next frame's interval;
-    // backward rounds DOWN so it falls strictly short of this frame's start
-    // and therefore inside the previous frame's interval.
-    const double target = frameStepSeekTarget(raw, forward);
-    if (!forward && !(target < native_frame_start_))
-      return;
-    pending_frame_step_ = 0;
-    if (auto intent = makeNativeExactSeekIntent(target))
-      static_cast<void>(dispatchNativeSeekIntent(*intent));
+    stepNativeFrame(forward, native_.get(), &submitNativeCommit);
     return;
   }
 
@@ -1269,26 +1271,74 @@ void PlayerController::stepFrame(int direction) {
                                     : QByteArrayLiteral("frame-back-step")});
 }
 
+void PlayerController::stepNativeFrame(bool forward, void *context,
+                                       NativeSeekSubmitter submitter) {
+  // An audio-only generation proves no frame geometry and has nothing to
+  // step; say so rather than seeking by a made-up interval.
+  if (std::holds_alternative<NativeAudioOnly>(native_frame_))
+    return;
+
+  const NativeFrame *frame = std::get_if<NativeFrame>(&native_frame_);
+  if (frame == nullptr || position_ < frame->start ||
+      position_ - frame->start >= frame->duration) {
+    // No proof yet for the frame actually on screen (nothing has been drawn
+    // since the last open, or the position moved by a route the draw proof
+    // did not narrate). Spend this press on one settling commit at the
+    // current position -- which by definition lands on, and proves, the
+    // covering frame -- and remember the direction for that commit's Ready.
+    auto intent = makeNativeExactSeekIntent(frameStepSeekTarget(position_, false));
+    if (!intent)
+      return;
+    pending_frame_step_ =
+        PendingFrameStep{intent->gesture, intent->request, forward ? 1 : -1};
+    static_cast<void>(dispatchNativeSeekIntent(*intent, context, submitter));
+    // Only a commit that is still converging keeps the step: a refusal, a
+    // failure or a compatibility hand-off has nothing left to land.
+    const NativeSeekIntent *live = nativeCommit();
+    if (live == nullptr || live->gesture != intent->gesture ||
+        live->request != intent->request) {
+      pending_frame_step_.reset();
+    }
+    return;
+  }
+
+  // The exact neighbour, from this frame's own duration -- never a nominal
+  // frame interval, so a variable-frame-rate source steps onto its real
+  // sample times.
+  double raw = 0.0;
+  if (forward) {
+    raw = frame->start + frame->duration;
+    if (duration_ > 0.0 && raw >= duration_)
+      return; // Already on the last frame.
+  } else {
+    if (frame->start <= 0.0)
+      return; // Already on the first frame.
+    raw = frame->start;
+  }
+  // Forward rounds UP so the target reaches the next frame's interval;
+  // backward rounds DOWN so it falls strictly short of this frame's start
+  // and therefore inside the previous frame's interval.
+  const double target = frameStepSeekTarget(raw, forward);
+  if (!forward && !(target < frame->start))
+    return;
+  pending_frame_step_.reset();
+  if (auto intent = makeNativeExactSeekIntent(target))
+    static_cast<void>(dispatchNativeSeekIntent(*intent, context, submitter));
+}
+
+double PlayerController::nativeFrameDuration() const noexcept {
+  const auto *frame = std::get_if<NativeFrame>(&native_frame_);
+  return frame != nullptr ? frame->duration : 0.0;
+}
+
 void PlayerController::publishNativeFrameGeometry(double start_seconds,
                                                   double duration_seconds) {
   if (!std::isfinite(start_seconds) || !std::isfinite(duration_seconds))
     return;
-  native_frame_start_ = std::max(0.0, start_seconds);
-  native_frame_duration_ = std::max(0.0, duration_seconds);
-  if (pending_frame_step_ == 0)
-    return;
-  // The settling commit above has landed and proved the covering frame; spend
-  // the remembered direction now. Clearing first keeps a refused or clamped
-  // step from re-arming itself on the proof its own commit publishes.
-  const int direction = pending_frame_step_;
-  pending_frame_step_ = 0;
-  if (native_frame_duration_ <= 0.0)
-    return;
-  // Deferred, not immediate: this runs inside the owner's observation drain,
-  // and dispatching the next commit from underneath it would re-enter the
-  // session command path mid-drain. Zero-delay queued is the same idiom the
-  // rest of this class uses for exactly that reason.
-  QTimer::singleShot(0, this, [this, direction] { stepFrame(direction); });
+  if (duration_seconds > 0.0)
+    native_frame_ = NativeFrame{std::max(0.0, start_seconds), duration_seconds};
+  else
+    native_frame_ = NativeAudioOnly{};
 }
 
 void PlayerController::toggleMute() { setMuted(!muted_); }

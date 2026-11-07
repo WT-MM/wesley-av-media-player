@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 class QTimer;
@@ -450,8 +451,9 @@ private:
     double origin = 0.0;
     double target = 0.0;
     std::uint64_t latest_preview_request = 0;
-    std::uint64_t dispatched_preview_request = 0;
-    bool intended_paused = true;
+    // The one preview request the session is working on; empty while the
+    // slot is free.
+    std::optional<std::uint64_t> in_flight_preview;
     // False when the native session refused the pointer-down preview handoff
     // for the whole binding -- an audio-only source has no thumbnail to show.
     // The gesture still tracks the drag in the time readout and still commits
@@ -471,6 +473,41 @@ private:
     double target = 0.0;
     double rollback_position = 0.0;
     bool intended_paused = true;
+  };
+
+  // The native transport gesture, which owns the logical pause intent until
+  // it ends. Scrubbing may still have the previous commit converging under
+  // it (a new drag that began before the last release landed); its pause
+  // intent is the scrub's. Committing's is the commit's own.
+  struct NativeGestureIdle {};
+  struct NativeScrubbing {
+    NativeScrubIntent scrub;
+    std::optional<NativeSeekIntent> converging;
+    bool intended_paused = true;
+  };
+  struct NativeCommitting {
+    NativeSeekIntent commit;
+  };
+  using NativeGesture =
+      std::variant<NativeGestureIdle, NativeScrubbing, NativeCommitting>;
+
+  // Frame geometry of the picture on screen, as last proved by a draw.
+  struct NativeFrameUnknown {};
+  struct NativeAudioOnly {};
+  struct NativeFrame {
+    double start = 0.0;
+    double duration = 0.0;
+  };
+  using NativeFrameGeometry =
+      std::variant<NativeFrameUnknown, NativeAudioOnly, NativeFrame>;
+
+  // A frame step pressed before the frame on screen was proved: the direction
+  // to step once THIS settling commit lands. Bound to the commit's identity,
+  // so a refused, failed or superseded settle cannot fire it later.
+  struct PendingFrameStep {
+    std::uint64_t gesture = 0;
+    std::uint64_t request = 0;
+    int direction = 0;
   };
 
   enum class NativeSeekTerminal : std::uint8_t {
@@ -587,13 +624,36 @@ private:
   void nativeCommitFailed(std::uint64_t gesture,
                           std::uint64_t request) noexcept override;
   void setNativeScrubPauseIntent(bool paused);
+  [[nodiscard]] NativeScrubIntent *nativeScrub() noexcept;
+  [[nodiscard]] const NativeSeekIntent *nativeCommit() const noexcept;
+  // The logical pause intent: the gesture's while one is live, else the
+  // transport's.
+  [[nodiscard]] bool nativeIntendedPaused() const noexcept;
+  // An accepted commit becomes the live one (under a scrub, the converging
+  // one). Ready or Failed for that identity retires it.
+  void adoptNativeCommit(const NativeSeekIntent &intent);
+  [[nodiscard]] bool retireNativeCommit(std::uint64_t gesture,
+                                        std::uint64_t request,
+                                        const double *target) noexcept;
+  // True when (gesture, request) is the preview occupying the slot.
+  [[nodiscard]] bool ownsNativePreview(std::uint64_t gesture,
+                                       std::uint64_t request) noexcept;
+  // Frees the slot after a terminal preview and spends it once on the newest
+  // desire if that is not the request that just finished.
+  void releaseNativePreviewSlot(std::uint64_t request, void *context,
+                                NativePreviewSubmitter submitter);
+  [[nodiscard]] static NativeSeekSubmission
+  submitNativeCommit(void *context, const NativeSeekIntent &intent) noexcept;
+  void stepNativeFrame(bool forward, void *context,
+                       NativeSeekSubmitter submitter);
+  [[nodiscard]] double nativeFrameDuration() const noexcept;
   // A native scrub or seek owns the logical pause intent until it commits.
   // Play at the end, or within one frame of it (never less than 50 ms),
   // replays from the start. `frame_duration` is the playing engine's own
   // frame duration, 0 when it knows none.
   [[nodiscard]] bool atEndForReplay(double frame_duration) const noexcept override;
   [[nodiscard]] bool nativeSeekInFlight() const noexcept override {
-    return native_scrub_intent_ || native_seek_intent_;
+    return !std::holds_alternative<NativeGestureIdle>(native_gesture_);
   }
   void invalidateNativeScrubIntent() noexcept;
   void invalidateNativeSeekIntents() noexcept;
@@ -792,19 +852,14 @@ private:
   // so the Subtitles menu can name them honestly. A file the user loaded is
   // not a generated caption.
   std::vector<std::filesystem::path> generated_caption_files_;
-  std::optional<NativeScrubIntent> native_scrub_intent_;
-  std::optional<NativeSeekIntent> native_seek_intent_;
+  NativeGesture native_gesture_;
+  // The overlay of synchronous commitSeek calls currently on the C++ stack
+  // (innermost first). A terminal observation drained during submission is
+  // recorded here because the commit is not live yet.
   NativeSeekSubmissionState *native_seek_submission_ = nullptr;
   std::uint64_t latest_native_seek_submission_request_ = 0;
-  // Last proved on-screen frame geometry (native route). Negative start means
-  // "nothing proved yet"; a zero duration means the proof named an audio-only
-  // generation, which has no frame to step.
-  double native_frame_start_ = -1.0;
-  double native_frame_duration_ = 0.0;
-  // A step pressed before any frame geometry was proved converts into one
-  // settling commit at the current position; this remembers the direction to
-  // apply once that commit's own draw proof arrives.
-  int pending_frame_step_ = 0;
+  NativeFrameGeometry native_frame_;
+  std::optional<PendingFrameStep> pending_frame_step_;
 #if defined(WAM_QT_TEST_SEAMS)
   // The controller-only test target deliberately excludes the platform owner.
   // This seam lets it exercise the public previewSeekTo boundary while keeping
