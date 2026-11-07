@@ -50,7 +50,7 @@ static_assert((kProductionDecodeFrameFlags &
                kVTDecodeFrame_EnableTemporalProcessing) == 0,
               "finite decoder admission cannot use temporal processing");
 
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 thread_local std::optional<VideoToolboxDecoderTestCFAllocationPoint>
     gFailNextCFAllocationPoint;
 
@@ -162,7 +162,6 @@ struct AsyncDecodeState {
     std::uint64_t submissionSequence{0};
     FrameTiming timing{};
     std::uint64_t compressedBytes{0};
-    bool directCompressedStorage{false};
   };
 
   explicit AsyncDecodeState(
@@ -203,14 +202,7 @@ struct AsyncDecodeState {
   // in-flight retirement, whose credit may reach zero before notifyProgress.
   std::size_t activeCallbacks{0};
   std::uint64_t submitted{0};
-  std::uint64_t directSampleBufferSubmissions{0};
-  std::uint64_t directSampleBufferBytes{0};
-  std::uint64_t copiedSpanSubmissions{0};
-  std::uint64_t copiedSpanBytes{0};
-  std::uint64_t currentDirectCompressedBytes{0};
-  std::uint64_t peakDirectCompressedBytes{0};
-  std::uint64_t currentCopiedCompressedBytes{0};
-  std::uint64_t peakCopiedCompressedBytes{0};
+  std::uint64_t submittedCompressedBytes{0};
   std::uint64_t currentCompressedBytes{0};
   std::uint64_t peakCompressedBytes{0};
   std::uint64_t delivered{0};
@@ -242,7 +234,7 @@ struct AsyncDecodeState {
   bool callbackFailedClosed{false};
   AsyncError lastError;
   const VideoDecoderProgressHandler progressHandler;
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   std::optional<VideoToolboxDecoderTestAllocationPoint>
       failNextAllocationPoint;
   bool permitSyntheticCallbackFrame{false};
@@ -286,22 +278,10 @@ void retireCompressedChargeLocked(
     AsyncDecodeState &state,
     AsyncDecodeState::FrameRefConSlot &slot) noexcept {
   const std::uint64_t bytes = slot.compressedBytes;
-  if (slot.directCompressedStorage) {
-    state.currentDirectCompressedBytes =
-        state.currentDirectCompressedBytes >= bytes
-            ? state.currentDirectCompressedBytes - bytes
-            : 0;
-  } else {
-    state.currentCopiedCompressedBytes =
-        state.currentCopiedCompressedBytes >= bytes
-            ? state.currentCopiedCompressedBytes - bytes
-            : 0;
-  }
   state.currentCompressedBytes = state.currentCompressedBytes >= bytes
                                      ? state.currentCompressedBytes - bytes
                                      : 0;
   slot.compressedBytes = 0;
-  slot.directCompressedStorage = false;
 }
 
 void notifyProgress(const std::shared_ptr<AsyncDecodeState> &state) noexcept {
@@ -309,22 +289,6 @@ void notifyProgress(const std::shared_ptr<AsyncDecodeState> &state) noexcept {
   if (handler.function != nullptr) {
     handler.function(handler.context);
   }
-}
-
-void releaseReservedDecodeCapacity(
-    const std::shared_ptr<AsyncDecodeState> &state,
-    AsyncDecodeState::FrameRefConSlot *slot) {
-  std::lock_guard lock(state->mutex);
-  if (slot == nullptr ||
-      slot->state != AsyncDecodeState::FrameRefConSlotState::Reserved ||
-      state->inFlight == 0) {
-    assignAsyncErrorLocked(
-        *state, "VideoToolbox reserved decode capacity is inconsistent");
-    return;
-  }
-  *slot = {};
-  --state->inFlight;
-  state->completion.notify_all();
 }
 
 void recordAsyncError(const std::shared_ptr<AsyncDecodeState> &state,
@@ -339,7 +303,7 @@ void recordAsyncError(const std::shared_ptr<AsyncDecodeState> &state,
   }
 }
 
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 void maybeFailCallbackAllocationLocked(
     AsyncDecodeState &state,
     VideoToolboxDecoderTestAllocationPoint point) {
@@ -423,7 +387,7 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
           return timeBefore(left.timing().presentationTime,
                             right.timing().presentationTime);
         });
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     maybeFailCallbackAllocationLocked(
         state, VideoToolboxDecoderTestAllocationPoint::PendingPresentation);
 #endif
@@ -449,8 +413,6 @@ void resetPresentationState(
          state->frameRefConSlots) {
       slot = {};
     }
-    state->currentDirectCompressedBytes = 0;
-    state->currentCopiedCompressedBytes = 0;
     state->currentCompressedBytes = 0;
     state->lastDeliveredPresentationTime = kCMTimeInvalid;
     state->callbackFailedClosed = false;
@@ -944,7 +906,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
         incrementSaturated(state->dropped);
       } else if ((infoFlags & kVTDecodeInfo_FrameDropped) != 0 ||
                  (imageBuffer == nullptr
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
                   && !state->permitSyntheticCallbackFrame
 #endif
                   )) {
@@ -961,7 +923,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
         incrementSaturated(state->dropped);
       } else {
         auto pixelBuffer = static_cast<CVPixelBufferRef>(imageBuffer);
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
         if (state->permitSyntheticCallbackFrame && pixelBuffer == nullptr) {
           decodedFrame.emplace(pixelBuffer, timing);
         } else
@@ -979,7 +941,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
           // rather than reinterpreted at each reader.
           normalizeDecodedColorAttachments(pixelBuffer);
           bool outputSurfaceValid = false;
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
           if (state->permitSyntheticOutputSurface) {
             outputSurfaceValid = true;
           } else
@@ -1053,7 +1015,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
             *state,
             "VideoToolbox invoked a duplicate decoded-frame callback");
       } else {
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
         maybeFailCallbackAllocationLocked(
             *state, VideoToolboxDecoderTestAllocationPoint::CompletedDecode);
 #endif
@@ -1347,7 +1309,7 @@ bool equivalentCodecConfigurationAtoms(
   return true;
 }
 
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 bool equivalentFormatCodecConfigurations(
     CMVideoFormatDescriptionRef configuredFormat,
     CMVideoFormatDescriptionRef directFormat, std::string *error) {
@@ -1399,7 +1361,7 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
   const CFStringRef atomName = codecConfigurationAtomName(configuration.codec);
 
   CFDataRef atomData = nullptr;
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (!consumeCFAllocationFailure(
           VideoToolboxDecoderTestCFAllocationPoint::CodecAtomData))
 #endif
@@ -1419,7 +1381,7 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
   const void *atomKeys[] = {atomName};
   const void *atomValues[] = {atomData};
   CFDictionaryRef atoms = nullptr;
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (!consumeCFAllocationFailure(
           VideoToolboxDecoderTestCFAllocationPoint::CodecAtomsDictionary))
 #endif
@@ -1430,7 +1392,7 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
   }
   CFDictionaryRef extensions = nullptr;
   if (atoms != nullptr) {
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (!consumeCFAllocationFailure(
             VideoToolboxDecoderTestCFAllocationPoint::
                 FormatExtensionsDictionary))
@@ -1542,61 +1504,6 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
              ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
              : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
 }
-
-OSStatus
-createCompressedSampleBuffer(CMVideoFormatDescriptionRef formatDescription,
-                             const CompressedVideoPacket &packet,
-                             CMSampleBufferRef *sampleOut) {
-  if (sampleOut == nullptr || formatDescription == nullptr ||
-      packet.bytes.empty()) {
-    return paramErr;
-  }
-  *sampleOut = nullptr;
-
-  CMBlockBufferRef block = nullptr;
-  OSStatus status = CMBlockBufferCreateWithMemoryBlock(
-      kCFAllocatorDefault, nullptr, packet.bytes.size(), kCFAllocatorDefault,
-      nullptr, 0, packet.bytes.size(), 0, &block);
-  if (status != noErr || block == nullptr) {
-    return status == noErr ? memFullErr : status;
-  }
-  status = CMBlockBufferReplaceDataBytes(packet.bytes.data(), block, 0,
-                                         packet.bytes.size());
-  if (status != noErr) {
-    CFRelease(block);
-    return status;
-  }
-
-  const CMSampleTimingInfo timing{packet.duration, packet.presentationTime,
-                                  packet.decodeTime};
-  const std::size_t sampleSize = packet.bytes.size();
-  status =
-      CMSampleBufferCreateReady(kCFAllocatorDefault, block, formatDescription,
-                                1, 1, &timing, 1, &sampleSize, sampleOut);
-  CFRelease(block);
-  if (status != noErr || *sampleOut == nullptr) {
-    return status == noErr ? memFullErr : status;
-  }
-
-  CFArrayRef attachments =
-      CMSampleBufferGetSampleAttachmentsArray(*sampleOut, true);
-  if (attachments != nullptr && CFArrayGetCount(attachments) > 0) {
-    auto *attachment = static_cast<CFMutableDictionaryRef>(
-        const_cast<void *>(CFArrayGetValueAtIndex(attachments, 0)));
-    CFDictionarySetValue(attachment, kCMSampleAttachmentKey_NotSync,
-                         packet.keyFrame ? kCFBooleanFalse : kCFBooleanTrue);
-    if (packet.keyFrame) {
-      CFDictionarySetValue(attachment, kCMSampleAttachmentKey_DependsOnOthers,
-                           kCFBooleanFalse);
-    }
-  }
-  return noErr;
-}
-
-enum class CompressedSubmissionStorage : std::uint8_t {
-  DirectSampleBuffer,
-  CopiedSpan,
-};
 
 struct DirectCompressedSampleMetadata {
   CMVideoFormatDescriptionRef formatDescription{nullptr};
@@ -1738,8 +1645,12 @@ struct VideoToolboxDecoder::Impl {
   std::uint64_t retirementInvalidationGeneration{0};
   bool retirementStarted{false};
   bool retirementDone{false};
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   std::size_t testReservedInFlight{0};
+  // VideoToolbox may invoke the output handler before DecodeFrame returns
+  // even with asynchronous decompression requested; tests exercise both
+  // legal callback modes. Production always requests asynchronous mode.
+  bool testAsynchronousDecompression{true};
 #endif
 
   ~Impl() {
@@ -1803,7 +1714,7 @@ struct VideoToolboxDecoder::Impl {
     }
 
     CFMutableDictionaryRef decoderSpecification = nullptr;
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (!consumeCFAllocationFailure(
             VideoToolboxDecoderTestCFAllocationPoint::
                 DecoderSpecificationDictionary))
@@ -1837,7 +1748,7 @@ struct VideoToolboxDecoder::Impl {
     }
 
     CFDictionaryRef emptyIOSurfaceProperties = nullptr;
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (!consumeCFAllocationFailure(
             VideoToolboxDecoderTestCFAllocationPoint::
                 IOSurfacePropertiesDictionary))
@@ -1856,7 +1767,7 @@ struct VideoToolboxDecoder::Impl {
     }
 
     CFMutableDictionaryRef imageAttributes = nullptr;
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (!consumeCFAllocationFailure(
             VideoToolboxDecoderTestCFAllocationPoint::
                 ImageAttributesDictionary))
@@ -1923,7 +1834,7 @@ struct VideoToolboxDecoder::Impl {
     if (pinOutputPixelFormat) {
       const std::int32_t pixelFormatValue =
           static_cast<std::int32_t>(outputPixelFormat);
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
       if (!consumeCFAllocationFailure(
               VideoToolboxDecoderTestCFAllocationPoint::PixelFormatNumber))
 #endif
@@ -2078,8 +1989,8 @@ struct VideoToolboxDecoder::Impl {
 
   bool armFrameRefConSlotLocked(
       AsyncDecodeState::FrameRefConSlot *slot, FrameTiming timing,
-      CompressedSubmissionStorage storage, std::size_t compressedBytes,
-      std::uint64_t *submissionSequence, std::string *error) {
+      std::size_t compressedBytes, std::uint64_t *submissionSequence,
+      std::string *error) {
     if (slot == nullptr || submissionSequence == nullptr) {
       assignError(error, "VideoToolbox submission has no frame-refcon slot");
       return false;
@@ -2093,19 +2004,6 @@ struct VideoToolboxDecoder::Impl {
     slot->submissionSequence = *submissionSequence;
     slot->timing = timing;
     slot->compressedBytes = static_cast<std::uint64_t>(compressedBytes);
-    slot->directCompressedStorage =
-        storage == CompressedSubmissionStorage::DirectSampleBuffer;
-    if (slot->directCompressedStorage) {
-      async->currentDirectCompressedBytes = saturatedAdd(
-          async->currentDirectCompressedBytes, slot->compressedBytes);
-      updatePeak(async->peakDirectCompressedBytes,
-                 async->currentDirectCompressedBytes);
-    } else {
-      async->currentCopiedCompressedBytes = saturatedAdd(
-          async->currentCopiedCompressedBytes, slot->compressedBytes);
-      updatePeak(async->peakCopiedCompressedBytes,
-                 async->currentCopiedCompressedBytes);
-    }
     async->currentCompressedBytes = saturatedAdd(
         async->currentCompressedBytes, slot->compressedBytes);
     updatePeak(async->peakCompressedBytes, async->currentCompressedBytes);
@@ -2115,18 +2013,16 @@ struct VideoToolboxDecoder::Impl {
 
   VideoDecodeSubmitResult submitPreparedSampleLocked(
       CMSampleBufferRef sample, AsyncDecodeState::FrameRefConSlot *slot,
-      FrameTiming timing,
-      CompressedSubmissionStorage storage, std::size_t compressedBytes,
-      std::string *error) {
+      FrameTiming timing, std::size_t compressedBytes, std::string *error) {
     std::uint64_t submissionSequence = 0;
-    if (!armFrameRefConSlotLocked(slot, timing, storage, compressedBytes,
+    if (!armFrameRefConSlotLocked(slot, timing, compressedBytes,
                                   &submissionSequence, error)) {
       return VideoDecodeSubmitResult::Rejected;
     }
     VTDecodeInfoFlags infoFlags = 0;
-#if defined(WAM_NATIVE_VIDEO_TESTING)
-    const VTDecodeFrameFlags decodeFlags = finiteAdmissionDecodeFlags(
-        options.enableAsynchronousDecompression);
+#if defined(WAM_NATIVE_TEST_SEAMS)
+    const VTDecodeFrameFlags decodeFlags =
+        finiteAdmissionDecodeFlags(testAsynchronousDecompression);
 #else
     constexpr VTDecodeFrameFlags decodeFlags = kProductionDecodeFrameFlags;
 #endif
@@ -2147,13 +2043,9 @@ struct VideoToolboxDecoder::Impl {
     {
       std::lock_guard stateLock(async->mutex);
       incrementSaturated(async->submitted);
-      const bool direct =
-          storage == CompressedSubmissionStorage::DirectSampleBuffer;
-      incrementSaturated(direct ? async->directSampleBufferSubmissions
-                                : async->copiedSpanSubmissions);
-      std::uint64_t &bytes =
-          direct ? async->directSampleBufferBytes : async->copiedSpanBytes;
-      bytes = saturatedAdd(bytes, static_cast<std::uint64_t>(compressedBytes));
+      async->submittedCompressedBytes =
+          saturatedAdd(async->submittedCompressedBytes,
+                       static_cast<std::uint64_t>(compressedBytes));
     }
     awaitingKeyFrame = false;
     return VideoDecodeSubmitResult::Accepted;
@@ -2722,14 +2614,7 @@ bool VideoToolboxDecoder::configure(
     impl_->async->inFlight = 0;
     impl_->async->activeCallbacks = 0;
     impl_->async->submitted = 0;
-    impl_->async->directSampleBufferSubmissions = 0;
-    impl_->async->directSampleBufferBytes = 0;
-    impl_->async->copiedSpanSubmissions = 0;
-    impl_->async->copiedSpanBytes = 0;
-    impl_->async->currentDirectCompressedBytes = 0;
-    impl_->async->peakDirectCompressedBytes = 0;
-    impl_->async->currentCopiedCompressedBytes = 0;
-    impl_->async->peakCopiedCompressedBytes = 0;
+    impl_->async->submittedCompressedBytes = 0;
     impl_->async->currentCompressedBytes = 0;
     impl_->async->peakCompressedBytes = 0;
     impl_->async->delivered = 0;
@@ -2758,7 +2643,7 @@ bool VideoToolboxDecoder::configure(
     impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
     impl_->async->callbackFailedClosed = false;
     impl_->async->lastError.reset();
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     impl_->async->failNextAllocationPoint.reset();
     impl_->async->permitSyntheticCallbackFrame = false;
     impl_->async->permitSyntheticOutputSurface = false;
@@ -2776,109 +2661,6 @@ bool VideoToolboxDecoder::configure(
   }
   impl_->configured = true;
   return true;
-}
-
-VideoDecodeSubmitResult
-VideoToolboxDecoder::submit(const CompressedVideoPacket &packet,
-                            std::string *error) {
-  if (error != nullptr) {
-    error->clear();
-  }
-  std::lock_guard operationLock(impl_->operationMutex);
-  if (!impl_->configured) {
-    assignError(error, "VideoToolbox decoder is not configured");
-    return VideoDecodeSubmitResult::Rejected;
-  }
-
-  std::uint64_t generation = 0;
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    generation = impl_->async->generation;
-  }
-  if (packet.generation != generation) {
-    assignError(error, "compressed packet belongs to a stale generation");
-    return VideoDecodeSubmitResult::Rejected;
-  }
-
-  if (packet.endOfStream) {
-    const VideoDecodeDrainProgress begun =
-        impl_->beginEndOfStreamLocked(generation, error);
-    if (begun == VideoDecodeDrainProgress::Failed ||
-        begun == VideoDecodeDrainProgress::StaleGeneration) {
-      return VideoDecodeSubmitResult::Rejected;
-    }
-    if (begun == VideoDecodeDrainProgress::Done) {
-      return VideoDecodeSubmitResult::Accepted;
-    }
-    const VideoDecodeDrainProgress drained =
-        impl_->drainEndOfStreamLocked(generation, error);
-    switch (drained) {
-    case VideoDecodeDrainProgress::Done:
-      return VideoDecodeSubmitResult::Accepted;
-    case VideoDecodeDrainProgress::Progress:
-    case VideoDecodeDrainProgress::Quiescing:
-      // Resubmitting the exact EOS packet performs at most one more bounded
-      // owner drain attempt; the retained frame is never silently consumed.
-      return VideoDecodeSubmitResult::Backpressure;
-    case VideoDecodeDrainProgress::StaleGeneration:
-    case VideoDecodeDrainProgress::Failed:
-      return VideoDecodeSubmitResult::Rejected;
-    }
-  }
-
-  if (impl_->ended) {
-    assignError(error, "cannot submit compressed data after end of stream");
-    return VideoDecodeSubmitResult::Rejected;
-  }
-  if (packet.bytes.empty()) {
-    assignError(error, "compressed video packet is empty");
-    return VideoDecodeSubmitResult::Rejected;
-  }
-  if (!native_video_limits::acceptsCompressedVideoAccessUnitSize(
-          packet.bytes.size())) {
-    assignError(error,
-                "compressed video packet exceeds the 8 MiB decoder memory "
-                "bound");
-    return VideoDecodeSubmitResult::Rejected;
-  }
-  if (impl_->awaitingKeyFrame && !packet.keyFrame) {
-    assignError(error, "decoder requires a key frame after configure or flush");
-    return VideoDecodeSubmitResult::Rejected;
-  }
-  if (auto asyncError = impl_->takeAsyncErrorLocked()) {
-    assignError(error, std::move(*asyncError));
-    return VideoDecodeSubmitResult::Rejected;
-  }
-  if (!impl_->createSessionLocked(error)) {
-    return VideoDecodeSubmitResult::Rejected;
-  }
-
-  // Reserve bounded decode capacity before allocating or copying compressed
-  // packet storage. Backpressure therefore has constant cost and never grows
-  // memory just to discover that the pipeline is already saturated.
-  AsyncDecodeState::FrameRefConSlot *slot =
-      impl_->reserveDecodeCapacityLocked();
-  if (slot == nullptr) {
-    return VideoDecodeSubmitResult::Backpressure;
-  }
-
-  CMSampleBufferRef sample = nullptr;
-  const OSStatus sampleStatus =
-      createCompressedSampleBuffer(impl_->formatDescription, packet, &sample);
-  if (sampleStatus != noErr || sample == nullptr) {
-    releaseReservedDecodeCapacity(impl_->async, slot);
-    notifyProgress(impl_->async);
-    assignError(error, statusError("CMSampleBufferCreateReady", sampleStatus));
-    return VideoDecodeSubmitResult::Rejected;
-  }
-
-  const FrameTiming timing{packet.presentationTime, packet.duration,
-                           packet.generation, packet.keyFrame};
-  const VideoDecodeSubmitResult result = impl_->submitPreparedSampleLocked(
-      sample, slot, timing, CompressedSubmissionStorage::CopiedSpan,
-      packet.bytes.size(), error);
-  CFRelease(sample);
-  return result;
 }
 
 VideoDecodeSubmitResult VideoToolboxDecoder::submitCMSampleBuffer(
@@ -3017,9 +2799,9 @@ VideoDecodeSubmitResult VideoToolboxDecoder::submitCMSampleBuffer(
     return VideoDecodeSubmitResult::Rejected;
   }
 
-  // Preserve the same finite admission gate as generic packet submission.
-  // All inspection above is metadata-only; the compressed payload has not
-  // been flattened, allocated, or copied when Backpressure is returned.
+  // Reserve bounded decode capacity only after metadata-only inspection: the
+  // compressed payload has not been read, flattened, allocated, or copied when
+  // Backpressure is returned, so Backpressure has constant cost.
   AsyncDecodeState::FrameRefConSlot *slot =
       impl_->reserveDecodeCapacityLocked();
   if (slot == nullptr) {
@@ -3028,10 +2810,8 @@ VideoDecodeSubmitResult VideoToolboxDecoder::submitCMSampleBuffer(
 
   const FrameTiming timing{metadata.presentationTime, metadata.duration,
                            generation, metadata.keyFrame};
-  return impl_->submitPreparedSampleLocked(
-      sample, slot, timing,
-      CompressedSubmissionStorage::DirectSampleBuffer,
-      metadata.dataLength, error);
+  return impl_->submitPreparedSampleLocked(sample, slot, timing,
+                                          metadata.dataLength, error);
 }
 
 VideoDecodeDrainProgress VideoToolboxDecoder::beginEndOfStream(
@@ -3151,11 +2931,8 @@ VideoDecoderStats VideoToolboxDecoder::stats() const noexcept {
     result.codecReorderFrames = impl_->async->codecReorderFrames;
     result.generation = impl_->async->generation;
     result.submittedFrames = impl_->async->submitted;
-    result.directSampleBufferSubmissions =
-        impl_->async->directSampleBufferSubmissions;
-    result.directSampleBufferBytes = impl_->async->directSampleBufferBytes;
-    result.copiedSpanSubmissions = impl_->async->copiedSpanSubmissions;
-    result.copiedSpanBytes = impl_->async->copiedSpanBytes;
+    result.directSampleBufferSubmissions = impl_->async->submitted;
+    result.directSampleBufferBytes = impl_->async->submittedCompressedBytes;
     result.deliveredFrames = impl_->async->delivered;
     result.droppedFrames = impl_->async->dropped;
     result.backpressuredSubmissions = impl_->async->backpressuredSubmissions;
@@ -3187,14 +2964,10 @@ VideoToolboxDecoder::memoryFacts() const noexcept {
   result.inFlightFrames = impl_->async->inFlight;
   result.presentationFrames =
       impl_->async->pendingPresentationFrames.size();
-  result.currentDirectCompressedBytes =
-      impl_->async->currentDirectCompressedBytes;
-  result.peakDirectCompressedBytes =
-      impl_->async->peakDirectCompressedBytes;
-  result.currentCopiedCompressedBytes =
-      impl_->async->currentCopiedCompressedBytes;
-  result.peakCopiedCompressedBytes =
-      impl_->async->peakCopiedCompressedBytes;
+  // Every submission is a caller-owned CMSampleBuffer: no compressed byte is
+  // ever copied into decoder-owned storage.
+  result.currentDirectCompressedBytes = impl_->async->currentCompressedBytes;
+  result.peakDirectCompressedBytes = impl_->async->peakCompressedBytes;
   result.currentCompressedBytes = impl_->async->currentCompressedBytes;
   result.peakCompressedBytes = impl_->async->peakCompressedBytes;
   return result;
@@ -3204,7 +2977,7 @@ std::optional<std::string> VideoToolboxDecoder::takeLastError() {
   return impl_->takeAsyncErrorLocked();
 }
 
-#if defined(WAM_NATIVE_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 bool VideoToolboxDecoderTestAccess::admitsConfigurationMetadata(
     const VideoStreamConfiguration &configuration) noexcept {
   return admitsCodecConfigurationMetadata(configuration);
@@ -3329,7 +3102,13 @@ std::uint32_t VideoToolboxDecoderTestAccess::decodeFlags(
     const VideoToolboxDecoder &decoder) noexcept {
   std::lock_guard operationLock(decoder.impl_->operationMutex);
   return static_cast<std::uint32_t>(finiteAdmissionDecodeFlags(
-      decoder.impl_->options.enableAsynchronousDecompression));
+      decoder.impl_->testAsynchronousDecompression));
+}
+
+void VideoToolboxDecoderTestAccess::setAsynchronousDecompression(
+    VideoToolboxDecoder &decoder, bool enabled) noexcept {
+  std::lock_guard operationLock(decoder.impl_->operationMutex);
+  decoder.impl_->testAsynchronousDecompression = enabled;
 }
 
 std::optional<CodecReorderDepth>
@@ -3414,7 +3193,7 @@ VideoDecodeSubmitResult
 VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
     VideoToolboxDecoder &decoder, FrameTiming timing,
     std::uint64_t *submissionSequence, std::string *error,
-    std::size_t compressedBytes, bool directCompressedStorage) {
+    std::size_t compressedBytes) {
   if (error != nullptr) {
     error->clear();
   }
@@ -3433,11 +3212,7 @@ VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
     return VideoDecodeSubmitResult::Backpressure;
   }
   if (!decoder.impl_->armFrameRefConSlotLocked(
-          slot, timing,
-          directCompressedStorage
-              ? CompressedSubmissionStorage::DirectSampleBuffer
-              : CompressedSubmissionStorage::CopiedSpan,
-          compressedBytes, submissionSequence, error)) {
+          slot, timing, compressedBytes, submissionSequence, error)) {
     return VideoDecodeSubmitResult::Rejected;
   }
   return VideoDecodeSubmitResult::Accepted;
@@ -3556,10 +3331,6 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
         decoder.impl_->options.maxInFlightFrames;
     decoder.impl_->async->nextSubmissionSequence = 0;
     decoder.impl_->async->nextCompletionSequence = 0;
-    decoder.impl_->async->currentDirectCompressedBytes = 0;
-    decoder.impl_->async->peakDirectCompressedBytes = 0;
-    decoder.impl_->async->currentCopiedCompressedBytes = 0;
-    decoder.impl_->async->peakCopiedCompressedBytes = 0;
     decoder.impl_->async->currentCompressedBytes = 0;
     decoder.impl_->async->peakCompressedBytes = 0;
     for (AsyncDecodeState::FrameRefConSlot &slot :

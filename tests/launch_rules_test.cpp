@@ -2,18 +2,9 @@
 #include "qt/media_url.hpp"
 #include "qt/window_manager.hpp"
 
-#include <iostream>
+#include "support/expect.hpp"
 
 namespace {
-
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (condition)
-    return;
-  std::cerr << "FAIL: " << message << '\n';
-  ++failures;
-}
 
 void mediaUrlResolution() {
   using wam::qt::mediaUrlFromArgument;

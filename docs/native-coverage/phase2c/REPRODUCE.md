@@ -13,12 +13,6 @@ services. The retained ten-pass sequence used `ctest --output-on-failure -j 8`
 from `build/`. `avcodec_fixture_transaction`, `avcodec_packaging_audit` and
 `avcodec_allocation_attribution` are the three added CTest entries.
 
-The additional fixture-policy check consumes generated CTest metadata:
-
-```sh
-python3 tests/avcodec_fixture_policy_test.py build
-```
-
 The private heap probe measures beyond production admission. It does not use
 presentation surfaces, does not change the production cap and does not prove a
 worst-case reservation. Build it in a fresh scratch directory:
@@ -47,9 +41,9 @@ full-range encoding. Inspect the emitted stream facts before claiming the
 requested range was actually signalled. The accompanying
 `native_avcodec_color_projection.py --captures <directory> --output <json>`
 rejects no-signal captures and evaluates the original projection/RMS thresholds
-in a common sRGB color space. Use
-`native_avcodec_color_projection_test.py --captures <valid-hardware-captures>`
-to test the measurement against a hardware oracle. This run's fresh captures
+in a common sRGB color space; run it on valid hardware captures to test the
+measurement against a hardware oracle (every row must report
+`matrix_range_projection_pass`). This run's fresh captures
 were all black; only the retained phase-2b captures qualified the method.
 
 `native_avcodec_multiwindow_probe.py --asset <local-video> --output

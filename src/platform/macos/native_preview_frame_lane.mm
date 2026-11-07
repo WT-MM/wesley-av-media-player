@@ -239,7 +239,7 @@ class PreviewFrameSink final : public DecodedFrameSink {
     // contention may legitimately fail a FrameLease copy; in that case the
     // output must remain untouched so there is no untracked terminal event.
     FrameLease retained(*frame_);
-#if defined(WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (failNextRetainedClone_) {
       failNextRetainedClone_ = false;
       retained.reset();
@@ -274,7 +274,7 @@ class PreviewFrameSink final : public DecodedFrameSink {
     return peak_;
   }
 
-#if defined(WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   void failNextRetainedCloneForTesting() noexcept {
     failNextRetainedClone_ = true;
   }
@@ -287,7 +287,7 @@ class PreviewFrameSink final : public DecodedFrameSink {
   std::uint64_t generation_{0};
   std::size_t peak_{0};
   bool ended_{false};
-#if defined(WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   bool failNextRetainedClone_{false};
 #endif
 };
@@ -1191,7 +1191,7 @@ NativePreviewFrameLane::memoryFacts() const noexcept {
   return result;
 }
 
-#if defined(WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 std::unique_ptr<NativePreviewFrameLane>
 NativePreviewFrameLaneTestAccess::create(
     NativePreviewFrameLaneBinding binding,

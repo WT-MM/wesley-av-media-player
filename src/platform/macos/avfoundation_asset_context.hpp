@@ -93,9 +93,7 @@ class AVFoundationAssetContext final
       const AVFoundationAssetContext& context) noexcept;
   friend void noteAVFoundationAssetContextReaderStarted(
       const AVFoundationAssetContext& context) noexcept;
-#if defined(WAM_AVFOUNDATION_ASSET_CONTEXT_TESTING) || \
-    defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING) || \
-    defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend std::shared_ptr<const AVFoundationAssetContext>
   makeAVFoundationAssetContextForTesting(
       std::filesystem::path path,
@@ -125,9 +123,7 @@ void noteAVFoundationAssetContextReaderCreationAttempt(
 void noteAVFoundationAssetContextReaderStarted(
     const AVFoundationAssetContext& context) noexcept;
 
-#if defined(WAM_AVFOUNDATION_ASSET_CONTEXT_TESTING) || \
-    defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING) || \
-    defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Test fixtures that inject already-prepared Apple handles explicitly model
 // the one asset and one selected-track batch required for cold admission.
 [[nodiscard]] std::shared_ptr<const AVFoundationAssetContext>

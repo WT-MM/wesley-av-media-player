@@ -1,7 +1,7 @@
 #include "media/avcodec/api.hpp"
 #include "media/avcodec/closure.hpp"
 #include "media/avcodec/runtime.hpp"
-#include "playback/mpv/mpv_runtime.hpp"
+#include "fakes/mpv_runtime/mpv_runtime_test_access.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -9,40 +9,35 @@
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstring>
-namespace wam::playback::mpv {
-class MpvRuntimeTestAccess final {
-public:
-  static MpvRuntimeLoadResult load(const QString& directory) {return MpvRuntime::load(directory);}
-};
-}
-#define CHECK(x) do { if(!(x)) {std::fprintf(stderr,"line %d: %s\n",__LINE__,#x);return 1;} } while(0)
+#include "support/expect.hpp"
 int main(int argc,char** argv) {
   QCoreApplication app(argc,argv);
   using namespace wam::media::avcodec;
   using wam::playback::mpv::MpvRuntimeTestAccess;
-  CHECK(argc==2);
-  QTemporaryDir scratch("/private/tmp/wam-coexistence-XXXXXX");CHECK(scratch.isValid());
+  REQUIRE(argc==2);
+  QTemporaryDir scratch("/private/tmp/wam-coexistence-XXXXXX");REQUIRE(scratch.isValid());
   const auto contents=scratch.path()+"/Fixture.app/Contents";
-  CHECK(QDir().mkpath(contents+"/MacOS"));CHECK(QDir().mkpath(contents+"/Frameworks"));
-  CHECK(QFile::copy(QString::fromLocal8Bit(argv[1]),contents+"/Frameworks/WAMMpvFallback.dylib"));
-  RuntimeLease first,second;CHECK(!first.acquire());CHECK(!second.acquire());
-  Dl_info symbol{};CHECK(dladdr(reinterpret_cast<void*>(api().avcodec_version),&symbol));
-  CHECK(symbol.dli_fname && std::strstr(symbol.dli_fname,"libavcodec-wamnative."));
+  REQUIRE(QDir().mkpath(contents+"/MacOS"));REQUIRE(QDir().mkpath(contents+"/Frameworks"));
+  REQUIRE(QFile::copy(QString::fromLocal8Bit(argv[1]),contents+"/Frameworks/WAMMpvFallback.dylib"));
+  RuntimeLease first,second;REQUIRE(!first.acquire());REQUIRE(!second.acquire());
+  Dl_info symbol{};REQUIRE(dladdr(reinterpret_cast<void*>(api().avcodec_version),&symbol));
+  EXPECT(symbol.dli_fname && std::strstr(symbol.dli_fname,"libavcodec-wamnative."));
   const auto before=api().avcodec_version();
-  auto fallback=MpvRuntimeTestAccess::load(contents+"/MacOS");CHECK(fallback);
-  CHECK(nativeClosurePresent() && foreignClosurePresent());CHECK(api().avcodec_version()==before);
-  first.release();CHECK(nativeClosurePresent());CHECK(api().avcodec_version()==before);
-  second.release();CHECK(!nativeClosurePresent());
-  CHECK(foreignClosurePresent() && !nativeClosurePresent());
-  CHECK(dladdr(reinterpret_cast<void*>(fallback.runtime->api().mpv_client_api_version),&symbol));
-  CHECK(symbol.dli_fname);
-  fallback.runtime.reset();CHECK(foreignClosurePresent());
-  CHECK(!first.acquire());CHECK(!second.acquire());
-  CHECK(nativeClosurePresent() && foreignClosurePresent());
-  CHECK(api().avcodec_version()==before);
-  CHECK(dladdr(reinterpret_cast<void*>(api().avcodec_version),&symbol));
-  CHECK(symbol.dli_fname && std::strstr(symbol.dli_fname,"libavcodec-wamnative."));
-  first.release();CHECK(nativeClosurePresent());second.release();
-  CHECK(!nativeClosurePresent() && api().avcodec_version==nullptr);
+  auto fallback=MpvRuntimeTestAccess::load(contents+"/MacOS");REQUIRE(fallback);
+  EXPECT(nativeClosurePresent() && foreignClosurePresent());EXPECT(api().avcodec_version()==before);
+  first.release();EXPECT(nativeClosurePresent());EXPECT(api().avcodec_version()==before);
+  second.release();EXPECT(!nativeClosurePresent());
+  EXPECT(foreignClosurePresent() && !nativeClosurePresent());
+  REQUIRE(dladdr(reinterpret_cast<void*>(fallback.runtime->api().mpv_client_api_version),&symbol));
+  EXPECT(symbol.dli_fname);
+  fallback.runtime.reset();EXPECT(foreignClosurePresent());
+  REQUIRE(!first.acquire());REQUIRE(!second.acquire());
+  EXPECT(nativeClosurePresent() && foreignClosurePresent());
+  EXPECT(api().avcodec_version()==before);
+  REQUIRE(dladdr(reinterpret_cast<void*>(api().avcodec_version),&symbol));
+  EXPECT(symbol.dli_fname && std::strstr(symbol.dli_fname,"libavcodec-wamnative."));
+  first.release();EXPECT(nativeClosurePresent());second.release();
+  EXPECT(!nativeClosurePresent() && api().avcodec_version==nullptr);
   std::puts("both load orders preserve native symbol ownership and leases; cached fallback permits later native sessions");
+  return failures == 0 ? 0 : 1;
 }

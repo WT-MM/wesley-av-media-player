@@ -164,9 +164,7 @@ void noteAVFoundationAssetContextReaderStarted(
   }
 }
 
-#if defined(WAM_AVFOUNDATION_ASSET_CONTEXT_TESTING) || \
-    defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING) || \
-    defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 std::shared_ptr<const AVFoundationAssetContext>
 adoptPreparedAVFoundationAssetContext(
     std::filesystem::path path,

@@ -1,24 +1,14 @@
 #pragma once
 
-#if !defined(WAM_MPV_RUNTIME_TESTING)
+#if !defined(WAM_QT_TEST_SEAMS)
 #error "injected_mpv_runtime.hpp is test-only"
 #endif
 
-#include "playback/mpv/mpv_runtime.hpp"
+#include "mpv_runtime_test_access.hpp"
 
 #include <memory>
-#include <utility>
 
 namespace wam::playback::mpv {
-
-class MpvRuntimeTestAccess final {
- public:
-  [[nodiscard]] static std::shared_ptr<const MpvRuntime> create(MpvApi api) {
-    return std::shared_ptr<const MpvRuntime>(new MpvRuntime(
-        std::move(api), MPV_CLIENT_API_VERSION,
-        QStringLiteral("injected-test-mpv")));
-  }
-};
 
 // The current render/controller tests intentionally exercise a real client
 // through an explicitly injected immutable table. They perform no QLibrary

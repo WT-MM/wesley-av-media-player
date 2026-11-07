@@ -6,6 +6,8 @@
 #include "media/mpegts_packet.hpp"
 #include "media/native_media_source.hpp"
 
+#include "support/expect.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -72,17 +74,6 @@ static_assert(std::is_trivially_copyable_v<MpegTsCompressedSample>);
 static_assert(sizeof(MpegTsCompressedSample) == 88);
 static_assert(sizeof(MpegTsIndexEntry) == 24);
 static_assert(std::is_trivially_copyable_v<TsPacketHeader>);
-
-int failures = 0;
-int assertions = 0;
-
-void expect(bool condition, const char* message) {
-  ++assertions;
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 void missingFixture(const char* message) {
   std::cerr << "FAIL: required fixture unavailable: " << message << '\n';
@@ -489,9 +480,20 @@ void testContinuityTracking() {
 }
 
 void testSectionAssemblyAndCrc() {
+  // CRC-32/MPEG-2 check value (poly 0x04C11DB7, init ~0, no reflection or
+  // final xor).
+  Bytes check;
+  append(check, {'1', '2', '3', '4', '5', '6', '7', '8', '9'});
+  expect(mpegCrc32(std::span<const std::byte>(check)) == 0x0376E6E7U,
+         "CRC-32/MPEG-2 of \"123456789\" is the catalogued check value");
+  // The PAT ffmpeg's mpegts muxer writes for one program (tsid 1, program 1,
+  // PMT pid 0x1000), CRC 2A B1 04 B2 included.
   const Bytes pat = makePatSection(0x0001, {{1, 0x1000}});
-  expect(mpegCrc32(std::span<const std::byte>(pat)) == 0,
-         "a section with its own CRC appended CRCs to zero");
+  Bytes ffmpegPat;
+  append(ffmpegPat, {0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01,
+                     0xF0, 0x00, 0x2A, 0xB1, 0x04, 0xB2});
+  expect(pat == ffmpegPat,
+         "the PAT section and its CRC match ffmpeg's bytes");
 
   Bytes payload;
   payload.push_back(octet(0x00));  // pointer_field
@@ -2556,7 +2558,6 @@ int main(int argc, char** argv) {
     std::cerr << failures << " MPEG-TS demuxer test(s) failed\n";
     return EXIT_FAILURE;
   }
-  std::cout << "MPEG-TS demuxer tests passed (" << assertions
-            << " assertions)\n";
+  std::cout << "MPEG-TS demuxer tests passed\n";
   return EXIT_SUCCESS;
 }

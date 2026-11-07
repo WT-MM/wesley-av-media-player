@@ -20,11 +20,7 @@ constexpr std::uint64_t kDirectWriterToken =
 constexpr std::uint64_t kReservationBuildingToken =
     kDirectWriterToken - 1U;
 constexpr std::uint64_t kMaximumReservationToken =
-#if defined(WAM_NATIVE_MEDIA_CLOCK_TESTING)
-    64U;
-#else
     kReservationBuildingToken - 1U;
-#endif
 constexpr std::uint64_t kMaximumPublicationSerial =
     std::numeric_limits<std::uint64_t>::max() >> kSlotBits;
 constexpr std::uint64_t kMaximumActiveGeneration =
@@ -670,6 +666,14 @@ bool NativeMediaClock::prepareSegmentState(
   *next = working;
   return true;
 }
+
+#if defined(WAM_NATIVE_TEST_SEAMS)
+void NativeMediaClock::spendReservationTokensForTesting(
+    std::uint64_t remaining) noexcept {
+  reservation_serial_ = kMaximumReservationToken -
+                        std::min(remaining, kMaximumReservationToken);
+}
+#endif
 
 NativeMediaSegmentReservation NativeMediaClock::reserveSegment(
     std::uint64_t expectedGeneration,

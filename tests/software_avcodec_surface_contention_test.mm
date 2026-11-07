@@ -1,13 +1,13 @@
 #include "platform/macos/software_avcodec_video_decoder.hpp"
 #include "platform/macos/native_surface_budget.hpp"
 #include "media/video_codec_configuration.hpp"
+#include "support/expect.hpp"
 #include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <thread>
 #include <vector>
 using namespace wam::macos;
-#define REQUIRE(x) do { if (!(x)) { std::fprintf(stderr, "FAIL %d: %s (%s)\n", __LINE__, #x, error.c_str()); return 1; } } while (false)
 struct Sink final : DecodedFrameSink {
   unsigned frames{};
   bool exact{true}, ended{};
@@ -53,11 +53,14 @@ int main(int argc, char** argv) {
   for (bool cancel : {false, true}) {
     Sink sink;
     SoftwareAvcodecVideoDecoder decoder;
-    REQUIRE(decoder.configure(config, sink, &error));
+    const bool configured = decoder.configure(config, sink, &error);
+    require(configured, "configure: " + error);
     const auto before = NativeSurfaceBudget::stats().rejections;
     REQUIRE(NativeSurfaceBudgetTestAccess::holdInsertionReservation());
-    REQUIRE(decoder.submitCMSampleBuffer(sample, 1, &error) == VideoDecodeSubmitResult::Accepted);
-    REQUIRE(decoder.beginEndOfStream(1, &error) != VideoDecodeDrainProgress::Failed);
+    const auto submitted = decoder.submitCMSampleBuffer(sample, 1, &error);
+    require(submitted == VideoDecodeSubmitResult::Accepted, "submit: " + error);
+    const auto begun = decoder.beginEndOfStream(1, &error);
+    require(begun != VideoDecodeDrainProgress::Failed, "beginEndOfStream: " + error);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (NativeSurfaceBudget::stats().rejections == before) {
       REQUIRE(std::chrono::steady_clock::now() < deadline);
@@ -66,20 +69,23 @@ int main(int argc, char** argv) {
     const auto progress = decoder.drainPresentation(1, &error);
     if (cancel) decoder.close();
     NativeSurfaceBudgetTestAccess::releaseInsertionReservation();
-    REQUIRE(progress != VideoDecodeDrainProgress::Failed);
+    require(progress != VideoDecodeDrainProgress::Failed, "drainPresentation: " + error);
     if (!cancel) {
-      REQUIRE(decoder.beginEndOfStream(1, &error) != VideoDecodeDrainProgress::Failed);
+      const auto resumed = decoder.beginEndOfStream(1, &error);
+      require(resumed != VideoDecodeDrainProgress::Failed, "beginEndOfStream: " + error);
       while (!sink.ended) {
         REQUIRE(std::chrono::steady_clock::now() < deadline);
-        REQUIRE(decoder.drainEndOfStream(1, &error) != VideoDecodeDrainProgress::Failed);
+        const auto draining = decoder.drainEndOfStream(1, &error);
+        require(draining != VideoDecodeDrainProgress::Failed, "drainEndOfStream: " + error);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
-      REQUIRE(sink.frames == 1 && sink.exact);
+      EXPECT(sink.frames == 1 && sink.exact);
       decoder.close();
     }
-    REQUIRE(NativeSurfaceBudget::stats().currentSurfaces == 0);
-    REQUIRE(NativeSurfaceBudget::stats().currentBytes == 0);
+    EXPECT(NativeSurfaceBudget::stats().currentSurfaces == 0);
+    EXPECT(NativeSurfaceBudget::stats().currentBytes == 0);
   }
   CFRelease(sample); CFRelease(block);
   std::puts("PASS insertion contention retains exact frame; cancellation retires every lease");
+  return failures == 0 ? 0 : 1;
 }

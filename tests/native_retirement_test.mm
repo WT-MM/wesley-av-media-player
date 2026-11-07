@@ -3,16 +3,12 @@
 #import <Foundation/Foundation.h>
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
-#include <iostream>
+#include "support/expect.hpp"
 #include <thread>
 #include <vector>
 
 using wam::macos::NativeRetirement;
 namespace {
-void expect(bool value, const char* message) {
-  if (!value) { std::cerr << message << '\n'; std::exit(1); }
-}
 struct Probe {
   std::atomic<bool> entered{false};
   std::atomic<bool> release{false};
@@ -70,4 +66,5 @@ int main() {
     retiring.reset();
     expect(NativeRetirement::charged() == 0, "completed graphs release all reservations");
   }
+  return failures == 0 ? 0 : 1;
 }

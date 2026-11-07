@@ -11,15 +11,17 @@ import tempfile
 
 def run(argv, expected=0):
     p = subprocess.run([str(x) for x in argv], capture_output=True, text=True)
-    if p.returncode in (-9, 137):
-        p = subprocess.run([str(x) for x in argv], capture_output=True, text=True)
-    if p.returncode == 1 and 'create=-12906' in p.stdout:
-        # kVTCouldNotFindVideoDecoderErr: hosted virtual machines expose no ProRes
-        # decoder even though VTIsHardwareDecodeSupported answers yes for it.
-        print('SKIP: this host has no decoder for', p.stdout.strip())
-        sys.exit(77)
     assert p.returncode == expected, (argv, p.returncode, p.stdout, p.stderr)
     return p.stdout
+
+
+def virtual_machine():
+    # Hosted macOS VMs expose no ProRes decoder (session creation fails with
+    # kVTCouldNotFindVideoDecoderErr, -12906) although VTIsHardwareDecodeSupported
+    # answers yes for it. Decide from the host, never from the probe's error.
+    p = subprocess.run(['/usr/sbin/sysctl', '-n', 'kern.hv_vmm_present'],
+                       capture_output=True, text=True)
+    return p.stdout.strip() == '1'
 
 
 def main():
@@ -28,6 +30,9 @@ def main():
         parser.add_argument('--'+name, required=True)
     parser.add_argument('--artifacts')
     a = parser.parse_args()
+    if virtual_machine():
+        print('SKIP: virtual machines expose no hardware ProRes decoder')
+        sys.exit(77)
     with tempfile.TemporaryDirectory(prefix='wam-phase0b-', dir='/private/tmp') as tmp:
         root = Path(a.artifacts or tmp)
         root.mkdir(parents=True, exist_ok=True)

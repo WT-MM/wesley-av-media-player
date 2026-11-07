@@ -1,19 +1,13 @@
 #include "platform/macos/native_layer_host_view.hpp"
 #import <AppKit/AppKit.h>
 #import <AVFoundation/AVFoundation.h>
-#include <cstdlib>
-#include <iostream>
+#include "support/expect.hpp"
 
-namespace {
-void expect(bool value, const char* message) {
-  if (!value) { std::cerr << message << '\n'; std::exit(1); }
-}
-}
 int main() {
   @autoreleasepool {
     std::string error;
     auto binding = wam::macos::NativeLayerHostView::createDetached(480, 270, &error);
-    expect(bool(binding) && error.empty(), "a host view can be created without a Qt window");
+    require(bool(binding) && error.empty(), "a host view can be created without a Qt window");
     NSView* view = (__bridge NSView*)binding->view();
     expect(view && !view.window && !view.superview, "standalone view does not install itself");
     AVSampleBufferDisplayLayer* display = (__bridge AVSampleBufferDisplayLayer*)binding->displayLayer();
@@ -33,4 +27,5 @@ int main() {
     binding.reset();
     expect(!view.superview, "binding destruction detaches its view");
   }
+  return failures == 0 ? 0 : 1;
 }

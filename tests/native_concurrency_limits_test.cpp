@@ -16,19 +16,11 @@
 #include "platform/macos/native_layer_presentation_state.hpp"
 #include "platform/macos/native_surface_budget.hpp"
 
+#include "support/expect.hpp"
+
 #include <cstdio>
-#include <cstdlib>
 
 namespace {
-
-int g_failures = 0;
-
-void check(bool condition, const char *what) {
-  if (!condition) {
-    ++g_failures;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-  }
-}
 
 using namespace wam::macos;
 
@@ -36,14 +28,14 @@ using namespace wam::macos;
 // The cap itself, and the two ceilings it was chosen against.
 // ---------------------------------------------------------------------------
 void testWindowCap() {
-  check(kMaximumConcurrentPlayerWindows == 16,
+  expect(kMaximumConcurrentPlayerWindows == 16,
         "the window cap is 16 (raising it re-derives every bound below)");
   // The cap has to admit real multi-window use and still stay well inside the
   // ~1020-entry per-process IOSurface client ceiling that N sessions' worth of
   // VideoToolbox helpers consume.
-  check(kMaximumConcurrentPlayerWindows >= 2,
+  expect(kMaximumConcurrentPlayerWindows >= 2,
         "the cap must admit at least two simultaneous windows");
-  check(kMaximumConcurrentPlayerWindows <= 64,
+  expect(kMaximumConcurrentPlayerWindows <= 64,
         "the cap must stay far inside the per-process IOSurface client "
         "ceiling");
 }
@@ -53,30 +45,30 @@ void testWindowCap() {
 // window cap, and the counter must be able to reach it and come back to zero.
 // ---------------------------------------------------------------------------
 void testLayerPresentationBound() {
-  check(kLayerPresentationsPerWindow == 2,
+  expect(kLayerPresentationsPerWindow == 2,
         "a window owns at most its steady-state output plus one route-swap "
         "overlap");
-  check(kMaxConcurrentLayerPresentations ==
+  expect(kMaxConcurrentLayerPresentations ==
             kMaximumConcurrentPlayerWindows * kLayerPresentationsPerWindow,
         "the layer presentation bound is derived, never independently set");
-  check(kMaxConcurrentLayerPresentations == 32,
+  expect(kMaxConcurrentLayerPresentations == 32,
         "the derived layer presentation bound is 32");
 
-  check(!nativeLayerPresentationActive(),
+  expect(!nativeLayerPresentationActive(),
         "the presentation counter starts at zero");
   for (int index = 0; index < kMaxConcurrentLayerPresentations; ++index) {
     retainNativeLayerPresentation();
-    check(nativeLayerPresentationActive(),
+    expect(nativeLayerPresentationActive(),
           "any live retain keeps presentation active");
   }
-  check(nativeLayerPresentationCounter().load() ==
+  expect(nativeLayerPresentationCounter().load() ==
             kMaxConcurrentLayerPresentations,
         "every window's worth of retains fits inside the bound");
   for (int index = 0; index < kMaxConcurrentLayerPresentations; ++index)
     releaseNativeLayerPresentation();
-  check(!nativeLayerPresentationActive(),
+  expect(!nativeLayerPresentationActive(),
         "a balanced release returns the counter to zero");
-  check(nativeLayerPresentationCounter().load() == 0,
+  expect(nativeLayerPresentationCounter().load() == 0,
         "the counter is exactly zero after balanced release");
 }
 
@@ -86,27 +78,27 @@ void testLayerPresentationBound() {
 // and that is the statement being pinned here.
 // ---------------------------------------------------------------------------
 void testSurfaceBudgetSplit() {
-  check(kNativeSurfaceBudgetMaximumSurfaces == 10,
+  expect(kNativeSurfaceBudgetMaximumSurfaces == 10,
         "the per-session surface complement is unchanged by multi-window");
-  check(kNativeSurfaceBudgetProcessMaximumSurfaces ==
+  expect(kNativeSurfaceBudgetProcessMaximumSurfaces ==
             kNativeSurfaceBudgetMaximumSurfaces *
                 static_cast<std::uint64_t>(kMaximumConcurrentPlayerWindows),
         "the process surface pool is the cap's worth of per-session "
         "complements");
-  check(kNativeSurfaceBudgetProcessMaximumBytes ==
+  expect(kNativeSurfaceBudgetProcessMaximumBytes ==
             kNativeSurfaceBudgetMaximumBytes *
                 static_cast<std::uint64_t>(kMaximumConcurrentPlayerWindows),
         "the process byte pool is the cap's worth of per-session budgets");
   // The byte pool must still cover a full complement of worst-case surfaces,
   // or the surface COUNT stops being the binding constraint and the route
   // starts refusing surfaces mid-playback instead of at admission.
-  check(kNativeSurfaceBudgetProcessMaximumBytes >=
+  expect(kNativeSurfaceBudgetProcessMaximumBytes >=
             kNativeSurfaceBudgetProcessMaximumSurfaces *
                 kNativeSurfaceBudgetWorstCaseSurfaceBytes,
         "the process byte pool covers every window's full complement");
   // Two windows was the case that actually broke: one shared ten-surface pool
   // starved the second window to 4.6 fps. Pin the property that fixed it.
-  check(kNativeSurfaceBudgetProcessMaximumSurfaces >=
+  expect(kNativeSurfaceBudgetProcessMaximumSurfaces >=
             2ULL * kNativeSurfaceBudgetMaximumSurfaces,
         "two windows must each be able to hold a full complement at once");
 }
@@ -117,8 +109,8 @@ int main() {
   testWindowCap();
   testLayerPresentationBound();
   testSurfaceBudgetSplit();
-  if (g_failures != 0) {
-    std::fprintf(stderr, "%d check(s) failed\n", g_failures);
+  if (failures != 0) {
+    std::fprintf(stderr, "%d check(s) failed\n", failures);
     return EXIT_FAILURE;
   }
   std::printf("native concurrency limit checks passed\n");

@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "support/expect.hpp"
+#include "support/fake_host_clock.hpp"
 
 namespace {
 
@@ -56,19 +57,6 @@ void operator delete(void *memory, std::size_t) noexcept {
 void operator delete[](void *memory, std::size_t) noexcept {
   std::free(memory);
 }
-
-namespace wam::media {
-
-struct NativeAudioRenderCoreTestAccess {
-  static void setAfterPreflightHook(NativeAudioRenderCore &core,
-                                    NativeAudioRenderCore::TestHook hook,
-                                    void *context) noexcept {
-    core.after_preflight_hook_ = hook;
-    core.after_preflight_context_ = context;
-  }
-};
-
-}  // namespace wam::media
 
 namespace wam::macos {
 
@@ -582,20 +570,6 @@ struct FakeAudioUnit {
     AudioUnitRenderActionFlags flags = 0;
     return callback(callbackContext, &flags, &timestamp, bus, frames,
                     buffers == 0 ? nullptr : &list);
-  }
-};
-
-struct FakeHostClock {
-  std::atomic<std::uint64_t> ticks{0};
-
-  static std::uint64_t read(void *context) noexcept {
-    return static_cast<FakeHostClock *>(context)->ticks.load(
-        std::memory_order_relaxed);
-  }
-
-  [[nodiscard]] NativeMediaHostClock seam(
-      std::uint64_t frequency) noexcept {
-    return {&read, this, frequency};
   }
 };
 

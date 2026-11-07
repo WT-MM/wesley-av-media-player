@@ -132,7 +132,7 @@ struct NativePreviewFrameLaneMemoryFacts {
 static_assert(
     std::is_trivially_copyable_v<NativePreviewFrameLaneMemoryFacts>);
 
-#if defined(WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct NativePreviewFrameLaneTestAccess;
 #endif
 
@@ -187,12 +187,12 @@ class NativePreviewFrameLane final {
   explicit NativePreviewFrameLane(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;
 
-#if defined(WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativePreviewFrameLaneTestAccess;
 #endif
 };
 
-#if defined(WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Shipping objects contain neither this factory nor the synthetic-frame seam.
 struct NativePreviewFrameLaneTestAccess {
   [[nodiscard]] static std::unique_ptr<NativePreviewFrameLane> create(

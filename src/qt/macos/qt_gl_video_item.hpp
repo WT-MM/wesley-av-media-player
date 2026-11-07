@@ -33,8 +33,7 @@ class QtGlFatalErrorSerialToken final {
 };
 
 // Identity supplied by the one-credit native output adapter. Both fields are
-// either zero (an untracked legacy submission) or nonzero. deliverySequence
-// is unique for the adapter lifetime; frameSequence is the exact caller-owned
+// nonzero. deliverySequence is unique for the adapter lifetime; frameSequence is the exact caller-owned
 // identity used to reject redraw/PTS substitution as delivery progress.
 struct QtGlFrameIdentity {
   std::uint64_t deliverySequence{0};
@@ -108,7 +107,7 @@ struct QtGlVideoItemStats {
   std::uint64_t rejectedFrames{0};
   std::uint64_t staleFrames{0};
   std::uint64_t destroyedResourceSets{0};
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   std::uint64_t textureParameterCalls{0};
   std::uint64_t drawFramebufferBindingQueries{0};
 #endif
@@ -150,7 +149,7 @@ static_assert(std::is_trivially_copyable_v<QtGlVideoItemMemoryFacts>);
 // directly into Qt's active render target in one draw.
 //
 // MpvVideoItem constructs one as its child; it is not registered as a QML type.
-// submitFrame() belongs on the GUI thread. OpenGL imports, draws, fences, and
+// submitTrackedFrame() belongs on the GUI thread. OpenGL imports, draws, fences, and
 // destruction happen on the scene-graph render thread or the private shared-
 // context retirement service.
 class QtGlVideoItem final : public QQuickItem {
@@ -162,12 +161,11 @@ class QtGlVideoItem final : public QQuickItem {
   explicit QtGlVideoItem(QQuickItem* parent = nullptr);
   ~QtGlVideoItem() override;
 
-  // Capacity-one handoff: a newer frame replaces a pending frame that has not
-  // yet been consumed by the render thread. The last accepted lease is also
-  // retained so paused playback survives scene-graph recreation.
-  void submitFrame(FrameLease frame);
-  // Same GUI-thread handoff with exact output/caller identity. A successful
-  // first draw publishes one event; retained-frame redraws publish none.
+  // Capacity-one GUI-thread handoff with exact output/caller identity: a newer
+  // frame replaces a pending frame that has not yet been consumed by the
+  // render thread. The last accepted lease is also retained so paused playback
+  // survives scene-graph recreation. A successful first draw publishes one
+  // event; retained-frame redraws publish none.
   void submitTrackedFrame(FrameLease frame, QtGlFrameIdentity identity);
   // Atomically advances the accepted timeline and clears the retained frame.
   // A stale frame submitted by an asynchronous pre-seek callback is rejected,
@@ -188,7 +186,7 @@ class QtGlVideoItem final : public QQuickItem {
   // from an already handled one without allocating on the blank-player path.
   [[nodiscard]] std::optional<QString> takeFatalError();
 
-#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   // Deterministic fail-closed seam for the isolated hardware gate.
   void failNextImportForTesting();
   void failSecondPlaneImportForTesting();

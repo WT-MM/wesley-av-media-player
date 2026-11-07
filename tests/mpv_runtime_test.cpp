@@ -1,4 +1,5 @@
-#include "playback/mpv/mpv_runtime.hpp"
+#include "fakes/mpv_runtime/mpv_runtime_test_access.hpp"
+#include "support/expect.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -16,18 +17,6 @@
 #include <vector>
 
 #include <unistd.h>
-
-namespace wam::playback::mpv {
-
-class MpvRuntimeTestAccess final {
- public:
-  [[nodiscard]] static MpvRuntimeLoadResult load(
-      const QString& applicationDirectory) {
-    return MpvRuntime::load(applicationDirectory);
-  }
-};
-
-}  // namespace wam::playback::mpv
 
 namespace {
 
@@ -48,15 +37,6 @@ static_assert(std::is_same_v<
                   decltype(MpvApi::mpv_render_context_render)>,
               decltype(&::mpv_render_context_render)>);
 
-int g_failures = 0;
-
-void expect(bool condition, const std::string& message) {
-  if (condition) {
-    return;
-  }
-  std::cerr << "FAIL: " << message << '\n';
-  ++g_failures;
-}
 
 struct Bundle final {
   QString applicationDirectory;
@@ -264,7 +244,7 @@ int runPreloadedCollisionChild(const QString& collisionLibrary,
     expect(result.error == MpvRuntimeLoadError::LoadedImageMismatch,
            "a dyld install-name collision fails as an image mismatch");
   }
-  return g_failures == 0 ? 0 : 1;
+  return failures == 0 ? 0 : 1;
 }
 
 void testPreloadedCollision(const QString& collisionLibrary,
@@ -400,7 +380,7 @@ int main(int argc, char** argv) {
 
   QTemporaryDir temporary;
   expect(temporary.isValid(), "create isolated bundle root");
-  if (g_failures == 0) {
+  if (failures == 0) {
     testPathRejections(temporary.path(), valid);
     testVersionAndSymbolFailures(temporary.path(), missing, wrong_major,
                                  old_minor);
@@ -409,8 +389,8 @@ int main(int argc, char** argv) {
     testRetryCacheAndLifetime(temporary.path(), missing, valid);
   }
 
-  if (g_failures != 0) {
-    std::cerr << g_failures << " mpv runtime test(s) failed\n";
+  if (failures != 0) {
+    std::cerr << failures << " mpv runtime test(s) failed\n";
     return 1;
   }
   std::cout << "mpv runtime tests passed\n";

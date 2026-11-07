@@ -21,8 +21,6 @@ with tempfile.TemporaryDirectory(prefix='wam-avcodec-runtime-', dir='/private/tm
     def check(name, refusal=None):
         command = [str(binary)] + ([refusal] if refusal else [])
         r = subprocess.run(command, capture_output=True, text=True, timeout=15)
-        if r.returncode == -9:
-            r = subprocess.run(command, capture_output=True, text=True, timeout=15)
         results.append(dict(case=name, rc=r.returncode, stdout=r.stdout, stderr=r.stderr))
         assert r.returncode == 0, results[-1]
     check('missing', 'DecoderStageNotBuilt')

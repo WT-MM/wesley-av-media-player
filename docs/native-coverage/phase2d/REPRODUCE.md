@@ -16,7 +16,7 @@ For decoder-implementation logging, use the acceptance build:
 ```sh
 cmake -S . -B build -DWAM_ENABLE_AVCODEC_STAGE=ON -DWAM_ENABLE_AVFORMAT_STAGE=ON
 cmake --build build --parallel
-python3 tests/native_display_capture_test.py \
+python3 tests/native_display_capture_proof.py \
   --output /private/tmp/<fresh-known-red-run>
 ```
 
@@ -31,7 +31,7 @@ A current known-red PASS has **not** been obtained.
 While the session is locked, the negative acceptance is:
 
 ```sh
-python3 tests/native_display_capture_test.py --expect-session-locked \
+python3 tests/native_display_capture_proof.py --expect-session-locked \
   --output /private/tmp/<fresh-locked-run>
 ```
 

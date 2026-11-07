@@ -25,7 +25,6 @@ with tempfile.TemporaryDirectory(prefix='wam-software-audio-',dir='/private/tmp'
     path=root/'actual.f32'
     command=[a.probe,str(asset),str(path),target]
     run=subprocess.run(command,capture_output=True,text=True,timeout=30)
-    if run.returncode==-9:run=subprocess.run(command,capture_output=True,text=True,timeout=30)
     assert run.returncode==0,(family,channels,target,run.stderr)
     value=Fraction(target)*48000;frame=-(-value.numerator//value.denominator)
     actual=np.fromfile(path,dtype='<f4').reshape(-1,2);want=expected[frame:]

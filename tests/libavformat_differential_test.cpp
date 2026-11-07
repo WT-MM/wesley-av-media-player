@@ -3,14 +3,8 @@
 #include "media/mpegts_demuxer.hpp"
 #include <algorithm>
 #include <iostream>
+#include "support/expect.hpp"
 #include <vector>
-#define REQUIRE(condition)                                                     \
-  do {                                                                         \
-    if (!(condition)) {                                                        \
-      std::cerr << "FAIL " << __LINE__ << ": " #condition "\n";                \
-      return 1;                                                                \
-    }                                                                          \
-  } while (false)
 using namespace wam::media;
 bool equal(MediaTime a, MediaTime b) {
   return (!a.valid() && !b.valid()) ||
@@ -99,24 +93,24 @@ int main(int argc, char **argv) {
                 << packet.dts.timescale << " duration=" << duration.value << '/'
                 << duration.timescale << ":" << packet.duration.value << '/'
                 << packet.duration.timescale << '\n';
-    REQUIRE(equal(pts, packet.pts));
-    REQUIRE(equal(dts, packet.dts));
-    REQUIRE(equal(duration, packet.duration));
-    REQUIRE(key == packet.key);
+    EXPECT(equal(pts, packet.pts));
+    EXPECT(equal(dts, packet.dts));
+    EXPECT(equal(duration, packet.duration));
+    EXPECT(key == packet.key);
     REQUIRE(size == packet.bytes.size());
-    REQUIRE(
+    EXPECT(
         std::equal(packet.bytes.begin(), packet.bytes.end(), payload.begin()));
     ++count;
     bytes += size;
   }
   if (mkv)
-    REQUIRE(
+    EXPECT(
         std::holds_alternative<matroska::MatroskaCursorEnd>(mc->readNext()));
   else
-    REQUIRE(std::holds_alternative<mpegts::MpegTsCursorEnd>(tc->readNext()));
-  REQUIRE(count > 0);
+    EXPECT(std::holds_alternative<mpegts::MpegTsCursorEnd>(tc->readNext()));
+  EXPECT(count > 0);
   std::cout << "agreement packets=" << count << " bytes=" << bytes
             << " pts=" << count << " dts=" << count << " duration=" << count
             << " key=" << count << '\n';
-  return 0;
+  return failures == 0 ? 0 : 1;
 }

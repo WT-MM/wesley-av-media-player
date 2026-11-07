@@ -419,7 +419,7 @@ struct NativeMediaSessionWake::Impl final {
   bool hostPaced{false};
   bool heartbeat{true};
   media::NativeMediaHostClock hostPacedClock{};
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   std::atomic<std::uint64_t> consumedTokens{0};
   std::atomic<std::uint64_t> consumeBarrierTarget{0};
   std::atomic<std::atomic<bool>*> consumeBarrierEntered{nullptr};
@@ -549,7 +549,7 @@ void NativeMediaSessionWake::wait() noexcept {
 #else
   static_cast<void>(waitResult);
 #endif
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   const std::uint64_t token =
       impl_->consumedTokens.fetch_add(1, std::memory_order_acq_rel) + 1;
   const std::uint64_t target =
@@ -814,7 +814,7 @@ struct NativeMediaSession::Impl final {
     bool inserted = false;
     {
       std::lock_guard lock(mutex);
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
       // This barrier deliberately runs while holding the same lock used by
       // public command admission. It makes the failure stamp and the terminal
       // public latch one linearized transaction in the race test below.
@@ -985,7 +985,7 @@ struct NativeMediaSession::Impl final {
   [[nodiscard]] bool beginLiveIssue(
       const protocol::SetRunState* runIssue = nullptr,
       bool allowEnding = false, bool allowCommit = false) noexcept {
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (liveIssueBarrierEntered != nullptr &&
         liveIssueBarrierRelease != nullptr &&
         !liveIssueBarrierConsumed.exchange(true,
@@ -1134,7 +1134,7 @@ struct NativeMediaSession::Impl final {
   // them into the unsynchronised owner fields below; callbacks and the public
   // threads never read or write worker state directly.
   void acceptPublishedCommands() noexcept {
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     bool previewPulled = false;
 #endif
     {
@@ -1182,7 +1182,7 @@ struct NativeMediaSession::Impl final {
       publishedPreview.reset();
       previewPending = true;
       previewIssued = false;
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
       previewPulled = true;
 #endif
     }
@@ -1228,7 +1228,7 @@ struct NativeMediaSession::Impl final {
       mutedPending = true;
     }
     }
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (previewPulled) {
       std::atomic<bool>* const entered =
           previewPullBarrierEntered.load(std::memory_order_acquire);
@@ -1304,7 +1304,7 @@ struct NativeMediaSession::Impl final {
   }
 
   [[nodiscard]] bool ensurePreviewLane() noexcept {
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (previewPort != nullptr && previewBindingObserver == nullptr) {
       return true;
     }
@@ -1321,7 +1321,7 @@ struct NativeMediaSession::Impl final {
     // scrub lane simply stays inactive without disturbing main playback.
     NativePreviewBinding sourceBinding{
         binding.localPath, descriptorSnapshot, {}, assetContextSnapshot};
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (previewBindingObserver != nullptr &&
         !previewBindingObserver(previewBindingObserverContext,
                                 sourceBinding)) {
@@ -1462,7 +1462,7 @@ struct NativeMediaSession::Impl final {
     TakePresented,
   };
 
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   void waitPreviewCompletionBarrier(
       PreviewChildCompletionPoint point) noexcept {
     NativeMediaSessionTestPreviewCompletionPoint expected =
@@ -1513,7 +1513,7 @@ struct NativeMediaSession::Impl final {
   [[nodiscard]] bool completePreviewChild(
       PreviewChildCompletionPoint point, bool allowPublishedEnded,
       Commit&& commit) noexcept {
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     waitPreviewCompletionBarrier(point);
 #else
     static_cast<void>(point);
@@ -1597,7 +1597,7 @@ struct NativeMediaSession::Impl final {
       return;
     }
     const bool laneReady = ensurePreviewLane();
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (std::atomic<bool>* const entered =
             previewConstructionBarrierEntered.load(
                 std::memory_order_acquire)) {
@@ -2404,7 +2404,7 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void recordCommitPhase() noexcept {
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     const auto phase = static_cast<std::uint8_t>(commitPhase);
     const std::uint32_t length =
         commitPhaseTraceLength.load(std::memory_order_acquire);
@@ -2467,7 +2467,7 @@ if (result != NativeAudioSessionProgress::Done) {
   // session defect, not a media condition: it is named on stderr, latched as a
   // CommitSeek live failure, and never applied. Must not run under `mutex`.
   [[nodiscard]] bool enterCommitPhase(CommitPhase next) noexcept {
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     if (commitPhaseFault != nullptr &&
         commitPhaseFault->exchange(false, std::memory_order_acq_rel)) {
       next = commitPhase;
@@ -3063,7 +3063,7 @@ if (result != NativeAudioSessionProgress::Done) {
     }
   }
 
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   struct WorkerAutoreleasePoolProbe final {
     explicit WorkerAutoreleasePoolProbe(Impl* owner) noexcept : owner(owner) {
       owner->workerAutoreleasePoolsEntered.fetch_add(1,
@@ -3113,7 +3113,7 @@ if (result != NativeAudioSessionProgress::Done) {
       // only after a wake is consumed and drain it before the worker blocks
       // again, bounding Foundation/AVFoundation temporaries to one pass.
       @autoreleasepool {
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
         WorkerAutoreleasePoolProbe workerAutoreleasePoolProbe{this};
 #endif
         {
@@ -3127,7 +3127,7 @@ if (result != NativeAudioSessionProgress::Done) {
         // the event-driven wake, then again only when real session
         // work wakes this worker; never poll or invoke the controller inline.
         queueObservations();
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
         if (commandDrainBarrierEntered != nullptr &&
             commandDrainBarrierRelease != nullptr &&
             !commandDrainBarrierConsumed.exchange(true,
@@ -3233,7 +3233,7 @@ if (result != NativeAudioSessionProgress::Done) {
           }
           if (terminalFailure && !dispatcherFailurePublished) {
             dispatcherFailurePublished = true;
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
             if (failureDetectionEntered != nullptr &&
                 failureDetectionRelease != nullptr) {
               failureDetectionEntered->store(true, std::memory_order_release);
@@ -3365,7 +3365,7 @@ if (result != NativeAudioSessionProgress::Done) {
   // concrete asset context; createNativePreviewSource() selects the preview
   // reader from its backendKind().
   std::shared_ptr<const media::MediaSourcePreparedContext> assetContextSnapshot;
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   bool (*previewBindingObserver)(
       void*, const NativePreviewBinding&) noexcept{nullptr};
   void* previewBindingObserverContext{nullptr};
@@ -3491,7 +3491,7 @@ if (result != NativeAudioSessionProgress::Done) {
   protocol::Stamp previewLaneAcceptedThrough{};
   bool liveIssueActive{false};
   bool exitRequested{false};
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   std::atomic<bool>* failureLatchEntered{nullptr};
   std::atomic<bool>* failureLatchRelease{nullptr};
   std::atomic<bool>* failureDetectionEntered{nullptr};
@@ -4131,7 +4131,7 @@ NativeMediaSessionMetrics NativeMediaSession::metrics() const noexcept {
   return result;
 }
 
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 NativeMediaSessionFacts NativeMediaSessionTestAccess::facts(
     const NativeMediaSession& session) noexcept {
   const auto& impl_ = session.impl_;

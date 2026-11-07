@@ -11,9 +11,11 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include "support/expect.hpp"
+#include "support/fake_host_clock.hpp"
 
-#if !defined(WAM_NATIVE_MEDIA_CLOCK_TESTING)
-#error "native media clock tests require bounded test-only token limits"
+#if !defined(WAM_NATIVE_TEST_SEAMS)
+#error "native media clock tests spend reservation tokens through a test seam"
 #endif
 
 namespace {
@@ -41,8 +43,6 @@ static_assert(noexcept(std::declval<NativeMediaClock &>().commitSegment(
 static_assert(noexcept(std::declval<NativeMediaClock &>().runAtHostTicks(
     1, 0, Rate{})));
 
-int failures = 0;
-
 MediaTime at(double seconds) {
   return wam::media::exactNonnegativeMediaTime(seconds).value_or(MediaTime{});
 }
@@ -51,34 +51,10 @@ Rate rate(double value) {
   return wam::media::native_playback::nativeRateRatio(value);
 }
 
-void expect(bool condition, const char *message) {
-  if (condition) {
-    return;
-  }
-  std::cerr << "FAIL: " << message << '\n';
-  ++failures;
-}
-
 void expectNear(double actual, double expected, double tolerance,
                 const char *message) {
   expect(std::abs(actual - expected) <= tolerance, message);
 }
-
-struct FakeHostClock {
-  std::atomic<std::uint64_t> ticks{0};
-  std::atomic<std::uint64_t> reads{0};
-
-  static std::uint64_t read(void *context) noexcept {
-    auto &clock = *static_cast<FakeHostClock *>(context);
-    clock.reads.fetch_add(1, std::memory_order_relaxed);
-    return clock.ticks.load(std::memory_order_relaxed);
-  }
-
-  [[nodiscard]] NativeMediaHostClock seam(
-      std::uint64_t ticksPerSecond) noexcept {
-    return {&read, this, ticksPerSecond};
-  }
-};
 
 // Anchors through the public API with the host clock held at hostTicks.
 template <typename Host>
@@ -476,6 +452,7 @@ void testReservationTokenSaturation() {
   NativeMediaClock clock(host.seam(10));
   expect(anchorAt(clock, host, 1, 100, 0.0, 1.0, true),
          "token saturation test establishes a future clock");
+  clock.spendReservationTokensForTesting(64);
 
   NativeMediaSegmentReservation ancient;
   for (std::uint64_t serial = 1; serial <= 64; ++serial) {
