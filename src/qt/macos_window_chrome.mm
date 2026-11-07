@@ -10,7 +10,6 @@
 
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
-#import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 
 #include "test_seams.hpp"
@@ -674,16 +673,8 @@ bool revealInFinder(const QUrl &source) {
   return true;
 }
 
-media::MediaDisplaySize exactDisplaySize(QWindow* window) {
-  if (!window) return {};
-  return {{window->property("wamDisplayWidthNumerator").toLongLong(),
-           window->property("wamDisplayWidthDenominator").toULongLong()},
-          {window->property("wamDisplayHeightNumerator").toLongLong(),
-           window->property("wamDisplayHeightDenominator").toULongLong()}};
-}
-
-void setContentAspectRatio(QWindow *window, qreal width, qreal height) {
-  const auto exact = exactDisplaySize(window);
+void setContentAspectRatio(QWindow *window, const media::MediaDisplaySize &exact,
+                           qreal width, qreal height) {
   if (width > 0 && height > 0 && !exact.empty()) {
     const auto aspect = media::displayAspect(exact);
     width = aspect.numerator; height = aspect.denominator;
@@ -711,9 +702,8 @@ bool interactiveResizeActive(QWindow *window) {
   return lock.armed && lock.window == nsWindow;
 }
 
-void resizeToActualSize(QWindow *window, qreal videoPixelWidth,
-                        qreal videoPixelHeight) {
-  const auto exact = exactDisplaySize(window);
+void resizeToActualSize(QWindow *window, const media::MediaDisplaySize &exact,
+                        qreal videoPixelWidth, qreal videoPixelHeight) {
   if (!exact.empty()) {
     videoPixelWidth = media::displayPhysicalPixels(exact.width);
     videoPixelHeight = media::displayPhysicalPixels(exact.height);
@@ -752,7 +742,8 @@ void resizeToActualSize(QWindow *window, qreal videoPixelWidth,
     fitState(nsWindow).valid = false;
 }
 
-void resizeToFitScreen(QWindow *window, qreal videoWidth, qreal videoHeight) {
+void resizeToFitScreen(QWindow *window, const media::MediaDisplaySize &exact,
+                       qreal videoWidth, qreal videoHeight) {
   NSWindow *nsWindow = nsWindowFor(window);
   if (!nsWindow)
     return;
@@ -781,7 +772,6 @@ void resizeToFitScreen(QWindow *window, qreal videoWidth, qreal videoHeight) {
 
   CGFloat target_width = NSWidth(visible);
   CGFloat target_height = NSHeight(visible);
-  const auto exact = exactDisplaySize(window);
   if (!exact.empty()) {
     const auto fit = media::displayFit(exact,
         static_cast<std::uint32_t>(std::llround(NSWidth(visible) * screen.backingScaleFactor)),
@@ -886,9 +876,8 @@ void clearFillScreenPadded(QWindow *window) {
   state.window = nil;
 }
 
-void snapToVideoAspectRatio(QWindow *window, qreal videoWidth,
-                            qreal videoHeight) {
-  const auto exact = exactDisplaySize(window);
+void snapToVideoAspectRatio(QWindow *window, const media::MediaDisplaySize &exact,
+                            qreal videoWidth, qreal videoHeight) {
   if (!exact.empty()) {
     const auto aspect = media::displayAspect(exact);
     videoWidth = aspect.numerator; videoHeight = aspect.denominator;
@@ -940,66 +929,6 @@ void snapToVideoAspectRatio(QWindow *window, qreal videoWidth,
   if (applyWindowFrame(nsWindow, target))
     fitState(nsWindow).valid = false;
 }
-
-namespace {
-
-// Shared by the synchronous and asynchronous natural-size reads; expects the
-// asset's tracks to be available (loaded, or loadable synchronously).
-QSizeF naturalSizeFromAsset(AVURLAsset *asset) {
-  NSArray<AVAssetTrack *> *tracks =
-      [asset tracksWithMediaType:AVMediaTypeVideo];
-  if (tracks.count == 0)
-    return {};
-
-  AVAssetTrack *track = tracks.firstObject;
-  // naturalSize is the track's coded pixel size; preferredTransform can carry
-  // a 90/270 degree rotation for video shot in portrait orientation. Applying
-  // it gives the actual displayed (width, height), matching what mpv reports
-  // via "dwidth"/"dheight" and what the player visibly renders.
-  const CGSize transformed =
-      CGSizeApplyAffineTransform(track.naturalSize, track.preferredTransform);
-  const qreal width = std::fabs(transformed.width);
-  const qreal height = std::fabs(transformed.height);
-  if (width <= 0 || height <= 0)
-    return {};
-  return QSizeF(width, height);
-}
-
-// Whether the asset's first video track is tagged with an HDR transfer
-// function. Shared by the asynchronous read below; expects loaded tracks.
-//
-// The transfer function is the whole question, and deliberately not the
-// primaries: BT.2020 primaries with a BT.709 transfer is wide-gamut SDR, which
-// wants the Vivid boost exactly as much as any other SDR source does. PQ and
-// HLG are the two transfers that already carry above-SDR-white luminance, and
-// they are the two the native colour envelope admits (see
-// media::mediaVideoColorAdmitted).
-bool assetHasHdrTransfer(AVURLAsset *asset) {
-  NSArray<AVAssetTrack *> *tracks =
-      [asset tracksWithMediaType:AVMediaTypeVideo];
-  if (tracks.count == 0)
-    return false;
-  for (id description in tracks.firstObject.formatDescriptions) {
-    CMFormatDescriptionRef format = (__bridge CMFormatDescriptionRef)description;
-    if (format == nullptr)
-      continue;
-    CFStringRef transfer = static_cast<CFStringRef>(
-        CMFormatDescriptionGetExtension(
-            format, kCMFormatDescriptionExtension_TransferFunction));
-    if (transfer == nullptr)
-      continue;
-    if (CFStringCompare(transfer,
-                        kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ,
-                        0) == kCFCompareEqualTo ||
-        CFStringCompare(transfer,
-                        kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG,
-                        0) == kCFCompareEqualTo)
-      return true;
-  }
-  return false;
-}
-
-} // namespace
 
 void adoptBackgroundLaunchPolicy() {
   NSApplication *application = NSApp;
@@ -1132,17 +1061,6 @@ void orderFrontWithoutActivating(QWindow *window) {
     return;
   nsWindow.level = NSFloatingWindowLevel;
   [nsWindow orderFrontRegardless];
-}
-
-QSizeF videoNaturalSizeForSource(const QUrl &source) {
-  if (!source.isLocalFile())
-    return {};
-  NSURL *url = source.toNSURL();
-  if (!url)
-    return {};
-
-  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
-  return naturalSizeFromAsset(asset);
 }
 
 bool captureWindowToFile(QWindow *window, const QString &path) {
@@ -1303,7 +1221,6 @@ qreal appliedVividBoost(QWindow *window) {
 @interface WAMTheaterDimController : NSObject
 - (instancetype)initWithPlayerWindow:(NSWindow *)window;
 - (void)setEnabled:(BOOL)enabled opacity:(CGFloat)opacity;
-- (BOOL)active;
 - (void)invalidate;
 @end
 
@@ -1369,10 +1286,6 @@ qreal appliedVividBoost(QWindow *window) {
 
 - (void)dealloc {
   [self invalidate];
-}
-
-- (BOOL)active {
-  return _enabled && _dims.count > 0;
 }
 
 - (void)setEnabled:(BOOL)enabled opacity:(CGFloat)opacity {
@@ -1600,46 +1513,6 @@ void MacWindowChrome::reclampVividBoost() {
   wam::macos_window_chrome::setVividBoost(window_, requestedVividBoost_);
 }
 
-qreal MacWindowChrome::vividBoost() const {
-  return wam::macos_window_chrome::vividBoost(window_);
-}
-
-qreal MacWindowChrome::edrHeadroom() const {
-  return wam::macos_window_chrome::screenEdrHeadroom(window_);
-}
-
-void MacWindowChrome::requestSourceIsHdr(const QUrl &source) {
-  if (!source.isLocalFile()) {
-    emit sourceIsHdrReady(source, false);
-    return;
-  }
-  NSURL *url = source.toNSURL();
-  if (!url) {
-    emit sourceIsHdrReady(source, false);
-    return;
-  }
-  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
-  const QUrl requested = source;
-  const QPointer<MacWindowChrome> guard(this);
-  [asset loadValuesAsynchronouslyForKeys:@[ @"tracks" ]
-                       completionHandler:^{
-                         dispatch_async(dispatch_get_main_queue(), ^{
-                           MacWindowChrome *self = guard.data();
-                           if (self == nullptr)
-                             return;
-                           bool hdr = false;
-                           NSError *error = nil;
-                           if ([asset statusOfValueForKey:@"tracks"
-                                                    error:&error] ==
-                               AVKeyValueStatusLoaded) {
-                             hdr = wam::macos_window_chrome::assetHasHdrTransfer(
-                                 asset);
-                           }
-                           emit self->sourceIsHdrReady(requested, hdr);
-                         });
-                       }];
-}
-
 // ------------------------------------------------------------- theater dim
 
 void MacWindowChrome::setTheaterDim(bool enabled, qreal opacity) {
@@ -1661,52 +1534,6 @@ void MacWindowChrome::setTheaterDim(bool enabled, qreal opacity) {
           opacity:static_cast<CGFloat>(opacity)];
 }
 
-bool MacWindowChrome::theaterDimActive() const {
-  if (theaterDim_ == nullptr)
-    return false;
-  WAMTheaterDimController *dim =
-      (__bridge WAMTheaterDimController *)theaterDim_;
-  return [dim active] == YES;
-}
-
-void MacWindowChrome::requestVideoNaturalSize(const QUrl &source) {
-  if (!source.isLocalFile()) {
-    emit videoNaturalSizeReady(source, 0, 0);
-    return;
-  }
-  NSURL *url = source.toNSURL();
-  if (!url) {
-    emit videoNaturalSizeReady(source, 0, 0);
-    return;
-  }
-  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
-  // Blocks capture reference-typed variables by reference; everything the
-  // completion needs is first copied into non-reference locals.
-  const QUrl requested = source;
-  const QPointer<MacWindowChrome> guard(this);
-  [asset loadValuesAsynchronouslyForKeys:@[ @"tracks" ]
-                       completionHandler:^{
-                         dispatch_async(dispatch_get_main_queue(), ^{
-                           MacWindowChrome *self = guard.data();
-                           if (self == nullptr)
-                             return;
-                           QSizeF size;
-                           NSError *error = nil;
-                           if ([asset statusOfValueForKey:@"tracks"
-                                                    error:&error] ==
-                               AVKeyValueStatusLoaded) {
-                             size = wam::macos_window_chrome::
-                                 naturalSizeFromAsset(asset);
-                           }
-                           if (self->exactDisplaySource_ == requested && !self->exactDisplaySize_.empty())
-                             size = QSizeF(media::displayScalar(self->exactDisplaySize_.width),
-                                           media::displayScalar(self->exactDisplaySize_.height));
-                           emit self->videoNaturalSizeReady(
-                               requested, size.width(), size.height());
-                         });
-                       }];
-}
-
 void MacWindowChrome::hideCursorUntilMouseMoves() {
   [NSCursor setHiddenUntilMouseMoves:YES];
 }
@@ -1716,20 +1543,12 @@ void MacWindowChrome::setTitlebarRevealed(bool revealed, bool animated) {
                                                         animated);
 }
 
-void MacWindowChrome::setExactVideoDisplaySize(media::MediaDisplaySize size, const QUrl& source) {
-  exactDisplaySource_ = source;
+void MacWindowChrome::setExactVideoDisplaySize(media::MediaDisplaySize size) {
   exactDisplaySize_ = size;
-  // The rational payload stays attached to this window; QML's size is only a
-  // notification/visual projection and never feeds native sizing arithmetic.
-  window_->setProperty("wamDisplayWidthNumerator", QVariant::fromValue<qlonglong>(size.width.numerator));
-  window_->setProperty("wamDisplayWidthDenominator", QVariant::fromValue<qulonglong>(size.width.denominator));
-  window_->setProperty("wamDisplayHeightNumerator", QVariant::fromValue<qlonglong>(size.height.numerator));
-  window_->setProperty("wamDisplayHeightDenominator", QVariant::fromValue<qulonglong>(size.height.denominator));
-  if (!size.empty()) emit videoNaturalSizeReady(source, media::displayScalar(size.width), media::displayScalar(size.height));
 }
 
 void MacWindowChrome::setContentAspectRatio(qreal width, qreal height) {
-  wam::macos_window_chrome::setContentAspectRatio(window_, width, height);
+  wam::macos_window_chrome::setContentAspectRatio(window_, exactDisplaySize_, width, height);
 }
 
 bool MacWindowChrome::interactiveResizeActive() const {
@@ -1738,12 +1557,13 @@ bool MacWindowChrome::interactiveResizeActive() const {
 
 void MacWindowChrome::resizeToActualSize(qreal videoPixelWidth,
                                          qreal videoPixelHeight) {
-  wam::macos_window_chrome::resizeToActualSize(window_, videoPixelWidth,
-                                               videoPixelHeight);
+  wam::macos_window_chrome::resizeToActualSize(window_, exactDisplaySize_,
+                                               videoPixelWidth, videoPixelHeight);
 }
 
 void MacWindowChrome::resizeToFitScreen(qreal videoWidth, qreal videoHeight) {
-  wam::macos_window_chrome::resizeToFitScreen(window_, videoWidth, videoHeight);
+  wam::macos_window_chrome::resizeToFitScreen(window_, exactDisplaySize_, videoWidth,
+                                              videoHeight);
 }
 
 bool MacWindowChrome::setFillScreenPadded(bool filled) {
@@ -1756,12 +1576,8 @@ void MacWindowChrome::clearFillScreenPadded() {
 
 void MacWindowChrome::snapToVideoAspectRatio(qreal videoWidth,
                                              qreal videoHeight) {
-  wam::macos_window_chrome::snapToVideoAspectRatio(window_, videoWidth,
-                                                    videoHeight);
-}
-
-QSizeF MacWindowChrome::videoNaturalSizeForSource(const QUrl &source) const {
-  return wam::macos_window_chrome::videoNaturalSizeForSource(source);
+  wam::macos_window_chrome::snapToVideoAspectRatio(window_, exactDisplaySize_,
+                                                    videoWidth, videoHeight);
 }
 
 qreal MacWindowChrome::titlebarHeight() const {

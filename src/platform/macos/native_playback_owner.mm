@@ -30,6 +30,7 @@ NativeMediaSessionMetrics NativePlaybackOwner::nativeMetrics() const noexcept {
   return nativeSession_ ? nativeSession_->metrics() : NativeMediaSessionMetrics{};
 }
 void NativePlaybackOwner::setNativeMetricsEnabled(bool enabled) noexcept {
+  hostMetricsEnabled_ = enabled;
   if (nativeSession_) nativeSession_->setMetricsEnabled(enabled);
 }
 std::shared_ptr<const media::MediaSourceDescriptor> NativePlaybackOwner::nativeDescriptor() const noexcept {
@@ -80,6 +81,10 @@ playback_router::Tick NativePlaybackOwner::nextTick() noexcept {
 // forcing retirement here cannot let a retired generation reach the screen.
 
 void NativePlaybackOwner::refreshNativePhaseWatchdog() {
+  const bool seeking = router_.snapshot().state == playback_router::State::NativeSeeking;
+  // Seek progress reads the session metrics, so keep their publication armed
+  // exactly while a seek is in flight, independent of any host stream.
+  if (nativeSession_) nativeSession_->setSeekMetricsEnabled(seeking && !retirementPending());
   if (retirementPending() || !playback_router::isBoundedNativePhase(router_.snapshot().state)) {
     ++nativePhaseWatchdogEpoch_;
     nativePhaseWatchdogArmed_ = false;
@@ -89,9 +94,6 @@ void NativePlaybackOwner::refreshNativePhaseWatchdog() {
     return;
   }
   nativePhaseWatchdogArmed_ = true;
-  const bool seeking = router_.snapshot().state == playback_router::State::NativeSeeking;
-  // Seek progress reads the session metrics, so arm their publication now.
-  if (seeking && nativeSession_) nativeSession_->setMetricsEnabled(true);
   if (!seeking) nativeSeekProgress_ = {};
   const std::uint64_t epoch = ++nativePhaseWatchdogEpoch_;
   const auto lifetime = ownerLifetime_;
@@ -984,6 +986,7 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
   }
 
   nativeSession_ = std::move(session);
+  nativeSession_->setMetricsEnabled(hostMetricsEnabled_);
   observationBridge_ = std::move(bridge);
   nativeStop_.reset();
   lastAudioProofSerial_ = 0;

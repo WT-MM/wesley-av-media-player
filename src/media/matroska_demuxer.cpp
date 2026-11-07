@@ -504,26 +504,17 @@ inline constexpr MatroskaCodecRow kMatroskaCodecs[] = {
   return nullptr;
 }
 
+// Structural invariants only: one row per CodecID, and the audio builder and
+// WebM legality columns apply to audio rows alone.
 [[nodiscard]] constexpr bool matroskaCodecTableConsistent() noexcept {
-  std::size_t audio = 0;
-  for (std::size_t i = 0; i < std::size(kMatroskaCodecs); ++i) {
-    const MatroskaCodecRow& row = kMatroskaCodecs[i];
+  for (const MatroskaCodecRow& row : kMatroskaCodecs) {
     if (matroskaCodecRow(row.codecId) != &row ||
         (row.trackType == 1) != (row.builder == MatroskaAudioBuilder::None) ||
         (row.trackType == 1 && row.webm)) {
       return false;
     }
-    const std::string_view id = row.codecId;
-    const bool webm = id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS";
-    const bool software = id == "A_DTS" || id == "A_TRUEHD" || id == "A_MLP";
-    if (row.trackType == 2 &&
-        (row.webm != webm ||
-         (row.builder == MatroskaAudioBuilder::Software) != software)) {
-      return false;
-    }
-    audio += row.trackType == 2 ? 1 : 0;
   }
-  return audio == 14;
+  return true;
 }
 static_assert(matroskaCodecTableConsistent());
 
@@ -740,18 +731,9 @@ trackDuration(const Info& info) noexcept {
       if (nanoseconds >= 0 &&
           nanoseconds <=
           static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
-        auto numerator = static_cast<std::int64_t>(nanoseconds);
-        auto denominator = kNanosecondsPerSecond;
-        const std::int64_t divisor =
-            std::gcd(numerator == 0 ? denominator : numerator, denominator);
-        if (divisor > 0) {
-          numerator /= divisor;
-          denominator /= divisor;
-        }
-        if (denominator > 0 &&
-            denominator <= std::numeric_limits<std::int32_t>::max()) {
-          return MediaTime{numerator,
-                           static_cast<std::int32_t>(denominator)};
+        if (const auto exact =
+                mediaTimeFromTicks(nanoseconds, kNanosecondsPerSecond)) {
+          return *exact;
         }
       }
     }
@@ -912,11 +894,7 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
       !readRange(reader, *entry.codecPrivate, &configuration, cancellation)) {
     return false;
   }
-  VideoCodecConfigurationLimits codecLimits;
-  codecLimits.maximumConfigurationBytes = limits.maximumCodecConfigurationBytes;
-  codecLimits.maximumWidth = limits.maximumCodedWidth;
-  codecLimits.maximumHeight = limits.maximumCodedHeight;
-  codecLimits.maximumPixels = limits.maximumCodedPixels;
+  auto codecLimits = VideoCodecConfigurationLimits::from(limits);
   // Matroska may carry BT.2020/PQ/HLG. This route earns the flag because
   // matroska_sample_builder.mm puts the matching colour extensions on the
   // CMVideoFormatDescription it synthesizes; see the field's comment in
@@ -1408,17 +1386,13 @@ struct ExactAudioDuration {
       endFrame > static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
     return false;
   }
-  const auto endFrameValue = static_cast<std::uint64_t>(endFrame);
-  const std::uint64_t divisor =
-      std::gcd(endFrameValue, static_cast<std::uint64_t>(sampleRate));
-  const MediaTime duration{static_cast<std::int64_t>(endFrameValue / divisor),
-                           static_cast<std::int32_t>(sampleRate / divisor)};
-  if (!duration.valid()) {
+  const auto duration = mediaTimeFromTicks(endFrame, sampleRate);
+  if (!duration) {
     return false;
   }
-  out->duration = duration;
+  out->duration = *duration;
   out->discardFrames = *discardFrames;
-  out->endFrame = endFrameValue;
+  out->endFrame = static_cast<std::uint64_t>(endFrame);
   return true;
 }
 
@@ -1428,23 +1402,12 @@ struct ExactAudioDuration {
 [[nodiscard]] bool exactPresentationOrigin(std::uint32_t codecDelayFrames,
                                            std::uint32_t sampleRate,
                                            MediaTime* origin) noexcept {
-  if (sampleRate == 0U) {
+  const auto candidate =
+      mediaTimeFromTicks(-static_cast<__int128_t>(codecDelayFrames), sampleRate);
+  if (!candidate) {
     return false;
   }
-  if (codecDelayFrames == 0U) {
-    *origin = MediaTime{0, 1};
-    return true;
-  }
-  const std::uint64_t divisor =
-      std::gcd(static_cast<std::uint64_t>(codecDelayFrames),
-               static_cast<std::uint64_t>(sampleRate));
-  const MediaTime candidate{
-      -static_cast<std::int64_t>(codecDelayFrames / divisor),
-      static_cast<std::int32_t>(sampleRate / divisor)};
-  if (!candidate.valid()) {
-    return false;
-  }
-  *origin = candidate;
+  *origin = *candidate;
   return true;
 }
 
@@ -1465,34 +1428,6 @@ struct AudioDescriptorFields {
   std::uint64_t tailBlockOffset{0};
   std::int64_t tailDiscardPaddingNanoseconds{0};
 };
-
-// Mono and stereo keep their exact canonical tags. A WIDER layout states no
-// tag at all, deliberately.
-//
-// This demuxer knows a channel COUNT; it does not know AudioToolbox's
-// per-codec channel-order convention, and its decoders emit three different
-// 5.1 orders (AAC C L R Ls Rs LFE, AC-3 and E-AC-3 L C R Ls Rs LFE, FLAC
-// L R C LFE Ls Rs). Inventing a CoreAudio tag here would be guessing at that
-// convention, and a wrong guess puts dialogue in the surround channel with no
-// other symptom. AudioConverter reports the identical output channel layout
-// whether or not an input layout is supplied, so supplying none costs nothing
-// and the platform layer reads the authoritative order back from the decoder
-// itself.
-void applyChannelLayoutTag(MediaAudioFormat* format,
-                           std::uint32_t channelCount) noexcept {
-  if (channelCount == 1) {
-    format->channelLayoutTag = kCoreAudioMonoLayoutTag;
-    format->channelLayoutPresent = true;
-    return;
-  }
-  if (channelCount == 2) {
-    format->channelLayoutTag = kCoreAudioStereoLayoutTag;
-    format->channelLayoutPresent = true;
-    return;
-  }
-  format->channelLayoutTag = 0;
-  format->channelLayoutPresent = false;
-}
 
 void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
                          const AudioDescriptorFields& fields,
@@ -1809,15 +1744,12 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   if (total > static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
     return false;
   }
-  const std::uint64_t divisor =
-      std::gcd(configuration.totalSamples,
-               static_cast<std::uint64_t>(configuration.sampleRate));
-  const MediaTime duration{
-      static_cast<std::int64_t>(configuration.totalSamples / divisor),
-      static_cast<std::int32_t>(configuration.sampleRate / divisor)};
-  if (!duration.valid()) {
+  const auto exactDuration =
+      mediaTimeFromTicks(total, configuration.sampleRate);
+  if (!exactDuration) {
     return false;
   }
+  const MediaTime duration = *exactDuration;
 
   AudioDescriptorFields fields;
   fields.codec = MediaCodec::Flac;
@@ -1914,51 +1846,22 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   // so ordinal 0 presents samplesPerAccessUnit frames early. This is the exact
   // structural analogue of the Opus pre-skip and it flows through the same
   // fields. Reduced in the frame domain so no rounding enters the origin.
-  const std::uint64_t originDivisor =
-      std::gcd(static_cast<std::uint64_t>(samplesPerAccessUnit),
-               static_cast<std::uint64_t>(sampleRate));
-  const MediaTime origin{
-      -static_cast<std::int64_t>(samplesPerAccessUnit / originDivisor),
-      static_cast<std::int32_t>(sampleRate / originDivisor)};
-  if (!origin.valid()) {
+  MediaTime origin;
+  if (!exactPresentationOrigin(samplesPerAccessUnit, sampleRate, &origin)) {
     return false;
   }
 
   // Exact end of the decoded stream, in track-rate frames from media zero:
   //   (lastOrdinal + lacedFrames) * samplesPerAccessUnit
   //     - samplesPerAccessUnit - discardPadding
-  const auto tailProjection = nearestAudioPacketForMatroskaTick(
-      probe.tailBlockTick, MediaTime{0, 1}, sampleRate,
-      timestampScaleNanoseconds, samplesPerAccessUnit);
-  if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
+  ExactAudioDuration exact;
+  if (!exactAudioDurationFromTail(probe, sampleRate, samplesPerAccessUnit,
+                                  timestampScaleNanoseconds,
+                                  samplesPerAccessUnit, 0U,
+                                  kMaximumOpusGridTickResidual, &exact)) {
     return false;
   }
-  const auto discardFrames = matroskaFramesFromNanoseconds(
-      probe.tailDiscardPaddingNanoseconds, sampleRate,
-      kMaximumVorbisPacketFrames);
-  if (!discardFrames || *discardFrames >= samplesPerAccessUnit) {
-    return false;
-  }
-  const __int128 endOrdinal =
-      static_cast<__int128>(tailProjection->accessUnitOrdinal) +
-      static_cast<__int128>(probe.tailBlockFrameCount);
-  const __int128 endFrame =
-      endOrdinal * static_cast<__int128>(samplesPerAccessUnit) -
-      static_cast<__int128>(samplesPerAccessUnit) -
-      static_cast<__int128>(*discardFrames);
-  if (endFrame <= 0 ||
-      endFrame > static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
-    return false;
-  }
-  const auto endFrameValue = static_cast<std::uint64_t>(endFrame);
-  const std::uint64_t durationDivisor =
-      std::gcd(endFrameValue, static_cast<std::uint64_t>(sampleRate));
-  const MediaTime exactDuration{
-      static_cast<std::int64_t>(endFrameValue / durationDivisor),
-      static_cast<std::int32_t>(sampleRate / durationDivisor)};
-  if (!exactDuration.valid()) {
-    return false;
-  }
+  const MediaTime exactDuration = exact.duration;
 
   result->id = *id;
   result->kind = MediaTrackKind::Audio;
@@ -2073,54 +1976,25 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   // Presentation-grid origin is -CodecDelay exactly: ordinal 0 presents
   // preSkip frames before media time zero. Reduced in the 48 kHz frame domain
   // so no nanosecond rounding can ever enter the origin.
-  const std::uint64_t originDivisor =
-      std::gcd(static_cast<std::uint64_t>(configuration.preSkipFrames),
-               static_cast<std::uint64_t>(kOpusOutputSampleRate));
-  const MediaTime origin{
-      -static_cast<std::int64_t>(configuration.preSkipFrames / originDivisor),
-      static_cast<std::int32_t>(kOpusOutputSampleRate / originDivisor)};
-  if (!origin.valid()) {
+  MediaTime origin;
+  if (!exactPresentationOrigin(configuration.preSkipFrames,
+                               kOpusOutputSampleRate, &origin)) {
     return false;
   }
 
   // Exact end of the decoded stream, in 48 kHz frames from media time zero:
   //   (lastOrdinal + lacedFrames) * samplesPerAccessUnit
   //     - preSkip - discardPadding
-  const auto tailProjection = nearestAudioPacketForMatroskaTick(
-      probe.tailBlockTick, MediaTime{0, 1}, kOpusOutputSampleRate,
-      timestampScaleNanoseconds, probe.samplesPerAccessUnit);
-  if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
+  ExactAudioDuration exact;
+  if (!opusHeadTrimFrames(configuration) ||
+      !exactAudioDurationFromTail(probe, kOpusOutputSampleRate,
+                                  probe.samplesPerAccessUnit,
+                                  timestampScaleNanoseconds,
+                                  configuration.preSkipFrames, 0U,
+                                  kMaximumOpusGridTickResidual, &exact)) {
     return false;
   }
-  const auto discardFrames =
-      matroskaFramesFromNanoseconds(probe.tailDiscardPaddingNanoseconds,
-                                    kOpusOutputSampleRate,
-                                    kMaximumOpusPacketFrames);
-  const auto headTrim = opusHeadTrimFrames(configuration);
-  if (!discardFrames || !headTrim ||
-      *discardFrames >= probe.samplesPerAccessUnit) {
-    return false;
-  }
-  const __int128 endOrdinal =
-      static_cast<__int128>(tailProjection->accessUnitOrdinal) +
-      static_cast<__int128>(probe.tailBlockFrameCount);
-  const __int128 endFrame =
-      endOrdinal * static_cast<__int128>(probe.samplesPerAccessUnit) -
-      static_cast<__int128>(configuration.preSkipFrames) -
-      static_cast<__int128>(*discardFrames);
-  if (endFrame <= 0 ||
-      endFrame > static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
-    return false;
-  }
-  const auto endFrameValue = static_cast<std::uint64_t>(endFrame);
-  const std::uint64_t durationDivisor =
-      std::gcd(endFrameValue, static_cast<std::uint64_t>(kOpusOutputSampleRate));
-  const MediaTime exactDuration{
-      static_cast<std::int64_t>(endFrameValue / durationDivisor),
-      static_cast<std::int32_t>(kOpusOutputSampleRate / durationDivisor)};
-  if (!exactDuration.valid()) {
-    return false;
-  }
+  const MediaTime exactDuration = exact.duration;
 
   result->id = *id;
   result->kind = MediaTrackKind::Audio;
@@ -2257,14 +2131,15 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
         }) || !valid) return false;
   }
   if (!totalFrames || totalFrames > INT64_MAX) return false;
-  const auto divisor = std::gcd(totalFrames, static_cast<std::uint64_t>(rate));
+  const auto duration = mediaTimeFromTicks(totalFrames, rate);
+  if (!duration) return false;
   AudioDescriptorFields fields;
   fields.codec = format.codec;
   fields.formatTag = format.format.formatTag;
   fields.sampleRate = static_cast<std::uint32_t>(rate);
   fields.channelCount = static_cast<std::uint8_t>(entry.audio->channels);
   fields.samplesPerAccessUnit = format.blockFrames;
-  fields.duration = {static_cast<std::int64_t>(totalFrames/divisor), static_cast<std::int32_t>(static_cast<std::uint64_t>(rate)/divisor)};
+  fields.duration = *duration;
   fields.magicCookie = format.cookie;
   fields.tailBlockKnown = tailOffset != 0;
   fields.tailBlockOffset = tailOffset;
@@ -2328,14 +2203,15 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
                             : std::optional<std::uint32_t>(0);
   if (!ordinal || !trim || *trim >= ordinal * frames) return false;
   const auto total = ordinal * frames - *trim;
-  const auto divisor = std::gcd(total, std::uint64_t(48000));
+  const auto duration = mediaTimeFromTicks(total, 48000);
+  if (!duration) return false;
   std::vector<std::byte> privateBytes;
   if (entry.codecPrivate && !readRange(reader, *entry.codecPrivate, &privateBytes, cancellation)) return false;
   AudioDescriptorFields fields;
   fields.codec = codec; fields.sampleRate = 48000;
   fields.channelCount = static_cast<std::uint8_t>(entry.audio->channels);
   fields.samplesPerAccessUnit = frames;
-  fields.duration = {static_cast<std::int64_t>(total / divisor), static_cast<std::int32_t>(48000 / divisor)};
+  fields.duration = *duration;
   fields.tailBlockKnown = tail; fields.tailBlockOffset = tailOffset;
   fields.tailDiscardPaddingNanoseconds = padding;
   fillAudioDescriptor(entry, *trackId(entry.number), fields, result, runtime);
@@ -3172,21 +3048,13 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             }
             frameCount = bytes / descriptor->audio->bytesPerFrame;
           }
-          const std::uint64_t divisor =
-              std::gcd(frameCount,
-                       static_cast<std::uint64_t>(state.audio->audioSampleRate));
-          const std::uint64_t numerator = frameCount / divisor;
-          const std::uint64_t denominator = state.audio->audioSampleRate / divisor;
-          if (!duration ||
-              numerator > static_cast<std::uint64_t>(
-                              std::numeric_limits<std::int64_t>::max()) ||
-              denominator > static_cast<std::uint64_t>(
-                                std::numeric_limits<std::int32_t>::max())) {
+          const auto exactDuration =
+              mediaTimeFromTicks(frameCount, state.audio->audioSampleRate);
+          if (!duration || !exactDuration) {
             return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline,
                                          "audio duration overflow"};
           }
-          sample.duration = MediaTime{static_cast<std::int64_t>(numerator),
-                                      static_cast<std::int32_t>(denominator)};
+          sample.duration = *exactDuration;
           impl_->expectedAudioOrdinal += sample.frameCount;
         }
         return sample;
@@ -3769,7 +3637,7 @@ namespace {
           !track.video->pixelWidth || !track.video->pixelHeight) {
         continue;
       }
-      if (!codedDimensionsWithinV1Ceiling(*track.video->pixelWidth,
+      if (!MediaSourceLimits::codedDimensionsWithinHardCeiling(*track.video->pixelWidth,
                                           *track.video->pixelHeight)) {
         overCeiling = &track;
         break;
@@ -4339,7 +4207,7 @@ MatroskaPrepareOutcome prepareMatroska(
         // when that is the reason, say so with both numbers.
         if (video->video && video->video->pixelWidth &&
             video->video->pixelHeight &&
-            !codedDimensionsWithinV1Ceiling(*video->video->pixelWidth,
+            !MediaSourceLimits::codedDimensionsWithinHardCeiling(*video->video->pixelWidth,
                                             *video->video->pixelHeight)) {
           result.error = MediaRefusalClass::CodedDimensionLimit;
           result.message = codedDimensionRefusalMessage(

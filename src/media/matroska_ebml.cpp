@@ -512,7 +512,7 @@ VintOutcome decodeVint(std::span<const std::byte> input,
   return {VintStatus::Ready, result};
 }
 
-ParseOptions clampParseOptions(const ParseOptions& requested) noexcept {
+static ParseOptions clampParseOptions(const ParseOptions& requested) noexcept {
   ParseOptions result = requested;
   result.maximumReadBytes = std::clamp<std::size_t>(
       requested.maximumReadBytes, 1, ParseOptions::kHardMaximumReadBytes);

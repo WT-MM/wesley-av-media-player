@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace wam::media {
@@ -21,6 +22,13 @@ struct AdpcmFormat {
 // Each block restarts history, has no lead-in or tail, and writes only after
 // format, capacity and all channel headers validate. Storage belongs to caller.
 [[nodiscard]] const char *validateAdpcmFormat(const AdpcmFormat &) noexcept;
+// Parses a WAVEFORMATEX ADPCM record (IMA with cbSize 2, MS with cbSize 32
+// and its coefficient table) that must state `rate`, `channels` and 4-bit
+// samples. Empty unless validateAdpcmFormat accepts the result. Matroska
+// A_MS/ACM CodecPrivate and a WAV `fmt ` chunk carry the same record.
+[[nodiscard]] std::optional<AdpcmFormat>
+parseAdpcmWaveFormat(std::span<const std::byte> waveFormat, std::uint32_t rate,
+                     std::uint32_t channels) noexcept;
 [[nodiscard]] const char *decodeAdpcmBlock(const AdpcmFormat &,
                                            std::span<const std::byte>,
                                            std::span<float>) noexcept;

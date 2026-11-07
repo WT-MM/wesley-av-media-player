@@ -47,12 +47,10 @@ class SubtitleBitmapProvider final : public QQuickImageProvider {
 public:
   SubtitleBitmapProvider();
 
-  // The URL authority: image://<name>/<key>/<serial>. The serial exists only to
-  // defeat QML's image cache -- the same key with new pixels must not be served
-  // from the cache -- and is ignored when resolving.
-  [[nodiscard]] static QString name();
-  // Builds the URL for a key and serial. Kept next to the parser so the two
-  // cannot drift.
+  // Builds image://<provider>/<key>/<serial>. The serial exists only to
+  // defeat QML's image cache -- the same key with new pixels must not be
+  // served from the cache -- and is ignored when resolving. Kept next to the
+  // parser so the two cannot drift.
   [[nodiscard]] static QString urlFor(quint64 key, quint64 serial);
 
   QImage requestImage(const QString &id, QSize *size,

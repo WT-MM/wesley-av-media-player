@@ -85,18 +85,15 @@ using NativePreviewReadResult =
                  NativePreviewEndOfStream, NativePreviewCancelled,
                  NativePreviewFailure>;
 
-// Production facts are cumulative across reader replacement. assetLoad* stays
-// zero on every backend: the asset is admitted by the main source and every
-// preview request creates only the per-epoch streaming object.
+// Production facts are cumulative across reader replacement. No backend loads
+// the asset: the main source admitted it, and every preview request creates
+// only the per-epoch streaming object.
 //
 // "Reader" is the backend's unit of streaming state: one AVAssetReader on the
 // AVFoundation route, one demuxer cursor on the custom-container routes. The
 // Matroska asset context counts exactly that pair of facts against cursors
 // (`matroska_asset_context.hpp`), so every backend answers the same question.
 struct NativePreviewBackendFacts {
-  std::uint64_t assetLoadAttempts{0};
-  std::uint64_t assetLoadsCompleted{0};
-  std::uint64_t assetLoadNanoseconds{0};
   std::uint64_t readersCreated{0};
   std::uint64_t readersStarted{0};
 };

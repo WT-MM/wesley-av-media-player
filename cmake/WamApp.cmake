@@ -60,7 +60,6 @@ set(WAM_APP_SOURCES
   src/qt/subtitle_bitmap_provider.hpp
   src/qt/player_core.cpp
   src/qt/player_core_p.hpp
-  src/qt/mpv_hwdec_interop_policy.hpp
   src/qt/render_lifecycle.hpp
   src/qt/playback_policy.hpp
   src/qt/mpv_video_item.cpp
@@ -290,8 +289,6 @@ if(APPLE)
       src/qt/native_benchmark_telemetry.cpp
       src/qt/native_playback_metrics.hpp
       src/qt/native_playback_metrics.cpp
-      src/qt/native_open_preflight.hpp
-      src/qt/native_open_preflight.mm
       src/qt/native_playback_owner.hpp
       src/qt/native_playback_owner.mm
       src/qt/native_media_session_adapter.hpp

@@ -1067,18 +1067,14 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
       return result;
     }
 
-    // Exact rational target -> 90 kHz ticks, rounded DOWN so the plan never
-    // starts after the requested time. __int128 keeps a large timescale exact.
-    const __int128 scaled = (static_cast<__int128>(target.value) *
-                             static_cast<__int128>(kTimestampHz)) /
-                            static_cast<__int128>(target.timescale);
-    if (scaled > std::numeric_limits<std::int64_t>::max()) {
+    const auto scaled =
+        mediaTimeToTicks(target, kTimestampHz, 1, TickRounding::Floor);
+    if (!scaled) {
       result.error = MediaRefusalClass::InvalidRequest;
       result.message = "seek target is outside the 90 kHz timeline";
       return result;
     }
-    const std::int64_t targetTick =
-        state.originTick + static_cast<std::int64_t>(scaled);
+    const std::int64_t targetTick = state.originTick + *scaled;
 
     // Binary search: the last index entry at or before the target. The ticks
     // are already unwrapped, so this is a plain integer compare even across a
@@ -1225,14 +1221,12 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
           if (walk.collecting) {
             const std::optional<MpegTsCompressedSample> unit =
                 finishUnit(state, walk, walk.pid, packetOffset);
-            if (unit && unit->decodableFromCold &&
-                unit->presentationTime.valid()) {
-              const std::int64_t unitTick =
-                  state.originTick +
-                  static_cast<std::int64_t>(
-                      (static_cast<__int128>(unit->presentationTime.value) *
-                       kTimestampHz) /
-                      unit->presentationTime.timescale);
+            const auto unitTicks =
+                unit ? mediaTimeToTicks(unit->presentationTime, kTimestampHz,
+                                        1, TickRounding::Floor)
+                     : std::nullopt;
+            if (unit && unit->decodableFromCold && unitTicks) {
+              const std::int64_t unitTick = state.originTick + *unitTicks;
               if (unitTick <= targetTick) {
                 atOrBefore = *unit;
                 atOrBeforeTick = unitTick;
@@ -2354,10 +2348,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
                  : "could not synthesize an avcC from in-band SPS/PPS";
         return result;
       }
-      VideoCodecConfigurationLimits codecLimits{};
-      codecLimits.maximumWidth = state->limits.maximumCodedWidth;
-      codecLimits.maximumHeight = state->limits.maximumCodedHeight;
-      codecLimits.maximumPixels = state->limits.maximumCodedPixels;
+      auto codecLimits = VideoCodecConfigurationLimits::from(state->limits);
       // The transport stream has no colour box at all -- no `colr`, no
       // Matroska Colour element -- so the SPS VUI is the ONLY colour
       // statement, and this flag is what lets the shared SPS parser carry a
@@ -2487,20 +2478,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               format.formatTag =
                   mediaCodecFacts(MediaCodec::Aac).coreAudioFormatTag;
               format.framesPerPacket = kAacLcSamplesPerAccessUnit;
-              // Mono and stereo keep their canonical tags. A wider AAC layout
-              // states none: this demuxer knows a channel count, not
-              // AudioToolbox's per-codec channel ORDER, and the platform layer
-              // reads the authoritative order back from the decoder before
-              // folding to stereo. Stating the stereo tag on a six-channel
-              // track would be an outright false statement.
-              format.channelLayoutTag =
-                  admission.configuration->channelCount == 1
-                      ? kCoreAudioMonoLayoutTag
-                  : admission.configuration->channelCount == 2
-                      ? kCoreAudioStereoLayoutTag
-                      : 0U;
-              format.channelLayoutPresent =
-                  admission.configuration->channelCount <= 2;
+              applyChannelLayoutTag(&format,
+                                    admission.configuration->channelCount);
               state->audio.sampleRate = admission.configuration->sampleRate;
               state->audio.channels = admission.configuration->channelCount;
               state->audio.samplesPerFrame = kAacLcSamplesPerAccessUnit;
@@ -2542,17 +2521,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           // that restates a different count mid-stream is still refused by the
           // per-frame walk in the media source.
           format.framesPerPacket = frame.samplesPerFrame;
-          // Mono and stereo keep their canonical tags. A wider layout states
-          // none, exactly as the AAC branch above does and for the same
-          // reason: this demuxer knows a channel COUNT, not AudioToolbox's
-          // per-codec channel ORDER, and the platform layer reads the
-          // authoritative order back from the decoder before folding.
-          format.channelLayoutTag =
-              frame.channels == 1 ? kCoreAudioMonoLayoutTag
-              : frame.channels == 2
-                  ? kCoreAudioStereoLayoutTag
-                  : 0U;
-          format.channelLayoutPresent = frame.channels <= 2;
+          applyChannelLayoutTag(&format, frame.channels);
           state->audio.sampleRate = frame.sampleRate;
           state->audio.channels = frame.channels;
           state->audio.samplesPerFrame = frame.samplesPerFrame;
@@ -2578,10 +2547,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
                   ? mediaCodecFacts(MediaCodec::Mp3).coreAudioFormatTag
                   : codec::kMpegLayer2FormatTag;
           format.framesPerPacket = frame.samplesPerFrame;
-          format.channelLayoutTag =
-              frame.channels == 1 ? kCoreAudioMonoLayoutTag
-                                  : kCoreAudioStereoLayoutTag;
-          format.channelLayoutPresent = true;
+          applyChannelLayoutTag(&format, frame.channels);
           state->audio.sampleRate = frame.sampleRate;
           state->audio.channels = frame.channels;
           state->audio.samplesPerFrame = frame.samplesPerFrame;

@@ -560,6 +560,26 @@ int main(int argc, char** argv) {
     expect(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(3),
            "destructor cancels and joins promptly");
   }
+#ifndef _WIN32
+  {
+    // The post-SIGKILL reap is bounded: a child the kernel has not yet torn
+    // down (here, one that was never signalled) cannot hold the caller.
+    const pid_t child = fork();
+    if (child == 0) {
+      for (;;) pause();
+    }
+    expect(child > 0, "fork a child for the bounded reap");
+    const auto started = std::chrono::steady_clock::now();
+    int status = 0;
+    const bool reaped = wam::detail::reapKilledChild(
+        child, &status, std::chrono::milliseconds(100));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    expect(!reaped && elapsed < std::chrono::seconds(2),
+           "a deferred SIGKILL reap returns within its bound");
+    kill(child, SIGKILL);
+  }
+#endif
+
   {
     // Tool resolution order. resolveTool is pure over its probe, so the whole
     // precedence rule is testable without installing anything.

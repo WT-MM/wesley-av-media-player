@@ -112,7 +112,7 @@ class AVFoundationBackend {
   makeGeneration(AVFoundationGenerationRequest request) = 0;
 };
 
-class AVFoundationMediaSource final : public media::MediaSource, public media::AudioTrackRetrySource {
+class AVFoundationMediaSource final : public media::MediaSource {
  public:
   AVFoundationMediaSource();
   explicit AVFoundationMediaSource(
@@ -128,6 +128,9 @@ class AVFoundationMediaSource final : public media::MediaSource, public media::A
       const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,
       media::MediaGeneration generation) override;
+  [[nodiscard]] bool supportsAudioTrackRetry() const noexcept override {
+    return true;
+  }
   media::MediaSourceOpenOutcome retryAudioTrack(
       const std::filesystem::path&, const media::MediaSourceOpenOptions&,
       media::MediaGeneration, media::MediaTrackId rejected) override;

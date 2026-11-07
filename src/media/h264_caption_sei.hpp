@@ -57,12 +57,8 @@ inline constexpr std::size_t kMaximumTripletsPerPicture{32};
 std::size_t appendCaptionTripletsFromSeiRbsp(std::string_view rbsp,
                                              std::vector<CcTriplet>* out);
 
-// Same, for an Annex-B byte range that may contain several NALs of any type.
-// Start codes may be 3 or 4 bytes. Non-SEI NALs are ignored.
-std::size_t appendCaptionTripletsFromAnnexB(std::string_view annexB,
-                                            std::vector<CcTriplet>* out);
-
-// Same, for a length-prefixed (AVCC / "avc1") sample, as CoreMedia and the MP4
+// Same, for a length-prefixed (AVCC / "avc1") sample that may contain several
+// NALs of any type (non-SEI NALs are ignored), as CoreMedia and the MP4
 // container carry it. `lengthSize` is nalUnitLength+1 from the avcC record and
 // must be 1, 2 or 4.
 std::size_t appendCaptionTripletsFromAvcc(std::string_view sample,
@@ -76,15 +72,6 @@ std::size_t appendCaptionTripletsFromAvcc(std::string_view sample,
 // True when the NAL header byte names an SEI NAL (type 6).
 [[nodiscard]] constexpr bool isSeiNalHeader(std::uint8_t header) noexcept {
   return (header & 0x1FU) == 6U;
-}
-
-// HEVC carries the same A/53 payload in a PREFIX_SEI_NUT (type 39). The
-// payload parser is shared; only the NAL header differs (two bytes, type in
-// bits 1..6 of the first). No route calls this yet: HEVC caption extraction is
-// not wired.
-[[nodiscard]] constexpr bool isHevcPrefixSeiNalHeader(
-    std::uint8_t byte0) noexcept {
-  return ((byte0 >> 1) & 0x3FU) == 39U;
 }
 
 }  // namespace wam::media::captions

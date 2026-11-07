@@ -8,16 +8,6 @@
 
 namespace wam::media {
 
-// Cold-open retry is optional and never changes an explicit track request.
-// Implementations must retire the prior source attempt before reopening.
-class AudioTrackRetrySource {
- public:
-  virtual ~AudioTrackRetrySource() = default;
-  virtual MediaSourceOpenOutcome retryAudioTrack(
-      const std::filesystem::path&, const MediaSourceOpenOptions&,
-      MediaGeneration, MediaTrackId rejected) = 0;
-};
-
 struct AudioTrackRejections {
   std::array<MediaTrackId, MediaSourceLimits::kHardMaximumTracks> tracks{};
   std::size_t count{0};

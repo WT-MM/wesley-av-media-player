@@ -1,8 +1,7 @@
-#include "qt/native_open_preflight.hpp"
+#include "platform/macos/native_open_preflight.hpp"
 #include "support/expect.hpp"
 
 #include <QCoreApplication>
-#include <QEvent>
 #include <QUrl>
 
 #include <algorithm>
@@ -24,10 +23,15 @@
 namespace {
 
 using wam::media::playback_router::Route;
-using wam::qt::NativeOpenPreflight;
-using wam::qt::NativeOpenPreflightRequest;
-using wam::qt::NativeOpenPreflightResult;
-using wam::qt::PlaybackSourceClass;
+using wam::macos::NativeOpenPreflight;
+using wam::macos::NativeOpenPreflightRequest;
+using wam::macos::NativeOpenPreflightResult;
+using PlaybackSourceClass = wam::macos::NativeSourceClass;
+
+// The encoded URL form the Qt owner hands the edge.
+std::string fileUrl(const QString &path) {
+  return QUrl::fromLocalFile(path).toEncoded().toStdString();
+}
 
 class ManualCompletionQueue final {
 public:
@@ -157,12 +161,12 @@ dependencies(ManualCompletionQueue &queue,
   if (blocker != nullptr) {
     result.beforeEvaluate = [blocker](std::uint64_t id) { blocker->enter(id); };
   }
-  result.classifySource = [](const QUrl &displaySource,
-                             const QString &absolutePath) {
-    if (!displaySource.isLocalFile()) {
+  result.classifySource = [](const std::string &displaySource,
+                             const std::string &absolutePath) {
+    if (!displaySource.starts_with("file:")) {
       return PlaybackSourceClass::Network;
     }
-    if (absolutePath.contains(QStringLiteral("buffered"))) {
+    if (absolutePath.find("buffered") != std::string::npos) {
       return PlaybackSourceClass::BufferedLocal;
     }
     return PlaybackSourceClass::FastLocal;
@@ -186,7 +190,7 @@ NativeOpenPreflightRequest localRequest(const char *path,
                                         double initialPosition, bool paused,
                                         bool nativeAllowed = true) {
   return {{77},
-          QUrl::fromLocalFile(QString::fromUtf8(path)),
+          fileUrl(QString::fromUtf8(path)),
           initialPosition,
           paused,
           nativeAllowed};
@@ -225,8 +229,8 @@ void capacityOneLatestRequestWins() {
   require(!results.empty(), "blocked A and superseded B publish a result");
   expect(results.size() == 1 && results.front().requestId == *c,
          "blocked A and superseded B publish only exact C");
-  expect(results.front().source == QUrl::fromLocalFile(QStringLiteral(
-                                       "/private/tmp/wam-preflight-c.mp4")),
+  expect(results.front().source ==
+             fileUrl(QStringLiteral("/private/tmp/wam-preflight-c.mp4")),
          "latest source identity survives the worker edge");
   expect(results.front().canonicalSource == results.front().source,
          "already-local source preserves exact canonical identity");
@@ -280,9 +284,8 @@ void routeMappingIsExact() {
   expect(fast.sourceClass == PlaybackSourceClass::FastLocal &&
              fast.route == Route::NativeEligibleLocal &&
              fast.absoluteLocalPath.is_absolute() &&
-             fast.canonicalSource.isLocalFile() &&
-             fast.canonicalSource.toLocalFile() ==
-                 QString::fromStdString(fast.absoluteLocalPath.string()),
+             fast.canonicalSource == fileUrl(QString::fromStdString(
+                                         fast.absoluteLocalPath.string())),
          "relative local path snapshots to absolute fast-native admission");
 
   NativeOpenPreflightResult buffered = submitAndTake(
@@ -298,7 +301,7 @@ void routeMappingIsExact() {
 
   NativeOpenPreflightResult network =
       submitAndTake({{77},
-                     QUrl(QStringLiteral("https://example.invalid/media.mp4")),
+                     "https://example.invalid/media.mp4",
                      7.0,
                      true,
                      true});
@@ -348,7 +351,7 @@ void productionMountClassificationIsFailClosed() {
       executablePath.toUtf8().constData(), 0.0, true));
   expect(local.sourceClass == PlaybackSourceClass::FastLocal &&
              local.route == Route::NativeEligibleLocal &&
-             local.canonicalSource.isLocalFile() &&
+             local.canonicalSource.starts_with("file:") &&
              local.absoluteLocalPath.is_absolute(),
          "a real local path is admitted from the native mount authority");
 
@@ -363,7 +366,7 @@ void productionMountClassificationIsFailClosed() {
 #endif
   expect(uninspectable.sourceClass == PlaybackSourceClass::BufferedLocal &&
              uninspectable.route == uninspectableRoute &&
-             uninspectable.canonicalSource.isLocalFile() &&
+             uninspectable.canonicalSource.starts_with("file:") &&
              uninspectable.absoluteLocalPath.is_absolute(),
          "an uninspectable local path retains its local classification for source admission");
 }
@@ -480,8 +483,8 @@ void evaluationExceptionCompletesAsFailure() {
   ManualCompletionQueue queue;
   std::vector<NativeOpenPreflightResult> results;
   NativeOpenPreflight::Dependencies dependencies;
-  dependencies.classifySource = [](const QUrl &,
-                                   const QString &) -> PlaybackSourceClass {
+  dependencies.classifySource = [](const std::string &,
+                                   const std::string &) -> PlaybackSourceClass {
     throw std::runtime_error("injected classifier failure");
   };
   dependencies.queueCompletion = [&queue](std::function<void()> completion) {
@@ -503,36 +506,11 @@ void evaluationExceptionCompletesAsFailure() {
   expect(results.size() == 1 && results.front().requestId == *accepted &&
              results.front().sourceKey.value == 77 &&
              results.front().source ==
-                 QUrl::fromLocalFile(
-                     QStringLiteral("/private/tmp/throwing-classifier.mp4")) &&
+                 fileUrl(QStringLiteral("/private/tmp/throwing-classifier.mp4")) &&
              results.front().initialPositionSeconds == 4.0 &&
              !results.front().paused && results.front().preflightFailed &&
              results.front().route == Route::FallbackOnly,
          "evaluation exception preserves exact lineage in one failure result");
-}
-
-void defaultDeliveryUsesQtQueue() {
-  bool delivered = false;
-  const auto owner = std::this_thread::get_id();
-  NativeOpenPreflight::Dependencies dependencies;
-  dependencies.classifySource = [](const QUrl &, const QString &) {
-    return PlaybackSourceClass::FastLocal;
-  };
-  NativeOpenPreflight preflight([&](NativeOpenPreflightResult result) {
-    expect(std::this_thread::get_id() == owner, "completion stays on Qt owner");
-    expect(result.sourceKey.value == 77, "completion retains request identity");
-    delivered = true;
-  }, std::move(dependencies));
-  expect(preflight.enqueue(localRequest("/private/tmp/queue-fixture.mp4", 0, false)).has_value(),
-         "Qt delivery request accepted");
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (!delivered && std::chrono::steady_clock::now() < deadline) {
-    // Deliberately do not pump Cocoa/libdispatch: regression to dispatch_main
-    // delivery must fail even though an ordinary app.exec would eventually work.
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  expect(delivered, "preflight completes through Qt posted events alone");
 }
 
 } // namespace
@@ -540,7 +518,6 @@ void defaultDeliveryUsesQtQueue() {
 int main(int argc, char **argv) {
   QCoreApplication application(argc, argv);
   try {
-    defaultDeliveryUsesQtQueue();
     capacityOneLatestRequestWins();
     routeMappingIsExact();
     productionMountClassificationIsFailClosed();

@@ -20,13 +20,13 @@ using Error = VideoCodecConfigurationError;
 effectiveLimits(VideoCodecConfigurationLimits requested) noexcept {
   requested.maximumConfigurationBytes =
       std::min(requested.maximumConfigurationBytes,
-               kMaximumVideoCodecConfigurationBytes);
+               MediaSourceLimits::kHardMaximumCodecConfigurationBytes);
   requested.maximumWidth =
-      std::min(requested.maximumWidth, kMaximumVideoCodecWidth);
+      std::min(requested.maximumWidth, MediaSourceLimits::kHardMaximumCodedWidth);
   requested.maximumHeight =
-      std::min(requested.maximumHeight, kMaximumVideoCodecHeight);
+      std::min(requested.maximumHeight, MediaSourceLimits::kHardMaximumCodedHeight);
   requested.maximumPixels =
-      std::min(requested.maximumPixels, kMaximumVideoCodecPixels);
+      std::min(requested.maximumPixels, MediaSourceLimits::kHardMaximumCodedPixels);
   requested.maximumReorderFrames =
       std::min(requested.maximumReorderFrames, kMaximumVideoCodecReorderFrames);
   return requested;
@@ -2858,11 +2858,6 @@ namespace {
 }
 
 } // namespace
-
-bool codedDimensionsWithinV1Ceiling(std::uint64_t width,
-                                    std::uint64_t height) noexcept {
-  return MediaSourceLimits::codedDimensionsWithinHardCeiling(width, height);
-}
 
 std::string codedDimensionRefusalMessage(std::uint64_t width,
                                          std::uint64_t height) noexcept {

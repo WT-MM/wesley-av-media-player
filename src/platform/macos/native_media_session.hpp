@@ -340,8 +340,8 @@ enum class NativeMediaSessionOwnershipPhase : std::uint8_t {
 //
 // The counters themselves live on worker-confined children, so metrics() never
 // reads them directly. The worker publishes one coherent-enough set of relaxed
-// atomic slots once per pass, and only after a first metrics() call arms it;
-// while the metrics stream is disabled the worker performs no sampling at all.
+// atomic slots once per pass, and only while a host stream or the seek
+// watchdog has armed it; otherwise the worker performs no sampling at all.
 // The three "valid" flags separate "genuinely unavailable" (no graph built, or
 // nothing published yet) from a real zero, so a sampler can emit null instead
 // of inventing a count.
@@ -443,10 +443,15 @@ class NativeMediaSession final {
 
   [[nodiscard]] NativeMediaSessionObservations takeObservations() noexcept;
   // Diagnostic sampler for an out-of-band metrics stream. Safe to call from
-  // any thread. The first call arms worker-side publication; until the worker
-  // has completed one pass afterwards the returned validity flags are false.
+  // any thread, and free of side effects: worker-side publication runs only
+  // while at least one reason below is set, and until an armed pass has run
+  // the returned validity flags are false.
   [[nodiscard]] NativeMediaSessionMetrics metrics() const noexcept;
+  // A host metrics stream wants the counters.
   void setMetricsEnabled(bool) noexcept;
+  // The owner's seek watchdog wants decodedPrerollFrames; independent of the
+  // host stream so disabling one never stops the other.
+  void setSeekMetricsEnabled(bool) noexcept;
   [[nodiscard]] std::shared_ptr<const media::MediaSourceDescriptor> descriptor() const noexcept;
 
  private:

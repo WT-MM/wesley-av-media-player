@@ -1,4 +1,5 @@
 #include "native_media_session_system.hpp"
+#include "platform/macos/native_primitives.hpp"
 
 #include "media/media_container_routing.hpp"
 #include "avfoundation_media_source.hpp"
@@ -24,8 +25,6 @@
 namespace wam::macos {
 namespace {
 
-constexpr std::uint64_t kMaximumExactDoubleInteger =
-    std::uint64_t{1} << 53U;
 
 struct NativeMediaSessionSystemLifetime final {
   std::shared_ptr<void> caller;
@@ -176,13 +175,10 @@ NativeMediaSessionGraph buildSystemGraph(
   return graph;
 }
 
-void assignError(std::string* error, const char* message) noexcept {
-  if (error == nullptr || !error->empty() || message == nullptr) {
-    return;
-  }
-  try {
-    *error = message;
-  } catch (...) {
+// The first failure's text wins.
+void assignFirstError(std::string* error, const char* message) noexcept {
+  if (error != nullptr && error->empty()) {
+    assignError(error, message);
   }
 }
 
@@ -228,25 +224,25 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     error->clear();
   }
   if (!validBinding(binding)) {
-    assignError(error,
+    assignFirstError(error,
                 "system native media session requires an absolute local "
                 "source binding");
     return {};
   }
   if (externalLifetime == nullptr) {
-    assignError(error,
+    assignFirstError(error,
                 "system native media session requires an external lifetime");
     return {};
   }
   if (factory.create == nullptr) {
-    assignError(error,
+    assignFirstError(error,
                 "system native media session requires a presentation factory");
     return {};
   }
 
   std::uint64_t ticksPerSecond = 0;
   if (!systemHostTicksPerSecond(&ticksPerSecond)) {
-    assignError(error,
+    assignFirstError(error,
                 "system host clock has no exact integral frequency");
     return {};
   }
@@ -255,14 +251,14 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     std::shared_ptr<NativeMediaSessionWake> wake =
         NativeMediaSessionWake::create();
     if (wake == nullptr) {
-      assignError(error, "system native media wake allocation failed");
+      assignFirstError(error, "system native media wake allocation failed");
       return {};
     }
 
     NativeMediaSessionPresentation presentation = factory.create(
         factory.context, wake->trackedVideo(), error);
     if (!presentation.output) {
-      assignError(error, "PresentationUnavailable");
+      assignFirstError(error, "PresentationUnavailable");
       if (presentationUnavailable != nullptr) {
         *presentationUnavailable = true;
       }
@@ -271,7 +267,7 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     std::shared_ptr<NativeTrackedVideoArbiter> videoArbiter =
         NativeTrackedVideoArbiter::create(std::move(presentation.output), error);
     if (videoArbiter == nullptr) {
-      assignError(error,
+      assignFirstError(error,
                   "system tracked native video arbiter creation failed");
       return {};
     }
@@ -280,7 +276,7 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     std::shared_ptr<NativeTrackedVideoPreviewPort> previewOutput =
         videoArbiter->previewPort();
     if (videoOutput == nullptr || previewOutput == nullptr) {
-      assignError(error,
+      assignFirstError(error,
                   "system tracked native video arbiter has no output views");
       return {};
     }
@@ -304,11 +300,11 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     std::unique_ptr<NativeMediaSession> session = NativeMediaSession::create(
         std::move(binding), std::move(dependencies));
     if (session == nullptr) {
-      assignError(error, "system native media session creation failed");
+      assignFirstError(error, "system native media session creation failed");
     }
     return session;
   } catch (...) {
-    assignError(error, "system native media session construction threw");
+    assignFirstError(error, "system native media session construction threw");
     return {};
   }
 }

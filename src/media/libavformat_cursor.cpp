@@ -185,7 +185,7 @@ struct LibavformatCursor::Impl {
     unsigned demuxers{};
     while (api.av_demuxer_iterate(&demuxIterator))
       ++demuxers;
-    if (demuxers != 9) {
+    if (demuxers != kRequiredDemuxers.size()) {
       error = "LibavformatUnexpectedDemuxer";
       return false;
     }
@@ -413,6 +413,10 @@ LibavformatCursor::Read LibavformatCursor::read(Packet &out,
     error = "LibavformatTimestampUnrepresentable";
     return Read::Failed;
   }
+  // Matroska stores presentation times only, and libavformat's Matroska
+  // demuxer copies each block's presentation time into dts, which is not a
+  // decode order once frames reorder. Native Matroska carriage never invents
+  // a decode timestamp either; VideoToolbox decodes in storage order.
   if (std::strstr(s.format->iformat->name, "matroska"))
     out.dts = {};
   out.stream = p.stream_index;
@@ -461,21 +465,18 @@ bool LibavformatCursor::seek(unsigned stream, MediaTime target,
     return false;
   }
   const auto tb = s.format->streams[stream]->time_base;
-  const __int128 numerator = __int128(target.value) * tb.den;
-  const __int128 denominator = __int128(target.timescale) * tb.num;
-  if (denominator <= 0) {
+  if (tb.num <= 0 || tb.den <= 0) {
     error = "LibavformatSeekTimeBase";
     return false;
   }
-  const __int128 tick =
-      numerator / denominator - (numerator < 0 && numerator % denominator != 0);
-  if (tick < INT64_MIN || tick > INT64_MAX) {
+  const auto tick = mediaTimeToTicks(target, tb.den, tb.num, TickRounding::Floor);
+  if (!tick) {
     error = "LibavformatSeekUnrepresentable";
     return false;
   }
   s.ioBudget = 4 * kProbeBytes;
   avcodec::api().av_packet_unref(s.packet);
-  if (s.api.av_seek_frame(s.format, stream, std::int64_t(tick),
+  if (s.api.av_seek_frame(s.format, stream, *tick,
                           AVSEEK_FLAG_BACKWARD) < 0) {
     error = "LibavformatSeekFailed";
     return false;

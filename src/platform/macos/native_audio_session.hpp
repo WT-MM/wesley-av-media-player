@@ -207,10 +207,10 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   setPaused(bool paused) noexcept;
   // Owner-thread controls are accepted before configure and throughout a
   // live/reversible lifecycle. Gain uses the render core's fail-safe policy:
-  // finite values are clamped to [0, 1], while non-finite values become zero.
-  // Mute is independent and never overwrites the cached gain. Terminal
-  // teardown states reject both calls without changing the cached request or
-  // callback-visible control revision.
+  // finite values are clamped to [0, NativeAudioRenderCore::kMaximumGain],
+  // while non-finite values become zero. Mute is independent and never
+  // overwrites the cached gain. Terminal teardown states reject both calls
+  // without changing the cached request or callback-visible control revision.
   [[nodiscard]] NativeAudioSessionProgress setGain(float gain) noexcept;
   [[nodiscard]] NativeAudioSessionProgress setMuted(bool muted) noexcept;
   // Pitch-preserved playback rate as an exact rational. Cached like gain, so

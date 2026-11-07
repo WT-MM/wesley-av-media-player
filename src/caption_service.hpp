@@ -3,6 +3,7 @@
 #include "cancellation.hpp"
 #include "caption_backend.hpp"
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -29,8 +30,6 @@ enum class CaptionStage {
   Failed,
   Cancelled,
 };
-
-const char *captionStageName(CaptionStage stage) noexcept;
 
 struct CaptionTools {
   std::filesystem::path ffmpeg;
@@ -92,22 +91,21 @@ struct CaptionStatus {
   std::filesystem::path output_srt;
 };
 
-// These functions are useful in diagnostics and tests. CaptionService executes
-// the equivalent argument vectors directly (without a command shell), so user
-// paths cannot become shell syntax. quoteArg is still used here to produce an
-// accurate, copyable representation on each supported platform.
-std::string buildCaptionAudioCommand(const std::filesystem::path &ffmpeg,
-                                     const std::filesystem::path &input,
-                                     const std::filesystem::path &wav);
-std::string buildCaptionWhisperCommand(const std::filesystem::path &whisper,
-                                       const std::filesystem::path &model,
-                                       const std::filesystem::path &wav,
-                                       const std::filesystem::path &output_base,
-                                       const CaptionOptions &options = {});
+// The argument vectors CaptionService executes directly, without a command
+// shell, so user paths cannot become shell syntax.
+std::vector<std::string> captionAudioArguments(const std::filesystem::path &input,
+                                               const std::filesystem::path &wav);
+std::vector<std::string>
+captionWhisperArguments(const std::filesystem::path &model,
+                        const std::filesystem::path &wav,
+                        const std::filesystem::path &output_base,
+                        const CaptionOptions &options = {});
+
+class AppleCaptionBackend;
 
 class CaptionService {
 public:
-  CaptionService() = default;
+  CaptionService();
   ~CaptionService();
   CaptionService(const CaptionService &) = delete;
   CaptionService &operator=(const CaptionService &) = delete;
@@ -140,8 +138,12 @@ private:
   mutable std::mutex worker_mutex_;
   std::thread worker_;
   detail::CancellationFlag cancellation_;
-  std::unique_ptr<CaptionBackend> apple_;
-  std::atomic<int> download_response_{0};
+  std::unique_ptr<AppleCaptionBackend> apple_;
+  // 0 until respondToDownload(); 1 consent, -1 refusal. cancel() also wakes
+  // the waiting worker.
+  std::mutex download_mutex_;
+  std::condition_variable download_changed_;
+  int download_response_ = 0;
   std::atomic<bool> transcribing_{false};
   bool download_asked_ = false;
 };

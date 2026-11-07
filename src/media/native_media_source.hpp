@@ -935,6 +935,12 @@ struct MediaDisplaySize {
 [[nodiscard]] MediaDisplaySize mediaSourceDisplaySize(
     const MediaSourceDescriptor& descriptor) noexcept;
 
+// Whether the selected video track carries an HDR transfer (PQ or HLG). False
+// for an audio-only source. Primaries are deliberately not consulted: BT.2020
+// with a BT.709 transfer is wide-gamut SDR.
+[[nodiscard]] bool mediaSourceHighDynamicRange(
+    const MediaSourceDescriptor& descriptor) noexcept;
+
 // Single-owner pull boundary. openLocalFile(), seek(), readNext(), and close()
 // are confined to one source worker/retirement owner and may block there;
 // requestCancel() is prompt, noexcept, and callable from any thread. A source
@@ -968,6 +974,23 @@ class MediaSource {
   [[nodiscard]] virtual MediaSourceOpenOutcome openLocalFile(
       const std::filesystem::path& path, const MediaSourceOpenOptions& options,
       MediaGeneration generation) = 0;
+  // Cold-open retry without the rejected audio track is optional and never
+  // changes an explicit track request. A source that supports it must retire
+  // the prior attempt before reopening. Wrappers forward both calls to the
+  // source they wrap, so the answer is the wrapped source's.
+  [[nodiscard]] virtual bool supportsAudioTrackRetry() const noexcept {
+    return false;
+  }
+  [[nodiscard]] virtual MediaSourceOpenOutcome retryAudioTrack(
+      const std::filesystem::path&, const MediaSourceOpenOptions&,
+      MediaGeneration generation, MediaTrackId /*rejected*/) {
+    MediaSourceOpenOutcome out;
+    out.status = MediaSourceOpenStatus::Unsupported;
+    out.generation = generation;
+    out.refusal = MediaRefusalClass::AudioTrackRetryUnavailable;
+    out.error = mediaRefusalClassName(out.refusal);
+    return out;
+  }
   [[nodiscard]] virtual MediaSourceSeekOutcome seek(
       const MediaSourceSeekRequest& request) = 0;
   [[nodiscard]] virtual MediaSourceReadResult

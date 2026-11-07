@@ -160,7 +160,7 @@ MediaSample sample(
   return result;
 }
 
-class FakeSource final : public MediaSource, public AudioTrackRetrySource {
+class FakeSource final : public MediaSource {
  public:
   FakeSource(std::shared_ptr<const MediaSourceDescriptor> descriptor,
              std::vector<MediaSourceReadResult> events)
@@ -253,6 +253,10 @@ class FakeSource final : public MediaSource, public AudioTrackRetrySource {
 
   std::vector<std::shared_ptr<const MediaSourceDescriptor>> retryDescriptors;
   std::vector<MediaTrackId> rejectedTracks;
+  bool retrySupported{true};
+  [[nodiscard]] bool supportsAudioTrackRetry() const noexcept override {
+    return retrySupported;
+  }
   MediaSourceOpenOutcome retryAudioTrack(
       const std::filesystem::path& path, const MediaSourceOpenOptions& options,
       MediaGeneration generation, MediaTrackId rejected) override {
@@ -2072,15 +2076,18 @@ void backendTrackRetry() {
       if (track.kind == MediaTrackKind::Audio) track.id = id;
     return d;
   };
-  for (unsigned mode = 0; mode < 5; ++mode) {
+  for (unsigned mode = 0; mode < 6; ++mode) {
     auto rig = makeRigWithDescriptor(candidate(2), {});
+    // A source whose wrapped backend cannot retry (MPEG-TS, libavformat)
+    // configures both lanes at once and fails on the first audio refusal.
+    if (mode == 5) rig.source->retrySupported = false;
     rig.source->retryDescriptors = {candidate(3), candidate(4)};
     if (mode == 4) rig.source->retryDescriptors = {candidate(3)};
     rig.audio->allowOpenReset = true;
     rig.audio->configureHook = [&] {
       rig.audio->configureResult = rig.audio->configuredTrack == 4
           ? NativeMediaConsumeResult::Accepted : NativeMediaConsumeResult::Failed;
-      if (mode != 1 && rig.audio->configuredTrack != 4)
+      if (mode != 1 && mode != 5 && rig.audio->configuredTrack != 4)
         expect(rig.video->configureCalls == 0, "video stays unexposed until audio admitted");
       if (mode == 3) rig.dispatcher->requestCancel(1);
     };
@@ -2109,6 +2116,13 @@ void backendTrackRetry() {
              rig.dispatcher->failureMessage().starts_with(
                  "AudioBackendConfigurationRefused: track 2: "),
              "exhausted candidates decline the file without a dispatcher failure");
+    } else if (mode == 5) {
+      expect(out.status == NativeMediaDispatcherOpenStatus::Failed &&
+             rig.source->rejectedTracks.empty() &&
+             rig.audio->configureCalls == 1 && rig.video->configureCalls == 1 &&
+             rig.dispatcher->stats().refusal ==
+                 MediaRefusalClass::AudioBackendConfigurationRefused,
+             "a source without retry never takes the serial retry path");
     } else {
       expect(out.status == NativeMediaDispatcherOpenStatus::Failed &&
              rig.source->rejectedTracks.empty() && rig.audio->configureCalls == 1 &&

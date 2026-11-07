@@ -58,6 +58,10 @@ enum class Route : std::uint8_t {
   FallbackOnly,
 };
 
+// Where a source's bytes come from. Decides routing (the open preflight) and
+// the compatibility engine's buffering (qt/playback_policy.hpp).
+enum class SourceClass : std::uint8_t { Network, BufferedLocal, FastLocal };
+
 struct OpenRequest {
   native::SourceKey sourceKey;
   Route route{Route::FallbackOnly};

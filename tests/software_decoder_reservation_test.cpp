@@ -19,6 +19,9 @@ int main() {
   EXPECT(h264->referenceBytes==38*h264->planeBytes);
   EXPECT(!softwareDecoderReservation(MediaCodec::H264,4096,2320,10,2,0));
   EXPECT(softwareDecoderReservation(MediaCodec::Mpeg4Visual,4096,2320,8,1,0));
+  // The same sorted-axis ceiling as admission: two long axes are refused even
+  // under the pixel cap.
+  EXPECT(!softwareDecoderReservation(MediaCodec::Mpeg4Visual,3000,3000,8,1,0));
   RuntimeLease runtime;REQUIRE(runtime.acquire()==nullptr);
   auto& functions=api();void* domain=functions.av_wam_reservation_begin(1024);REQUIRE(domain);
   auto* first=functions.av_mallocz(512);REQUIRE(first && reinterpret_cast<std::uintptr_t>(first)%64==0);

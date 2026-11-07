@@ -314,7 +314,7 @@ PreparedFixture prepare() {
   prepared.outcome = wam::media::matroska::prepareMatroska(
       prepared.reader, kFixturePath, options);
   if (prepared.outcome.asset != nullptr) {
-    prepared.context = wam::macos::adoptPreparedMatroskaAssetContext(
+    prepared.context = wam::macos::MatroskaAssetContext::adopt(
         kFixturePath, options, prepared.outcome.asset);
   }
   return prepared;
@@ -405,10 +405,6 @@ void testCueMappingWithoutBackWalk() {
   expect(facts.backend.readersCreated == cases.size() &&
              facts.backend.readersStarted == cases.size(),
          "exactly one cursor is created and started per preview epoch");
-  expect(facts.backend.assetLoadAttempts == 0 &&
-             facts.backend.assetLoadsCompleted == 0 &&
-             facts.backend.assetLoadNanoseconds == 0,
-         "preview never reopens a container the main source already admitted");
 }
 
 void testDecodeOnlyBoundaryAndForwardRetarget() {

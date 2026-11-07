@@ -13,7 +13,7 @@
 
 namespace wam::macos {
 
-enum class NativeSourceClass { Network, BufferedLocal, FastLocal };
+using NativeSourceClass = media::playback_router::SourceClass;
 
 struct NativeOpenPreflightState;
 

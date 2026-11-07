@@ -57,10 +57,10 @@ struct MatroskaSourceTraits {
   // either cap.
   static constexpr std::int64_t kVideoMergeLeadNanoseconds{250'000'000};
 
-  static constexpr auto adoptContext = &adoptPreparedMatroskaAssetContext;
+  static constexpr auto adoptContext = &MatroskaAssetContext::adopt;
   static constexpr auto noteCursorCreationAttempt =
-      &noteMatroskaAssetContextCursorCreationAttempt;
-  static constexpr auto noteCursorStarted = &noteMatroskaAssetContextCursorStarted;
+      &MatroskaAssetContext::noteCursorCreationAttempt;
+  static constexpr auto noteCursorStarted = &MatroskaAssetContext::noteCursorStarted;
   // The first Cue's exact tick, or empty for a Cue-less asset.
   [[nodiscard]] static std::optional<media::MediaTime> videoOrigin(
       const PreparedAsset& asset) noexcept;
@@ -84,7 +84,7 @@ struct MatroskaSourceTraits {
 // this source publishes carries an invalid decodeTime and a CMSampleBuffer with
 // kCMTimeInvalid as its decode stamp. VideoToolbox then decodes in submission
 // order, which is exactly the storage order the cursors emit in.
-class MatroskaMediaSource final : public media::MediaSource, public media::AudioTrackRetrySource {
+class MatroskaMediaSource final : public media::MediaSource {
  public:
   MatroskaMediaSource();
   ~MatroskaMediaSource() override;
@@ -98,6 +98,9 @@ class MatroskaMediaSource final : public media::MediaSource, public media::Audio
       const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,
       media::MediaGeneration generation) override;
+  [[nodiscard]] bool supportsAudioTrackRetry() const noexcept override {
+    return true;
+  }
   media::MediaSourceOpenOutcome retryAudioTrack(
       const std::filesystem::path&, const media::MediaSourceOpenOptions&,
       media::MediaGeneration, media::MediaTrackId rejected) override;
