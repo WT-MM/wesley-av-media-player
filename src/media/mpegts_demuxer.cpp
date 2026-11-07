@@ -116,8 +116,6 @@ struct StreamWalk {
   bool hasPts{false};
   bool hasDts{false};
   bool randomAccess{false};
-  bool discontinuity{false};
-  bool continuityGap{false};
   // Sticky across units, deliberately: it is a property of the STREAM's
   // prologue size, not of any one access unit, and the only consumer is a
   // refusal message that wants to know whether the scan ever ran out of probe
@@ -136,8 +134,6 @@ struct StreamWalk {
     hasPts = false;
     hasDts = false;
     randomAccess = false;
-    discontinuity = false;
-    continuityGap = false;
   }
 
   void discardUnit() noexcept {
@@ -726,8 +722,6 @@ finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
   sample.pid = walk.pid;
   sample.kind = walk.video ? MediaSampleKind::EncodedVideo
                            : MediaSampleKind::EncodedAudio;
-  sample.discontinuity = walk.discontinuity;
-  sample.continuityGap = walk.continuityGap;
 
   if (walk.hasPts) {
     const std::optional<MediaTime> presentation =
@@ -828,12 +822,6 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
       }
       return MpegTsCursorEnd{};
     }
-    if (status == WalkStatus::Resynchronized && walk.collecting) {
-      // Bytes were lost inside the unit under construction. Note it on the
-      // sample rather than dropping the unit: a decoder handles a damaged
-      // access unit far better than the pipeline handles a hole.
-      walk.continuityGap = true;
-    }
 
     TsPacketHeader header{};
     if (decodeTsPacket(packet, header) != TsPacketStatus::Ok) {
@@ -843,7 +831,6 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
       continue;
     }
     if (header.transportError) {
-      walk.continuityGap = true;
       continue;
     }
     const ContinuityVerdict verdict = walk.continuity.observe(header);
@@ -852,10 +839,8 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
     }
     if (verdict == ContinuityVerdict::Gap) {
       ++impl_->continuityGaps;
-      walk.continuityGap = true;
     }
     if (verdict == ContinuityVerdict::Discontinuous) {
-      walk.discontinuity = true;
       walk.pts.resynchronize();
       walk.dts.resynchronize();
     }
