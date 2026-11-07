@@ -7,33 +7,9 @@ namespace wam::playback::mpv {
 namespace {
 
 [[nodiscard]] MpvApi linkedApi() noexcept {
-  return {
-      &::mpv_abort_async_command,
-      &::mpv_client_api_version,
-      &::mpv_command,
-      &::mpv_command_async,
-      &::mpv_create,
-      &::mpv_error_string,
-      &::mpv_free,
-      &::mpv_get_property,
-      &::mpv_get_property_string,
-      &::mpv_initialize,
-      &::mpv_observe_property,
-      &::mpv_render_context_create,
-      &::mpv_render_context_free,
-      &::mpv_render_context_get_info,
-      &::mpv_render_context_render,
-      &::mpv_render_context_set_update_callback,
-      &::mpv_render_context_update,
-      &::mpv_request_log_messages,
-      &::mpv_set_option_string,
-      &::mpv_set_property,
-      &::mpv_set_property_async,
-      &::mpv_set_property_string,
-      &::mpv_set_wakeup_callback,
-      &::mpv_terminate_destroy,
-      &::mpv_wait_event,
-  };
+#define WAM_LINKED_MPV_SYMBOL(name) &::name,
+  return {WAM_MPV_API(WAM_LINKED_MPV_SYMBOL)};
+#undef WAM_LINKED_MPV_SYMBOL
 }
 
 }  // namespace

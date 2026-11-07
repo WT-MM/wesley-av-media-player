@@ -138,6 +138,107 @@ int terminateUnisolatedChild(pid_t child, int error) {
   return error ? error : 1;
 }
 
+namespace {
+constexpr auto kSupervisePollInterval = std::chrono::milliseconds(20);
+}
+
+bool reapKilledChild(pid_t child, int* status,
+                     std::chrono::milliseconds bound) {
+  int error = 0;
+  const auto deadline = std::chrono::steady_clock::now() + bound;
+  while (observePosixChild(child, &error) == ChildObservation::Running &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(kSupervisePollInterval);
+  if (observePosixChild(child, &error) == ChildObservation::Exited)
+    return reapPosixChild(child, status, &error);
+  if (error != ECHILD)
+    std::thread([child] {
+      int ignored_status = 0;
+      int ignored_error = 0;
+      reapPosixChild(child, &ignored_status, &ignored_error);
+    }).detach();
+  return false;
+}
+
+SupervisedChild superviseChildGroup(pid_t child,
+                                    const CancellationFlag& cancellation,
+                                    std::chrono::milliseconds grace,
+                                    const std::function<bool()>& stopRequested) {
+  constexpr auto kKilledReapBound = std::chrono::milliseconds(500);
+  SupervisedChild out;
+  int setup_error = 0;
+  if (!establishProcessGroup(child, &setup_error)) {
+    // macOS can report ESRCH when a very short-lived, already-isolated child
+    // has become waitable before the parent wins the setpgid race. Preserve
+    // its real status without ever signalling an unverified numeric PGID.
+    out.isolated = false;
+    out.error = setup_error;
+    int observation_error = 0;
+    const auto observation = observePosixChild(child, &observation_error);
+    if (observation == ChildObservation::Exited) {
+      int reap_error = 0;
+      out.exited = reapPosixChild(child, &out.status, &reap_error);
+      if (out.exited) out.error = 0;
+      else if (reap_error) out.error = reap_error;
+    } else if (observation == ChildObservation::Running ||
+               observation_error != ECHILD) {
+      terminateUnisolatedChild(child, 0);
+    }
+    return out;
+  }
+
+  const auto terminate = [&] {
+    out.terminated = true;
+    signalVerifiedProcessGroup(child, SIGTERM);
+    return std::chrono::steady_clock::now() + grace;
+  };
+  auto force_kill_at = std::chrono::steady_clock::time_point::max();
+  for (;;) {
+    const bool stop = stopRequested && stopRequested();
+    if (!out.terminated) {
+      if (cancellation.requested() || stop) {
+        out.cancelled = cancellation.requested();
+        out.stopped = !out.cancelled;
+        force_kill_at = terminate();
+      } else {
+        int observation_error = 0;
+        const auto observation = observePosixChild(child, &observation_error);
+        if (observation == ChildObservation::Error) {
+          // ECHILD means somebody else already reaped the leader, so its PID
+          // can no longer protect the group identity. Never group-signal it.
+          if (observation_error != ECHILD) {
+            signalVerifiedProcessGroup(child, SIGKILL);
+            out.exited = reapKilledChild(child, &out.status, kKilledReapBound);
+          }
+          out.error = observation_error ? observation_error : 1;
+          return out;
+        }
+        if (observation == ChildObservation::Exited) {
+          // The exit is only observed, not reaped. Re-check cancellation while
+          // the PID still reserves the process-group identity.
+          if (cancellation.requested()) {
+            out.cancelled = true;
+            force_kill_at = terminate();
+          } else {
+            int reap_error = 0;
+            out.exited = reapPosixChild(child, &out.status, &reap_error);
+            if (!out.exited) out.error = reap_error ? reap_error : 1;
+            return out;
+          }
+        }
+      }
+    }
+    if (out.terminated && std::chrono::steady_clock::now() >= force_kill_at) {
+      // The leader remains waitable (possibly a zombie) through this final
+      // group signal. That reserves its PID/PGID and makes -child safe.
+      signalVerifiedProcessGroup(child, SIGKILL);
+      out.exited = reapKilledChild(child, &out.status, kKilledReapBound);
+      return out;
+    }
+    std::this_thread::sleep_for(kSupervisePollInterval);
+  }
+}
+
 #endif
 
 }  // namespace detail
@@ -148,7 +249,9 @@ namespace {
 
 using namespace std::chrono_literals;
 
+#ifdef _WIN32
 constexpr auto kProcessPollInterval = 20ms;
+#endif
 constexpr auto kGracefulShutdownTimeout = 750ms;
 
 #ifdef _WIN32
@@ -269,85 +372,6 @@ int runProcessCommand(const detail::CancellationFlag& cancellation,
 
 #else
 
-int waitForPosixChild(const detail::CancellationFlag& cancellation,
-                      pid_t child) {
-  int setup_error = 0;
-  if (!establishProcessGroup(child, &setup_error)) {
-    // macOS can report ESRCH when a very short-lived, already-isolated child
-    // has become waitable before the parent wins the setpgid race. Preserve
-    // its real status without ever signalling an unverified numeric PGID.
-    int observation_error = 0;
-    if (observePosixChild(child, &observation_error) ==
-        ChildObservation::Exited) {
-      int status = 0;
-      int reap_error = 0;
-      if (!reapPosixChild(child, &status, &reap_error))
-        return reap_error ? reap_error : setup_error;
-      return cancellation.requested() ? 130 : normalizedExitCode(status);
-    }
-    if (observation_error == ECHILD)
-      return setup_error ? setup_error : observation_error;
-    return terminateUnisolatedChild(child, setup_error);
-  }
-
-  bool cancellation_started = false;
-  std::chrono::steady_clock::time_point force_kill_at{};
-  for (;;) {
-    if (!cancellation_started) {
-      if (cancellation.requested()) {
-        cancellation_started = true;
-        force_kill_at =
-            std::chrono::steady_clock::now() + kGracefulShutdownTimeout;
-        signalVerifiedProcessGroup(child, SIGTERM);
-      } else {
-        int observation_error = 0;
-        const auto observation = observePosixChild(child, &observation_error);
-        if (observation == ChildObservation::Error) {
-          // ECHILD means somebody else already reaped the leader, so its PID
-          // can no longer protect the group identity. Never group-signal it.
-          if (observation_error != ECHILD) {
-            signalVerifiedProcessGroup(child, SIGKILL);
-            int ignored_status = 0;
-            int ignored_error = 0;
-            reapPosixChild(child, &ignored_status, &ignored_error);
-          }
-          return observation_error ? observation_error : 1;
-        }
-        if (observation == ChildObservation::Exited) {
-          // The exit is only observed, not reaped. Re-check cancellation while
-          // the PID still reserves the process-group identity.
-          if (cancellation.requested()) {
-            cancellation_started = true;
-            force_kill_at =
-                std::chrono::steady_clock::now() + kGracefulShutdownTimeout;
-            signalVerifiedProcessGroup(child, SIGTERM);
-          } else {
-            int status = 0;
-            int reap_error = 0;
-            if (!reapPosixChild(child, &status, &reap_error))
-              return reap_error ? reap_error : 1;
-            return normalizedExitCode(status);
-          }
-        }
-      }
-    }
-
-    if (cancellation_started &&
-        std::chrono::steady_clock::now() >= force_kill_at) {
-      // The leader remains waitable (possibly a zombie) through this final
-      // group signal. That reserves its PID/PGID and makes -child safe.
-      signalVerifiedProcessGroup(child, SIGKILL);
-      int status = 0;
-      int reap_error = 0;
-      reapPosixChild(child, &status, &reap_error);
-      // Cancellation is the canonical public outcome even if a cooperative
-      // TERM handler made the leader exit zero.
-      return 130;
-    }
-    std::this_thread::sleep_for(kProcessPollInterval);
-  }
-}
-
 int runProcessCommand(const detail::CancellationFlag& cancellation,
                       const ProcessCommand& command) {
   if (cancellation.requested()) return 130;
@@ -370,7 +394,15 @@ int runProcessCommand(const detail::CancellationFlag& cancellation,
     execvp(arguments.front(), arguments.data());
     _exit(errno == ENOENT ? 127 : 126);
   }
-  return waitForPosixChild(cancellation, child);
+  const auto supervised =
+      superviseChildGroup(child, cancellation, kGracefulShutdownTimeout, {});
+  // Cancellation is the canonical public outcome even if a cooperative TERM
+  // handler made the leader exit zero.
+  if (supervised.terminated ||
+      (!supervised.isolated && supervised.exited && cancellation.requested()))
+    return 130;
+  if (supervised.error) return supervised.error;
+  return supervised.exited ? normalizedExitCode(supervised.status) : 1;
 }
 
 #endif
@@ -410,32 +442,6 @@ std::string formatNumber(double value) {
 }
 
 }  // namespace
-
-std::string quoteArg(const std::string& value) {
-#ifdef _WIN32
-  std::string out = "\"";
-  unsigned slashes = 0;
-  for (char c : value) {
-    if (c == '\\') {
-      ++slashes;
-    } else if (c == '"') {
-      out.append(slashes * 2 + 1, '\\');
-      out += '"';
-      slashes = 0;
-    } else {
-      out.append(slashes, '\\');
-      slashes = 0;
-      out += c;
-    }
-  }
-  out.append(slashes * 2, '\\');
-  return out + '"';
-#else
-  std::string out = "'";
-  for (char c : value) out += (c == '\'' ? "'\\''" : std::string(1, c));
-  return out + "'";
-#endif
-}
 
 std::string atempoFilter(double speed) {
   speed = std::clamp(speed, 0.0625, 16.0);
@@ -664,16 +670,6 @@ ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
   }
   args.push_back(pathArgument(o.output));
   return command;
-}
-
-std::string buildExportCommand(const std::filesystem::path& ffmpeg,
-                               const EditOptions& options) {
-  const ProcessCommand process = buildExportProcess(ffmpeg, options);
-  std::ostringstream command;
-  command << quoteArg(pathArgument(process.executable));
-  for (const auto& argument : process.arguments)
-    command << ' ' << quoteArg(argument);
-  return command.str();
 }
 
 std::filesystem::path reserveExportStagingFile(

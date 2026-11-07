@@ -499,7 +499,7 @@ struct NativeMediaDispatcherStats {
 // of the compressed access units its bounded reorder window still needs to
 // emit that very frame -- a silent deadlock whose visibility depends only on
 // how many access units past the target the stream's GOP structure requires.
-// setSeekSettleReadAhead() lets the session name that window. While it is set,
+// step(true) lets the session name that window. Inside it,
 // a refused audio event goes into a bounded audio read-ahead lane exactly the
 // way video's does and the gate stays open; outside it the audio lane is never
 // written and capacity-one is unchanged. A lane already holding events always
@@ -560,7 +560,12 @@ class NativeMediaDispatcher final {
       const std::filesystem::path& path,
       const MediaSourceOpenOptions& options,
       MediaGeneration generation) noexcept;
-  [[nodiscard]] NativeMediaDispatcherStep step() noexcept;
+  // seekSettleReadAhead names the exact-seek commit window in which the audio
+  // route is paused at the target with a primed ring and only a video draw can
+  // release it (see the seek-settle note above the class). Leaving it false
+  // never discards an already-deferred audio event.
+  [[nodiscard]] NativeMediaDispatcherStep
+  step(bool seekSettleReadAhead = false) noexcept;
   [[nodiscard]] NativeMediaDispatcherSeekOutcome seek(
       const MediaSourceSeekRequest& request) noexcept;
 
@@ -622,12 +627,6 @@ class NativeMediaDispatcher final {
   // so the hot per-step POD copy stays allocation free; read it only on a
   // failure path. Serialized on the dispatcher owner like every other method.
   [[nodiscard]] const std::string& failureMessage() const noexcept;
-
-  // Names the exact-seek commit window in which the audio route is paused at
-  // the target with a primed ring and only a video draw can release it. See
-  // the seek-settle note above the class. Idempotent; clearing it never
-  // discards an already-deferred audio event.
-  void setSeekSettleReadAhead(bool enabled) noexcept;
 
  private:
   enum class PendingLaneHead : std::uint8_t { None, Video, Audio };
@@ -729,8 +728,7 @@ class NativeMediaDispatcher final {
   std::size_t pending_payload_bytes_{0};
   std::size_t peak_pending_payload_bytes_{0};
   ReadAheadLane video_lane_{};
-  // Written only inside the seek-settle window named by
-  // setSeekSettleReadAhead(); empty in every other state, which is what keeps
+  // Written only inside the seek-settle window named by step(true); empty in every other state, which is what keeps
   // the audio capacity-one rule intact for ordinary playback.
   ReadAheadLane audio_lane_{};
   // Names the lane whose head was taken into pending_. That event is older

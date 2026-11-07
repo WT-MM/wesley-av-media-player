@@ -822,12 +822,12 @@ void removeLastByteFromAvcPps(std::vector<std::uint8_t> &record) {
 }
 
 void testApiAndHardBounds() {
-  static_assert(kMaximumVideoCodecConfigurationBytes == 256U * 1024U);
+  static_assert(MediaSourceLimits::kHardMaximumCodecConfigurationBytes ==
+                256U * 1024U);
   // The 4K-class v1 envelope.
-  static_assert(kMaximumVideoCodecWidth == 4096U);
-  static_assert(kMaximumVideoCodecHeight == 2320U);
-  static_assert(kMaximumVideoCodecPixels == 4096ULL * 2320ULL);
-  static_assert(kMaximumVideoCodecPixels == 9'502'720ULL);
+  static_assert(MediaSourceLimits::kHardMaximumCodedWidth == 4096U);
+  static_assert(MediaSourceLimits::kHardMaximumCodedHeight == 2320U);
+  static_assert(MediaSourceLimits::kHardMaximumCodedPixels == 9'502'720ULL);
   static_assert(kMaximumVideoCodecReorderFrames == 16U);
 
   // VP9 is an admitted codec now, so this case proves the kind gate rather

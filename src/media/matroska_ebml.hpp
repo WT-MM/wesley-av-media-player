@@ -185,9 +185,6 @@ struct ParseOptions {
   bool proveUnselectedTrackCues{true};
 };
 
-[[nodiscard]] ParseOptions
-clampParseOptions(const ParseOptions& requested) noexcept;
-
 struct ElementHeader {
   std::uint32_t id{0};
   ByteRange encoded;
@@ -708,7 +705,8 @@ class ClusterChildCursor final {
 // file/Segment boundary. When absoluteOffset differs from segmentDataOffset,
 // the parser proves it is a direct Segment child before trusting it. Passing
 // equal offsets is reserved for standalone test/fixture masters that begin at
-// byte zero; production callers use parseSegmentChildAt().
+// byte zero. Production walks the Segment through the cursor API instead;
+// this, parseSegmentChildAt() and parseFile() serve fixture tests.
 [[nodiscard]] ParseOutcome parseMasterAt(
     SeekableByteReader& reader, std::uint64_t absoluteOffset,
     std::uint64_t parentEnd, std::uint64_t segmentDataOffset,

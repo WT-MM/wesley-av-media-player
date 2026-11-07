@@ -139,8 +139,17 @@ std::string processFailure(const char *tool, const ProcessResult &result) {
   return message.str();
 }
 
-std::vector<std::string> audioArguments(const fs::path &input,
-                                        const fs::path &wav) {
+unsigned effectiveThreadCount(const CaptionOptions &options) {
+  if (options.threads != 0)
+    return std::clamp(options.threads, 1u, 64u);
+  const auto available = std::thread::hardware_concurrency();
+  return std::clamp(available == 0 ? 4u : available, 1u, 16u);
+}
+
+} // namespace
+
+std::vector<std::string> captionAudioArguments(const fs::path &input,
+                                               const fs::path &wav) {
   return {"-hide_banner",
           "-loglevel",
           "error",
@@ -160,17 +169,10 @@ std::vector<std::string> audioArguments(const fs::path &input,
           pathArgument(wav)};
 }
 
-unsigned effectiveThreadCount(const CaptionOptions &options) {
-  if (options.threads != 0)
-    return std::clamp(options.threads, 1u, 64u);
-  const auto available = std::thread::hardware_concurrency();
-  return std::clamp(available == 0 ? 4u : available, 1u, 16u);
-}
-
-std::vector<std::string> whisperArguments(const fs::path &model,
-                                          const fs::path &wav,
-                                          const fs::path &output_base,
-                                          const CaptionOptions &options) {
+std::vector<std::string> captionWhisperArguments(const fs::path &model,
+                                                 const fs::path &wav,
+                                                 const fs::path &output_base,
+                                                 const CaptionOptions &options) {
   std::vector<std::string> args{"-m",
                                 pathArgument(model),
                                 "-f",
@@ -191,14 +193,7 @@ std::vector<std::string> whisperArguments(const fs::path &model,
   return args;
 }
 
-std::string displayCommand(const fs::path &executable,
-                           const std::vector<std::string> &arguments) {
-  std::ostringstream command;
-  command << quoteArg(pathArgument(executable));
-  for (const auto &argument : arguments)
-    command << ' ' << quoteArg(argument);
-  return command.str();
-}
+namespace {
 
 #ifdef _WIN32
 std::wstring windowsCommandLine(const fs::path &executable,
@@ -338,7 +333,6 @@ ProcessResult runProcess(const fs::path &executable,
 
 #else
 
-constexpr auto kCaptionProcessPollInterval = 20ms;
 constexpr auto kCaptionGracefulShutdownTimeout = 500ms;
 
 void drainPosixPipe(int pipe, std::string &output, ProcessMonitor* monitor = nullptr) {
@@ -436,115 +430,35 @@ ProcessResult runProcess(const fs::path &executable,
   result.launched = true;
   close(diagnostic_pipe[1]); diagnostics.write = -1;
   close(output_pipe[1]);
-  int setup_error = 0;
-  if (!establishProcessGroup(pid, &setup_error)) {
-    int observation_error = 0;
-    const auto observation =
-        observePosixChild(pid, &observation_error);
-    int status = 0;
-    int reap_error = 0;
-    const bool exited = observation == ChildObservation::Exited &&
-                        reapPosixChild(pid, &status, &reap_error);
-    if (observation == ChildObservation::Running ||
-        (observation == ChildObservation::Error &&
-         observation_error != ECHILD))
-      terminateUnisolatedChild(pid, 0);
-    drainPosixPipe(output_pipe[0], result.output, &monitor);
-    drainPosixPipe(diagnostic_pipe[0], result.output);
-    close(output_pipe[0]);
-    result.cancelled = cancellation.requested();
-    if (exited) {
-      result.exit_code = result.cancelled ? 130 : normalizedExitCode(status);
-    } else {
-      result.launched = false;
-      result.exit_code = result.cancelled ? 130 : setup_error;
-      result.launch_error =
-          std::string("could not establish an isolated process group: ") +
-          std::strerror(setup_error);
-    }
-    return result;
-  }
-
-  bool termination_sent = false;
-  auto force_at = std::chrono::steady_clock::time_point::max();
-  int status = 0;
-  bool status_valid = false;
-  for (;;) {
-    drainPosixPipe(output_pipe[0], result.output, &monitor);
-    drainPosixPipe(diagnostic_pipe[0], result.output);
-    const bool stalled = monitor.stalled();
-    if (!termination_sent) {
-      if (cancellation.requested() || stalled) {
-        result.cancelled = cancellation.requested();
-        result.timed_out = stalled && !result.cancelled;
-        termination_sent = true;
-        force_at = std::chrono::steady_clock::now() +
-                   kCaptionGracefulShutdownTimeout;
-        signalVerifiedProcessGroup(pid, SIGTERM);
-      } else {
-        int observation_error = 0;
-        const auto observation =
-            observePosixChild(pid, &observation_error);
-        if (observation == ChildObservation::Error) {
-          // After ECHILD the PID may already be reusable. Do not direct a
-          // process-group signal at that numeric identity.
-          if (observation_error != ECHILD) {
-            signalVerifiedProcessGroup(pid, SIGKILL);
-            int ignored_error = 0;
-            status_valid = reapPosixChild(pid, &status, &ignored_error);
-          }
-          if (!status_valid)
-            result.exit_code = observation_error ? observation_error : 1;
-          break;
-        }
-        if (observation == ChildObservation::Exited) {
-          // waitid(WNOWAIT) leaves the leader unreaped. Re-check cancellation
-          // before choosing between a normal reap and whole-group cleanup.
-          if (cancellation.requested()) {
-            result.cancelled = true;
-            termination_sent = true;
-            force_at = std::chrono::steady_clock::now() +
-                       kCaptionGracefulShutdownTimeout;
-            signalVerifiedProcessGroup(pid, SIGTERM);
-          } else {
-            int reap_error = 0;
-            status_valid = reapPosixChild(pid, &status, &reap_error);
-            if (!status_valid)
-              result.exit_code = reap_error ? reap_error : 1;
-            break;
-          }
-        }
-      }
-    }
-
-    if (termination_sent &&
-        std::chrono::steady_clock::now() >= force_at) {
-      // Keep the leader waitable until this final group signal. Its unreaped
-      // PID prevents the process-group number from being reused underneath us.
-      signalVerifiedProcessGroup(pid, SIGKILL);
-      int reap_error = 0;
-      const auto reap_deadline = std::chrono::steady_clock::now()+500ms;
-      while (observePosixChild(pid,&reap_error)==ChildObservation::Running &&
-             std::chrono::steady_clock::now()<reap_deadline)
-        std::this_thread::sleep_for(kCaptionProcessPollInterval);
-      if (observePosixChild(pid,&reap_error)==ChildObservation::Exited) {
-        status_valid = reapPosixChild(pid, &status, &reap_error);
-      } else if (reap_error != ECHILD) {
-        // A driver can defer SIGKILL indefinitely. Reap eventually off-job;
-        // the caption worker can retry on CPU and cancellation stays bounded.
-        std::thread([pid] { int ignored=0,error=0; reapPosixChild(pid,&ignored,&error); }).detach();
-      }
-      if (!status_valid) result.exit_code = 130;
-      break;
-    }
-    std::this_thread::sleep_for(kCaptionProcessPollInterval);
-  }
+  const auto supervised = superviseChildGroup(
+      pid, cancellation, kCaptionGracefulShutdownTimeout, [&] {
+        drainPosixPipe(output_pipe[0], result.output, &monitor);
+        drainPosixPipe(diagnostic_pipe[0], result.output);
+        return monitor.stalled();
+      });
   drainPosixPipe(output_pipe[0], result.output, &monitor);
   drainPosixPipe(diagnostic_pipe[0], result.output);
   monitor.finish();
   close(output_pipe[0]);
-  if (status_valid)
-    result.exit_code = normalizedExitCode(status);
+  if (!supervised.isolated) {
+    result.cancelled = cancellation.requested();
+    if (supervised.exited) {
+      result.exit_code =
+          result.cancelled ? 130 : normalizedExitCode(supervised.status);
+    } else {
+      result.launched = false;
+      result.exit_code = result.cancelled ? 130 : supervised.error;
+      result.launch_error =
+          std::string("could not establish an isolated process group: ") +
+          std::strerror(supervised.error);
+    }
+    return result;
+  }
+  result.cancelled = supervised.cancelled;
+  result.timed_out = supervised.stopped;
+  result.exit_code = supervised.exited ? normalizedExitCode(supervised.status)
+                     : supervised.terminated ? 130
+                                             : supervised.error;
   return result;
 }
 
@@ -565,13 +479,13 @@ public:
     finish();
     std::packaged_task<CaptionBackendResult()> task([this,wav,staging,events] {
       fs::path base = staging; base.replace_extension();
-      auto result = runProcess(tools_.whisper,whisperArguments(tools_.model,wav,base,options_),
+      auto result = runProcess(tools_.whisper,captionWhisperArguments(tools_.model,wav,base,options_),
         cancellation_, {options_.use_gpu ? std::max(100u,options_.gpu_watchdog_ms) : 0,events});
       if (result.timed_out && !cancellation_.requested()) {
         if (events.progress) events.progress(0,"Whisper Metal stopped making progress; retrying on CPU…");
         std::ofstream(staging,std::ios::trunc).close();
         auto cpu = options_; cpu.use_gpu = false;
-        result = runProcess(tools_.whisper,whisperArguments(tools_.model,wav,base,cpu),cancellation_,{0,events});
+        result = runProcess(tools_.whisper,captionWhisperArguments(tools_.model,wav,base,cpu),cancellation_,{0,events});
       }
       return CaptionBackendResult{result.launched && result.exit_code == 0 && !result.cancelled,
                                   processFailure("whisper.cpp",result)};
@@ -821,32 +735,6 @@ bool commitCaptionFile(const fs::path &staging, const fs::path &destination,
 
 } // namespace
 
-const char *captionStageName(CaptionStage stage) noexcept {
-  switch (stage) {
-  case CaptionStage::Idle:
-    return "Idle";
-  case CaptionStage::Validating:
-    return "Validating";
-  case CaptionStage::ExtractingAudio:
-    return "Preparing audio";
-  case CaptionStage::AwaitingDownloadConsent:
-    return "Language download";
-  case CaptionStage::PreparingEngine:
-    return "Preparing caption engine";
-  case CaptionStage::Transcribing:
-    return "Transcribing";
-  case CaptionStage::VerifyingOutput:
-    return "Saving captions";
-  case CaptionStage::Completed:
-    return "Complete";
-  case CaptionStage::Failed:
-    return "Failed";
-  case CaptionStage::Cancelled:
-    return "Cancelled";
-  }
-  return "Unknown";
-}
-
 CaptionTools findCaptionTools(const char *argv0) {
   CaptionTools tools;
 #ifdef _WIN32
@@ -860,20 +748,7 @@ CaptionTools findCaptionTools(const char *argv0) {
   return tools;
 }
 
-std::string buildCaptionAudioCommand(const fs::path &ffmpeg,
-                                     const fs::path &input,
-                                     const fs::path &wav) {
-  return displayCommand(ffmpeg, audioArguments(input, wav));
-}
-
-std::string buildCaptionWhisperCommand(const fs::path &whisper,
-                                       const fs::path &model,
-                                       const fs::path &wav,
-                                       const fs::path &output_base,
-                                       const CaptionOptions &options) {
-  return displayCommand(whisper,
-                        whisperArguments(model, wav, output_base, options));
-}
+CaptionService::CaptionService() = default;
 
 CaptionService::~CaptionService() {
   cancel();
@@ -891,7 +766,10 @@ bool CaptionService::start(CaptionRequest request) {
   if (worker_.joinable())
     worker_.join();
   cancellation_.reset();
-  download_response_.store(0);
+  {
+    std::lock_guard download_lock(download_mutex_);
+    download_response_ = 0;
+  }
   {
     std::lock_guard status_lock(status_mutex_);
     status_ = {};
@@ -931,6 +809,8 @@ void CaptionService::cancel() noexcept {
   // message is best-effort and must never make this noexcept method throw.
   cancellation_.request();
   try {
+    { std::lock_guard download_lock(download_mutex_); }
+    download_changed_.notify_all();
     std::lock_guard status_lock(status_mutex_);
     if (!status_.running)
       return;
@@ -942,7 +822,13 @@ void CaptionService::cancel() noexcept {
 }
 
 void CaptionService::respondToDownload(bool consent) noexcept {
-  download_response_.store(consent ? 1 : -1);
+  try {
+    std::lock_guard download_lock(download_mutex_);
+    download_response_ = consent ? 1 : -1;
+  } catch (...) {
+    return;
+  }
+  download_changed_.notify_all();
 }
 
 void CaptionService::wait() {
@@ -1111,12 +997,17 @@ void CaptionService::run(
         update(CaptionStage::AwaitingDownloadConsent,0.05f,
           "Apple Speech needs a one-time on-device language download (size unknown).");
         { std::lock_guard lock(status_mutex_); status_.needs_download_consent = true; status_.download_locale = caps.locale; }
-        while (download_response_.load() == 0 && !cancellation.requested()) std::this_thread::sleep_for(20ms);
-        consent = download_response_.load() == 1;
+        {
+          std::unique_lock download_lock(download_mutex_);
+          download_changed_.wait(download_lock, [&] {
+            return download_response_ != 0 || cancellation.requested();
+          });
+          consent = download_response_ == 1;
+        }
         { std::lock_guard lock(status_mutex_); status_.needs_download_consent = false; }
       }
       if (!cancellation.requested() && (selectCaptionEngine(caps) == CaptionEngine::Apple || consent)) {
-        static_cast<AppleCaptionBackend*>(apple_.get())->setEvents(events);
+        apple_->setEvents(events);
         update(CaptionStage::PreparingEngine,0.08f,consent ? "Apple Speech: downloading language asset…" : "Preparing Apple Speech on device…");
         auto preparation = apple_->prepare(consent);
         useApple = awaitBackend(preparation,*apple_).succeeded;
@@ -1174,7 +1065,7 @@ void CaptionService::run(
     update(CaptionStage::ExtractingAudio, 0.12f,
            "Preparing clean speech audio with FFmpeg…");
     const auto extraction = runProcess(
-        request.tools.ffmpeg, audioArguments(request.input, *wav),
+        request.tools.ffmpeg, captionAudioArguments(request.input, *wav),
         cancellation);
     if (extraction.cancelled) {
       cancelled();

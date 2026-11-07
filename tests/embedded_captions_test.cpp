@@ -263,17 +263,6 @@ void testEmulationPreventionRemoval() {
              "emulation-prevention bytes are removed");
 }
 
-void testAnnexBWalk() {
-  std::string stream;
-  stream += bytes({0x00, 0x00, 0x00, 0x01, 0x67, 0x42});  // SPS, ignored
-  stream += bytes({0x00, 0x00, 0x01});
-  stream += ccSeiNal({field1(0x14, 0x2F)});
-  stream += bytes({0x00, 0x00, 0x00, 0x01, 0x65, 0x88});  // IDR slice
-  std::vector<CcTriplet> out;
-  expect(appendCaptionTripletsFromAnnexB(stream, &out) == 1,
-         "the Annex-B walker finds the caption SEI among other NALs");
-}
-
 // An AVCC access unit carrying one caption SEI with the given pairs.
 std::string avccPicture(const std::vector<std::pair<int, int>>& pairs) {
   std::vector<CcTriplet> triplets;
@@ -717,7 +706,6 @@ int main() {
   testSeiRejectsWrongCountryOrProvider();
   testSeiHonoursProcessFlag();
   testEmulationPreventionRemoval();
-  testAnnexBWalk();
   testAvccWalk();
   testTruncatedSeiDoesNotOverrun();
 

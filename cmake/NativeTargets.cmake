@@ -76,8 +76,6 @@ if(APPLE OR WAM_BUILD_APP)
     src/media/media_time.hpp
     src/media/native_media_source.hpp
     src/media/native_media_source.cpp
-    src/media/native_media_backend.hpp
-    src/media/native_media_backend.cpp
     src/media/native_media_dispatcher.hpp
     src/media/native_media_dispatcher.cpp
     src/media/native_playback_contract.hpp

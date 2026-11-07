@@ -13,8 +13,7 @@
 #include <unistd.h>
 namespace wam::macos {
 namespace {
-class RoutedSource final : public media::MediaSource,
-                           public media::AudioTrackRetrySource {
+class RoutedSource final : public media::MediaSource {
 public:
   bool armOperation(media::MediaGeneration generation) noexcept override {
     if (active_)
@@ -69,18 +68,17 @@ public:
         source->close();
     return outcome;
   }
+  [[nodiscard]] bool supportsAudioTrackRetry() const noexcept override {
+    return active_ && active_->supportsAudioTrackRetry();
+  }
   media::MediaSourceOpenOutcome
   retryAudioTrack(const std::filesystem::path &path,
                   const media::MediaSourceOpenOptions &options,
                   media::MediaGeneration generation,
                   media::MediaTrackId rejected) override {
-    if (auto *retry = dynamic_cast<media::AudioTrackRetrySource *>(active_))
-      return retry->retryAudioTrack(path, options, generation, rejected);
-    media::MediaSourceOpenOutcome out;
-    out.generation = generation;
-    out.refusal = media::MediaRefusalClass::AudioTrackRetryUnavailable;
-    out.error = media::mediaRefusalClassName(out.refusal);
-    return out;
+    return active_ ? active_->retryAudioTrack(path, options, generation, rejected)
+                   : MediaSource::retryAudioTrack(path, options, generation,
+                                                  rejected);
   }
   media::MediaSourceSeekOutcome
   seek(const media::MediaSourceSeekRequest &request) override {

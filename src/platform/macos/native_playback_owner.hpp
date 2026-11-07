@@ -157,6 +157,8 @@ protected:
   media::MediaTime nativeCommitTime_{};
   std::uint64_t nativePhaseWatchdogEpoch_{0};
   bool nativePhaseWatchdogArmed_{false};
+  // The host metrics stream's reason, reapplied to every new session.
+  bool hostMetricsEnabled_{false};
   media::SeekProgressDeadline nativeSeekProgress_{};
   bool firstNativeDrawReported_{false};
   PreviewDisposition nativePreviewDisposition_{PreviewDisposition::Rejected};
