@@ -270,32 +270,8 @@ template <typename Function>
 #define WAM_VERIFY_MPV_SYMBOL(symbol)                                      \
   if (!verifyResolvedSymbol(api.symbol, expected, loaded_image, detail,    \
                             #symbol))                                      \
-    return false
-  WAM_VERIFY_MPV_SYMBOL(mpv_client_api_version);
-  WAM_VERIFY_MPV_SYMBOL(mpv_abort_async_command);
-  WAM_VERIFY_MPV_SYMBOL(mpv_command);
-  WAM_VERIFY_MPV_SYMBOL(mpv_command_async);
-  WAM_VERIFY_MPV_SYMBOL(mpv_create);
-  WAM_VERIFY_MPV_SYMBOL(mpv_error_string);
-  WAM_VERIFY_MPV_SYMBOL(mpv_free);
-  WAM_VERIFY_MPV_SYMBOL(mpv_get_property);
-  WAM_VERIFY_MPV_SYMBOL(mpv_get_property_string);
-  WAM_VERIFY_MPV_SYMBOL(mpv_initialize);
-  WAM_VERIFY_MPV_SYMBOL(mpv_observe_property);
-  WAM_VERIFY_MPV_SYMBOL(mpv_render_context_create);
-  WAM_VERIFY_MPV_SYMBOL(mpv_render_context_free);
-  WAM_VERIFY_MPV_SYMBOL(mpv_render_context_get_info);
-  WAM_VERIFY_MPV_SYMBOL(mpv_render_context_render);
-  WAM_VERIFY_MPV_SYMBOL(mpv_render_context_set_update_callback);
-  WAM_VERIFY_MPV_SYMBOL(mpv_render_context_update);
-  WAM_VERIFY_MPV_SYMBOL(mpv_request_log_messages);
-  WAM_VERIFY_MPV_SYMBOL(mpv_set_option_string);
-  WAM_VERIFY_MPV_SYMBOL(mpv_set_property);
-  WAM_VERIFY_MPV_SYMBOL(mpv_set_property_async);
-  WAM_VERIFY_MPV_SYMBOL(mpv_set_property_string);
-  WAM_VERIFY_MPV_SYMBOL(mpv_set_wakeup_callback);
-  WAM_VERIFY_MPV_SYMBOL(mpv_terminate_destroy);
-  WAM_VERIFY_MPV_SYMBOL(mpv_wait_event);
+    return false;
+  WAM_MPV_API(WAM_VERIFY_MPV_SYMBOL)
 #undef WAM_VERIFY_MPV_SYMBOL
   return true;
 }
@@ -306,80 +282,16 @@ template <typename Function>
 }
 
 [[nodiscard]] MpvApi resolveApi(QLibrary& library) noexcept {
-  return {
-      resolve<decltype(&::mpv_abort_async_command)>(
-          library, "mpv_abort_async_command"),
-      resolve<decltype(&::mpv_client_api_version)>(
-          library, "mpv_client_api_version"),
-      resolve<decltype(&::mpv_command)>(library, "mpv_command"),
-      resolve<decltype(&::mpv_command_async)>(library, "mpv_command_async"),
-      resolve<decltype(&::mpv_create)>(library, "mpv_create"),
-      resolve<decltype(&::mpv_error_string)>(library, "mpv_error_string"),
-      resolve<decltype(&::mpv_free)>(library, "mpv_free"),
-      resolve<decltype(&::mpv_get_property)>(library, "mpv_get_property"),
-      resolve<decltype(&::mpv_get_property_string)>(
-          library, "mpv_get_property_string"),
-      resolve<decltype(&::mpv_initialize)>(library, "mpv_initialize"),
-      resolve<decltype(&::mpv_observe_property)>(
-          library, "mpv_observe_property"),
-      resolve<decltype(&::mpv_render_context_create)>(
-          library, "mpv_render_context_create"),
-      resolve<decltype(&::mpv_render_context_free)>(
-          library, "mpv_render_context_free"),
-      resolve<decltype(&::mpv_render_context_get_info)>(
-          library, "mpv_render_context_get_info"),
-      resolve<decltype(&::mpv_render_context_render)>(
-          library, "mpv_render_context_render"),
-      resolve<decltype(&::mpv_render_context_set_update_callback)>(
-          library, "mpv_render_context_set_update_callback"),
-      resolve<decltype(&::mpv_render_context_update)>(
-          library, "mpv_render_context_update"),
-      resolve<decltype(&::mpv_request_log_messages)>(
-          library, "mpv_request_log_messages"),
-      resolve<decltype(&::mpv_set_option_string)>(
-          library, "mpv_set_option_string"),
-      resolve<decltype(&::mpv_set_property)>(library, "mpv_set_property"),
-      resolve<decltype(&::mpv_set_property_async)>(
-          library, "mpv_set_property_async"),
-      resolve<decltype(&::mpv_set_property_string)>(
-          library, "mpv_set_property_string"),
-      resolve<decltype(&::mpv_set_wakeup_callback)>(
-          library, "mpv_set_wakeup_callback"),
-      resolve<decltype(&::mpv_terminate_destroy)>(
-          library, "mpv_terminate_destroy"),
-      resolve<decltype(&::mpv_wait_event)>(library, "mpv_wait_event"),
-  };
+#define WAM_RESOLVE_MPV_SYMBOL(name) resolve<decltype(&::name)>(library, #name),
+  return {WAM_MPV_API(WAM_RESOLVE_MPV_SYMBOL)};
+#undef WAM_RESOLVE_MPV_SYMBOL
 }
 
 [[nodiscard]] const char* firstMissingSymbol(const MpvApi& api) noexcept {
 #define WAM_REQUIRE_MPV_SYMBOL(symbol) \
   if (api.symbol == nullptr)           \
-    return #symbol
-  WAM_REQUIRE_MPV_SYMBOL(mpv_abort_async_command);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_client_api_version);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_command);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_command_async);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_create);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_error_string);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_free);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_get_property);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_get_property_string);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_initialize);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_observe_property);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_create);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_free);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_get_info);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_render);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_set_update_callback);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_update);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_request_log_messages);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_set_option_string);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_set_property);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_set_property_async);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_set_property_string);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_set_wakeup_callback);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_terminate_destroy);
-  WAM_REQUIRE_MPV_SYMBOL(mpv_wait_event);
+    return #symbol;
+  WAM_MPV_API(WAM_REQUIRE_MPV_SYMBOL)
 #undef WAM_REQUIRE_MPV_SYMBOL
   return nullptr;
 }
