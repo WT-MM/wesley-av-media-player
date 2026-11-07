@@ -1646,6 +1646,23 @@ if(WAM_QMLTESTRUNNER)
   endforeach()
 endif()
 
+# The benchmark and ASR bake-off harnesses' own unit tests (fake tools, no
+# media, no app launch).
+if(APPLE)
+  foreach(suite IN ITEMS benchmarks/test_validate_corpus
+      benchmarks/macos/test_collect benchmarks/macos/test_report_matrix
+      benchmarks/macos/test_run_matrix benchmarks/macos/test_run_suite
+      benchmarks/macos/test_summarize tools/asr-bench/test_bench)
+    get_filename_component(suite_dir "${suite}" DIRECTORY)
+    get_filename_component(suite_module "${suite}" NAME)
+    string(REGEX REPLACE "[/-]" "_" suite_name "${suite_dir}_${suite_module}")
+    add_test(NAME ${suite_name}
+      COMMAND "${Python3_EXECUTABLE}" -B -m unittest ${suite_module}
+      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/${suite_dir}")
+    set_tests_properties(${suite_name} PROPERTIES TIMEOUT 120)
+  endforeach()
+endif()
+
 if(APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
   add_library(wam_coexistence_fake_mpv SHARED fakes/mpv_runtime/fake_mpv.cpp)
   target_compile_definitions(wam_coexistence_fake_mpv PRIVATE WAM_FAKE_MPV_NEWER_MINOR=1)
