@@ -604,7 +604,8 @@ std::int64_t readTrackSelection(const mpv_event_property *property) {
 PlayerController::PlayerController(QObject *parent)
     : QObject(parent), mpv_(this) {
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  native_ = std::make_unique<NativePlaybackOwner>(*this);
+  native_ = std::make_unique<NativePlaybackOwner>(
+      *this, static_cast<NativeEngineHost &>(*this));
 #endif
   work_timer_ = new QTimer(this);
   work_timer_->setInterval(100);

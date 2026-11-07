@@ -79,8 +79,10 @@ void setMacosPlaybackActivityHeld(bool held) noexcept {
 #endif
 }
 
-NativePlaybackOwner::NativePlaybackOwner(PlayerController &controller)
+NativePlaybackOwner::NativePlaybackOwner(PlayerController &controller,
+                                         NativeEngineHost &host)
     : controller_(controller),
+      host_(host),
       openPreflight_(
           [this](::wam::macos::NativeOpenPreflightResult result) {
             if (const TestSeams *seams = testSeams(); seams != nullptr && seams->openDelayMilliseconds > 0) {
@@ -201,7 +203,7 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
     sample.hasClock = sampled.clockValid;
     sample.paused = controller_.paused();
   } else if (acceptsFallbackPlaybackEvents()) {
-    sample = controller_.mpv_.metrics();
+    sample = host_.mpvEngine().metrics();
   }
   // Unavailable audio/drop counters stay null; no time/fps estimate is used
   // as a substitute for frames actually rendered by the compatibility host.
@@ -265,7 +267,7 @@ bool NativePlaybackOwner::open(const QUrl &source,
   }
   const auto sourceKey = allocateSourceKey();
   if (!sourceKey.has_value()) {
-    controller_.setLastError(
+    host_.setLastError(
         QStringLiteral("Playback source identities are exhausted."));
     return false;
   }
@@ -284,14 +286,14 @@ bool NativePlaybackOwner::open(const QUrl &source,
   const auto request = openPreflight_.enqueue(
       {*sourceKey, source.toEncoded().toStdString(), initialPositionSeconds, paused,
        !surfaceLost_ && surface_ != nullptr &&
-           controller_.nativeRouteAdmissionAllowed()});
+           host_.nativeRouteAdmissionAllowed()});
   if (!request.has_value()) {
     return false;
   }
   sourceFailureDetail_.clear();
   latestOpenPreflightRequest_ = *request;
   if (telemetry_ != nullptr) {
-    telemetry_->openRequested(*sourceKey, controller_.engineReady());
+    telemetry_->openRequested(*sourceKey, host_.engineReady());
   }
   return true;
 }
@@ -318,7 +320,7 @@ void NativePlaybackOwner::completeOpenPreflight(
   sourceFailureDetail_.clear();
   const QUrl routedSource = record.url;
   WAM_STARTUP_STAMP(RouteIntentBegin);
-  controller_.prepareRoutedOpenIntent(routedSource);
+  host_.prepareRoutedOpenIntent(routedSource);
   WAM_STARTUP_STAMP(RouteIntentEnd);
   if (result.requestId != latestOpenPreflightRequest_) {
     return;
@@ -327,7 +329,7 @@ void NativePlaybackOwner::completeOpenPreflight(
   try {
     sources_.emplace(result.sourceKey.value, std::move(record));
   } catch (...) {
-    controller_.setLastError(
+    host_.setLastError(
         QStringLiteral("Unable to retain the playback request."));
     return;
   }
@@ -336,7 +338,7 @@ void NativePlaybackOwner::completeOpenPreflight(
                     result.initialPositionSeconds, result.paused});
   if (!applied(transition)) {
     sources_.erase(result.sourceKey.value);
-    controller_.setLastError(
+    host_.setLastError(
         QStringLiteral("Unable to route the playback request."));
     return;
   }
@@ -352,12 +354,12 @@ bool NativePlaybackOwner::stop() {
   drainCurrentObservations();
   const playback_router::Transition transition = routeStop();
   if (!applied(transition)) {
-    controller_.setLastError(
+    host_.setLastError(
         QStringLiteral("Unable to stop the active playback route."));
     return false;
   }
   execute(transition);
-  controller_.finishStopUi(false);
+  host_.finishStopUi(false);
   return true;
 }
 
@@ -373,7 +375,7 @@ NativePlaybackOwner::setPaused(bool paused) {
   const playback_router::Transition transition =
       routeSetPaused(paused);
   if (!applied(transition)) {
-    controller_.setLastError(
+    host_.setLastError(
         QStringLiteral("Unable to change the playback state."));
     return nativeOwnsTransport() ? PauseDisposition::NativeHandled
                                  : PauseDisposition::FallbackHandled;
@@ -405,7 +407,7 @@ std::optional<playback_router::Transition>
 NativePlaybackOwner::beginFallbackCreate(
     const playback_router::Action &action) {
   if (hasNativeSession()) {
-    controller_.setLastError(QStringLiteral(
+    host_.setLastError(QStringLiteral(
         "Please wait for playback to stop, then try again."));
     return std::nullopt;
   }
@@ -413,12 +415,12 @@ NativePlaybackOwner::beginFallbackCreate(
   // Reserve terminal recovery before creating any fallback resource. If this
   // allocation fails, FallbackCreating can honestly fail with no mpv handle
   // admitted; once a handle exists, retirement needs no further allocation.
-  if (!controller_.mpv_.reserveReplacement()) {
-    controller_.setLastError(QStringLiteral(
+  if (!host_.mpvEngine().reserveReplacement()) {
+    host_.setLastError(QStringLiteral(
         "Could not start playback. Please try again."));
     return routeFallbackFailed({action.fallback.stamp});
   }
-  if (!controller_.initializePlaybackEngine()) {
+  if (!host_.initializePlaybackEngine()) {
     return routeFallbackFailed({action.fallback.stamp});
   }
 
@@ -428,12 +430,12 @@ NativePlaybackOwner::beginFallbackCreate(
 bool NativePlaybackOwner::beginFallbackOpen(
     const playback_router::Action &action) {
   const SourceRecord *record = sourceRecord(action.fallback.sourceKey);
-  if (record == nullptr || !controller_.engineReady()) {
-    controller_.setLastError(
+  if (record == nullptr || !host_.engineReady()) {
+    host_.setLastError(
         QStringLiteral("Could not open the file. Please try again."));
     return false;
   }
-  return controller_.beginRoutedFallbackOpen(
+  return host_.beginRoutedFallbackOpen(
       record->url, action.fallback.stamp.attempt.value,
       action.fallback.stamp.serial.value, action.fallback.sourceKey.value,
       action.fallback.paused, record->sourceClass);
@@ -441,21 +443,21 @@ bool NativePlaybackOwner::beginFallbackOpen(
 
 bool NativePlaybackOwner::beginFallbackStop(
     const playback_router::Action &action) {
-  if (!controller_.engineReady() || fallbackStop_.has_value()) {
-    controller_.setLastError(QStringLiteral(
+  if (!host_.engineReady() || fallbackStop_.has_value()) {
+    host_.setLastError(QStringLiteral(
         "Could not stop playback. Please try again."));
     return false;
   }
 
-  fallbackStop_ = FallbackStop{action.fallback, controller_.mpv_.core};
-  controller_.mpv_.revokeRendering();
-  controller_.requestVideoUpdate();
+  fallbackStop_ = FallbackStop{action.fallback, host_.mpvEngine().core};
+  host_.mpvEngine().revokeRendering();
+  host_.requestVideoUpdate();
   return submitFallbackStop();
 }
 
 bool NativePlaybackOwner::submitFallbackStop() {
-  if (!fallbackStop_.has_value() || !controller_.engineReady() ||
-      fallbackStop_->core != controller_.mpv_.core ||
+  if (!fallbackStop_.has_value() || !host_.engineReady() ||
+      fallbackStop_->core != host_.mpvEngine().core ||
       fallbackStop_->submissions >= kMaximumFallbackStopSubmissions) {
     exhaustFallbackStop(QStringLiteral(
         "Playback did not stop."));
@@ -472,7 +474,7 @@ bool NativePlaybackOwner::submitFallbackStop() {
   fallbackStop_->commandReplied = false;
   fallbackStop_->idleObserved = false;
 
-  if (!controller_.mpv_.submitStop(kFallbackStopReplyNamespace |
+  if (!host_.mpvEngine().submitStop(kFallbackStopReplyNamespace |
                                    nextFallbackStopReplyId_)) {
     if (fallbackStop_->submissions < kMaximumFallbackStopSubmissions)
       return submitFallbackStop();
@@ -480,20 +482,14 @@ bool NativePlaybackOwner::submitFallbackStop() {
         "Could not stop playback."));
     return false;
   }
-  const QPointer<PlayerController> controller = &controller_;
   const std::uint64_t replyId = fallbackStop_->replyId;
   QTimer::singleShot(
-      kFallbackStopWatchdogMilliseconds, &controller_, [controller, replyId] {
-        if (controller == nullptr || !controller->native_)
-          return;
-        auto &owner = static_cast<NativePlaybackOwner &>(*controller->native_);
-        if (!owner.fallbackStop_.has_value() ||
-            owner.fallbackStop_->replyId != replyId ||
-            owner.fallbackStop_->terminalResetRequired) {
+      kFallbackStopWatchdogMilliseconds, &timerContext_, [this, replyId] {
+        if (!fallbackStop_.has_value() || fallbackStop_->replyId != replyId ||
+            fallbackStop_->terminalResetRequired) {
           return;
         }
-        owner.exhaustFallbackStop(QStringLiteral(
-            "Playback took too long to stop."));
+        exhaustFallbackStop(QStringLiteral("Playback took too long to stop."));
       });
   return true;
 }
@@ -505,7 +501,7 @@ void NativePlaybackOwner::exhaustFallbackStop(const QString &detail) {
   fallbackStop_->commandReplied = false;
   fallbackStop_->idleObserved = false;
   qWarning().noquote() << "WAM:" << detail;
-  controller_.setLastError(QStringLiteral("Playback stopped responding. Please open the file again."));
+  host_.setLastError(QStringLiteral("Playback stopped responding. Please open the file again."));
   maybeCompleteFallbackStop();
 }
 
@@ -528,7 +524,7 @@ void NativePlaybackOwner::publishLifecycle(
         using Event = std::decay_t<decltype(event)>;
         if constexpr (std::is_same_v<Event, native_protocol::Prepared>) {
           if (telemetry_ != nullptr) {
-            telemetry_->prepared(event, controller_.engineReady());
+            telemetry_->prepared(event, host_.engineReady());
           }
           // The base owner submits Start before calling here, i.e. before any
           // synchronous QML-facing signal below. durationChanged may
@@ -537,38 +533,38 @@ void NativePlaybackOwner::publishLifecycle(
           // Start command has been physically admitted.
           const SourceRecord *record = sourceRecord(event.sourceKey);
           if (record != nullptr) {
-            controller_.updateSource(record->url);
-            controller_.updateMediaTitle(
+            host_.updateSource(record->url);
+            host_.updateMediaTitle(
                 QFileInfo(record->url.toLocalFile()).fileName());
           }
           // Before the duration: durationChanged may issue the resume seek,
           // and that target must already be snapped under the ceiling.
-          controller_.updateNativeSeekCeiling(
+          host_.updateNativeSeekCeiling(
               nativeSeekCeilingSeconds());
-          controller_.updateDuration(event.descriptor.durationSeconds);
+          host_.updateDuration(event.descriptor.durationSeconds);
           // Published before the QML-facing signals below so that a handler
           // reacting to the open already sees it. Zero means "not stated"
           // and updateVideoFacts drops it.
-          controller_.updateVideoFacts(event.descriptor.displayWidth,
+          host_.updateVideoFacts(event.descriptor.displayWidth,
                                        event.descriptor.displayHeight,
                                        event.descriptor.highDynamicRange);
-          controller_.updatePause(true);
-          controller_.updateIdle(false);
-          controller_.updateEof(false);
-          controller_.setLastError({});
+          host_.updatePause(true);
+          host_.updateIdle(false);
+          host_.updateEof(false);
+          host_.setLastError({});
         } else if constexpr (std::is_same_v<Event, native_protocol::Started>) {
           if (telemetry_ != nullptr) {
-            telemetry_->started(event, controller_.engineReady());
+            telemetry_->started(event, host_.engineReady());
           }
-          controller_.updateLoading(false);
-          controller_.updateIdle(false);
-          controller_.updateEof(false);
+          host_.updateLoading(false);
+          host_.updateIdle(false);
+          host_.updateEof(false);
         } else if constexpr (std::is_same_v<Event, native_protocol::Ended>) {
           const double position = std::max(0.0, event.finalPositionSeconds);
-          controller_.publishSeekTarget(position);
-          controller_.updatePause(true);
-          controller_.updateIdle(true);
-          controller_.updateEof(true);
+          host_.publishSeekTarget(position);
+          host_.updatePause(true);
+          host_.updateIdle(true);
+          host_.updateEof(true);
         } else if constexpr (std::is_same_v<Event, native_protocol::Failed>) {
           // The router owns recovery. A native refusal is not a user error:
           // only failure of the final playback route is surfaced.
@@ -581,14 +577,14 @@ void NativePlaybackOwner::publishLifecycle(
 
 void NativePlaybackOwner::publishPreviewPresented(
     const native_protocol::PreviewPresented &presented) {
-  if (telemetry_) telemetry_->previewFrameDrawn(presented, controller_.engineReady());
-  controller_.nativePreviewPresented(presented);
+  if (telemetry_) telemetry_->previewFrameDrawn(presented, host_.engineReady());
+  host_.nativePreviewPresented(presented);
 }
 
 void NativePlaybackOwner::publishPreviewFailed(
     const native_protocol::PreviewFailed &failed) {
-  if (telemetry_) telemetry_->previewFailed(failed, controller_.engineReady());
-  controller_.nativePreviewFailed(failed);
+  if (telemetry_) telemetry_->previewFailed(failed, host_.engineReady());
+  host_.nativePreviewFailed(failed);
 }
 
 void NativePlaybackOwner::publishRunState(
@@ -598,49 +594,49 @@ void NativePlaybackOwner::publishRunState(
   // native graph. Its pause acknowledgement must not make the QML transport
   // appear paused; play/pause during the gesture updates that retained intent
   // and CommitReady applies it to the promoted generation.
-  if (!controller_.nativeSeekInFlight()) {
-    controller_.updatePause(command.paused);
+  if (!host_.nativeSeekInFlight()) {
+    host_.updatePause(command.paused);
   }
-  controller_.updateIdle(false);
-  controller_.updateEof(false);
+  host_.updateIdle(false);
+  host_.updateEof(false);
 }
 
 void NativePlaybackOwner::publishAudioClock(
     const native_protocol::AudioClockProof &proof) {
   const double position = std::max(0.0, proof.positionSeconds);
-  controller_.publishNativeMainPosition(position);
+  host_.publishNativeMainPosition(position);
 }
 
 void NativePlaybackOwner::publishVideoDraw(
     const native_protocol::VideoDrawProof &proof, bool first) {
-  if (first && telemetry_) telemetry_->firstFrameDrawn(proof, controller_.engineReady());
+  if (first && telemetry_) telemetry_->firstFrameDrawn(proof, host_.engineReady());
   // NativeAudioSession owns the authoritative running clock internally, but
   // the public v1 proof stream emits a sampled AudioClockProof only for
   // paused transport and for video-less generations. While video is running,
   // the exact drawn frame PTS is therefore the bounded, event-driven UI
   // playhead observation.
   const double position = std::max(0.0, proof.frameStartSeconds);
-  controller_.publishNativeMainPosition(position);
+  host_.publishNativeMainPosition(position);
   // The same proof also carries this frame's own duration, which is the only
   // per-sample timing the GUI layer ever sees. Frame stepping reads it to
   // find the neighbouring sample's exact PTS under VFR; publishing it here
   // means the first "." after a pause already has a proved covering frame and
   // costs no settling commit.
-  controller_.publishNativeFrameGeometry(position, proof.frameDurationSeconds);
+  host_.publishNativeFrameGeometry(position, proof.frameDurationSeconds);
 }
 
 void NativePlaybackOwner::commitProved(const native_protocol::CommitReady& ready, bool first) {
   if (telemetry_) {
-    telemetry_->commitReady(ready, controller_.engineReady());
-    if (first) telemetry_->firstFrameDrawn(ready.videoDraw, controller_.engineReady());
+    telemetry_->commitReady(ready, host_.engineReady());
+    if (first) telemetry_->firstFrameDrawn(ready.videoDraw, host_.engineReady());
   }
 }
 void NativePlaybackOwner::publishCommitReady(
     const native_protocol::CommitReady &ready) {
-  controller_.nativeCommitReady(ready);
-  controller_.updateIdle(false);
-  controller_.updateEof(false);
-  controller_.publishSeekTarget(std::max(0.0, ready.targetSeconds));
+  host_.nativeCommitReady(ready);
+  host_.updateIdle(false);
+  host_.updateEof(false);
+  host_.publishSeekTarget(std::max(0.0, ready.targetSeconds));
   if (telemetry_ != nullptr) {
     static_cast<void>(telemetry_->checkpoint());
   }
@@ -681,7 +677,7 @@ void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyUserdata,
   }
   fallbackStop_->commandReplied = true;
   fallbackStop_->idleObserved = false;
-  if (controller_.mpv_.idle()) {
+  if (host_.mpvEngine().idle()) {
     fallbackStop_->idleObserved = true;
   }
   maybeCompleteFallbackStop();
@@ -689,13 +685,13 @@ void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyUserdata,
 
 void NativePlaybackOwner::fallbackIdleChanged(bool idle) {
   if (!fallbackStop_.has_value() || !fallbackStop_->commandReplied || !idle ||
-      fallbackStop_->core != controller_.mpv_.core) {
+      fallbackStop_->core != host_.mpvEngine().core) {
     return;
   }
   // Property observations are coalesced and can have been published before
   // the Stop reply. Re-read only after exact command completion so the value
   // is causally post-Stop.
-  if (controller_.mpv_.idle()) {
+  if (host_.mpvEngine().idle()) {
     fallbackStop_->idleObserved = true;
   }
   maybeCompleteFallbackStop();
@@ -718,15 +714,15 @@ void NativePlaybackOwner::maybeCompleteFallbackStop() {
     return;
   }
   if (!fallbackStop_.has_value() || !fallbackStop_->core ||
-      fallbackStop_->core != controller_.mpv_.core ||
-      !controller_.mpv_.renderingReleased()) {
+      fallbackStop_->core != host_.mpvEngine().core ||
+      !host_.mpvEngine().renderingReleased()) {
     return;
   }
 
   const playback_router::FallbackCommand command = fallbackStop_->command;
   if (fallbackStop_->terminalResetRequired) {
     const std::shared_ptr<PlayerCore> retiredCore = fallbackStop_->core;
-    if (!controller_.resetRoutedFallbackCoreAfterRelease(retiredCore)) {
+    if (!host_.resetRoutedFallbackCoreAfterRelease(retiredCore)) {
       return;
     }
   } else if (!fallbackStop_->commandReplied || !fallbackStop_->idleObserved) {
@@ -751,7 +747,7 @@ void NativePlaybackOwner::detachSurface(MpvVideoItem *item) noexcept {
 }
 
 void NativePlaybackOwner::sessionCleared() noexcept {
-  controller_.updateNativeSeekCeiling(0.0);
+  host_.updateNativeSeekCeiling(0.0);
 }
 
 void NativePlaybackOwner::surfaceNativeError(const QString &detail) {
@@ -765,43 +761,43 @@ void NativePlaybackOwner::surfaceNativeError(macos::NativeOwnerError,
 }
 void NativePlaybackOwner::ownerError(const char* detail) {
   qWarning() << "WAM:" << detail;
-  controller_.finishStopUi(false);
-  controller_.setLastError(QStringLiteral("Playback stopped. Please try opening the file again."));
+  host_.finishStopUi(false);
+  host_.setLastError(QStringLiteral("Playback stopped. Please try opening the file again."));
 }
 void NativePlaybackOwner::ownerNotice(const char* detail) { qInfo() << "WAM:" << detail; }
 void NativePlaybackOwner::seekProgress(std::uint64_t) {
-  controller_.setLastNotice(QStringLiteral("Seeking…"));
+  host_.setLastNotice(QStringLiteral("Seeking…"));
 }
 void NativePlaybackOwner::commitFailed(std::uint64_t gesture, std::uint64_t request) {
-  controller_.nativeCommitFailed(gesture, request);
+  host_.nativeCommitFailed(gesture, request);
 }
 void NativePlaybackOwner::nativeSelected(const native_protocol::Prepare& command) {
-  if (telemetry_) telemetry_->nativeSelected(command, controller_.engineReady());
+  if (telemetry_) telemetry_->nativeSelected(command, host_.engineReady());
 }
 void NativePlaybackOwner::fallbackSelected(const playback_router::FallbackCommand& command) {
-  if (telemetry_) telemetry_->fallbackSelected(command.stamp, command.sourceKey, controller_.engineReady());
+  if (telemetry_) telemetry_->fallbackSelected(command.stamp, command.sourceKey, host_.engineReady());
 }
 void NativePlaybackOwner::previewDispatched(native_protocol::GestureId gesture, native_protocol::RequestId request, double target) {
-  if (telemetry_) telemetry_->previewDispatched(gesture, request, target, controller_.engineReady());
+  if (telemetry_) telemetry_->previewDispatched(gesture, request, target, host_.engineReady());
 }
 void NativePlaybackOwner::previewAdmitted(const native_protocol::PreviewFrame& command) {
-  if (telemetry_) telemetry_->previewAdmitted(command, controller_.engineReady());
+  if (telemetry_) telemetry_->previewAdmitted(command, host_.engineReady());
 }
 void NativePlaybackOwner::commitSubmitted(const native_protocol::CommitSeek& command) {
-  if (telemetry_) telemetry_->commitSeekSubmitted(command, controller_.engineReady());
+  if (telemetry_) telemetry_->commitSeekSubmitted(command, host_.engineReady());
 }
 std::optional<playback_router::Transition> NativePlaybackOwner::applyFallbackRunState(const playback_router::Action& action) {
 
-    if (!controller_.engineReady()) {
+    if (!host_.engineReady()) {
       return routeFallbackFailed({action.fallback.stamp});
     }
-    if (!controller_.mpv_.setPausedNow(action.fallback.paused)) {
-      controller_.setLastError(
+    if (!host_.mpvEngine().setPausedNow(action.fallback.paused)) {
+      host_.setLastError(
           QStringLiteral("Could not apply the playback "
                          "change."));
       return routeFallbackFailed({action.fallback.stamp});
     }
-    controller_.updatePause(action.fallback.paused);
+    host_.updatePause(action.fallback.paused);
     return std::nullopt;
 
 }

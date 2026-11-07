@@ -56,7 +56,7 @@ void setMacosPlaybackActivityHeld(bool held) noexcept;
 class NativePlaybackOwner final : public macos::NativePlaybackOwner,
                                   public NativeEngine {
 public:
-  explicit NativePlaybackOwner(PlayerController &controller);
+  NativePlaybackOwner(PlayerController &controller, NativeEngineHost &host);
   ~NativePlaybackOwner();
 
   NativePlaybackOwner(const NativePlaybackOwner &) = delete;
@@ -200,6 +200,9 @@ private:
   void samplePlaybackMetrics();
 
   PlayerController &controller_;
+  NativeEngineHost &host_;
+  // Context for this owner's own timers: destroyed with it, which cancels them.
+  QObject timerContext_;
   QPointer<MpvVideoItem> surface_;
   std::map<std::uint64_t, SourceRecord> sources_;
   ::wam::macos::NativeOpenPreflight openPreflight_;
