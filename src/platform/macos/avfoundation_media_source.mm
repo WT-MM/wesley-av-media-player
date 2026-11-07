@@ -3695,22 +3695,13 @@ struct AVFoundationMediaSource::Impl final
       withdrawFailedOperation();
       return generationStart(std::move(started));
     }
-    if ((options.selection.requireVideo &&
-         !started.descriptor->selectedVideo) ||
-        (options.selection.requireAudio &&
-         !started.descriptor->selectedAudio)) {
+    if (!selectsRequiredTracks(*started.descriptor, options, &started.error)) {
       started.status = AVFoundationGenerationStatus::Unsupported;
-      started.error = "AVFoundation did not select every required track";
       withdrawFailedOperation();
       return generationStart(std::move(started));
     }
-    descriptor = started.descriptor;
-    assetContext = started.assetContext;
-    videoTerminal = !descriptor->selectedVideo;
-    audioTerminal = !descriptor->selectedAudio;
-    if ((!videoTerminal && !stage(true, true, &started.error)) ||
-        (!audioTerminal && !stage(false, true, &started.error)) ||
-        isCancelled()) {
+    installGeneration(started.descriptor, started.assetContext);
+    if (!stageAdmissionHeads(&started.error)) {
       started.status = isCancelled()
                            ? AVFoundationGenerationStatus::Cancelled
                            : AVFoundationGenerationStatus::Unsupported;
@@ -3723,8 +3714,7 @@ struct AVFoundationMediaSource::Impl final
                               started.declaredPresentationEnd,
                               started.declaredAudioEnd)
             .value_or(media::MediaAudioGenerationWindow{});
-    open = true;
-    openSnapshot.store(true, std::memory_order_release);
+    publishOpen();
     return generationStart(std::move(started));
   }
 };
