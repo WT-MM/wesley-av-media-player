@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 
 namespace wam::macos {
 
@@ -180,8 +181,8 @@ struct YCbCrMatrixRows {
 // untagged PQ surface is presented as SDR -- the washed-out render this
 // mapping prevents.
 //
-// This is the exact inverse of avfoundation_media_support.mm's copy* readers,
-// stated once so the two directions cannot drift apart.
+// The *ForExtension readers below are the inverse direction, derived from
+// these maps so the two directions cannot drift apart.
 //
 // nullptr means "write no key". Absence is how an untagged stream is spelled
 // to CoreMedia, so an untagged track keeps a byte-identical description. OtherExplicit and Srgb
@@ -245,6 +246,56 @@ ycbcrMatrixExtension(media::MediaMatrixCoefficients value) noexcept {
   default:
     return nullptr;
   }
+}
+
+// The inverse direction: the enumerator a CoreMedia colour extension value
+// spells, or nullopt when the value is not one the maps above write.
+template <typename Enum, std::size_t N>
+[[nodiscard]] inline std::optional<Enum> colorEnumForExtension(
+    CFTypeRef value, const std::array<Enum, N>& candidates,
+    CFStringRef (*extension)(Enum)) noexcept {
+  if (value == nullptr || CFGetTypeID(value) != CFStringGetTypeID()) {
+    return std::nullopt;
+  }
+  for (const Enum candidate : candidates) {
+    if (CFStringRef spelled = extension(candidate);
+        spelled != nullptr && CFEqual(value, spelled)) {
+      return candidate;
+    }
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] inline std::optional<media::MediaColorPrimaries>
+colorPrimariesForExtension(CFTypeRef value) noexcept {
+  using P = media::MediaColorPrimaries;
+  return colorEnumForExtension(value, std::array{P::Bt709, P::Bt2020, P::Bt601},
+                               colorPrimariesExtension);
+}
+
+[[nodiscard]] inline std::optional<media::MediaTransferFunction>
+transferFunctionForExtension(CFTypeRef value) noexcept {
+  using T = media::MediaTransferFunction;
+  return colorEnumForExtension(value, std::array{T::Bt709, T::Pq, T::Hlg},
+                               transferFunctionExtension);
+}
+
+// matrix_coefficients 5 is the same matrix as 6, spelled the way CoreMedia
+// spells a value it has no constant for (see bt470bgYCbCrMatrixSpelling()), so
+// it reads as Bt601 although Bt601 is written back as the 601_4 constant.
+[[nodiscard]] inline std::optional<media::MediaMatrixCoefficients>
+ycbcrMatrixForExtension(CFTypeRef value) noexcept {
+  using M = media::MediaMatrixCoefficients;
+  if (const auto known = colorEnumForExtension(
+          value, std::array{M::Bt709, M::Bt601, M::Bt2020Ncl},
+          ycbcrMatrixExtension)) {
+    return known;
+  }
+  if (value != nullptr && CFGetTypeID(value) == CFStringGetTypeID() &&
+      CFEqual(value, bt470bgYCbCrMatrixSpelling())) {
+    return M::Bt601;
+  }
+  return std::nullopt;
 }
 
 // Writes whichever of the three keys are modelled onto `extensions`.

@@ -466,6 +466,12 @@ struct MediaSample {
   // descriptions remain available through its typed native lease.
   std::uint32_t sampleCount{1};
   std::uint32_t decodedAudioFrames{0};
+  // AAC only: each packet's CoreMedia timing states the presentation extent
+  // the source proved from the container's edit list (an overlap trim when
+  // shorter than the access unit, declared silence when longer) instead of
+  // the access unit's decoded length. The converter maps such samples onto
+  // its piecewise timeline.
+  bool aacPiecewiseTimeline{false};
   MediaPayloadLease payload;
 
   MediaSample() = default;

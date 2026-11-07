@@ -987,7 +987,7 @@ struct NativeAudioConverter::Impl {
     std::uint64_t duration{};
   };
   // The AAC piecewise timeline. A source that proves AAC packet extents from
-  // the container's edit list (the sample's aacPiecewiseTimelineAttachmentKey)
+  // the container's edit list (MediaSample::aacPiecewiseTimeline)
   // states each packet's presentation extent, which may be shorter or longer
   // than the packet's kAacFrames decoded frames; the extents of committed
   // samples queue here until their decoded frames are published.
@@ -1448,7 +1448,7 @@ NativeAudioConverter::prepare(const media::MediaSample &sample,
     return outcome;
   }
   const bool piecewise = state.audio.formatTag == kAudioFormatMPEG4AAC &&
-      CMGetAttachment(nativeSample,aacPiecewiseTimelineAttachmentKey(),nullptr) == kCFBooleanTrue;
+      sample.aacPiecewiseTimeline;
   if ((state.has_input_timeline && piecewise != state.aac.piecewise) ||
       (piecewise && sample.sampleCount > state.aac.room())) {
     assignError(error,"AAC piecewise mapping capacity or identity mismatch");
