@@ -149,8 +149,8 @@ python3 - "$repo" "$prefix" <<'PYVERIFY'
 import ctypes, pathlib, re, subprocess, sys
 repo, prefix = map(pathlib.Path, sys.argv[1:])
 symbols = (prefix / 'share/wam-media/mpv-symbols.txt').read_text()
-required = re.findall(r'WAM_REQUIRE_MPV_SYMBOL\((mpv_\w+)\)',
-                      (repo / 'src/playback/mpv/mpv_api.cpp').read_text())
+required = re.findall(r'\bX\((mpv_\w+)\)',
+                      (repo / 'src/playback/mpv/mpv_api.hpp').read_text())
 assert required
 for name in required:
     assert re.search(r'\b_' + name + r'$', symbols, re.M), name
