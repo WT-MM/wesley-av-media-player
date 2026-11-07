@@ -42,6 +42,15 @@ enum class RetireStage : std::uint8_t {
   StopOutput,
   InvalidateGraph,
   CloseOutput,
+  Done,
+};
+
+// An admitted exact retirement. Only this pair may be retried, and its stage
+// only moves forward.
+struct Retirement {
+  media::MediaGeneration retired{0};
+  media::MediaGeneration invalidation{0};
+  RetireStage stage{RetireStage::StopOutput};
 };
 
 enum class TerminalOverride : std::uint8_t {
@@ -477,7 +486,6 @@ struct NativeAudioSessionControl final {
   NativeAudioSessionFailure failure{NativeAudioSessionFailure::None};
   SessionLifecycle lifecycle{SessionLifecycle::None};
   FlushStage flushStage{FlushStage::Stop};
-  RetireStage retireStage{RetireStage::StopOutput};
   OutputSuspension outputSuspension{OutputSuspension::None};
   media::MediaGeneration generation{0};
   media::MediaGeneration highestExposedGeneration{0};
@@ -511,10 +519,7 @@ struct NativeAudioSessionControl final {
   bool endOfStreamRequested{false};
   bool terminalPublished{false};
   bool clockActivated{false};
-  bool retireRequested{false};
-  bool retireDone{false};
-  media::MediaGeneration retireRetiredGeneration{0};
-  media::MediaGeneration retireInvalidationGeneration{0};
+  std::optional<Retirement> retirement;
   bool closeDone{false};
   TerminalOverride terminalOverride{TerminalOverride::None};
   media::MediaGeneration terminalOverrideGeneration{0};
@@ -765,6 +770,11 @@ void publishOutputRefusalText(NativeAudioSessionControl& control) noexcept {
                                    : "");
   } catch (...) {
   }
+}
+
+[[nodiscard]] bool retirementDone(
+    const NativeAudioSessionControl& control) noexcept {
+  return control.retirement && control.retirement->stage == RetireStage::Done;
 }
 
 [[nodiscard]] bool outputFailed(NativeAudioSessionControl& control) noexcept {
@@ -1024,7 +1034,7 @@ enum class DeviceReconcile : std::uint8_t {
   }
   // Teardown owns the output outright once any of these is in flight, and a
   // retiring/closing session has no interest in resuming a device.
-  if (control.retireRequested || control.closeDone ||
+  if (control.retirement.has_value() || control.closeDone ||
       control.lifecycle != SessionLifecycle::None ||
       control.terminalOverride != TerminalOverride::None ||
       (control.state != NativeAudioSessionState::Started &&
@@ -1236,10 +1246,8 @@ beginRetire(NativeAudioSessionControl& control,
       invalidationGeneration <= highestInstalled) {
     return media::NativeMediaConsumerProgress::Failed;
   }
-  control.retireRequested = true;
-  control.retireRetiredGeneration = retiredGeneration;
-  control.retireInvalidationGeneration = invalidationGeneration;
-  control.retireStage = RetireStage::StopOutput;
+  control.retirement = Retirement{retiredGeneration, invalidationGeneration,
+                                  RetireStage::StopOutput};
   control.lifecycle = SessionLifecycle::None;
   control.lifecycleRetired = 0;
   control.lifecycleTarget = 0;
@@ -1255,7 +1263,7 @@ beginRetire(NativeAudioSessionControl& control,
 // Retire phase 1: stop the device and park the clock.
 [[nodiscard]] RetireStep
 retireStopOutput(NativeAudioSessionControl& control) noexcept {
-  if (control.retireStage != RetireStage::StopOutput) {
+  if (control.retirement->stage != RetireStage::StopOutput) {
     return std::nullopt;
   }
   if (control.output != nullptr) {
@@ -1302,7 +1310,7 @@ retireStopOutput(NativeAudioSessionControl& control) noexcept {
       }
     }
   }
-  control.retireStage = RetireStage::InvalidateGraph;
+  control.retirement->stage = RetireStage::InvalidateGraph;
   return std::nullopt;
 }
 
@@ -1310,11 +1318,11 @@ retireStopOutput(NativeAudioSessionControl& control) noexcept {
 // give up the converter.
 [[nodiscard]] RetireStep
 retireInvalidateGraph(NativeAudioSessionControl& control) noexcept {
-  if (control.retireStage != RetireStage::InvalidateGraph) {
+  if (control.retirement->stage != RetireStage::InvalidateGraph) {
     return std::nullopt;
   }
   const media::MediaGeneration invalidation =
-      control.retireInvalidationGeneration;
+      control.retirement->invalidation;
   if (control.ring.generation() != invalidation &&
       !control.ring.flush(invalidation)) {
     return failRetire(control, NativeAudioSessionFailure::RingTransition,
@@ -1346,7 +1354,7 @@ retireInvalidateGraph(NativeAudioSessionControl& control) noexcept {
   // Nothing compares CloseOutput, and that IS its effect: both stage guards
   // above fail once it is set, so a retry re-runs only the close-and-audit
   // tail, which is the only part of retire that is idempotent.
-  control.retireStage = RetireStage::CloseOutput;
+  control.retirement->stage = RetireStage::CloseOutput;
   return std::nullopt;
 }
 
@@ -1373,7 +1381,7 @@ retireCloseOutput(NativeAudioSessionControl& control) noexcept {
 [[nodiscard]] RetireStep
 retireAuditQuiesced(NativeAudioSessionControl& control) noexcept {
   const media::MediaGeneration invalidation =
-      control.retireInvalidationGeneration;
+      control.retirement->invalidation;
   if (control.ring.generation() != invalidation ||
       control.ring.queuedSlabs() != 0 ||
       !converterRetired(control.converter.stats())) {
@@ -1704,7 +1712,7 @@ media::NativeMediaConsumeResult NativeAudioSession::discontinuity(
     return media::NativeMediaConsumeResult::Failed;
   }
   NativeAudioSessionControl& control = *control_;
-  if (control.retireRequested) {
+  if (control.retirement.has_value()) {
     return media::NativeMediaConsumeResult::Failed;
   }
   if (discontinuity.generation != control.generation) {
@@ -1892,7 +1900,7 @@ NativeAudioSession::suspendOutputForPause() noexcept {
     return NativeAudioSessionProgress::Done;
   }
   if (control.output == nullptr || !control.requestedPaused ||
-      control.retireRequested ||
+      control.retirement.has_value() ||
       control.lifecycle != SessionLifecycle::None ||
       control.terminalOverride != TerminalOverride::None ||
       control.state != NativeAudioSessionState::Started) {
@@ -1981,7 +1989,7 @@ NativeAudioSessionProgress NativeAudioSession::stop() noexcept {
   }
   NativeAudioSessionControl& control = *control_;
   clearOutputWake(control);
-  if (control.retireRequested) {
+  if (control.retirement.has_value()) {
     return NativeAudioSessionProgress::Invalid;
   }
   if (control.terminalOverride == TerminalOverride::Stop) {
@@ -2034,7 +2042,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
   }
   NativeAudioSessionControl& control = *control_;
   clearOutputWake(control);
-  if (control.retireRequested) {
+  if (control.retirement.has_value()) {
     return media::NativeMediaConsumerProgress::Failed;
   }
   if (nextGeneration != 0 && nextGeneration > retiredGeneration &&
@@ -2159,7 +2167,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::cancel(
   }
   NativeAudioSessionControl& control = *control_;
   clearOutputWake(control);
-  if (control.retireRequested) {
+  if (control.retirement.has_value()) {
     return media::NativeMediaConsumerProgress::Failed;
   }
   if (generation != control.generation) {
@@ -2232,12 +2240,12 @@ media::NativeMediaConsumerProgress NativeAudioSession::retire(
   NativeAudioSessionControl& control = *control_;
   clearOutputWake(control);
 
-  if (control.retireRequested) {
-    if (retiredGeneration != control.retireRetiredGeneration ||
-        invalidationGeneration != control.retireInvalidationGeneration) {
+  if (control.retirement.has_value()) {
+    if (retiredGeneration != control.retirement->retired ||
+        invalidationGeneration != control.retirement->invalidation) {
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
-    if (control.retireDone) {
+    if (control.retirement->stage == RetireStage::Done) {
       return media::NativeMediaConsumerProgress::Done;
     }
   } else if (const RetireStep admission =
@@ -2260,13 +2268,13 @@ media::NativeMediaConsumerProgress NativeAudioSession::retire(
   }
 
   const media::MediaGeneration invalidation =
-      control.retireInvalidationGeneration;
+      control.retirement->invalidation;
   control.output.reset();
   control.generation = invalidation;
   control.configured = false;
   control.firstAudioSampleAccepted = false;
   control.active.decodeStart = {};
-  control.retireDone = true;
+  control.retirement->stage = RetireStage::Done;
   control.state = NativeAudioSessionState::Closed;
   releaseClaim(control);
   return media::NativeMediaConsumerProgress::Done;
@@ -2289,7 +2297,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
   // down.
   if (control.closeDone ||
       (control.state == NativeAudioSessionState::Closed &&
-       !control.retireDone)) {
+       !retirementDone(control))) {
     return media::NativeMediaConsumerProgress::Done;
   }
   control.state = NativeAudioSessionState::Closing;
@@ -2333,7 +2341,7 @@ media::NativeMediaClockSnapshot NativeAudioSession::visibleClock() const noexcep
   if (control_ == nullptr) {
     return {};
   }
-  if (control_->retireRequested && control_->clockActivated) {
+  if (control_->retirement.has_value() && control_->clockActivated) {
     return control_->clock.sample();
   }
   if (!control_->configured) {
@@ -2379,9 +2387,11 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.clockGeneration = clock.generation;
   result.clockValid = clock.valid;
   result.highestExposedGeneration = control.highestExposedGeneration;
-  result.retiredGeneration = control.retireRetiredGeneration;
-  result.invalidationGeneration = control.retireInvalidationGeneration;
-  result.retireDone = control.retireDone;
+  result.retiredGeneration =
+      control.retirement ? control.retirement->retired : 0;
+  result.invalidationGeneration =
+      control.retirement ? control.retirement->invalidation : 0;
+  result.retireDone = retirementDone(control);
   result.closeDone = control.closeDone;
   result.outputSuspended =
       control.outputSuspension == OutputSuspension::Suspended;
