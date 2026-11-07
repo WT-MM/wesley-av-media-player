@@ -210,7 +210,13 @@ public:
   PlayerController &operator=(const PlayerController &) = delete;
 
   [[nodiscard]] bool available() const;
-  [[nodiscard]] bool loading() const { return loading_; }
+  [[nodiscard]] bool loading() const {
+    return std::holds_alternative<MediaOpening>(media_phase_);
+  }
+  // Whether an open of `source` may land in this player: it holds nothing,
+  // or it is already opening exactly that file. A player opening some other
+  // file is taken.
+  [[nodiscard]] bool claimableFor(const QUrl &source) const;
   [[nodiscard]] bool hasMedia() const { return !source_.isEmpty(); }
   [[nodiscard]] QUrl source() const override { return source_; }
   [[nodiscard]] QString mediaTitle() const { return media_title_; }
@@ -727,7 +733,6 @@ private:
   void updatePause(bool paused) override;
   void updateIdle(bool idle) override;
   void updateLoading(bool loading) override;
-  bool loading_ = false;
   void updateEof(bool eof_reached) override;
   void updateDuration(double duration) override;
   // The native route's presentable ceiling (NativeMediaSession::
@@ -746,7 +751,17 @@ private:
   void updateMediaTitle(const QString &title) override;
   void resetTimeline() override;
   void cancelCaptionsForMediaChange();
+  // The engines' error report. During Opening an error IS the open failing
+  // (failOpen); otherwise it is only shown.
   void setLastError(const QString &error) override;
+  // Empties the player after its open failed, then shows why.
+  void failOpen(const QString &error);
+  // An error about a user action (a subtitle file, an export). Never changes
+  // what the player holds.
+  void showError(const QString &error);
+  // Burns the previous media's gesture, captions and timeline and stamps a
+  // new request serial for `source` (empty on stop).
+  void beginMediaTransaction(const QUrl &source);
   // Non-blocking counterpart to setLastError: fallback-continuation notices
   // (native playback degraded to compatibility playback, or a seek could not
   // be served natively) where playback kept going and a modal dialog would
@@ -800,6 +815,18 @@ private:
   bool subtitle_sources_native_ = false;
   bool subtitle_sources_built_ = false;
 
+  // What the player holds. Empty <=> source_ is empty. Opening is the
+  // native route's open in flight, carrying the URL the user asked for (the
+  // compatibility route goes straight from Empty to Loaded when mpv reports
+  // the path).
+  struct MediaEmpty {};
+  struct MediaOpening {
+    QUrl requested;
+  };
+  struct MediaLoaded {};
+  using MediaPhase = std::variant<MediaEmpty, MediaOpening, MediaLoaded>;
+  MediaPhase media_phase_;
+  void setMediaPhase(MediaPhase phase);
   QUrl source_;
   // requested_source_ is the authoritative GUI intent. source_ mirrors mpv's
   // observed path and can briefly clear during asynchronous replacement.

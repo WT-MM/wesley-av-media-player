@@ -180,8 +180,8 @@ PlayerWindow::~PlayerWindow() {
   controller_ = nullptr;
 }
 
-bool PlayerWindow::claimable() const {
-  return controller_ != nullptr && (controller_->loading() || !controller_->hasMedia());
+bool PlayerWindow::claimableFor(const QUrl &source) const {
+  return controller_ != nullptr && controller_->claimableFor(source);
 }
 
 bool PlayerWindow::open(const QUrl &source) {
@@ -431,13 +431,13 @@ PlayerWindow *WindowManager::createWindow() {
   return window;
 }
 
-PlayerWindow *WindowManager::claimableWindow() const {
+PlayerWindow *WindowManager::claimableWindow(const QUrl &source) const {
   // The focused window wins the claim when it is empty: opening a file with a
   // blank window in front of you must fill that window, not appear behind it.
-  if (focused_ && focused_->claimable())
+  if (focused_ && focused_->claimableFor(source))
     return focused_.data();
   for (PlayerWindow *window : windows_) {
-    if (window->claimable())
+    if (window->claimableFor(source))
       return window;
   }
   return nullptr;
@@ -447,7 +447,7 @@ bool WindowManager::openUrl(const QUrl &source) {
   if (source.isEmpty())
     return false;
 
-  if (PlayerWindow *claim = claimableWindow()) {
+  if (PlayerWindow *claim = claimableWindow(source)) {
     claim->raiseWindow();
     return claim->open(source);
   }

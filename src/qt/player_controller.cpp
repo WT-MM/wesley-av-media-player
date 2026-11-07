@@ -295,7 +295,7 @@ bool PlayerController::open(const QUrl &source) {
     if (accepted) {
       setLastError({});
       setLastNotice({});
-      updateLoading(true);
+      setMediaPhase(MediaOpening{source});
       updateSource(source);
       updateMediaTitle(source.fileName());
     }
@@ -306,48 +306,39 @@ bool PlayerController::open(const QUrl &source) {
   if (argument.isEmpty() || !initializePlaybackEngine())
     return false;
 
-  if (captioning_) {
-    const auto incoming = localPath(displayUrlForSource(source));
-    if (!incoming || caption_input_.empty() ||
-        !pathsReferToSameFile(caption_input_, *incoming)) {
-      cancelCaptionsForMediaChange();
-    }
-  }
-
-  mpv_.finishScrubGesture(true);
-
-  updateEof(false);
-  resetTimeline();
-
   // A render context is generation-bound: Qt can tear it down while libmpv's
   // asynchronous loadfile command is queued. Keep the newest intent until a
   // command reply confirms that the same renderer generation is still live.
-  ++request_serial_;
-  if (request_serial_ == 0)
-    ++request_serial_;
-  requested_source_ = source;
+  beginMediaTransaction(source);
+  mpv_.finishScrubGesture(true);
+  updateEof(false);
+  resetTimeline();
   return mpv_.beginOpen(source);
 }
 
 void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
+  beginMediaTransaction(source);
+  mpv_.finishScrubGesture(true);
+  updateEof(false);
+  resetTimeline();
+  mpv_.startNewLineage();
+}
+
+void PlayerController::beginMediaTransaction(const QUrl &source) {
   invalidateNativeSeekIntents();
   if (captioning_) {
-    const auto incoming = localPath(displayUrlForSource(source));
+    const auto incoming = source.isEmpty()
+                              ? std::nullopt
+                              : localPath(displayUrlForSource(source));
     if (!incoming || caption_input_.empty() ||
         !pathsReferToSameFile(caption_input_, *incoming)) {
       cancelCaptionsForMediaChange();
     }
   }
-
-  mpv_.finishScrubGesture(true);
-  updateEof(false);
-  resetTimeline();
-
   ++request_serial_;
   if (request_serial_ == 0)
     ++request_serial_;
   requested_source_ = source;
-  mpv_.startNewLineage();
 }
 
 bool PlayerController::nativeRouteAdmissionAllowed() const noexcept {
@@ -483,14 +474,10 @@ void PlayerController::stop() {
 }
 
 void PlayerController::finishStopUi(bool stop_compatibility_engine) {
-  updateLoading(false);
-  invalidateNativeSeekIntents();
-  ++request_serial_;
-  if (request_serial_ == 0)
-    ++request_serial_;
-  requested_source_.clear();
+  if (loading())
+    setMediaPhase(MediaLoaded{});
+  beginMediaTransaction({});
   mpv_.startNewLineage();
-  cancelCaptionsForMediaChange();
   if (stop_compatibility_engine && engineReady())
     mpv_.sendCommand({QByteArrayLiteral("stop")});
   updatePause(true);
@@ -1881,7 +1868,7 @@ void PlayerController::selectSubtitleTrack(int id) {
 bool PlayerController::loadSubtitleFile(const QUrl &file) {
   const auto path = localPath(file);
   if (!path) {
-    setLastError(QStringLiteral("Only local subtitle files can be loaded."));
+    showError(QStringLiteral("Only local subtitle files can be loaded."));
     return false;
   }
   return attachSubtitleSource(*path, static_cast<int>(
@@ -1918,13 +1905,13 @@ bool PlayerController::attachSubtitleSource(const std::filesystem::path &path,
   // source alongside the embedded tracks.
   const int id = subtitles_->addFileSource(path, kind, label, 0);
   if (id == SubtitleSources::kOffId) {
-    setLastError(QStringLiteral("That subtitle file could not be added."));
+    showError(QStringLiteral("That subtitle file could not be added."));
     return false;
   }
   emit subtitleTracksChanged();
   QString error;
   if (!subtitles_->loadFileCues(path, &error)) {
-    setLastError(error);
+    showError(error);
     return false;
   }
   selectSubtitleTrack(id);
@@ -2643,9 +2630,24 @@ void PlayerController::updateEof(bool eof_reached) {
 }
 
 void PlayerController::updateLoading(bool loading) {
-  if (loading_ == loading) return;
-  loading_ = loading;
-  emit loadingChanged();
+  // Only the end of an open is reported; the start is open() itself.
+  if (!loading && this->loading())
+    setMediaPhase(MediaLoaded{});
+}
+
+void PlayerController::setMediaPhase(MediaPhase phase) {
+  const bool was_loading = loading();
+  media_phase_ = std::move(phase);
+  if (was_loading != loading())
+    emit loadingChanged();
+}
+
+bool PlayerController::claimableFor(const QUrl &source) const {
+  if (std::holds_alternative<MediaEmpty>(media_phase_))
+    return true;
+  if (const auto *opening = std::get_if<MediaOpening>(&media_phase_))
+    return opening->requested == source;
+  return false;
 }
 
 void PlayerController::updateSource(const QUrl &source) {
@@ -2661,6 +2663,10 @@ void PlayerController::updateSource(const QUrl &source) {
   if (source_ == source)
     return;
   source_ = source;
+  if (source_.isEmpty())
+    setMediaPhase(MediaEmpty{});
+  else if (std::holds_alternative<MediaEmpty>(media_phase_))
+    setMediaPhase(MediaLoaded{});
   resetSubtitlesForMediaChange();
   emit sourceChanged();
   if (had_media != hasMedia()) {
@@ -2737,17 +2743,29 @@ void PlayerController::setLastError(const QString &error) {
   // A window on its way out has no user left to tell. See beginTeardown().
   if (tearing_down_)
     return;
-  if (!error.isEmpty()) {
-    qWarning().noquote() << "WAM:" << error;
-    if (loading_) {
-      updateLoading(false);
-      updateSource({});
-      updateMediaTitle({});
-      resetTimeline();
-      updatePause(true);
-      updateIdle(true);
-    }
+  if (!error.isEmpty() && loading()) {
+    failOpen(error);
+    return;
   }
+  showError(error);
+}
+
+void PlayerController::failOpen(const QString &error) {
+  if (tearing_down_)
+    return;
+  updateSource({});
+  updateMediaTitle({});
+  resetTimeline();
+  updatePause(true);
+  updateIdle(true);
+  showError(error);
+}
+
+void PlayerController::showError(const QString &error) {
+  if (tearing_down_)
+    return;
+  if (!error.isEmpty())
+    qWarning().noquote() << "WAM:" << error;
   if (last_error_ == error) {
     // Error dialogs are action feedback, not merely state reflection. Emit
     // again so retrying an invalid operation never fails silently.

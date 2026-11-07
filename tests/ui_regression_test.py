@@ -43,7 +43,8 @@ def run(name, source, script, ms=6500, expect=0, **extra):
     env = wam_launch.seam_env(home, WAM_TEST_QUIT_AFTER_MS=ms, WAM_TEST_WINDOW_SCRIPT=script,
                               WAM_TEST_NOTICE_TRACE=1, WAM_PLAYBACK_METRICS_PATH=out/'samples.jsonl',
                               WAM_PLAYBACK_METRICS_INTERVAL_MS=100, QT_QPA_PLATFORM='cocoa', **extra)
-    rc, log = wam_launch.run(a.app.resolve(), [source], env, out/'stderr.log', ms/1000 + 20)
+    sources = source if isinstance(source, list) else [source]
+    rc, log = wam_launch.run(a.app.resolve(), sources, env, out/'stderr.log', ms/1000 + 20)
     (out/'receipt.json').write_text(json.dumps(dict(returncode=rc, script=script, source=str(source)), indent=2))
     assert rc == expect, (rc, str(out), log[-2000:])
     reports = wam_launch.records(log)
@@ -77,6 +78,13 @@ elif case == 'pending':
     check(of(reports, 'test_loading', loading=True, title='fixture.mp4'), 'Pending request must expose loading/title')
     check(not of(reports, 'test_windows', count=2), 'Pending open must reuse its window')
     check(rows[0]['media']==1 and rows[-1]['playing']==1, 'Pending request owns media and starts')
+elif case == 'multiopen':
+    # Two files on the command line (a Finder multi-select) open two windows:
+    # the second must not claim the first while that one is still opening.
+    _, reports, _ = run(case, [media, root/'last.mp4'], 'report@2500')
+    check(of(reports, 'test_windows', count=2), 'Each file gets its own window')
+    check(sorted(r['source'] for r in windows(reports)) == ['fixture.mp4', 'last.mp4'],
+          'Both files are open')
 elif case == 'failed':
     _, reports, _ = run(case, root/'garbage.mp4', f'report@1800,menu@1,load:0:{media}@50,report@3000')
     rows = windows(reports)
