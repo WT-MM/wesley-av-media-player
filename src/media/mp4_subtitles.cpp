@@ -353,7 +353,8 @@ SubtitleTrackInventory inspectMp4SubtitleTracks(
 }
 
 SubtitleTrackLoad loadMp4SubtitleTrack(const std::filesystem::path& path,
-                                       std::uint32_t trackId) noexcept {
+                                       std::uint32_t trackId,
+                                       CancellationToken cancellation) noexcept {
   SubtitleTrackLoad load;
   std::string moov;
   if (!readMoov(path, &moov)) {
@@ -411,6 +412,10 @@ SubtitleTrackLoad loadMp4SubtitleTrack(const std::filesystem::path& path,
   std::size_t totalTextBytes = 0;
   std::string buffer;
   for (std::size_t i = 0; i < samples.size(); ++i) {
+    if (cancellation.cancelled()) {
+      load.cancelled = true;
+      return load;
+    }
     const SampleEntry& entry = samples[i];
     if (entry.size == 0 || entry.size > kMaximumSubtitleSampleBytes) {
       ++load.skipped;

@@ -7,6 +7,7 @@
 #include "support/process_wait.hpp"
 
 #include <QCoreApplication>
+#include <QTemporaryDir>
 #include <QEventLoop>
 #include <QTimer>
 #include <QThread>
@@ -20,6 +21,7 @@
 #include <utility>
 #include <vector>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -1206,6 +1208,37 @@ int main(int argc, char **argv) {
     expect(notifications==0, "caption worker cannot call UI directly");
     QCoreApplication::processEvents();
     expect(notifications==1 && bool(bridge.latest), "caption event queue is coalesced");
+  }
+  {
+    // A track load superseded by an inline source (a sidecar file) must not
+    // deliver its result afterwards: the cancel retires its generation.
+    QTemporaryDir dir;
+    const std::filesystem::path sidecar =
+        std::filesystem::path(dir.path().toStdString()) / "cue.srt";
+    std::ofstream(sidecar) << "1\n00:00:00,000 --> 00:00:10,000\nSidecar\n";
+    wam::qt::SubtitleSources tracks;
+    wam::qt::SubtitleSources::Source embedded;
+    embedded.label = QStringLiteral("Embedded");
+    embedded.mp4Track = 1;
+    embedded.filePath = std::filesystem::path(dir.path().toStdString()) / "absent.mp4";
+    tracks.setEmbeddedTracks({embedded});
+    const int sidecarId = tracks.addFileSource(
+        sidecar, wam::qt::SubtitleSources::Origin::External, {}, 0);
+    int failures = 0;
+    QObject::connect(&tracks, &wam::qt::SubtitleSources::loadFailed,
+                     [&failures](const QString &) { ++failures; });
+    tracks.beginNativeLoad(tracks.sources().front().id);
+    expect(tracks.loading(), "an embedded track loads on a worker");
+    tracks.setActiveId(sidecarId);
+    tracks.beginNativeLoad(sidecarId);
+    expect(!tracks.loading(), "an inline sidecar load leaves no worker running");
+    for (int i = 0; i < 20; ++i) {
+      QCoreApplication::processEvents();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    expect(failures == 0, "a superseded track load delivers nothing");
+    expect(tracks.textAt(1.0) == QStringLiteral("Sidecar"),
+           "the sidecar's cues are the ones shown");
   }
   {
     wam::qt::SubtitleSources tracks;
