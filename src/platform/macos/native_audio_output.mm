@@ -486,7 +486,7 @@ NativeAudioOutput::~NativeAudioOutput() {
   // initialization. Best-effort cleanup is safe because no callback can enter.
   if (unit_ != nullptr && !callback_attached_ && !listener_attached_ &&
       callback_entries_.load(std::memory_order_acquire) == 0) {
-    if (initialized_ || initialize_attempted_) {
+    if (unit_initialize_issued_) {
       static_cast<void>(uninitializeUnit());
     }
     static_cast<void>(disposeInstance(unit_));
@@ -856,7 +856,6 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   }
   used_ = true;
   setState(NativeAudioOutputState::Configuring);
-  stopped_.store(true, std::memory_order_release);
   device_rate_ = 0.0;
 
   const bool validConfiguration =
@@ -1025,8 +1024,7 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                          kAudio_ParamError,
                          NativeAudioOutputProgress::Failed);
   }
-  activated_ = true;
-  published_activated_.store(true, std::memory_order_release);
+  activated_.store(true, std::memory_order_release);
 
   OutputSlot &slot = gSlots[slot_index_];
   AURenderCallbackStruct callback{&NativeAudioOutput::renderCallback,
@@ -1061,14 +1059,13 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
     return failConfigure(device, status, NativeAudioOutputProgress::Failed);
   }
 
-  initialize_attempted_ = true;
+  unit_initialize_issued_ = true;
   status = initializeUnit();
   if (status != noErr) {
     return failConfigure(NativeAudioOutputFailure::InitializationFailed,
                          status,
                          NativeAudioOutputProgress::Failed);
   }
-  initialized_ = true;
 
   if (const NativeAudioOutputFailure device = revalidateDevice(
           kDeviceInvalidation | kDeviceFailureLatched, 0, &status);
@@ -1156,7 +1153,7 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
   if (!configured_.load(std::memory_order_acquire) ||
       state_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputState::Stopped) ||
-      !stopped_.load(std::memory_order_acquire) || generation == 0 ||
+      generation == 0 ||
       streamFrameCursor > kMaximumExactDoubleInteger ||
       !mediaOrigin.valid() || mediaOrigin.value < 0 ||
       !pausedClockPosition.valid() || pausedClockPosition.value < 0 ||
@@ -1184,16 +1181,15 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
                                std::memory_order_release);
   underrun_active_.store(false, std::memory_order_release);
   failure_wake_emitted_.store(false, std::memory_order_release);
-  activated_ = true;
-  published_activated_.store(true, std::memory_order_release);
+  activated_.store(true, std::memory_order_release);
   return NativeAudioOutputProgress::Done;
 }
 
 NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
-  if (!configured_.load(std::memory_order_acquire) || !activated_ ||
+  if (!configured_.load(std::memory_order_acquire) ||
+      !activated_.load(std::memory_order_acquire) ||
       state_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputState::Stopped) ||
-      !stopped_.load(std::memory_order_acquire) ||
       (admission_gate_.load(std::memory_order_acquire) &
        kAdmissionDeviceInvalid) != 0 ||
       failure_.load(std::memory_order_acquire) !=
@@ -1233,11 +1229,11 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
   }
 
   setState(NativeAudioOutputState::Starting);
-  stopped_.store(false, std::memory_order_release);
   resetTimingCarry();
-  const bool unitAlreadyRunning = stop_required_ && !stop_succeeded_;
-  stop_required_ = true;
-  stop_succeeded_ = false;
+  // A seek quiesce leaves the unit running under closed admission; only a
+  // unit that is not running needs AudioOutputUnitStart.
+  const bool unitAlreadyRunning = unit_running_;
+  unit_running_ = true;
   observed_queued_slabs_.store(kUnobservedQueuedSlabs,
                                std::memory_order_release);
   underrun_active_.store(false, std::memory_order_release);
@@ -1250,7 +1246,6 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
 #endif
   status = unitAlreadyRunning ? noErr : startUnit();
   if (status != noErr) {
-    started_.store(false, std::memory_order_release);
     latchFailure(NativeAudioOutputFailure::StartFailed, status);
     setState(NativeAudioOutputState::Stopping);
     return NativeAudioOutputProgress::Failed;
@@ -1259,7 +1254,6 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
   if (const NativeAudioOutputFailure device =
           revalidateDevice(kDeviceFailureLatched, 0, &status);
       device != NativeAudioOutputFailure::None) {
-    started_.store(false, std::memory_order_release);
     latchFailure(device, status);
     setState(NativeAudioOutputState::Stopping);
     return NativeAudioOutputProgress::Failed;
@@ -1272,7 +1266,6 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
 
   render_core_.setAccepting(true);
   admission_epoch_.store(epoch + 1U, std::memory_order_release);
-  started_.store(true, std::memory_order_release);
   setState(NativeAudioOutputState::Started);
   std::uint64_t expectedAdmission = kAdmissionClosed;
   if (!admission_gate_.compare_exchange_strong(
@@ -1282,7 +1275,6 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
       return startOvertakenByDeviceChange();
     }
     render_core_.setAccepting(false);
-    started_.store(false, std::memory_order_release);
     setState(NativeAudioOutputState::Stopping);
     latchFailure(NativeAudioOutputFailure::StartFailed, kAudio_ParamError);
     return NativeAudioOutputProgress::Failed;
@@ -1310,7 +1302,6 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
 NativeAudioOutputProgress
 NativeAudioOutput::startOvertakenByDeviceChange() noexcept {
   render_core_.setAccepting(false);
-  started_.store(false, std::memory_order_release);
   setState(NativeAudioOutputState::Stopping);
   if (failure_.load(std::memory_order_acquire) !=
       static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
@@ -1347,25 +1338,21 @@ NativeAudioOutputProgress NativeAudioOutput::stopImpl(bool keepUnitRunning) noex
 
   admission_gate_.fetch_or(kAdmissionClosed, std::memory_order_acq_rel);
   render_core_.setAccepting(false);
-  started_.store(false, std::memory_order_release);
-  stopped_.store(false, std::memory_order_release);
   setState(NativeAudioOutputState::Stopping);
 
-  if (!keepUnitRunning && stop_required_ && !stop_succeeded_) {
+  if (!keepUnitRunning && unit_running_) {
     const OSStatus status = stopUnit();
     if (status != noErr) {
       latchFailure(NativeAudioOutputFailure::StopFailed, status);
       return NativeAudioOutputProgress::Failed;
     }
-    stop_succeeded_ = true;
-    stop_required_ = false;
+    unit_running_ = false;
   }
 
   if (!renderBridgeDrained(gSlots[slot_index_].render.gate.fetch_or(
           kBridgePaused, std::memory_order_acq_rel))) {
     return quiescing();
   }
-  stopped_.store(true, std::memory_order_release);
   setState(NativeAudioOutputState::Stopped);
   return NativeAudioOutputProgress::Done;
 }
@@ -1434,8 +1421,7 @@ NativeAudioOutput::reconcileDeviceChange() noexcept {
 NativeAudioOutputProgress NativeAudioOutput::close() noexcept {
   if (unit_ == nullptr && !callback_attached_ && !listener_attached_) {
     configured_.store(false, std::memory_order_release);
-    published_activated_.store(false, std::memory_order_release);
-    activated_ = false;
+    activated_.store(false, std::memory_order_release);
     device_rate_ = 0.0;
     setState(NativeAudioOutputState::Closed);
     releaseClaim();
@@ -1467,19 +1453,19 @@ NativeAudioOutputProgress NativeAudioOutput::close() noexcept {
       slot.render.exitPins.load(std::memory_order_acquire) != 0 ||
       slot.deviceListener.exitPins.load(std::memory_order_acquire) != 0 ||
       callback_entries_.load(std::memory_order_acquire) != 0) {
-    setState(NativeAudioOutputState::Stopping);
+    // Still Detaching: the bridges are closed and stay closed, so neither
+    // stop() nor start() may treat this output as a stopped one.
     return quiescing();
   }
 
-  if (initialized_ || initialize_attempted_) {
+  if (unit_initialize_issued_) {
     const OSStatus status = uninitializeUnit();
     if (status != noErr) {
       latchFailure(NativeAudioOutputFailure::UninitializationFailed,
                    status);
       return NativeAudioOutputProgress::Failed;
     }
-    initialized_ = false;
-    initialize_attempted_ = false;
+    unit_initialize_issued_ = false;
   }
 
   if (callback_attached_) {
@@ -1524,11 +1510,9 @@ NativeAudioOutputProgress NativeAudioOutput::close() noexcept {
   }
 
   configured_.store(false, std::memory_order_release);
-  published_activated_.store(false, std::memory_order_release);
-  activated_ = false;
+  activated_.store(false, std::memory_order_release);
   device_rate_ = 0.0;
   device_buffer_frames_.store(0, std::memory_order_release);
-  stopped_.store(true, std::memory_order_release);
   setState(NativeAudioOutputState::Closed);
 
   // Compare-exchange, never a plain store: this slot's claim is released a few
@@ -1850,8 +1834,6 @@ void NativeAudioOutput::devicePropertyChanged(
   saturatingAdd(output->device_change_serial_, 1);
   const NativeAudioOutputWakeSeam wake = output->wake_;
   output->render_core_.setAccepting(false);
-  output->started_.store(false, std::memory_order_release);
-  output->stopped_.store(false, std::memory_order_release);
   output->setState(NativeAudioOutputState::Stopping);
   // Deliberately no latchFailure here. This runs in HAL notification context,
   // where no property may be read, so the only honest thing the listener can
@@ -2130,9 +2112,12 @@ NativeAudioOutputFacts NativeAudioOutput::facts() const noexcept {
   result.deviceChangeReconciliations =
       device_change_reconciliations_.load(std::memory_order_relaxed);
   result.configured = configured_.load(std::memory_order_acquire);
-  result.activated = published_activated_.load(std::memory_order_acquire);
-  result.started = started_.load(std::memory_order_acquire);
-  result.stopped = stopped_.load(std::memory_order_acquire);
+  result.activated = activated_.load(std::memory_order_acquire);
+  const auto state = static_cast<NativeAudioOutputState>(
+      state_.load(std::memory_order_acquire));
+  result.started = state == NativeAudioOutputState::Started;
+  result.stopped = state == NativeAudioOutputState::Stopped ||
+                   state == NativeAudioOutputState::Closed;
   result.fatal = result.failure != NativeAudioOutputFailure::None;
   result.firstCallbackObserved =
       first_callback_observed_.load(std::memory_order_acquire);

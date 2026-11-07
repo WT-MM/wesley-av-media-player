@@ -577,11 +577,12 @@ class NativeAudioOutput final
   bool used_{false};
   bool callback_attached_{false};
   bool listener_attached_{false};
-  bool initialize_attempted_{false};
-  bool initialized_{false};
-  bool stop_required_{false};
-  bool stop_succeeded_{true};
-  bool activated_{false};
+  // AudioUnitInitialize was called, successfully or not; close() and the
+  // destructor uninitialize exactly then.
+  bool unit_initialize_issued_{false};
+  // The AudioUnit is running (AudioOutputUnitStart issued, no successful stop
+  // since). A seek quiesce reaches Stopped with it still running.
+  bool unit_running_{false};
   // Whether this output still holds the claim on gSlots[slot_index_]. Taken
   // once by create() and released exactly once, on the first of the three
   // paths that can end the claim: the already-detached close() short circuit,
@@ -638,9 +639,7 @@ class NativeAudioOutput final
   std::atomic<std::uint32_t> device_buffer_frames_{0};
   std::atomic<std::uint32_t> unit_latency_frames_{0};
   std::atomic<bool> configured_{false};
-  std::atomic<bool> published_activated_{false};
-  std::atomic<bool> started_{false};
-  std::atomic<bool> stopped_{true};
+  std::atomic<bool> activated_{false};
   std::atomic<bool> first_callback_observed_{false};
   std::atomic<std::uint64_t> callbacks_{0};
   std::atomic<std::uint64_t> rendered_callbacks_{0};
