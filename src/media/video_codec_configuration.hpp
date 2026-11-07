@@ -15,22 +15,27 @@ namespace wam::media {
 // HEVC, AV1, and VP9 decoder configuration records. The hard limits
 // deliberately match the native v1 media contract; callers may tighten, but
 // never expand, them.
-inline constexpr std::size_t kMaximumVideoCodecConfigurationBytes{
-    MediaSourceLimits::kHardMaximumCodecConfigurationBytes};
-inline constexpr std::uint32_t kMaximumVideoCodecWidth{
-    MediaSourceLimits::kHardMaximumCodedWidth};
-inline constexpr std::uint32_t kMaximumVideoCodecHeight{
-    MediaSourceLimits::kHardMaximumCodedHeight};
-inline constexpr std::uint64_t kMaximumVideoCodecPixels{
-    MediaSourceLimits::kHardMaximumCodedPixels};
 inline constexpr std::uint8_t kMaximumVideoCodecReorderFrames{16};
 
 struct VideoCodecConfigurationLimits {
-  std::size_t maximumConfigurationBytes{kMaximumVideoCodecConfigurationBytes};
-  std::uint32_t maximumWidth{kMaximumVideoCodecWidth};
-  std::uint32_t maximumHeight{kMaximumVideoCodecHeight};
-  std::uint64_t maximumPixels{kMaximumVideoCodecPixels};
+  std::size_t maximumConfigurationBytes{
+      MediaSourceLimits::kHardMaximumCodecConfigurationBytes};
+  std::uint32_t maximumWidth{MediaSourceLimits::kHardMaximumCodedWidth};
+  std::uint32_t maximumHeight{MediaSourceLimits::kHardMaximumCodedHeight};
+  std::uint64_t maximumPixels{MediaSourceLimits::kHardMaximumCodedPixels};
   std::uint8_t maximumReorderFrames{kMaximumVideoCodecReorderFrames};
+
+  // A source's (possibly tightened) byte and geometry limits; every policy
+  // flag stays at its default.
+  [[nodiscard]] static constexpr VideoCodecConfigurationLimits
+  from(const MediaSourceLimits& limits) noexcept {
+    VideoCodecConfigurationLimits out;
+    out.maximumConfigurationBytes = limits.maximumCodecConfigurationBytes;
+    out.maximumWidth = limits.maximumCodedWidth;
+    out.maximumHeight = limits.maximumCodedHeight;
+    out.maximumPixels = limits.maximumCodedPixels;
+    return out;
+  }
 
   // Not a limit on size -- an admission policy. It lives on this struct
   // because `limits` is already threaded to every parser that asks the colour
@@ -353,8 +358,6 @@ inline constexpr std::size_t kMpeg4VisualEsdsOverheadBytes{41};
 // Callers wrap it with refusalMessage(..., MediaRefusalClass::
 // CodedDimensionLimit), so every backend's refusal ends in the same
 // " (CodedDimensionLimit)" token.
-[[nodiscard]] bool codedDimensionsWithinV1Ceiling(
-    std::uint64_t width, std::uint64_t height) noexcept;
 [[nodiscard]] std::string codedDimensionRefusalMessage(
     std::uint64_t width, std::uint64_t height) noexcept;
 

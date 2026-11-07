@@ -3,6 +3,7 @@
 #include "support/expect.hpp"
 #include "support/process_wait.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -231,12 +233,15 @@ int main(int argc, char **argv) {
 
     const fs::path awkward = temporary.path / "media ' ; & $ file.mov";
     const fs::path awkward_wav = temporary.path / "audio ' ; & $ file.wav";
-    const auto audio_command =
-        wam::buildCaptionAudioCommand(fake_ffmpeg, awkward, awkward_wav);
-    expect(audio_command.find(wam::quoteArg(awkward.string())) !=
-              std::string::npos,
-          "caption diagnostic command must quote the input path");
-    expect(audio_command.find("-nostdin") != std::string::npos,
+    const auto audio_arguments =
+        wam::captionAudioArguments(awkward, awkward_wav);
+    const auto has = [](const std::vector<std::string> &args,
+                        std::string_view value) {
+      return std::find(args.begin(), args.end(), value) != args.end();
+    };
+    expect(has(audio_arguments, awkward.string()),
+          "the input path is passed as one unquoted argument");
+    expect(has(audio_arguments, "-nostdin"),
           "FFmpeg command must not read from the app's input");
 
     const fs::path wav_log = temporary.path / "wav-path.log";
@@ -249,14 +254,13 @@ int main(int argc, char **argv) {
     // Metal is the default; opting out to CPU adds -ng and changes no other argv.
     {
       wam::CaptionOptions options;
-      auto command = wam::buildCaptionWhisperCommand("whisper","model","audio","output",options);
-      expect(command.find("-ng") == std::string::npos,"default must use Metal");
+      auto args = wam::captionWhisperArguments("model","audio","output",options);
+      expect(!has(args, "-ng"),"default must use Metal");
       options.use_gpu=false;
-      auto cpu = wam::buildCaptionWhisperCommand("whisper","model","audio","output",options);
-      expect(cpu.find("-ng") != std::string::npos,"CPU opt-out must pass -ng");
-      // quoteArg wraps each argument, so the token is ' -ng' or " -ng" plus quotes.
-      auto strip = [](std::string s){ for (const char* tok : {" '-ng'", " \"-ng\"", " -ng"}) { auto at = s.find(tok); if (at != std::string::npos) { s.erase(at, std::string(tok).size()); break; } } return s; };
-      expect(strip(cpu) == command,"CPU opt-out changed argv beyond -ng");
+      auto cpu = wam::captionWhisperArguments("model","audio","output",options);
+      expect(has(cpu, "-ng"),"CPU opt-out must pass -ng");
+      cpu.erase(std::find(cpu.begin(), cpu.end(), "-ng"));
+      expect(cpu == args,"CPU opt-out changed argv beyond -ng");
     }
 #ifndef _WIN32
     // No real GPU required: hung Metal leader + TERM-ignoring descendant must

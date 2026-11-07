@@ -13,6 +13,7 @@ int main(int argc,char** argv) {
   if(!opened.error.empty())std::fprintf(stderr,"%s\n",opened.error.c_str());
   REQUIRE(opened.status==MediaSourceOpenStatus::Ready);
   REQUIRE(opened.preparedContext->backendKind()==MediaSourceBackendKind::Libavformat);
+  EXPECT(!source->supportsAudioTrackRetry());
   REQUIRE(opened.descriptor->selectedAudio && opened.descriptor->selectedVideo);
   std::set<MediaTrackId> ended;unsigned video{},audio{};
   for(;;) {

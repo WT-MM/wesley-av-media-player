@@ -27,12 +27,10 @@ struct Provenance { PacketTiming timing; AVBufferRef* reference{}; };
 void releaseProvenance(void*, std::uint8_t*) {}
 bool timestampTicks(MediaTime time, std::int32_t scale, std::int64_t& result) {
   if (!time.valid()) { result = AV_NOPTS_VALUE; return true; }
-  const auto product = __int128(time.value) * scale;
-  if (product % time.timescale) return false;
-  const auto ticks = product / time.timescale;
-  if (ticks <= std::numeric_limits<std::int64_t>::min() ||
-      ticks > std::numeric_limits<std::int64_t>::max()) return false;
-  result = static_cast<std::int64_t>(ticks);
+  // AV_NOPTS_VALUE is INT64_MIN, so that tick is not a timestamp.
+  const auto ticks = mediaTimeToTicks(time, scale, 1, TickRounding::Exact);
+  if (!ticks || *ticks == AV_NOPTS_VALUE) return false;
+  result = *ticks;
   return true;
 }
 }

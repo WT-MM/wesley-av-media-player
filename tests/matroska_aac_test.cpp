@@ -253,31 +253,37 @@ void testEsDescriptorGoldenAndRevalidation() {
          "builder rejects a forged ASC size before forming a span");
 }
 
+std::optional<AacTickGridProjection>
+projectAacTick(std::int64_t tick, MediaTime origin, std::uint32_t sampleRate,
+               std::uint64_t timestampScaleNanoseconds) {
+  return nearestAudioPacketForMatroskaTick(tick, origin, sampleRate,
+                                           timestampScaleNanoseconds,
+                                           kAacLcSamplesPerAccessUnit);
+}
+
 void testExactAacFrameGrid() {
-  const auto first48 = aacAccessUnitGridTime({MediaTime{0, 1}, 1, 48'000U});
+  const auto first48 = audioPacketGridTime({MediaTime{0, 1}, 1, 48'000U});
   expect(first48 == MediaTime{8, 375},
          "48 kHz ordinal one is exactly 1024/48000 seconds");
-  const auto third48 = aacAccessUnitGridTime({MediaTime{0, 1}, 3, 48'000U});
+  const auto third48 = audioPacketGridTime({MediaTime{0, 1}, 3, 48'000U});
   expect(third48 == MediaTime{8, 125},
          "48 kHz ordinal three is reduced without incremental rounding");
-  const auto offset48 = aacAccessUnitGridTime({MediaTime{1, 10}, 1, 48'000U});
+  const auto offset48 = audioPacketGridTime({MediaTime{1, 10}, 1, 48'000U});
   expect(offset48 == MediaTime{91, 750},
          "nonzero origin combines exactly with the AAC frame grid");
-  const auto negative48 = aacAccessUnitGridTime({MediaTime{-1, 2}, 1, 48'000U});
+  const auto negative48 = audioPacketGridTime({MediaTime{-1, 2}, 1, 48'000U});
   expect(negative48 == MediaTime{-359, 750},
          "negative origin remains an exact rational");
 
   constexpr std::uint64_t longOrdinal = (std::uint64_t{1} << 32U) + 17U;
   const auto long441 =
-      aacAccessUnitGridTime({MediaTime{0, 1}, longOrdinal, 44'100U});
+      audioPacketGridTime({MediaTime{0, 1}, longOrdinal, 44'100U});
   expect(long441 == MediaTime{52'357'696'768LL, 525},
          "44.1 kHz grid stays exact beyond 32-bit access-unit ordinals");
 
-  expect(!aacAccessUnitGridTime({MediaTime{0, 0}, 1, 48'000U}),
+  expect(!audioPacketGridTime({MediaTime{0, 0}, 1, 48'000U}),
          "invalid origin time is rejected");
-  expect(!aacAccessUnitGridTime({MediaTime{0, 1}, 1, 32'000U}),
-         "unsupported grid sample rate is rejected");
-  expect(!aacAccessUnitGridTime(
+  expect(!audioPacketGridTime(
              {MediaTime{std::numeric_limits<std::int64_t>::max(), 1},
               std::numeric_limits<std::uint64_t>::max(), 44'100U}),
          "unrepresentable exact grid timestamp fails closed");
@@ -318,18 +324,15 @@ void testTiesEvenQuantizationAndGapProof() {
   const auto tick101 = nearestMatroskaTick(ordinal101, millisecondTicks);
   expect(tick100 == 2'133 && tick101 == 2'155,
          "adjacent grid ticks are reconstructed deterministically");
-  expect(tick100 && matroskaTickMatchesAacAccessUnit(*tick100, ordinal100,
-                                                     millisecondTicks),
+  expect(tick100 && nearestMatroskaTick(ordinal100, millisecondTicks) ==
+                        *tick100,
          "observed tick proves its exact access-unit ordinal");
-  expect(tick101 && !matroskaTickMatchesAacAccessUnit(*tick101, ordinal100,
-                                                      millisecondTicks),
+  expect(tick101 && nearestMatroskaTick(ordinal100, millisecondTicks) !=
+                        *tick101,
          "a skipped access unit is detected as a tick/grid gap");
 
   expect(!nearestMatroskaTick({MediaTime{0, 1}, 0, 48'000U}, 0U),
          "zero Matroska timestamp scale is rejected");
-  expect(
-      !matroskaTickMatchesAacAccessUnit(0, {MediaTime{0, 1}, 0, 48'000U}, 0U),
-      "tick proof fails closed for an invalid scale");
   expect(
       !nearestMatroskaTick(
           {MediaTime{std::numeric_limits<std::int64_t>::max(), 1}, 0, 48'000U},
@@ -354,7 +357,7 @@ void testTiesEvenQuantizationAndGapProof() {
 
 void testInverseTickProjection() {
   constexpr std::uint64_t millisecondTicks{1'000'000U};
-  const auto exact48 = nearestAacAccessUnitForMatroskaTick(
+  const auto exact48 = projectAacTick(
       2'133, MediaTime{0, 1}, 48'000U, millisecondTicks);
   expect(exact48 && exact48->accessUnitOrdinal == 100U &&
              exact48->exactPresentationTime == MediaTime{32, 15} &&
@@ -362,14 +365,14 @@ void testInverseTickProjection() {
              exact48->signedTickResidual == 0 && exact48->exactTickMatch,
          "48 kHz tick projects to ordinal 100 and its exact grid PTS");
 
-  const auto positiveResidual = nearestAacAccessUnitForMatroskaTick(
+  const auto positiveResidual = projectAacTick(
       2'134, MediaTime{0, 1}, 48'000U, millisecondTicks);
   expect(positiveResidual && positiveResidual->accessUnitOrdinal == 100U &&
              positiveResidual->quantizedGridTick == 2'133 &&
              positiveResidual->signedTickResidual == 1 &&
              !positiveResidual->exactTickMatch,
          "inverse reports a positive tick residual without tolerance");
-  const auto negativeResidual = nearestAacAccessUnitForMatroskaTick(
+  const auto negativeResidual = projectAacTick(
       2'132, MediaTime{0, 1}, 48'000U, millisecondTicks);
   expect(negativeResidual && negativeResidual->accessUnitOrdinal == 100U &&
              negativeResidual->quantizedGridTick == 2'133 &&
@@ -377,7 +380,7 @@ void testInverseTickProjection() {
              !negativeResidual->exactTickMatch,
          "inverse reports a negative tick residual without tolerance");
 
-  const auto negativeTick = nearestAacAccessUnitForMatroskaTick(
+  const auto negativeTick = projectAacTick(
       -787, MediaTime{-1, 1}, 48'000U, millisecondTicks);
   expect(
       negativeTick && negativeTick->accessUnitOrdinal == 10U &&
@@ -386,7 +389,7 @@ void testInverseTickProjection() {
           negativeTick->signedTickResidual == 0 && negativeTick->exactTickMatch,
       "negative observed tick projects exactly relative to a negative origin");
 
-  const auto long441 = nearestAacAccessUnitForMatroskaTick(
+  const auto long441 = projectAacTick(
       23'219'955, MediaTime{0, 1}, 44'100U, millisecondTicks);
   expect(long441 && long441->accessUnitOrdinal == 1'000'000U &&
              long441->exactPresentationTime == MediaTime{10'240'000, 441} &&
@@ -398,28 +401,28 @@ void testInverseTickProjection() {
   // boundaries. This proves inverse ordinal rounding independently of the
   // later Matroska tick re-quantization.
   constexpr std::uint64_t oneSecondTicks{1'000'000'000U};
-  const auto positiveHalfEvenZero = nearestAacAccessUnitForMatroskaTick(
+  const auto positiveHalfEvenZero = projectAacTick(
       0, MediaTime{-4, 375}, 48'000U, oneSecondTicks);
   expect(positiveHalfEvenZero &&
              positiveHalfEvenZero->accessUnitOrdinal == 0U &&
              positiveHalfEvenZero->exactTickMatch,
          "positive ordinal half tie chooses even zero");
-  const auto positiveHalfEvenTwo = nearestAacAccessUnitForMatroskaTick(
+  const auto positiveHalfEvenTwo = projectAacTick(
       0, MediaTime{-4, 125}, 48'000U, oneSecondTicks);
   expect(positiveHalfEvenTwo && positiveHalfEvenTwo->accessUnitOrdinal == 2U &&
              positiveHalfEvenTwo->exactPresentationTime == MediaTime{4, 375} &&
              positiveHalfEvenTwo->exactTickMatch,
          "positive one-and-a-half ordinal tie chooses even two");
-  const auto negativeHalfEvenZero = nearestAacAccessUnitForMatroskaTick(
+  const auto negativeHalfEvenZero = projectAacTick(
       0, MediaTime{4, 375}, 48'000U, oneSecondTicks);
   expect(negativeHalfEvenZero &&
              negativeHalfEvenZero->accessUnitOrdinal == 0U &&
              negativeHalfEvenZero->exactTickMatch,
          "negative ordinal half tie chooses even zero");
-  expect(!nearestAacAccessUnitForMatroskaTick(0, MediaTime{4, 125}, 48'000U,
+  expect(!projectAacTick(0, MediaTime{4, 125}, 48'000U,
                                               oneSecondTicks),
          "negative one-and-a-half tie rejects an unrepresentable ordinal");
-  const auto half441 = nearestAacAccessUnitForMatroskaTick(
+  const auto half441 = projectAacTick(
       0, MediaTime{-128, 11'025}, 44'100U, oneSecondTicks);
   expect(half441 && half441->accessUnitOrdinal == 0U && half441->exactTickMatch,
          "44.1 kHz half-access-unit tie also chooses even zero");
@@ -438,34 +441,31 @@ void testInverseTickProjection() {
   for (const AacFrameGridPosition grid : roundTrips) {
     const auto tick = nearestMatroskaTick(grid, millisecondTicks);
     const auto projection =
-        tick ? nearestAacAccessUnitForMatroskaTick(
+        tick ? projectAacTick(
                    *tick, grid.origin, grid.sampleRate, millisecondTicks)
              : std::nullopt;
     expect(
         tick && projection &&
             projection->accessUnitOrdinal == grid.accessUnitOrdinal &&
-            projection->exactPresentationTime == aacAccessUnitGridTime(grid) &&
+            projection->exactPresentationTime == audioPacketGridTime(grid) &&
             projection->quantizedGridTick == *tick &&
             projection->signedTickResidual == 0 && projection->exactTickMatch,
         "forward tick quantization and inverse ordinal projection agree");
   }
 
-  expect(!nearestAacAccessUnitForMatroskaTick(0, MediaTime{0, 0}, 48'000U,
+  expect(!projectAacTick(0, MediaTime{0, 0}, 48'000U,
                                               millisecondTicks),
          "inverse rejects an invalid origin rational");
-  expect(!nearestAacAccessUnitForMatroskaTick(0, MediaTime{0, 1}, 32'000U,
-                                              millisecondTicks),
-         "inverse rejects an unsupported sample rate");
-  expect(!nearestAacAccessUnitForMatroskaTick(0, MediaTime{0, 1}, 48'000U, 0U),
+  expect(!projectAacTick(0, MediaTime{0, 1}, 48'000U, 0U),
          "inverse rejects a zero timestamp scale");
-  expect(!nearestAacAccessUnitForMatroskaTick(-12, MediaTime{0, 1}, 48'000U,
+  expect(!projectAacTick(-12, MediaTime{0, 1}, 48'000U,
                                               millisecondTicks),
          "inverse rejects a genuinely negative nearest ordinal");
-  expect(!nearestAacAccessUnitForMatroskaTick(
+  expect(!projectAacTick(
              std::numeric_limits<std::int64_t>::max(), MediaTime{0, 1}, 48'000U,
              oneSecondTicks),
          "inverse rejects an ordinal beyond uint64");
-  expect(!nearestAacAccessUnitForMatroskaTick(
+  expect(!projectAacTick(
              std::numeric_limits<std::int64_t>::max(),
              MediaTime{std::numeric_limits<std::int64_t>::min(),
                        std::numeric_limits<std::int32_t>::max()},
@@ -485,12 +485,12 @@ void testGridRoundTripStress() {
                                         sampleRates[rateIndex]};
         const auto tick = nearestMatroskaTick(grid, tickScale);
         const auto projection =
-            tick ? nearestAacAccessUnitForMatroskaTick(
+            tick ? projectAacTick(
                        *tick, grid.origin, grid.sampleRate, tickScale)
                  : std::nullopt;
         expect(tick && projection && projection->accessUnitOrdinal == ordinal &&
                    projection->exactPresentationTime ==
-                       aacAccessUnitGridTime(grid) &&
+                       audioPacketGridTime(grid) &&
                    projection->quantizedGridTick == *tick &&
                    projection->signedTickResidual == 0 &&
                    projection->exactTickMatch,

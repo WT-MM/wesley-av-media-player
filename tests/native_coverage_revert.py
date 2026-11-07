@@ -21,7 +21,7 @@ def main():
          '--ffmpeg','/opt/homebrew/bin/ffmpeg','--slow-fixture','/private/tmp/wam-adversarial2/media/long70-4k.mp4']
     groups={
       'u8':('src/media/matroska_apple_audio.hpp',[("floating ? 1U : depth == 8 ? 0U : 4U","floating ? 1U : 4U")],common+['--case','pcm-u8']),
-      'rates':('src/media/matroska_demuxer.cpp',[("nearestAudioPacketForMatroskaTick(","nearestAacAccessUnitForMatroskaTick("),("audioPacketGridTime(","aacAccessUnitGridTime(")],common+['--case','matroska-rates']),
+      'rates':('src/media/matroska_aac.cpp',[("      position.sampleRate > MediaSourceLimits::kHardMaximumAudioSampleRate ||","      (position.sampleRate != 44'100U && position.sampleRate != 48'000U) ||")],common+['--case','matroska-rates']),
       'retry':('src/media/native_media_dispatcher.cpp',[("if (mayRetryAudio && audioVerdict == OpenConfigureVerdict::Rejected &&","if (false && mayRetryAudio && audioVerdict == OpenConfigureVerdict::Rejected &&")],['build/wam_native_media_dispatcher_test']),
       'retry-retirement':('src/platform/macos/native_audio_session.mm',[("bool NativeAudioSession::resetRejectedConfiguration(\n    media::MediaGeneration generation) noexcept {","bool NativeAudioSession::resetRejectedConfiguration(\n    media::MediaGeneration generation) noexcept {\n  return false;")],gui+['--case','retry']),
       'retry-source':('src/media/matroska_demuxer.cpp',[("!rejectedAudio.contains(trackId(candidate.number).value_or(0)) &&","true &&")],gui+['--case','retry']),

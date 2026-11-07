@@ -49,8 +49,7 @@ inline constexpr std::uint64_t kSoftwareProcessReservationMaximumBytes = 2ULL <<
     r.conversionBytes=kNativeSoftwareAudioConversionScratchBytes;
     r.privateScratchBytes=16ULL<<20;
   } else {
-    if(!width || !height || std::uint64_t(width)*height>MediaSourceLimits::kHardMaximumCodedPixels ||
-       width>MediaSourceLimits::kHardMaximumCodedWidth || height>MediaSourceLimits::kHardMaximumCodedWidth ||
+    if(!MediaSourceLimits::codedDimensionsWithinHardCeiling(width,height) ||
        (depth!=8 && depth!=10) || (chroma!=1 && chroma!=2)) return {};
     if(codec==MediaCodec::H264) r.referenceSlots=38;
     else if(codec==MediaCodec::Mpeg4Visual && depth==8 && chroma==1) r.referenceSlots=8;

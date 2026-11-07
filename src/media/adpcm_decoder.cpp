@@ -44,6 +44,32 @@ const char *validateAdpcmFormat(const AdpcmFormat &f) noexcept {
     return "AdpcmCoefficientsUnsupported";
   return nullptr;
 }
+std::optional<AdpcmFormat>
+parseAdpcmWaveFormat(std::span<const std::byte> b, std::uint32_t rate,
+                     std::uint32_t channels) noexcept {
+  if (b.size() < 20 || std::uint32_t(word(b, 2)) != channels ||
+      (std::uint32_t(word(b, 4)) | std::uint32_t(word(b, 6)) << 16U) != rate ||
+      word(b, 14) != 4 || std::size_t(word(b, 16)) != b.size() - 18)
+    return std::nullopt;
+  AdpcmFormat f;
+  f.tag = static_cast<std::uint16_t>(word(b, 0));
+  f.channels = channels;
+  f.blockBytes = static_cast<std::uint32_t>(word(b, 12));
+  f.blockFrames = static_cast<std::uint32_t>(word(b, 18));
+  if (f.blockBytes <= 7 * channels || f.blockFrames == 0)
+    return std::nullopt;
+  if (f.tag == 2) {
+    if (b.size() != 50 || word(b, 20) != 7)
+      return std::nullopt;
+    for (std::size_t i = 0; i < f.coefficients.size(); ++i)
+      f.coefficients[i] = static_cast<std::int16_t>(signedWord(b, 22 + 2 * i));
+  } else if (f.tag != 17 || b.size() != 20) {
+    return std::nullopt;
+  }
+  if (validateAdpcmFormat(f))
+    return std::nullopt;
+  return f;
+}
 const char *decodeAdpcmBlock(const AdpcmFormat &f, std::span<const std::byte> b,
                              std::span<float> out) noexcept {
   if (auto e = validateAdpcmFormat(f))

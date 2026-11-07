@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <numeric>
 
 namespace wam::media::native_playback {
 
@@ -197,6 +198,16 @@ inline constexpr double kMaximumNativeRate = 4.0;
 // displacement from the requested speed is 1/128 -- inaudible, and far
 // below the ~4% pitch/tempo just-noticeable difference.
 inline constexpr std::uint32_t kNativeRateGrid = 64;
+// The rate window in grid ticks.
+inline constexpr std::uint32_t kMinimumNativeRateGridTicks =
+    static_cast<std::uint32_t>(kMinimumNativeRate * kNativeRateGrid);
+inline constexpr std::uint32_t kMaximumNativeRateGridTicks =
+    static_cast<std::uint32_t>(kMaximumNativeRate * kNativeRateGrid);
+static_assert(kMinimumNativeRateGridTicks ==
+                  kMinimumNativeRate * kNativeRateGrid &&
+              kMaximumNativeRateGridTicks ==
+                  kMaximumNativeRate * kNativeRateGrid,
+              "both window endpoints lie on the admission grid");
 
 // An exact playback rate as the reduced rational numerator/denominator. This
 // is the only representation permitted past the protocol boundary; the media
@@ -210,9 +221,9 @@ struct PlaybackRateRatio {
     return numerator == denominator;
   }
   [[nodiscard]] constexpr bool valid() const noexcept {
-    return numerator != 0 && denominator != 0 &&
-           kNativeRateGrid % denominator == 0 &&
-           numerator * 4U >= denominator && numerator <= denominator * 4U;
+    return denominator != 0 && kNativeRateGrid % denominator == 0 &&
+           gridNumerator() >= kMinimumNativeRateGridTicks &&
+           gridNumerator() <= kMaximumNativeRateGridTicks;
   }
   // The rate's numerator over kNativeRateGrid; exact whenever valid().
   [[nodiscard]] constexpr std::uint64_t gridNumerator() const noexcept {
@@ -227,16 +238,6 @@ struct PlaybackRateRatio {
   friend constexpr bool operator==(PlaybackRateRatio,
                                    PlaybackRateRatio) = default;
 };
-
-[[nodiscard]] constexpr std::uint32_t
-gcd32(std::uint32_t a, std::uint32_t b) noexcept {
-  while (b != 0) {
-    const std::uint32_t t = a % b;
-    a = b;
-    b = t;
-  }
-  return a;
-}
 
 // Snaps an arbitrary requested speed onto the admission grid and reduces it.
 // Out-of-window and non-finite inputs collapse to the nearest admitted
@@ -255,15 +256,13 @@ nativeRateRatio(double rate) noexcept {
   const double scaled = bounded * static_cast<double>(kNativeRateGrid);
   // Round half away from zero; the operand is positive and below 257.
   auto ticks = static_cast<std::uint32_t>(scaled + 0.5);
-  const std::uint32_t minimumTicks = kNativeRateGrid / 4U;
-  const std::uint32_t maximumTicks = kNativeRateGrid * 4U;
-  if (ticks < minimumTicks) {
-    ticks = minimumTicks;
+  if (ticks < kMinimumNativeRateGridTicks) {
+    ticks = kMinimumNativeRateGridTicks;
   }
-  if (ticks > maximumTicks) {
-    ticks = maximumTicks;
+  if (ticks > kMaximumNativeRateGridTicks) {
+    ticks = kMaximumNativeRateGridTicks;
   }
-  const std::uint32_t divisor = gcd32(ticks, kNativeRateGrid);
+  const std::uint32_t divisor = std::gcd(ticks, kNativeRateGrid);
   return PlaybackRateRatio{ticks / divisor, kNativeRateGrid / divisor};
 }
 

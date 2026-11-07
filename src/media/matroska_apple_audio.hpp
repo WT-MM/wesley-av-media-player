@@ -60,28 +60,14 @@ struct AppleAudioPacketFormat {
     f.bytesPerFrame = channels * (depth / 8U);
     f.bytesPerPacket = f.bytesPerFrame;
   } else if (id == "A_MS/ACM") {
-    if (bytes.size() < 20 || appleAudioInteger(bytes, 2, 2, true) != channels ||
-        appleAudioInteger(bytes, 4, 4, true) != rate ||
-        appleAudioInteger(bytes, 14, 2, true) != 4 ||
-        appleAudioInteger(bytes, 16, 2, true) != bytes.size() - 18) return {};
-    const auto tag = appleAudioInteger(bytes, 0, 2, true);
-    f.bytesPerPacket = appleAudioInteger(bytes, 12, 2, true);
-    out.blockFrames = appleAudioInteger(bytes, 18, 2, true);
-    if (f.bytesPerPacket <= 7 * channels || out.blockFrames == 0) return {};
-    if (tag == 17 && bytes.size() == 20 &&
-        out.blockFrames == 1 + (f.bytesPerPacket - 4 * channels) * 2 / channels) {
-      out.codec = MediaCodec::AdpcmIma;
-      f.formatTag = mediaCodecFacts(MediaCodec::AdpcmIma).coreAudioFormatTag;
-    } else if (tag == 2 && bytes.size() == 50 &&
-               out.blockFrames == 2 + (f.bytesPerPacket - 7 * channels) * 2 / channels) {
-      constexpr auto& coefficients = kAdpcmMsCoefficients;
-      if (appleAudioInteger(bytes, 20, 2, true) != 7) return {};
-      for (unsigned i = 0; i < 14; ++i)
-        if (appleAudioInteger(bytes, 22 + 2*i, 2, true) !=
-            static_cast<std::uint16_t>(coefficients[i])) return {};
-      out.codec = MediaCodec::AdpcmMs;
-      f.formatTag = kMicrosoftAdpcmAudioFormatTag;
-    } else return {};
+    const auto adpcm = parseAdpcmWaveFormat(bytes, rate, channels);
+    if (!adpcm) return {};
+    const bool ima = adpcm->tag == 17;
+    out.codec = ima ? MediaCodec::AdpcmIma : MediaCodec::AdpcmMs;
+    f.formatTag = ima ? mediaCodecFacts(MediaCodec::AdpcmIma).coreAudioFormatTag
+                      : kMicrosoftAdpcmAudioFormatTag;
+    f.bytesPerPacket = adpcm->blockBytes;
+    out.blockFrames = adpcm->blockFrames;
     f.framesPerPacket = out.blockFrames;
   }
   return out;

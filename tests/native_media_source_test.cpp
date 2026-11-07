@@ -885,6 +885,20 @@ void checkExactTickArithmetic() {
              !mediaTimeFromTicks(static_cast<__int128_t>(kMax) + 1, 1) &&
              !mediaTimeFromTicks(static_cast<__int128_t>(kMin) - 1, 1),
          "tick reduction is exact, signed and fails closed outside MediaTime");
+  constexpr auto kFloor = TickRounding::Floor;
+  constexpr auto kExact = TickRounding::Exact;
+  expect(mediaTimeToTicks({1, 3}, 90'000, 1, kFloor) == 30'000 &&
+             mediaTimeToTicks({1, 7}, 90'000, 1, kFloor) == 12'857 &&
+             mediaTimeToTicks({-1, 7}, 90'000, 1, kFloor) == -12'858 &&
+             !mediaTimeToTicks({1, 7}, 90'000, 1, kExact) &&
+             mediaTimeToTicks({1, 2}, 1'000, 1, kExact) == 500 &&
+             mediaTimeToTicks({3, 2}, 1, 1'001, kFloor) == 0 &&
+             mediaTimeToTicks({kMax, 1}, 1, 1, kExact) == kMax &&
+             !mediaTimeToTicks({kMax, 1}, 2, 1, kFloor) &&
+             !mediaTimeToTicks({1, 0}, 90'000, 1, kFloor) &&
+             !mediaTimeToTicks({1, 1}, 0, 1, kFloor) &&
+             !mediaTimeToTicks({1, 1}, 1, 0, kFloor),
+         "time-to-ticks floors toward minus infinity and fails closed");
   // A product beyond 64 bits that reduces back into range stays exact.
   expect(mediaTimeFromTicks(static_cast<__int128_t>(kMax) * 1'000'000'000,
                             1'000'000'000) == MediaTime{kMax, 1},

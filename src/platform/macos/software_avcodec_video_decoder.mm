@@ -136,7 +136,8 @@ bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& conf
   if(s.retired) { s.latch("AvcodecDecoderRetired",error); return false; }
   close();
   if (configuration.codedSize.width<=0 || configuration.codedSize.height<=0 ||
-      std::uint64_t(configuration.codedSize.width)*configuration.codedSize.height>DecodeWorker::kMaximumSoftwarePixels) {
+      !media::MediaSourceLimits::codedDimensionsWithinHardCeiling(
+          std::uint64_t(configuration.codedSize.width),std::uint64_t(configuration.codedSize.height))) {
     if(error)*error="AvcodecSoftwareReferenceBudgetExceeded";return false;
   }
   media::VideoCodecConfigurationLimits limits; limits.admitHighDynamicRangeColor=true; limits.admitSoftwareProfiles=true;
