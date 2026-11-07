@@ -99,10 +99,6 @@ public:
   VideoDecodeLane(VideoDecodeLane &&) = delete;
   VideoDecodeLane &operator=(VideoDecodeLane &&) = delete;
 
-  [[nodiscard]] static bool softwareVp8Available() noexcept {
-    return SoftwareVp8Decoder::available();
-  }
-
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
                                DecodedFrameSink &sink, std::string *error,
                                std::optional<bool> hardwareCapability = {}) {

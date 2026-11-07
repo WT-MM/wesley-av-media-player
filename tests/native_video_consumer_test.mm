@@ -343,7 +343,7 @@ void testPresentationBackstop() {
     Fixture fixture;
     media::MediaVideoFormat video;
     video.sampleFormat = media::MediaVideoSampleFormat::Yuv444EightBit;
-    const char* refusal = nativePresentationRefusal(video, fixture.output->presentationCapabilities());
+    const char* refusal = nativePresentationRefusal(video, fixture.output->presentationCapabilities(), media::MediaCodec::H264);
     expect(refusal && std::string(refusal) == "SceneGraph444Unsupported",
            "scene graph refuses hardware 444 without a shader contract");
   }
@@ -359,7 +359,7 @@ void testPresentationBackstop() {
     Fixture fixture;
     media::MediaVideoFormat video;
     video.sampleFormat = format;
-    const char* refusal = nativePresentationRefusal(video, fixture.output->presentationCapabilities());
+    const char* refusal = nativePresentationRefusal(video, fixture.output->presentationCapabilities(), media::MediaCodec::H264);
     expect(refusal && std::string(refusal) == "SceneGraph422Unsupported",
            "scene graph refuses both 422 families by name");
   }

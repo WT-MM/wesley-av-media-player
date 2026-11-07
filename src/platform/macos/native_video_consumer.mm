@@ -466,7 +466,7 @@ void assignError(std::string* error, const char* message) {
       return nativeVideoToolboxSupportsAv1();
     // See the function comment: VP8 depends only on the libvpx build.
     case media::MediaCodec::Vp8:
-      return VideoDecodeLane::softwareVp8Available();
+      return SoftwareVp8Decoder::available();
     default:
       return true;
   }
