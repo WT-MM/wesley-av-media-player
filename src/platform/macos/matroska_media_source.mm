@@ -237,6 +237,7 @@ struct MatroskaMediaSource::Impl final
     if (!descriptor->selectedAudio) {
       return true;
     }
+    const auto* audioHead = this->audioLane.head();
     if (!audioHead || !audioDecodeStart.valid() ||
         std::get<MediaSample>(audioHead->value).presentationTime !=
             audioDecodeStart) {

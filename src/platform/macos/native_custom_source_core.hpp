@@ -34,8 +34,7 @@ namespace wam::macos {
 //                     one generation start; it calls resetForGeneration() first
 //                     and stages one admission head per selected output
 //                 stage(video, admission, error)
-//                     reads one head into videoHead/audioHead (or marks the
-//                     lane terminal)
+//                     reads one head into its lane (or ends the lane)
 //                 retireActive()       releases the generation's readers
 //                 cancellationPublished(generation)  (optional) out-of-band
 //                     cancel of a reader that does not poll the latch
@@ -58,6 +57,68 @@ class NativeSourceCore {
     std::size_t payloadBytes{0};
   };
 
+  // One selected output's capacity-one staging lane.
+  class Lane {
+   public:
+    // No head: before admission staging, or after a refill failed.
+    struct Empty {};
+    // The head was delivered; it is restaged only on the next pull, so the
+    // first delivered sample never waits on a speculative replacement read.
+    struct RefillPending {};
+    // The cursor ended, or the output is unselected.
+    struct Ended {};
+    struct EndEmitted {};
+
+    [[nodiscard]] const StagedSample* head() const noexcept {
+      return std::get_if<StagedSample>(&state_);
+    }
+    [[nodiscard]] bool refillPending() const noexcept {
+      return std::holds_alternative<RefillPending>(state_);
+    }
+    // Ended and its end of stream not yet delivered.
+    [[nodiscard]] bool ended() const noexcept {
+      return std::holds_alternative<Ended>(state_);
+    }
+    [[nodiscard]] bool terminal() const noexcept {
+      return ended() || std::holds_alternative<EndEmitted>(state_);
+    }
+
+    void reset(bool selected) noexcept {
+      state_ = selected ? State{Empty{}} : State{Ended{}};
+    }
+    void stage(StagedSample sample) { state_ = std::move(sample); }
+    void end() noexcept { state_ = Ended{}; }
+    void endEmitted() noexcept { state_ = EndEmitted{}; }
+    // Starts a refill: the demand edge is consumed before the read, so a read
+    // failure leaves the lane Empty rather than retried by a later pull.
+    void beginRefill() noexcept { state_ = Empty{}; }
+    [[nodiscard]] StagedSample take() {
+      StagedSample sample = std::move(std::get<StagedSample>(state_));
+      state_ = RefillPending{};
+      return sample;
+    }
+    // Drops a staged head or pending refill; an ended lane stays ended.
+    void clear() noexcept {
+      if (head() != nullptr || refillPending()) {
+        state_ = Empty{};
+      }
+    }
+
+   private:
+    using State =
+        std::variant<Empty, StagedSample, RefillPending, Ended, EndEmitted>;
+    State state_{Ended{}};
+  };
+
+  // The source's owner-side lifecycle: Closed, or Open on `generation`, where
+  // OpenFailed keeps delivering its staged heads and then reports its sticky
+  // read failure.
+  struct Closed {};
+  struct Open {};
+  struct OpenFailed {
+    std::string message;
+  };
+
   struct GenerationStart {
     media::MediaSourceOpenStatus status{media::MediaSourceOpenStatus::Failed};
     media::MediaTime actualDecodeStart{};
@@ -77,25 +138,16 @@ class NativeSourceCore {
   media::MediaSourceLimits limits;
   std::shared_ptr<const media::MediaSourceDescriptor> descriptor;
   std::shared_ptr<const AssetContext> assetContext;
-  std::optional<StagedSample> videoHead;
-  std::optional<StagedSample> audioHead;
+  Lane videoLane;
+  Lane audioLane;
   std::optional<media::MediaTime> requestedTarget;
   media::MediaSeekMode seekMode{media::MediaSeekMode::Accurate};
-  std::string failure;
+  std::variant<Closed, Open, OpenFailed> phase;
   media::MediaGeneration generation{0};
-  media::MediaGeneration armedGeneration{0};
+  // An armed operation not yet consumed by open or seek.
+  std::optional<media::MediaGeneration> armedGeneration;
   // Audio tracks the session refused during this cold open; cleared by arm().
   media::AudioTrackRejections rejectedAudio;
-  bool open{false};
-  bool videoTerminal{true};
-  bool audioTerminal{true};
-  // A consumed capacity-one head is refilled only when the downstream owner
-  // asks for another result, so the first delivered sample never waits on a
-  // speculative replacement pull.
-  bool videoRefillPending{false};
-  bool audioRefillPending{false};
-  bool videoEosEmitted{false};
-  bool audioEosEmitted{false};
 
   std::atomic<media::MediaGeneration> operationGeneration{0};
   std::atomic<media::MediaGeneration> cancelledGeneration{0};
@@ -162,21 +214,21 @@ class NativeSourceCore {
       std::shared_ptr<const AssetContext> context) noexcept {
     descriptor = std::move(admitted);
     assetContext = std::move(context);
-    videoTerminal = !descriptor->selectedVideo;
-    audioTerminal = !descriptor->selectedAudio;
+    videoLane.reset(descriptor->selectedVideo.has_value());
+    audioLane.reset(descriptor->selectedAudio.has_value());
   }
 
   // Admission proof: one real head retained from every selected output. The
   // contract forbids probing and reopening, so these exact heads are what the
   // first readNext() calls deliver. False on refusal or cancellation.
   [[nodiscard]] bool stageAdmissionHeads(std::string* error) {
-    return (videoTerminal || derived().stage(true, true, error)) &&
-           (audioTerminal || derived().stage(false, true, error)) &&
+    return (videoLane.terminal() || derived().stage(true, true, error)) &&
+           (audioLane.terminal() || derived().stage(false, true, error)) &&
            !isCancelled();
   }
 
   void publishOpen() noexcept {
-    open = true;
+    phase = Open{};
     openSnapshot.store(true, std::memory_order_release);
   }
 
@@ -213,8 +265,16 @@ class NativeSourceCore {
 
   // ---- generation algebra -------------------------------------------------
 
+  [[nodiscard]] Lane& lane(bool video) noexcept {
+    return video ? videoLane : audioLane;
+  }
+
+  [[nodiscard]] bool isOpen() const noexcept {
+    return !std::holds_alternative<Closed>(phase);
+  }
+
   [[nodiscard]] bool arm(media::MediaGeneration requested) noexcept {
-    if (requested == 0 || armedGeneration != 0) {
+    if (requested == 0 || armedGeneration) {
       return false;
     }
     media::MediaGeneration observed =
@@ -238,7 +298,7 @@ class NativeSourceCore {
         operationGeneration.load(std::memory_order_acquire) != requested) {
       return false;
     }
-    armedGeneration = 0;
+    armedGeneration.reset();
     return true;
   }
 
@@ -249,7 +309,8 @@ class NativeSourceCore {
   }
 
   void restoreCurrentPublicationAfterRejectedOperation() noexcept {
-    operationGeneration.store(open ? generation : 0, std::memory_order_release);
+    operationGeneration.store(isOpen() ? generation : 0,
+                              std::memory_order_release);
   }
 
   [[nodiscard]] bool isCancelled() const noexcept {
@@ -283,10 +344,12 @@ class NativeSourceCore {
   }
 
   void publishHeadFacts() noexcept {
-    const std::size_t videoCount = videoHead ? 1 : 0;
-    const std::size_t audioCount = audioHead ? 1 : 0;
-    const std::size_t videoBytes = videoHead ? videoHead->payloadBytes : 0;
-    const std::size_t audioBytes = audioHead ? audioHead->payloadBytes : 0;
+    const StagedSample* video = videoLane.head();
+    const StagedSample* audio = audioLane.head();
+    const std::size_t videoCount = video ? 1 : 0;
+    const std::size_t audioCount = audio ? 1 : 0;
+    const std::size_t videoBytes = video ? video->payloadBytes : 0;
+    const std::size_t audioBytes = audio ? audio->payloadBytes : 0;
     const std::size_t total = videoBytes + audioBytes;
     stagedVideoHeads.store(videoCount, std::memory_order_relaxed);
     stagedAudioHeads.store(audioCount, std::memory_order_relaxed);
@@ -296,27 +359,32 @@ class NativeSourceCore {
                            std::memory_order_release);
   }
 
-  void clearHead(std::optional<StagedSample>& head) noexcept {
-    head.reset();
+  // Stages one head into its lane and publishes the staged facts.
+  void stageHead(bool video, StagedSample sample) {
+    lane(video).stage(std::move(sample));
     publishHeadFacts();
   }
 
   void clearHeads() noexcept {
-    videoHead.reset();
-    audioHead.reset();
-    videoRefillPending = false;
-    audioRefillPending = false;
+    videoLane.clear();
+    audioLane.clear();
     publishHeadFacts();
   }
 
-  void withdrawFailedOperation() noexcept {
-    operationGeneration.store(0, std::memory_order_release);
+  // Open -> Closed: releases the generation's readers, heads and identity.
+  // The operation slot is the caller's to withdraw or keep.
+  void enterClosed() noexcept {
     derived().retireActive();
     clearHeads();
     descriptor.reset();
     assetContext.reset();
-    open = false;
+    phase = Closed{};
     openSnapshot.store(false, std::memory_order_release);
+  }
+
+  void withdrawFailedOperation() noexcept {
+    operationGeneration.store(0, std::memory_order_release);
+    enterClosed();
   }
 
   // The reset every generation start begins with. False when the operation
@@ -337,20 +405,9 @@ class NativeSourceCore {
       withdrawFailedOperation();
       return false;
     }
-    derived().retireActive();
-
-    videoTerminal = false;
-    audioTerminal = false;
-    videoRefillPending = false;
-    audioRefillPending = false;
-    videoEosEmitted = false;
-    audioEosEmitted = false;
-    failure.clear();
-    clearHeads();
-    descriptor.reset();
-    assetContext.reset();
-    open = false;
-    openSnapshot.store(false, std::memory_order_release);
+    enterClosed();
+    videoLane.reset(true);
+    audioLane.reset(true);
 
     if (isCancelled()) {
       withdrawFailedOperation();
@@ -360,18 +417,10 @@ class NativeSourceCore {
   }
 
   [[nodiscard]] bool refillPendingLane(bool video, std::string* error) {
-    bool& pending = video ? videoRefillPending : audioRefillPending;
-    std::optional<StagedSample>& head = video ? videoHead : audioHead;
-    const bool terminal = video ? videoTerminal : audioTerminal;
-    if (!pending) {
+    if (!lane(video).refillPending()) {
       return true;
     }
-    // Consume the demand edge before entering the demuxer. A read failure is
-    // sticky and must not turn later readNext() calls into implicit retries.
-    pending = false;
-    if (head || terminal) {
-      return true;
-    }
+    lane(video).beginRefill();
     return derived().stage(video, false, error);
   }
 
@@ -399,7 +448,7 @@ class NativeSourceCore {
         outcome.error = named("", " open was cancelled before entry");
         return outcome;
       }
-      if (requestedPath.empty() || open ||
+      if (requestedPath.empty() || isOpen() ||
           !media::validateMediaSourceInitialPosition(
               requestedOptions.initialPosition, &outcome.error)) {
         if (outcome.error.empty()) {
@@ -457,7 +506,7 @@ class NativeSourceCore {
       }
       const std::optional<media::MediaSourceInitialPosition> position{
           media::MediaSourceInitialPosition{request.target, request.mode}};
-      if (!open || request.generation == 0 ||
+      if (!isOpen() || request.generation == 0 ||
           request.generation <= generation ||
           !media::validateMediaSourceInitialPosition(position,
                                                      &outcome.error) ||
@@ -509,7 +558,7 @@ class NativeSourceCore {
   media::MediaSourceReadResult readNext(
       media::MediaGeneration expectedGeneration) {
     try {
-      if (!open || expectedGeneration != generation || isCancelled()) {
+      if (!isOpen() || expectedGeneration != generation || isCancelled()) {
         if (isCancelled()) {
           withdrawFailedOperation();
         }
@@ -520,7 +569,7 @@ class NativeSourceCore {
       // has been consumed, replenish that lane only on the next downstream
       // pull, then restore the complete A/V merge frontier before comparing
       // times.
-      if (failure.empty()) {
+      if (std::holds_alternative<Open>(phase)) {
         std::string refillError;
         bool refilled = false;
         try {
@@ -535,9 +584,10 @@ class NativeSourceCore {
             withdrawFailedOperation();
             return media::MediaSourceCancelled{expectedGeneration};
           }
-          failure = refillError.empty()
-                        ? named("", " could not stage the next sample")
-                        : std::move(refillError);
+          phase = OpenFailed{
+              refillError.empty()
+                  ? named("", " could not stage the next sample")
+                  : std::move(refillError)};
         }
       }
 
@@ -545,27 +595,26 @@ class NativeSourceCore {
       // wins ties: whichever key a container states, a tie means the two
       // decoders want the data at the same instant and the video path is the
       // one with the longer pipeline ahead of it.
-      std::optional<StagedSample>* chosen = nullptr;
-      bool chosenVideo = false;
+      const StagedSample* videoHead = videoLane.head();
+      const StagedSample* audioHead = audioLane.head();
+      Lane* chosen = nullptr;
       if (videoHead && audioHead) {
         const auto order = media::compareMediaTime(videoHead->orderTime,
                                                    audioHead->orderTime);
         if (!order) {
-          failure = "staged samples have incomparable timestamps";
+          phase = OpenFailed{"staged samples have incomparable timestamps"};
         } else {
-          chosenVideo = *order != media::MediaTimeOrder::Greater;
-          chosen = chosenVideo ? &videoHead : &audioHead;
+          chosen = *order != media::MediaTimeOrder::Greater ? &videoLane
+                                                            : &audioLane;
         }
       } else if (videoHead) {
-        chosenVideo = true;
-        chosen = &videoHead;
+        chosen = &videoLane;
       } else if (audioHead) {
-        chosen = &audioHead;
+        chosen = &audioLane;
       }
       if (chosen != nullptr) {
-        StagedSample emitted = std::move(**chosen);
-        clearHead(*chosen);
-        (chosenVideo ? videoRefillPending : audioRefillPending) = true;
+        StagedSample emitted = chosen->take();
+        publishHeadFacts();
         if (auto* sample = std::get_if<media::MediaSample>(&emitted.value)) {
           samplesEmitted.store(saturatingSum(samplesEmitted.load(
                                    std::memory_order_relaxed), 1),
@@ -574,15 +623,15 @@ class NativeSourceCore {
         }
         return std::get<media::MediaDiscontinuity>(std::move(emitted.value));
       }
-      if (!failure.empty()) {
-        return media::MediaSourceFailure{generation, failure};
+      if (const auto* failed = std::get_if<OpenFailed>(&phase)) {
+        return media::MediaSourceFailure{generation, failed->message};
       }
-      if (videoTerminal && !videoEosEmitted && descriptor->selectedVideo) {
-        videoEosEmitted = true;
+      if (videoLane.ended() && descriptor->selectedVideo) {
+        videoLane.endEmitted();
         return media::MediaEndOfStream{generation, *descriptor->selectedVideo};
       }
-      if (audioTerminal && !audioEosEmitted && descriptor->selectedAudio) {
-        audioEosEmitted = true;
+      if (audioLane.ended() && descriptor->selectedAudio) {
+        audioLane.endEmitted();
         return media::MediaEndOfStream{generation, *descriptor->selectedAudio};
       }
       return media::MediaSourceExhausted{generation};
@@ -610,12 +659,9 @@ class NativeSourceCore {
       out.error = media::mediaRefusalClassName(out.refusal);
       return out;
     }
-    derived().retireActive();
-    clearHeads();
-    descriptor.reset();
-    assetContext.reset();
-    open = false;
-    openSnapshot.store(false, std::memory_order_release);
+    enterClosed();
+    // Open -> Armed without the high-water check arm() makes: the retry is
+    // the same, already admitted cold-open operation.
     armedGeneration = requestedGeneration;
     operationGeneration.store(requestedGeneration, std::memory_order_release);
     return openLocalFile(requestedPath, requestedOptions, requestedGeneration);
@@ -631,16 +677,10 @@ class NativeSourceCore {
   void close() noexcept {
     try {
       operationGeneration.store(0, std::memory_order_release);
-      derived().retireActive();
-      clearHeads();
-      descriptor.reset();
-      assetContext.reset();
+      enterClosed();
       path.clear();
-      open = false;
-      openSnapshot.store(false, std::memory_order_release);
-      armedGeneration = 0;
+      armedGeneration.reset();
       requestedTarget.reset();
-      failure.clear();
       derived().resetSourceFacts();
     } catch (...) {
     }
@@ -715,22 +755,18 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
 
   using Base::assetContext;
   using Base::assignNamed;
-  using Base::audioHead;
-  using Base::audioTerminal;
   using Base::clearHeads;
   using Base::descriptor;
   using Base::generation;
   using Base::isCancelled;
+  using Base::lane;
   using Base::limits;
   using Base::named;
-  using Base::open;
   using Base::openSnapshot;
   using Base::publishCancellation;
-  using Base::publishHeadFacts;
   using Base::requestedTarget;
   using Base::seekMode;
-  using Base::videoHead;
-  using Base::videoTerminal;
+  using Base::stageHead;
   using Base::withdrawFailedOperation;
 
   NativeCustomSourceCore() = default;
@@ -822,7 +858,7 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
         video ? descriptor->selectedVideo : descriptor->selectedAudio;
     Cursor* cursor = video ? videoCursor.get() : audioCursor.get();
     if (!selected) {
-      (video ? videoTerminal : audioTerminal) = true;
+      lane(video).end();
       return true;
     }
     if (cursor == nullptr) {
@@ -845,7 +881,7 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
       return false;
     }
     if (std::holds_alternative<CursorEnd>(result)) {
-      (video ? videoTerminal : audioTerminal) = true;
+      lane(video).end();
       if (admission) {
         assignNamed(error, "selected ", " output has no admission sample");
         return false;
@@ -863,8 +899,7 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
         !Base::admitsFirstVideoSample(sample, false, error)) {
       return false;
     }
-    (video ? videoHead : audioHead) = std::move(head);
-    publishHeadFacts();
+    stageHead(video, std::move(*head));
     return true;
   }
 

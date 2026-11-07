@@ -118,9 +118,9 @@ struct MpegTsMediaSource::Impl final
   // The exact frame ordinal of the NEXT audio access unit this generation will
   // publish. Seeded from the first staged PES timestamp and advanced by whole
   // access units thereafter; it is the only thing this source ever treats as
-  // the audio timeline, and it never rounds after the seed.
-  std::int64_t audioNextFrame{0};
-  bool audioAnchored{false};
+  // the audio timeline, and it never rounds after the seed. Empty until the
+  // first audio unit anchors it.
+  std::optional<std::int64_t> audioNextFrame;
 
   [[nodiscard]] std::int64_t audioLeadInFrames() const noexcept {
     return media::decoderLeadInFrames(
@@ -175,8 +175,7 @@ struct MpegTsMediaSource::Impl final
         assignError(error, "mpeg-ts audio timestamp is not representable");
         return std::nullopt;
       }
-      if (!audioAnchored) {
-        audioAnchored = true;
+      if (!audioNextFrame) {
         // The anchor is the PES timestamp MINUS the decoder lead-in, so that
         // once the converter has swallowed that lead-in its first published
         // frame lands exactly on the presentation floor.
@@ -187,7 +186,7 @@ struct MpegTsMediaSource::Impl final
         // would publish audio the converter's exact-contiguity check would
         // reject one sample later with a far less useful message.
         const std::int64_t drift =
-            *pesFrame - audioLeadInFrames() - audioNextFrame;
+            *pesFrame - audioLeadInFrames() - *audioNextFrame;
         if (drift > audioFramesPerPacket || drift < -audioFramesPerPacket) {
           assignError(error,
                       "mpeg-ts audio access units are not contiguous on the "
@@ -196,7 +195,7 @@ struct MpegTsMediaSource::Impl final
         }
       }
       const auto time = audioFrameTime(
-          audioNextFrame, static_cast<std::uint32_t>(audioSampleRate));
+          *audioNextFrame, static_cast<std::uint32_t>(audioSampleRate));
       if (!time) {
         assignError(error, "mpeg-ts audio frame ordinal left the time domain");
         return std::nullopt;
@@ -292,7 +291,7 @@ struct MpegTsMediaSource::Impl final
       return std::nullopt;
     }
     if (!video) {
-      audioNextFrame += static_cast<std::int64_t>(audioLayout.decodedFrames);
+      *audioNextFrame += static_cast<std::int64_t>(audioLayout.decodedFrames);
     }
     return StagedSample{*selected, MediaTime{}, std::move(sample),
                         retainedBytes};
@@ -303,8 +302,7 @@ struct MpegTsMediaSource::Impl final
     static_cast<void>(plan);
     resetAudioFacts();
     audioChannels = 0;
-    audioNextFrame = 0;
-    audioAnchored = false;
+    audioNextFrame.reset();
     audioCodec = MediaCodec::Unknown;
     latmConfig = nullptr;
     videoCodec = MediaCodec::Unknown;
@@ -365,7 +363,8 @@ struct MpegTsMediaSource::Impl final
     if (!descriptor->selectedAudio) {
       return true;
     }
-    if (!audioHead || !audioAnchored) {
+    const auto* audioHead = this->audioLane.head();
+    if (!audioHead || !audioNextFrame) {
       assignError(error, "mpeg-ts audio generation staged no first unit");
       return false;
     }
@@ -447,10 +446,7 @@ struct MpegTsMediaSource::Impl final
     return true;
   }
 
-  void resetContainerFacts() noexcept {
-    audioAnchored = false;
-    audioNextFrame = 0;
-  }
+  void resetContainerFacts() noexcept { audioNextFrame.reset(); }
 };
 
 MpegTsMediaSource::MpegTsMediaSource() : impl_(std::make_unique<Impl>()) {}

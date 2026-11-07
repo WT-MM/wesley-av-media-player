@@ -1557,7 +1557,6 @@ struct NativeMediaSession::Impl final {
                   continuePreview = false;
                   break;
                 case NativeVideoConsumerPreviewProgress::StaleGeneration:
-                case NativeVideoConsumerPreviewProgress::KeyFrameRequired:
                 case NativeVideoConsumerPreviewProgress::Failed:
                   previewFailurePublished = failPreviewHandoffLocked();
                   continuePreview = false;

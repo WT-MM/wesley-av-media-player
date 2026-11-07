@@ -98,6 +98,20 @@ int main(int argc, char **argv) {
   EXPECT(!preview->facts().cancelled);
   preview->requestCancel(1);
   EXPECT(std::holds_alternative<NativePreviewCancelled>(preview->readNext(1)));
+  // At its end the preview reader stays open: a repeated read is end of
+  // stream again and a forward retarget is still served.
+  const MediaTime end = opened.descriptor->duration;
+  REQUIRE(preview->begin({2, end}).status == NativePreviewStatus::Ready);
+  bool ended = false;
+  for (unsigned i = 0; i < 1000 && !ended; ++i) {
+    const auto read = preview->readNext(2);
+    REQUIRE(std::holds_alternative<MediaSample>(read) ||
+            std::holds_alternative<NativePreviewEndOfStream>(read));
+    ended = std::holds_alternative<NativePreviewEndOfStream>(read);
+  }
+  EXPECT(ended);
+  EXPECT(std::holds_alternative<NativePreviewEndOfStream>(preview->readNext(2)));
+  EXPECT(preview->facts().open && preview->advanceTarget(2, end));
   preview->close();
   source->requestCancel(1);
   EXPECT(!source->stats().cancelled);

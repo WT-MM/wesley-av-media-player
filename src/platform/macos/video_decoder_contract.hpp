@@ -155,6 +155,22 @@ enum class VideoDecoderRetireProgress : std::uint8_t {
   Failed,
 };
 
+// A decoder's terminal retirement. The first valid pair is immutable: only its
+// exact replay answers Done.
+struct VideoDecoderRetirement {
+  std::uint64_t retired;
+  std::uint64_t invalidation;
+
+  [[nodiscard]] VideoDecoderRetireProgress replay(
+      std::uint64_t retiredGeneration,
+      std::uint64_t invalidationGeneration) const noexcept {
+    return retiredGeneration == retired &&
+                   invalidationGeneration == invalidation
+               ? VideoDecoderRetireProgress::Done
+               : VideoDecoderRetireProgress::StaleGeneration;
+  }
+};
+
 // Allocation-free edge notification used by WAM's media owner to retry work
 // when asynchronous decode capacity or lifecycle state changes. `function`
 // may run on a VideoToolbox callback thread or synchronously inside
