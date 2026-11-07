@@ -2549,7 +2549,6 @@ if (result != NativeAudioSessionProgress::Done) {
         acceptPublishedCommands();
         return;
       }
-      dispatcher->setSeekSettleReadAhead(false);
       const media::NativeMediaDispatcherStep step = dispatcher->step();
       endLiveIssue();
       publishVideoDueHint();
@@ -2650,8 +2649,8 @@ if (result != NativeAudioSessionProgress::Done) {
       // no longer mean "the pipeline is ahead". Name the window for the
       // dispatcher: audio backpressure must stop closing the merged read while
       // the video decoder still needs access units to emit the covering frame.
-      dispatcher->setSeekSettleReadAhead(true);
-      const media::NativeMediaDispatcherStep step = dispatcher->step();
+      const media::NativeMediaDispatcherStep step =
+          dispatcher->step(/*seekSettleReadAhead=*/true);
       endLiveIssue();
       publishVideoDueHint();
       if (stopPublished()) {
@@ -3199,7 +3198,6 @@ if (result != NativeAudioSessionProgress::Done) {
               acceptPublishedCommands();
               break;
             }
-            dispatcher->setSeekSettleReadAhead(false);
             const auto step = dispatcher->step();
             endLiveIssue();
             if (stopPublished()) {

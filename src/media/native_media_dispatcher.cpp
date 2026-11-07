@@ -754,7 +754,9 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
   return result;
 }
 
-NativeMediaDispatcherStep NativeMediaDispatcher::step() noexcept {
+NativeMediaDispatcherStep NativeMediaDispatcher::step(
+    bool seekSettleReadAhead) noexcept {
+  seek_settle_read_ahead_ = seekSettleReadAhead;
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
   if (late_trace::enabled) {
     auto& trace = late_trace::worker;
@@ -1253,10 +1255,6 @@ NativeMediaDispatcherStats NativeMediaDispatcher::stats() const noexcept {
   result.retirementInvalidationGeneration =
       retirement_invalidation_generation_;
   return result;
-}
-
-void NativeMediaDispatcher::setSeekSettleReadAhead(bool enabled) noexcept {
-  seek_settle_read_ahead_ = enabled;
 }
 
 bool NativeMediaDispatcher::seekSettleAudioLaneOpen() const noexcept {
@@ -2323,7 +2321,7 @@ void NativeMediaDispatcher::releaseRetainedEvents() noexcept {
   releaseLane(video_lane_);
   releaseLane(audio_lane_);
   // A retained lane never survives a lifecycle transition, so the window that
-  // authorized it is over too. The session re-arms it for the next commit.
+  // authorized it is over too for the rest of this step.
   seek_settle_read_ahead_ = false;
 }
 
