@@ -628,7 +628,7 @@ bool MpvEngine::scrubLineageCurrent() const {
          lineage.committed_open &&
          lineage.committed_open->request_serial == host_.requestSerial() &&
          lineage.committed_open->playlist_entry_id == scrub_seek_->playlist_entry_id &&
-         lineage.active_event_playlist_entry_id == scrub_seek_->playlist_entry_id;
+         lineage.activeEntry() == scrub_seek_->playlist_entry_id;
 }
 
 void MpvEngine::dispatchScrubSeek(double target, bool exact) {
@@ -807,7 +807,7 @@ bool MpvEngine::acceptsPlaybackObservation() const {
          lineage.committed_open->request_serial == host_.requestSerial() &&
          lineage.committed_open->playlist_entry_id >= 0 && core &&
          core->validateRenderTicket({lineage.committed_open->render_stamp}) &&
-         lineage.active_event_playlist_entry_id == lineage.committed_open->playlist_entry_id;
+         lineage.activeEntry() == lineage.committed_open->playlist_entry_id;
 }
 
 void MpvEngine::beginScrub(double /*position*/) {
@@ -1052,8 +1052,10 @@ void MpvEngine::handleRenderRecoveryCommandReply(
     }
     if (!attempt.restarted_playlist_entry)
       lineage.redirect_ranges.clear();
-    if (lineage.active_event_playlist_entry_id != reloaded_entry)
-      lineage.active_event_playlist_entry_id = -1;
+    if (const auto *active = std::get_if<EntryActive>(&lineage.entry_events);
+        active && active->entry != reloaded_entry) {
+      lineage.entry_events = EntryBetween{};
+    }
   } else if (lineage.committed_open->playlist_entry_id < 0 ||
              attempt.playlist_entry_id != lineage.committed_open->playlist_entry_id) {
     return;
@@ -1072,7 +1074,7 @@ void MpvEngine::restoreRenderRecovery() {
       lineage.render_recovery->request_serial != host_.requestSerial() ||
       lineage.committed_open->request_serial != host_.requestSerial() ||
       lineage.committed_open->playlist_entry_id < 0 ||
-      lineage.committed_open->playlist_entry_id != lineage.active_event_playlist_entry_id) {
+      lineage.committed_open->playlist_entry_id != lineage.activeEntry()) {
     return;
   }
   RenderRecovery &recovery = *lineage.render_recovery;
@@ -1252,7 +1254,7 @@ bool MpvEngine::committedOutputIs(std::uint64_t request_serial,
          lineage.committed_open->request_serial == request_serial &&
          lineage.committed_open->render_stamp == render_stamp &&
          lineage.committed_open->playlist_entry_id == playlist_entry_id &&
-         lineage.active_event_playlist_entry_id == playlist_entry_id &&
+         lineage.activeEntry() == playlist_entry_id &&
          core->validateRenderTicket({render_stamp});
 }
 
@@ -1355,7 +1357,7 @@ void MpvEngine::queueStartupPlaybackSync() {
       lineage.startup_playback_sync->request_serial != host_.requestSerial() ||
       lineage.startup_playback_sync->playlist_entry_id < 0 ||
       lineage.startup_playback_sync->playlist_entry_id !=
-          lineage.active_event_playlist_entry_id) {
+          lineage.activeEntry()) {
     return;
   }
 
@@ -1825,7 +1827,6 @@ void MpvEngine::handleOpenCommandReply(std::uint64_t attempt_id,
   lineage.committed_entry_source = displayUrlForSource(loaded_source);
   lineage.committed_playlist_position =
       playlistPositionForEntry(committed.playlist_entry_id);
-  lineage.terminal_playlist_entry_id = -1;
   lineage.redirect_ranges.clear();
   lineage.render_recovery.reset();
   lineage.attached_subtitle_files.clear();
@@ -1834,8 +1835,8 @@ void MpvEngine::handleOpenCommandReply(std::uint64_t attempt_id,
   lineage.selected_audio_track_id = -1;
   lineage.selected_subtitle_track_id = -1;
   lineage.selected_tracks_playlist_entry_id = -1;
-  if (lineage.active_event_playlist_entry_id != committed.playlist_entry_id)
-    lineage.active_event_playlist_entry_id = -1;
+  if (lineage.activeEntry() != committed.playlist_entry_id)
+    lineage.entry_events = EntryBetween{};
   const std::int64_t video_track = currentTrackId("vid");
   if (video_track > 0 && committed.playlist_entry_id >= 0) {
     lineage.selected_video_track_id = video_track;
@@ -1878,23 +1879,21 @@ void MpvEngine::handleStartFile(std::int64_t playlist_entry_id) {
     invalidateScrubGesture();
   }
   if (playlist_entry_id < 0) {
-    lineage.active_event_playlist_entry_id = -1;
+    lineage.entry_events = EntryBetween{};
     return;
   }
   if (lineage.recoveryAttempt() &&
       lineage.recoveryAttempt()->request_serial == host_.requestSerial() &&
       lineage.recoveryAttempt()->mode == RenderRecoveryMode::FullReload) {
     lineage.recoveryAttempt()->started_playlist_entry_id = playlist_entry_id;
-    lineage.active_event_playlist_entry_id = playlist_entry_id;
-    lineage.terminal_playlist_entry_id = -1;
+    lineage.entry_events = EntryActive{playlist_entry_id};
     return;
   }
 
   if (lineage.open_attempt && lineage.open_attempt->request_serial == host_.requestSerial() &&
       lineage.open_attempt->request_serial == lineage.pending_request_serial) {
     lineage.open_attempt->playlist_entry_id = playlist_entry_id;
-    lineage.active_event_playlist_entry_id = playlist_entry_id;
-    lineage.terminal_playlist_entry_id = -1;
+    lineage.entry_events = EntryActive{playlist_entry_id};
     return;
   }
 
@@ -1907,7 +1906,7 @@ void MpvEngine::handleStartFile(std::int64_t playlist_entry_id) {
   if (!lineage.pending_source.isEmpty() ||
       (!initial_start_without_committed_entry &&
        !playlistEntryBelongsToCurrentLineage(playlist_entry_id))) {
-    lineage.active_event_playlist_entry_id = -1;
+    lineage.entry_events = EntryBetween{};
     return;
   }
 
@@ -1932,8 +1931,7 @@ void MpvEngine::handleStartFile(std::int64_t playlist_entry_id) {
         ready() ? playlistEntrySource(playlist_entry_id)
                       : QUrl{};
   }
-  lineage.active_event_playlist_entry_id = playlist_entry_id;
-  lineage.terminal_playlist_entry_id = -1;
+  lineage.entry_events = EntryActive{playlist_entry_id};
   host_.updateEof(false);
   if (!lineage.render_recovery && lineage.committed_open->render_stamp == 0) {
     std::uint64_t stamp = 0;
@@ -1959,7 +1957,6 @@ void MpvEngine::handleStartFile(std::int64_t playlist_entry_id) {
   }
   if (entry_changed) {
     host_.resetTimeline();
-    lineage.observed_current_path = false;
     host_.updateMediaTitle({});
     lineage.selected_video_track_id = -1;
     lineage.selected_audio_track_id = -1;
@@ -1980,14 +1977,14 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
       end.playlist_entry_id >= 0 && lineage.committed_open &&
       lineage.committed_open->request_serial == host_.requestSerial() &&
       lineage.committed_open->playlist_entry_id == end.playlist_entry_id &&
-      (lineage.active_event_playlist_entry_id == end.playlist_entry_id ||
+      (lineage.activeEntry() == end.playlist_entry_id ||
        startup_entry);
   if (!current_entry)
     return;
 
   invalidateScrubGesture();
 
-  lineage.active_event_playlist_entry_id = -1;
+  lineage.entry_events = EntryBetween{};
 
   const bool expected_video_only_teardown =
       end.reason == MPV_END_FILE_REASON_ERROR &&
@@ -2053,7 +2050,7 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
         if (!lineage.render_recovery || host_.requestSerial() != terminal_serial ||
             !lineage.committed_open ||
             lineage.committed_open->playlist_entry_id != terminal_entry ||
-            lineage.active_event_playlist_entry_id >= 0 || !host_.eofReached() ||
+            lineage.activeEntry() >= 0 || !host_.eofReached() ||
             lineage.render_recovery->mode != RenderRecoveryMode::NoReselection) {
           return;
         }
@@ -2061,12 +2058,12 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
         const std::uint64_t adoption_stamp = restoring ? restoring->stamp : 0;
         lineage.render_recovery.reset();
         lineage.committed_open->render_stamp = adoption_stamp;
-        lineage.terminal_playlist_entry_id = terminal_entry;
+        lineage.entry_events = EntryEnded{terminal_entry};
       });
       return;
     }
     lineage.render_recovery.reset();
-    lineage.terminal_playlist_entry_id = end.playlist_entry_id;
+    lineage.entry_events = EntryEnded{end.playlist_entry_id};
     host_.updateEof(true);
     return;
   }
@@ -2082,7 +2079,7 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
     host_.updateMediaTitle({});
     host_.setRequestedSource({});
     lineage.committed_open.reset();
-    lineage.last_error_playlist_entry_id = end.playlist_entry_id;
+    lineage.error_entry = end.playlist_entry_id;
     QString failure = QStringLiteral("Could not open this file: %1")
                           .arg(mpvErrorDetail(end.error));
     NativeEngine *native = host_.nativeEngine();
@@ -2112,23 +2109,22 @@ void MpvEngine::handlePlaybackReady(bool file_loaded) {
   }
   if (file_loaded)
     cacheCurrentEntrySource();
-  if (file_loaded && lineage.last_error_playlist_entry_id >= 0 &&
-      lineage.active_event_playlist_entry_id >= 0 &&
-      lineage.active_event_playlist_entry_id != lineage.last_error_playlist_entry_id) {
-    lineage.last_error_playlist_entry_id = -1;
+  if (file_loaded && lineage.error_entry && lineage.activeEntry() >= 0 &&
+      lineage.activeEntry() != *lineage.error_entry) {
+    lineage.error_entry.reset();
     host_.setLastError({});
   }
   if (lineage.render_recovery) {
     bool matching_lineage = false;
     if (lineage.committed_open && lineage.committed_open->playlist_entry_id >= 0 &&
-        lineage.committed_open->playlist_entry_id == lineage.active_event_playlist_entry_id) {
+        lineage.committed_open->playlist_entry_id == lineage.activeEntry()) {
       matching_lineage = true;
     }
     if (lineage.recoveryAttempt() &&
         lineage.recoveryAttempt()->mode == RenderRecoveryMode::FullReload &&
         lineage.recoveryAttempt()->started_playlist_entry_id >= 0 &&
         lineage.recoveryAttempt()->started_playlist_entry_id ==
-            lineage.active_event_playlist_entry_id) {
+            lineage.activeEntry()) {
       matching_lineage = true;
     }
     if (matching_lineage) {
@@ -2141,9 +2137,9 @@ void MpvEngine::handlePlaybackReady(bool file_loaded) {
              lineage.startup_playback_sync->request_serial == host_.requestSerial() &&
              lineage.startup_playback_sync->playlist_entry_id >= 0 &&
              lineage.startup_playback_sync->playlist_entry_id ==
-                 lineage.active_event_playlist_entry_id &&
+                 lineage.activeEntry() &&
              lineage.committed_open->playlist_entry_id ==
-                 lineage.active_event_playlist_entry_id) {
+                 lineage.activeEntry()) {
     if (file_loaded)
       cacheCurrentTrackSelection();
     else
@@ -2182,14 +2178,24 @@ void MpvEngine::notePlaybackRestartForRecovery() {
       in_flight && in_flight->attempt.mode == RenderRecoveryMode::FullReload &&
       in_flight->attempt.started_playlist_entry_id >= 0 &&
       in_flight->attempt.started_playlist_entry_id ==
-          lineage.active_event_playlist_entry_id) {
+          lineage.activeEntry()) {
     in_flight->playback_restarted = true;
   }
 }
 
+bool MpvEngine::activeEntryIsCurrent() const {
+  const std::int64_t entry = lineage.activeEntry();
+  if (entry < 0)
+    return false;
+  const auto current = [&](const std::optional<OpenAttempt> &open) {
+    return open && open->request_serial == host_.requestSerial() &&
+           open->playlist_entry_id == entry;
+  };
+  return current(lineage.open_attempt) || current(lineage.committed_open);
+}
+
 void MpvEngine::abandonPendingOpen() {
   host_.setRequestedSource(host_.source());
-  lineage.observed_current_path = !host_.source().isEmpty();
   lineage.pending_source.clear();
   lineage.pending_request_serial = 0;
   lineage.open_attempt.reset();
@@ -2207,8 +2213,8 @@ void MpvEngine::abandonPendingOpen() {
 
 void MpvEngine::cacheCurrentTrackSelection() {
   if (!core || !ready() || !lineage.committed_open ||
-      lineage.active_event_playlist_entry_id < 0 ||
-      lineage.active_event_playlist_entry_id != lineage.committed_open->playlist_entry_id) {
+      lineage.activeEntry() < 0 ||
+      lineage.activeEntry() != lineage.committed_open->playlist_entry_id) {
     return;
   }
   lineage.selected_video_track_id = currentTrackSelection("vid");
@@ -2221,7 +2227,7 @@ void MpvEngine::cacheCurrentTrackSelection() {
 void MpvEngine::cacheCurrentEntrySource() {
   if (!core || !ready() || !lineage.committed_open ||
       lineage.committed_open->playlist_entry_id < 0 ||
-      lineage.committed_open->playlist_entry_id != lineage.active_event_playlist_entry_id) {
+      lineage.committed_open->playlist_entry_id != lineage.activeEntry()) {
     return;
   }
   const auto path = stringProperty("path");
@@ -2478,20 +2484,22 @@ void MpvEngine::drainMpvEvents() {
             lineage.committed_open->request_serial == host_.requestSerial() &&
             lineage.committed_open->playlist_entry_id >= 0 &&
             lineage.committed_open->playlist_entry_id ==
-                lineage.active_event_playlist_entry_id) {
+                lineage.activeEntry()) {
           lineage.committed_entry_source = observed_source;
         }
         if (sourceIdentity(observed_source) !=
             sourceIdentity(host_.requestedSource())) {
           break;
         }
-        lineage.observed_current_path = true;
         host_.updateSource(observed_source);
         break;
       }
       case ObservedProperty::MediaTitle: {
         QString value = readString(property);
-        if (!lineage.observed_current_path && !value.isEmpty())
+        // A title is trusted only from an entry known to be the current
+        // request's (the open's or the committed file's, a redirect child
+        // included); an outgoing file's late title is dropped.
+        if (!activeEntryIsCurrent() && !value.isEmpty())
           break;
         if (value.isEmpty())
           value = fallbackTitle(host_.source());
@@ -2648,9 +2656,9 @@ bool MpvEngine::beginOpen(const QUrl &source) {
   lineage.open_attempt.reset();
   lineage.render_recovery.reset();
   lineage.startup_playback_sync.reset();
-  lineage.observed_current_path = false;
-  lineage.terminal_playlist_entry_id = -1;
-  lineage.last_error_playlist_entry_id = -1;
+  if (std::holds_alternative<EntryEnded>(lineage.entry_events))
+    lineage.entry_events = EntryBetween{};
+  lineage.error_entry.reset();
 
   // A renderer setup failure is latched for its generation. An explicit user
   // open arms exactly one fresh generation; ordinary render passes do not.
@@ -2710,10 +2718,11 @@ void MpvEngine::play() {
     host_.updatePause(false);
     return;
   }
-  if (host_.eofReached() && lineage.committed_open &&
-      lineage.terminal_playlist_entry_id == lineage.committed_open->playlist_entry_id) {
-    lineage.active_event_playlist_entry_id = lineage.terminal_playlist_entry_id;
-    lineage.terminal_playlist_entry_id = -1;
+  // Replaying an ended entry: mpv sends no START_FILE for it.
+  if (const auto *ended = std::get_if<EntryEnded>(&lineage.entry_events);
+      ended && host_.eofReached() && lineage.committed_open &&
+      ended->entry == lineage.committed_open->playlist_entry_id) {
+    lineage.entry_events = EntryActive{ended->entry};
   }
   const double fps = doubleProperty("estimated-vf-fps").value_or(0.0);
   if (host_.atEndForReplay(std::isfinite(fps) && fps > 0.0 ? 1.0 / fps : 0.0))

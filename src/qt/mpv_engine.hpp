@@ -372,6 +372,18 @@ public:
     StartupSyncPhase phase;
   };
 
+  // mpv's file events for playlist entries: between entries, inside one
+  // (START_FILE seen, no END_FILE yet), or after one ended at EOF, which
+  // play() can resume without a new START_FILE.
+  struct EntryBetween {};
+  struct EntryActive {
+    std::int64_t entry;
+  };
+  struct EntryEnded {
+    std::int64_t entry;
+  };
+  using EntryEvents = std::variant<EntryBetween, EntryActive, EntryEnded>;
+
   struct PlaylistEntryRange {
     std::int64_t first = -1;
     std::uint64_t count = 0;
@@ -391,10 +403,10 @@ public:
     std::optional<StartupPlaybackSync> startup_playback_sync;
     std::optional<RoutedFallbackOpen> routed_fallback_open;
     std::vector<PlaylistEntryRange> redirect_ranges;
-    bool observed_current_path = false;
-    std::int64_t active_event_playlist_entry_id = -1;
-    std::int64_t terminal_playlist_entry_id = -1;
-    std::int64_t last_error_playlist_entry_id = -1;
+    EntryEvents entry_events;
+    // The entry whose END_FILE error is on screen; a later entry's
+    // FILE_LOADED clears it.
+    std::optional<std::int64_t> error_entry;
     std::uint64_t last_reported_render_failure_stamp = 0;
     std::int64_t selected_video_track_id = -1;
     std::int64_t selected_audio_track_id = -1;
@@ -402,6 +414,12 @@ public:
     std::int64_t selected_tracks_playlist_entry_id = -1;
     std::optional<bool> current_file_has_audio_track;
     std::vector<std::filesystem::path> attached_subtitle_files;
+
+    // The entry START_FILE opened and END_FILE has not closed, or -1.
+    [[nodiscard]] std::int64_t activeEntry() const noexcept {
+      const auto *active = std::get_if<EntryActive>(&entry_events);
+      return active ? active->entry : -1;
+    }
 
     [[nodiscard]] RenderRecoveryAttempt *recoveryAttempt() noexcept {
       return render_recovery ? render_recovery->attempt() : nullptr;
@@ -559,6 +577,9 @@ public:
   void handleEndFile(const mpv_event_end_file &end);
   void handlePlaybackReady(bool file_loaded);
   void abandonPendingOpen();
+  // The active entry is the current request's (its open's or its committed
+  // file's).
+  [[nodiscard]] bool activeEntryIsCurrent() const;
   void cacheCurrentTrackSelection();
   void cacheCurrentEntrySource();
   void notifyRoutedFallbackOpenFailed();

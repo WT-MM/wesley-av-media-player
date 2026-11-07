@@ -345,7 +345,7 @@ class PlayerControllerTestAccess final {
         1, serial, ticket.stamp, playlist_entry_id};
     controller.mpv_.lineage.committed_entry_source = source;
     controller.mpv_.lineage.committed_playlist_position = 0;
-    controller.mpv_.lineage.active_event_playlist_entry_id = playlist_entry_id;
+    controller.mpv_.lineage.entry_events = MpvEngine::EntryActive{playlist_entry_id};
     controller.mpv_.lineage.selected_video_track_id = video_track_id;
     controller.mpv_.lineage.selected_audio_track_id = audio_track_id;
     controller.mpv_.lineage.selected_subtitle_track_id = subtitle_track_id;
@@ -1166,7 +1166,7 @@ class PlayerControllerTestAccess final {
   }
 
   static std::int64_t activeEntry(const PlayerController &controller) {
-    return controller.mpv_.lineage.active_event_playlist_entry_id;
+    return controller.mpv_.lineage.activeEntry();
   }
 
   static void seedPendingReplacement(PlayerController &controller,
