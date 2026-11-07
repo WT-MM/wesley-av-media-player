@@ -1755,16 +1755,17 @@ void MpvEngine::observeOpenCommandReply(std::uint64_t attempt_id,
                                                int error) {
   if (error >= 0 && lineage.open_attempt &&
       lineage.open_attempt->id == attempt_id &&
-      !lineage.open_attempt->playback_restarted) {
+      lineage.open_attempt->progress != OpenProgress::RestartSeen) {
     // Metadata reads in handleOpenCommandReply are synchronous. Before the
     // first frame they can wait on mpv's VO while Qt needs this GUI thread to
     // dispatch rendering. Retain one reply in the existing attempt, then read
     // metadata after PLAYBACK_RESTART (also emitted for paused/audio opens).
-    lineage.open_attempt->reply_ready = true;
+    lineage.open_attempt->progress = OpenProgress::ReplyHeld;
     return;
   }
   const bool loaded = lineage.open_attempt && lineage.open_attempt->file_loaded;
-  const bool restarted = lineage.open_attempt && lineage.open_attempt->playback_restarted;
+  const bool restarted = lineage.open_attempt &&
+                         lineage.open_attempt->progress == OpenProgress::RestartSeen;
   handleOpenCommandReply(attempt_id, error);
   if (error >= 0 && !lineage.open_attempt && restarted) {
     if (loaded) handlePlaybackReady(true);
@@ -2094,12 +2095,20 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
 void MpvEngine::handlePlaybackReady(bool file_loaded) {
   if (!file_loaded) host_.updateLoading(false);
   if (lineage.open_attempt) {
-    if (file_loaded) lineage.open_attempt->file_loaded = true;
-    else lineage.open_attempt->playback_restarted = true;
-    if (file_loaded || !lineage.open_attempt->reply_ready) return;
+    if (file_loaded) {
+      lineage.open_attempt->file_loaded = true;
+      return;
+    }
+    if (lineage.open_attempt->progress != OpenProgress::ReplyHeld) {
+      lineage.open_attempt->progress = OpenProgress::RestartSeen;
+      return;
+    }
     const auto attempt = *lineage.open_attempt;
     handleOpenCommandReply(attempt.id, 0);
-    if (attempt.file_loaded) handlePlaybackReady(true);
+    // Replay the held FILE_LOADED only for the attempt it belonged to: a
+    // stale-renderer reply re-flushes a new attempt instead of committing.
+    if (attempt.file_loaded && !lineage.open_attempt)
+      handlePlaybackReady(true);
   }
   if (file_loaded)
     cacheCurrentEntrySource();
@@ -2529,7 +2538,8 @@ void MpvEngine::drainMpvEvents() {
       if (end) {
         // Failed/empty opens may end without PLAYBACK_RESTART. Retire their
         // accepted command using the matching START_FILE identity as well.
-        if (lineage.open_attempt && lineage.open_attempt->reply_ready &&
+        if (lineage.open_attempt &&
+            lineage.open_attempt->progress == OpenProgress::ReplyHeld &&
             lineage.open_attempt->playlist_entry_id == end->playlist_entry_id)
           handleOpenCommandReply(lineage.open_attempt->id, 0);
         handleEndFile(*end);

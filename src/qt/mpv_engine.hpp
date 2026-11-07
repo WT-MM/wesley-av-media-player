@@ -206,14 +206,20 @@ static_assert([] {
 // class touches the mpv handle of a router-owned stop or pause.
 class MpvEngine final {
 public:
+  // An open's reply and its PLAYBACK_RESTART may arrive in either order;
+  // whichever comes second commits it. ReplyHeld keeps a successful reply
+  // until the restart (metadata reads before the first frame can block on
+  // the VO); RestartSeen means the reply commits on arrival.
+  enum class OpenProgress : std::uint8_t { Queued, ReplyHeld, RestartSeen };
+
   struct OpenAttempt {
     std::uint64_t id = 0;
     std::uint64_t request_serial = 0;
     std::uint64_t render_stamp = 0;
     std::int64_t playlist_entry_id = -1;
-    bool reply_ready = false;
+    OpenProgress progress = OpenProgress::Queued;
+    // FILE_LOADED arrived before the commit and is replayed after it.
     bool file_loaded = false;
-    bool playback_restarted = false;
   };
 
   // The router's identity for an open it handed to this engine.
