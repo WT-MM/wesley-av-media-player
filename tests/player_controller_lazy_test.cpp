@@ -32,9 +32,11 @@ namespace wam::qt {
 // to shipping code.
 class PlayerControllerTestAccess final {
  public:
-  static void setExactDisplay(PlayerController& controller, media::MediaDisplaySize size) {
-    controller.updateVideoDisplaySize(size.width, size.height);
+  static void setVideoFacts(PlayerController& controller, media::MediaDisplaySize size,
+                            bool hdr = false) {
+    controller.updateVideoFacts(size.width, size.height, hdr);
   }
+  static void resetTimeline(PlayerController& controller) { controller.resetTimeline(); }
 
   static std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime() {
     static const auto injected =
@@ -44,7 +46,7 @@ class PlayerControllerTestAccess final {
 
   static bool provisionRuntime(PlayerController &controller) {
     return controller.engineReady() || controller.mpv_.provisioned() ||
-           controller.provisionMpvFallbackRuntime(runtime());
+           controller.mpv_.provision(runtime());
   }
 
   static std::shared_ptr<PlayerCore> core(const PlayerController &controller) {
@@ -56,7 +58,7 @@ class PlayerControllerTestAccess final {
   }
 
   static void drainMpvEvents(PlayerController &controller) {
-    controller.drainMpvEvents();
+    controller.mpv_.drainMpvEvents();
   }
 
   static RenderTicket makeRendererReady(PlayerController &controller) {
@@ -100,22 +102,22 @@ class PlayerControllerTestAccess final {
 
   static void observeOpenReply(PlayerController &controller, std::uint64_t id,
                                int error = 0) {
-    controller.observeOpenCommandReply((1ULL << 63) | id, error);
+    controller.mpv_.observeOpenCommandReply(id, error);
   }
 
   static void completeOpenAttempt(PlayerController &controller,
                                   std::uint64_t attempt_id, int error = 0) {
-    controller.handleOpenCommandReply((1ULL << 63) | attempt_id, error);
+    controller.mpv_.handleOpenCommandReply(attempt_id, error);
   }
 
   static void renderInvalidated(PlayerController &controller,
                                 RenderTicket retired) {
-    controller.handleRenderInvalidated(retired.stamp);
+    controller.mpv_.handleRenderInvalidated(retired.stamp);
   }
 
   static void renderFailed(PlayerController &controller, const QString &error,
                            RenderTicket failed) {
-    controller.handleRenderInitializationFailure(error, failed.stamp);
+    controller.mpv_.handleRenderInitializationFailure(error, failed.stamp);
   }
 
   static bool hasPendingOpen(const PlayerController &controller) {
@@ -174,9 +176,9 @@ class PlayerControllerTestAccess final {
       std::optional<bool> eof_reached) {
     if (!controller.mpv_.lineage.startup_playback_sync)
       return false;
-    return PlayerController::livePlaybackStateMatchesStartupSync(
+    return MpvEngine::livePlaybackStateMatchesStartupSync(
         *controller.mpv_.lineage.startup_playback_sync,
-        PlayerController::LivePlaybackState{paused, idle, eof_reached,
+        MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             std::nullopt, std::nullopt});
   }
 
@@ -184,8 +186,8 @@ class PlayerControllerTestAccess final {
       PlayerController &controller, bool paused, bool idle,
       std::optional<bool> eof_reached, std::optional<double> position,
       std::optional<double> duration) {
-    controller.reconcileStartupPlaybackSync(
-        PlayerController::LivePlaybackState{paused, idle, eof_reached,
+    controller.mpv_.reconcileStartupPlaybackSync(
+        MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             position, duration});
   }
 
@@ -296,12 +298,11 @@ class PlayerControllerTestAccess final {
   static void completeRecoveryAttempt(PlayerController &controller,
                                       std::uint64_t attempt_id,
                                       int error = 0) {
-    controller.handleRenderRecoveryCommandReply((1ULL << 62) | attempt_id,
-                                                error);
+    controller.mpv_.handleRenderRecoveryCommandReply(attempt_id, error);
   }
 
   static bool flush(PlayerController &controller, RenderTicket ticket) {
-    return controller.flushPendingOpen(ticket.stamp);
+    return controller.mpv_.flushPendingOpen(ticket.stamp);
   }
 
   static bool initializeEngine(PlayerController &controller) {
@@ -409,7 +410,7 @@ class PlayerControllerTestAccess final {
 
   static std::int64_t authoritativePlaylistEntry(
       std::int64_t live_entry, std::int64_t captured_start_entry) {
-    return PlayerController::authoritativePlaylistEntry(
+    return MpvEngine::authoritativePlaylistEntry(
         live_entry, captured_start_entry);
   }
 
@@ -434,134 +435,132 @@ class PlayerControllerTestAccess final {
 
   static void startFile(PlayerController &controller,
                         std::int64_t playlist_entry_id) {
-    controller.handleStartFile(playlist_entry_id);
+    controller.mpv_.handleStartFile(playlist_entry_id);
   }
 
   static void playbackReady(PlayerController &controller,
                             bool file_loaded = false) {
-    controller.handlePlaybackReady(file_loaded);
+    controller.mpv_.handlePlaybackReady(file_loaded);
   }
 
   static bool hasScrub(const PlayerController &controller) {
-    return controller.scrub_seek_.has_value();
+    return controller.mpv_.scrub_seek_.has_value();
   }
 
   static std::uint64_t scrubCommand(const PlayerController &controller) {
-    return controller.scrub_seek_ ? controller.scrub_seek_->command : 0;
+    return controller.mpv_.scrub_seek_ ? controller.mpv_.scrub_seek_->command : 0;
   }
 
   static double scrubTarget(const PlayerController &controller) {
-    return controller.scrub_seek_ ? controller.scrub_seek_->target : -1.0;
+    return controller.mpv_.scrub_seek_ ? controller.mpv_.scrub_seek_->target : -1.0;
   }
 
   static std::optional<double>
   scrubPendingTarget(const PlayerController &controller) {
-    return controller.scrub_seek_
-               ? controller.scrub_seek_->pending_target
+    return controller.mpv_.scrub_seek_
+               ? controller.mpv_.scrub_seek_->pending_target
                : std::nullopt;
   }
 
   static bool scrubIntendsPause(const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_seek_->intended_paused;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->intended_paused;
   }
 
   static bool scrubFinal(const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_seek_->final;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->final;
   }
 
   static bool scrubCommandExact(const PlayerController &controller) {
-    return controller.scrub_seek_ &&
-           controller.scrub_seek_->command_exact;
+    return controller.mpv_.scrub_seek_ &&
+           controller.mpv_.scrub_seek_->command_exact;
   }
 
   static const char *scrubCommandMode(const PlayerController &controller) {
-    return PlayerController::scrubSeekMode(scrubCommandExact(controller));
+    return MpvEngine::scrubSeekMode(scrubCommandExact(controller));
   }
 
   static QTimer *scrubTimeoutTimer(const PlayerController &controller) {
-    return controller.scrub_timeout_timer_;
+    return controller.mpv_.scrub_timeout_timer_;
   }
 
   static bool scrubTimeoutActive(const PlayerController &controller) {
-    return controller.scrub_timeout_timer_ &&
-           controller.scrub_timeout_timer_->isActive();
+    return controller.mpv_.scrub_timeout_timer_ &&
+           controller.mpv_.scrub_timeout_timer_->isActive();
   }
 
   static std::uint64_t scrubTimeoutCommand(
       const PlayerController &controller) {
-    return controller.scrub_timeout_command_;
+    return controller.mpv_.scrub_timeout_command_;
   }
 
   static bool scrubTimeoutOwnsActiveCommand(
       const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_timeout_timer_ &&
-           controller.scrub_timeout_timer_->isActive() &&
-           controller.scrub_timeout_gesture_ ==
-               controller.scrub_seek_->gesture &&
-           controller.scrub_timeout_request_serial_ ==
-               controller.scrub_seek_->request_serial &&
-           controller.scrub_timeout_command_ ==
-               controller.scrub_seek_->command;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_timeout_timer_ &&
+           controller.mpv_.scrub_timeout_timer_->isActive() &&
+           controller.mpv_.scrub_timeout_gesture_ ==
+               controller.mpv_.scrub_seek_->gesture &&
+           controller.mpv_.scrub_timeout_request_serial_ ==
+               controller.mpv_.scrub_seek_->request_serial &&
+           controller.mpv_.scrub_timeout_command_ ==
+               controller.mpv_.scrub_seek_->command;
   }
 
   static bool scrubSeekStarted(const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_seek_->seek_started;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->seek_started;
   }
 
   static bool scrubAbortPending(const PlayerController &controller) {
-    return controller.scrub_seek_ && controller.scrub_seek_->abort_pending;
+    return controller.mpv_.scrub_seek_ && controller.mpv_.scrub_seek_->abort_pending;
   }
 
   static void scrubCommandReply(PlayerController &controller,
                                 std::uint64_t command, int error = 0) {
-    controller.handleScrubCommandReply((1ULL << 63) | (1ULL << 61) |
-                                           command,
-                                       error);
+    controller.mpv_.handleScrubCommandReply(command, error);
   }
 
   static void scrubSeekStarted(PlayerController &controller) {
-    if (controller.scrub_seek_)
-      controller.scrub_seek_->seek_started = true;
+    if (controller.mpv_.scrub_seek_)
+      controller.mpv_.scrub_seek_->seek_started = true;
   }
 
   static void scrubRestart(PlayerController &controller,
                            double authoritative_position) {
-    if (!controller.scrub_seek_)
+    if (!controller.mpv_.scrub_seek_)
       return;
-    controller.scrub_seek_->authoritative_position =
+    controller.mpv_.scrub_seek_->authoritative_position =
         authoritative_position;
-    controller.scrub_seek_->playback_restarted = true;
-    controller.maybeCompleteScrubSeek();
+    controller.mpv_.scrub_seek_->playback_restarted = true;
+    controller.mpv_.maybeCompleteScrubSeek();
   }
 
   static void scrubPlaybackRestart(PlayerController &controller) {
-    controller.handleScrubPlaybackRestart();
+    controller.mpv_.handleScrubPlaybackRestart();
   }
 
   static void scrubObservedPosition(PlayerController &controller,
                                     double position) {
-    controller.applyObservedPosition(position);
+    controller.mpv_.applyObservedPosition(position);
   }
 
   static void scrubTimeout(PlayerController &controller,
                            std::uint64_t command) {
-    if (!controller.scrub_seek_)
+    if (!controller.mpv_.scrub_seek_)
       return;
-    if (controller.scrub_timeout_gesture_ ==
-            controller.scrub_seek_->gesture &&
-        controller.scrub_timeout_request_serial_ ==
-            controller.scrub_seek_->request_serial &&
-        controller.scrub_timeout_command_ == command) {
-      controller.cancelScrubTimeout();
+    if (controller.mpv_.scrub_timeout_gesture_ ==
+            controller.mpv_.scrub_seek_->gesture &&
+        controller.mpv_.scrub_timeout_request_serial_ ==
+            controller.mpv_.scrub_seek_->request_serial &&
+        controller.mpv_.scrub_timeout_command_ == command) {
+      controller.mpv_.cancelScrubTimeout();
     }
-    controller.handleScrubTimeout(controller.scrub_seek_->gesture,
-                                  controller.scrub_seek_->request_serial,
+    controller.mpv_.handleScrubTimeout(controller.mpv_.scrub_seek_->gesture,
+                                  controller.mpv_.scrub_seek_->request_serial,
                                   command);
   }
 
   static void scrubFinish(PlayerController &controller,
                           bool restore_transport) {
-    controller.finishScrubGesture(restore_transport);
+    controller.mpv_.finishScrubGesture(restore_transport);
   }
 
   static bool beginNativeScrub(PlayerController &controller) {
@@ -988,13 +987,13 @@ class PlayerControllerTestAccess final {
     if (!controller.mpv_.lineage.render_recovery)
       return;
     controller.mpv_.lineage.render_recovery->transport_restored = true;
-    controller.queueRenderRecoveryCompletion();
+    controller.mpv_.queueRenderRecoveryCompletion();
   }
 
   static void finishQueuedRecoveryCompletion(PlayerController &controller) {
     if (!controller.mpv_.lineage.render_recovery || !controller.mpv_.lineage.committed_open)
       return;
-    controller.finishRenderRecoveryCompletion(
+    controller.mpv_.finishRenderRecoveryCompletion(
         controller.mpv_.lineage.render_recovery->completion_token,
         controller.mpv_.lineage.render_recovery->request_serial,
         controller.mpv_.lineage.render_recovery->accepted_render_stamp,
@@ -1011,8 +1010,8 @@ class PlayerControllerTestAccess final {
       return;
     const PlayerController::RenderRecovery recovery =
         *controller.mpv_.lineage.render_recovery;
-    controller.commitRenderRecovery(
-        recovery, PlayerController::LivePlaybackState{
+    controller.mpv_.commitRenderRecovery(
+        recovery, MpvEngine::LivePlaybackState{
                       paused, idle, eof_reached, position, duration});
   }
 
@@ -1020,20 +1019,20 @@ class PlayerControllerTestAccess final {
       PlayerController &controller, bool paused, bool idle,
       std::optional<bool> eof_reached, std::optional<double> position,
       std::optional<double> duration) {
-    controller.commitStartupPlaybackSync(
-        PlayerController::LivePlaybackState{paused, idle, eof_reached,
+    controller.mpv_.commitStartupPlaybackSync(
+        MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             position, duration});
   }
 
   static bool livePlaybackPositionAvailable(
       const PlayerController &controller) {
-    const auto state = controller.readLivePlaybackState();
+    const auto state = controller.mpv_.readLivePlaybackState();
     return state && state->position.has_value();
   }
 
   static bool livePlaybackEofAvailable(
       const PlayerController &controller) {
-    const auto state = controller.readLivePlaybackState();
+    const auto state = controller.mpv_.readLivePlaybackState();
     return state && state->eof_reached.has_value();
   }
 
@@ -1042,26 +1041,26 @@ class PlayerControllerTestAccess final {
       bool eof_reached) {
     if (!controller.mpv_.lineage.render_recovery)
       return false;
-    return PlayerController::livePlaybackStateMatchesRecovery(
+    return MpvEngine::livePlaybackStateMatchesRecovery(
         *controller.mpv_.lineage.render_recovery,
-        PlayerController::LivePlaybackState{paused, idle, eof_reached,
+        MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             std::nullopt, std::nullopt});
   }
 
   static void applyObservedPlaybackState(PlayerController &controller,
                                          double position, bool paused) {
-    controller.applyObservedPosition(position);
-    controller.applyObservedPause(paused);
+    controller.mpv_.applyObservedPosition(position);
+    controller.mpv_.applyObservedPause(paused);
   }
 
   static void applyObservedTimeline(PlayerController &controller,
                                     double position, double duration,
                                     bool paused, bool idle, bool eof) {
-    controller.applyObservedPosition(position);
-    controller.applyObservedDuration(duration);
-    controller.applyObservedPause(paused);
-    controller.applyObservedIdle(idle);
-    controller.applyObservedEof(eof);
+    controller.mpv_.applyObservedPosition(position);
+    controller.mpv_.applyObservedDuration(duration);
+    controller.mpv_.applyObservedPause(paused);
+    controller.mpv_.applyObservedIdle(idle);
+    controller.mpv_.applyObservedEof(eof);
   }
 
   static bool idle(const PlayerController &controller) {
@@ -1115,7 +1114,7 @@ class PlayerControllerTestAccess final {
     if (!controller.mpv_.lineage.render_recovery)
       return;
     controller.mpv_.lineage.render_recovery->restore_retry_count = 3;
-    controller.scheduleRenderRecoveryRetry(error);
+    controller.mpv_.scheduleRenderRecoveryRetry(error);
   }
 
   static std::int64_t activeEntry(const PlayerController &controller) {
@@ -1141,7 +1140,7 @@ class PlayerControllerTestAccess final {
     end.playlist_entry_id = playlist_entry_id;
     end.playlist_insert_id = insert_id;
     end.playlist_insert_num_entries = insert_count;
-    controller.handleEndFile(end);
+    controller.mpv_.handleEndFile(end);
   }
 
   static void setNativeSeekCeiling(PlayerController &controller,
@@ -1232,7 +1231,7 @@ int main(int argc, char **argv) {
     using namespace wam::media;
     wam::qt::PlayerController controller;
     const MediaDisplaySize exact{{615240,307},{1080,1}};
-    wam::qt::PlayerControllerTestAccess::setExactDisplay(controller, exact);
+    wam::qt::PlayerControllerTestAccess::setVideoFacts(controller, exact);
     expect(controller.exactVideoDisplaySize() == exact,
            "Qt retains the exact prepared rational size independently of QSizeF");
     expect(displayAspect(controller.exactVideoDisplaySize()) == MediaRational{1709,921},
@@ -1245,6 +1244,14 @@ int main(int argc, char **argv) {
     expect(controller.videoDisplaySize().width() > 2004.0 &&
                controller.videoDisplaySize().width() < 2004.04,
            "QML projection retains the fractional size rather than truncating it");
+    expect(!controller.videoHdr(), "an SDR open states SDR");
+    wam::qt::PlayerControllerTestAccess::setVideoFacts(controller, exact, true);
+    expect(controller.videoHdr(), "the backend's HDR answer is the controller's");
+    wam::qt::PlayerControllerTestAccess::setVideoFacts(controller, {}, false);
+    expect(controller.videoHdr(), "a backend with no picture cannot clear HDR");
+    wam::qt::PlayerControllerTestAccess::resetTimeline(controller);
+    expect(!controller.videoHdr() && controller.videoDisplaySize().isEmpty(),
+           "a media transition forgets the previous file's video facts");
   }
   {
     wam::qt::PlayerController controller;

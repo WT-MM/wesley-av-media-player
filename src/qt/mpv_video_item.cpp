@@ -175,7 +175,6 @@ void registerWamQtTypes() {
         "Wam", 1, 0, "PlayerController",
         "PlayerController is provided by the WAM application");
     qmlRegisterType<MpvVideoItem>("Wam", 1, 0, "MpvVideo");
-    qmlRegisterType<MpvVideoItem>("Wam", 1, 0, "VideoSurface");
   });
 }
 

@@ -4,7 +4,8 @@
 
 #include "media/playback_router.hpp"
 #include "qt/native_engine.hpp"
-#include "qt/native_open_preflight.hpp"
+#include "platform/macos/native_open_preflight.hpp"
+#include "qt/playback_policy.hpp"
 
 #include <QMetaObject>
 
@@ -55,7 +56,7 @@ void setMacosPlaybackActivityHeld(bool held) noexcept;
 class NativePlaybackOwner final : public macos::NativePlaybackOwner,
                                   public NativeEngine {
 public:
-  explicit NativePlaybackOwner(PlayerController &controller);
+  NativePlaybackOwner(PlayerController &controller, NativeEngineHost &host);
   ~NativePlaybackOwner();
 
   NativePlaybackOwner(const NativePlaybackOwner &) = delete;
@@ -110,7 +111,7 @@ public:
                              std::uint64_t sourceKey) override;
   void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
                           std::uint64_t sourceKey) override;
-  void fallbackStopCommandReply(std::uint64_t replyUserdata,
+  void fallbackStopCommandReply(std::uint64_t replyId,
                                 int error) override;
   void fallbackIdleChanged(bool idle) override;
   void fallbackRenderStateChanged() override;
@@ -151,7 +152,7 @@ private:
     bool terminalResetRequired{false};
   };
 
-  void completeOpenPreflight(NativeOpenPreflightResult result);
+  void completeOpenPreflight(::wam::macos::NativeOpenPreflightResult result);
   [[nodiscard]] std::optional<native_protocol::SourceKey> allocateSourceKey();
   [[nodiscard]] SourceRecord *
   sourceRecord(native_protocol::SourceKey key) noexcept;
@@ -193,15 +194,17 @@ private:
   void previewAdmitted(const native_protocol::PreviewFrame&) override;
   void commitSubmitted(const native_protocol::CommitSeek&) override;
   std::optional<playback_router::Transition> applyFallbackRunState(const playback_router::Action&) override;
-  void surfaceNativeError(const QString &detail);
   // Both are no-ops unless WAM_PLAYBACK_METRICS_PATH names an absolute path.
   void startPlaybackMetrics();
   void samplePlaybackMetrics();
 
   PlayerController &controller_;
+  NativeEngineHost &host_;
+  // Context for this owner's own timers: destroyed with it, which cancels them.
+  QObject timerContext_;
   QPointer<MpvVideoItem> surface_;
   std::map<std::uint64_t, SourceRecord> sources_;
-  NativeOpenPreflight openPreflight_;
+  ::wam::macos::NativeOpenPreflight openPreflight_;
   std::optional<FallbackStop> fallbackStop_;
   std::uint64_t nextSourceKey_{0};
   std::uint64_t nextFallbackStopReplyId_{0};

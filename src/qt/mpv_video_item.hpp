@@ -62,8 +62,7 @@ class MpvVideoItem : public QQuickItem {
 #endif
 };
 
-// Call once before loading QML. Registers Wam 1.0 names `MpvVideo` and the
-// compatibility alias `VideoSurface`.
+// Call once before loading QML. Registers the Wam 1.0 names.
 void registerWamQtTypes();
 
 }  // namespace wam::qt

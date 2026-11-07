@@ -22,6 +22,19 @@ int main() {
     track.id = 1; track.kind = MediaTrackKind::Video; track.video = video;
     source.tracks.push_back(track); source.selectedVideo = 1;
     assert(mediaSourceDisplaySize(source) == expected);
+    // HDR is the selected track's transfer, whatever the container; BT.2020
+    // primaries with a BT.709 transfer stay SDR.
+    assert(!mediaSourceHighDynamicRange(source));
+    for (const auto transfer : {MediaTransferFunction::Pq, MediaTransferFunction::Hlg}) {
+      source.tracks[0].video->transferFunction = transfer;
+      assert(mediaSourceHighDynamicRange(source));
+    }
+    source.tracks[0].video->transferFunction = MediaTransferFunction::Bt709;
+    source.tracks[0].video->colorPrimaries = MediaColorPrimaries::Bt2020;
+    assert(!mediaSourceHighDynamicRange(source));
+    source.selectedVideo.reset();
+    assert(!mediaSourceHighDynamicRange(source));
+    source.selectedVideo = 1;
     native_playback::PreparedDescriptor prepared{10, false, true, expected.width, expected.height};
     assert((MediaDisplaySize{prepared.displayWidth, prepared.displayHeight} == expected));
     CALayer* container = [CALayer layer];
