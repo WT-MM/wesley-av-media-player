@@ -6,6 +6,7 @@ without it every seam is silently off. seam_env() is the one place that
 identity is spelled.
 """
 import contextlib
+import hashlib
 import json
 import os
 import subprocess
@@ -13,9 +14,17 @@ import uuid
 from pathlib import Path
 
 
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def seam_env(home, **extra):
-    """The environment for a quiet, parked, muted seam launch with HOME=home."""
-    env = dict(os.environ, HOME=str(home),
+    """The environment for a quiet, parked, muted seam launch with HOME=home.
+
+    WAM_* variables inherited from the caller are dropped: a stray seam in the
+    shell would silently change the run."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith('WAM_')}
+    env.update(HOME=str(home),
                WAM_NATIVE_BENCHMARK_TELEMETRY='1',
                WAM_NATIVE_BENCHMARK_RUN_ID=str(uuid.uuid4()),
                WAM_NATIVE_BENCHMARK_ASSET_SHA256='0' * 64,
