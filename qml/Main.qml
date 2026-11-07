@@ -20,12 +20,13 @@ ApplicationWindow {
         return command !== undefined && command !== null && command.trigger !== undefined && command.trigger();
     }
     readonly property int appearance: appSettings.appearance // 0 Light (default), 1 Dark, 2 Follow system.
-    readonly property bool darkAppearance: appearance === 1 || (appearance === 2 && systemPalette.window.hslLightness < 0.5)
     property bool quickEditOpen: false
     // Crop mode is per WINDOW, like the sheet that turns it on. The rectangle
     // itself lives on the controller (also per window) and is reset there on
     // every media change.
     property bool cropMode: false
+    // The one derivation every window (and Preferences) shares.
+    readonly property bool darkAppearance: appHost.darkAppearance
     // 0 = free; otherwise the locked width/height ratio in displayed pixels.
     property real cropAspect: 0
 
@@ -229,10 +230,6 @@ ApplicationWindow {
     // Native titlebar and window controls remain native. Content paints beneath them.
     // Qt ignores these hints on platforms that do not implement an expanded client area.
     flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
-
-    SystemPalette {
-        id: systemPalette
-    }
 
     function clampTransportX(candidate) {
         const left = Math.max(12, SafeArea.margins.left + 10);
