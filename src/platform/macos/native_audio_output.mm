@@ -1,4 +1,5 @@
 #include "native_audio_output.hpp"
+#include "platform/macos/native_primitives.hpp"
 #include "media/native_audio_benchmark.hpp"
 
 #include "native_audio_sample_rates.hpp"
@@ -19,8 +20,6 @@ namespace wam::macos {
 
 namespace {
 
-constexpr std::uint64_t kMaximumExactDoubleInteger =
-    std::uint64_t{1} << 53U;
 constexpr std::uint64_t kBridgeDetached = std::uint64_t{1} << 63U;
 constexpr std::uint64_t kBridgePaused = std::uint64_t{1} << 62U;
 constexpr std::uint64_t kBridgeCountMask = kBridgePaused - 1U;

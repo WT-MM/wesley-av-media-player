@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/audio_codec_timing.hpp"
+#include "platform/macos/native_primitives.hpp"
 #include "media/native_media_source.hpp"
 #include "media/media_codec_facts.hpp"
 #include "platform/macos/core_media_time.hpp"
@@ -29,18 +30,6 @@ namespace wam::macos {
 // Everything is `inline` on purpose: the header is included only by macOS
 // backend translation units, and a definition per unit is what keeps this out
 // of every CMake source list a backend must be linked into.
-
-inline void assignError(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
-}
-
-[[nodiscard]] inline std::uint64_t saturatingIncrement(
-    std::uint64_t value) noexcept {
-  return value == std::numeric_limits<std::uint64_t>::max() ? value
-                                                            : value + 1;
-}
 
 [[nodiscard]] inline bool exactNonnegativeTimeWithinDuration(
     media::MediaTime target, media::MediaTime duration) noexcept {

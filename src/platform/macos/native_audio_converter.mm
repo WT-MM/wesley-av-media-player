@@ -1,4 +1,5 @@
 #include "native_audio_converter.hpp"
+#include "platform/macos/native_primitives.hpp"
 #include "native_audio_admission.hpp"
 #include "native_audio_converter_backends.hpp"
 
@@ -24,17 +25,6 @@
 namespace wam::macos {
 namespace {
 
-
-void assignError(std::string *error, const char *message) {
-  if (error != nullptr) {
-    *error = message;
-  }
-}
-
-void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
-  const auto maximum = std::numeric_limits<std::uint64_t>::max();
-  value = amount > maximum - value ? maximum : value + amount;
-}
 
 [[nodiscard]] bool checkedAdd(std::uint64_t value, std::uint64_t amount,
                               std::uint64_t *result) noexcept {

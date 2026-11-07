@@ -1,4 +1,5 @@
 #include "native_tracked_video_arbiter.hpp"
+#include "platform/macos/native_primitives.hpp"
 
 #include <limits>
 #include <new>
@@ -19,16 +20,6 @@ void clearError(std::string* error) noexcept {
   }
   try {
     error->clear();
-  } catch (...) {
-  }
-}
-
-void assignError(std::string* error, const char* message) noexcept {
-  if (error == nullptr) {
-    return;
-  }
-  try {
-    error->assign(message);
   } catch (...) {
   }
 }

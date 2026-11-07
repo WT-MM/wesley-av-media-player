@@ -430,7 +430,7 @@ class NativeSourceCore {
       outcome.preparedContext = assetContext;
       outcome.audioWindow = started.audioWindow;
       seeksAccepted.store(
-          saturatingIncrement(seeksAccepted.load(std::memory_order_relaxed)),
+          saturatingSum(seeksAccepted.load(std::memory_order_relaxed), 1),
           std::memory_order_relaxed);
     } catch (const std::exception& exception) {
       withdrawFailedOperation();
@@ -503,8 +503,8 @@ class NativeSourceCore {
         clearHead(*chosen);
         (chosenVideo ? videoRefillPending : audioRefillPending) = true;
         if (auto* sample = std::get_if<media::MediaSample>(&emitted.value)) {
-          samplesEmitted.store(saturatingIncrement(samplesEmitted.load(
-                                   std::memory_order_relaxed)),
+          samplesEmitted.store(saturatingSum(samplesEmitted.load(
+                                   std::memory_order_relaxed), 1),
                                std::memory_order_relaxed);
           return std::move(*sample);
         }

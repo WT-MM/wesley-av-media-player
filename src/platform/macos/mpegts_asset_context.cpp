@@ -1,4 +1,5 @@
 #include "platform/macos/mpegts_asset_context.hpp"
+#include "platform/macos/native_primitives.hpp"
 
 #include <atomic>
 #include <limits>
@@ -6,15 +7,6 @@
 
 namespace wam::macos {
 namespace {
-
-void saturatingIncrement(std::atomic<std::uint64_t>& value) noexcept {
-  std::uint64_t observed = value.load(std::memory_order_relaxed);
-  while (observed != std::numeric_limits<std::uint64_t>::max() &&
-         !value.compare_exchange_weak(observed, observed + 1,
-                                      std::memory_order_relaxed,
-                                      std::memory_order_relaxed)) {
-  }
-}
 
 [[nodiscard]] bool validPreparedDescriptor(
     const std::shared_ptr<const media::MediaSourceDescriptor>& descriptor,

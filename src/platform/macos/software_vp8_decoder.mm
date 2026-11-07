@@ -1,4 +1,5 @@
 #include "software_vp8_decoder.hpp"
+#include "platform/macos/native_primitives.hpp"
 
 #include "native_video_color.hpp"
 #include "native_video_limits.hpp"
@@ -21,16 +22,6 @@
 
 namespace wam::macos {
 namespace {
-
-void assignError(std::string *error, const char *message) {
-  if (error != nullptr) {
-    try {
-      error->assign(message);
-    } catch (...) {
-      // The typed result is authoritative; the diagnostic string is optional.
-    }
-  }
-}
 
 // --------------------------------------------------------------------------
 // Colour attachments.

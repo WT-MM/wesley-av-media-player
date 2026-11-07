@@ -1,4 +1,5 @@
 #include "media/native_late_frame_trace.hpp"
+#include "platform/macos/native_primitives.hpp"
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
 #include <mach/mach_time.h>
 #endif
@@ -29,27 +30,6 @@ static_assert(NativeLayerVideoOutput::kRetainedFrameLeaseCeiling <=
               "layer presenter retention must fit the consumer's budget input");
 
 namespace {
-
-void assignErrorNoexcept(std::string* error, const char* message) noexcept {
-  if (error == nullptr || message == nullptr) {
-    return;
-  }
-  try {
-    *error = message;
-  } catch (...) {
-  }
-}
-
-void assignErrorNoexcept(std::string* error,
-                         const std::string& message) noexcept {
-  if (error == nullptr) {
-    return;
-  }
-  try {
-    *error = message;
-  } catch (...) {
-  }
-}
 
 // One metrics load per this many enqueues. At 30 fps that is a load roughly
 // every second: frequent enough that a drop is folded into the proof stream
@@ -277,7 +257,7 @@ struct NativeLayerVideoOutput::State
     const OSStatus status = CMVideoFormatDescriptionCreateForImageBuffer(
         kCFAllocatorDefault, pixelBuffer, &created);
     if (status != noErr || created == nullptr) {
-      assignErrorNoexcept(
+      assignError(
           error, "layer video output could not describe the decoded frame");
       return false;
     }
@@ -308,7 +288,7 @@ struct NativeLayerVideoOutput::State
       if (!CMTIME_IS_NUMERIC(end) ||
           (end.flags & kCMTimeFlags_HasBeenRounded) != 0 ||
           CMTimeCompare(end, kCMTimeZero) <= 0) {
-        assignErrorNoexcept(
+        assignError(
             error, "layer video output could not stage the decoded frame");
         return nullptr;
       }
@@ -324,7 +304,7 @@ struct NativeLayerVideoOutput::State
         kCFAllocatorDefault, pixelBuffer, formatDescription, &sampleTiming,
         &sampleBuffer);
     if (status != noErr || sampleBuffer == nullptr) {
-      assignErrorNoexcept(
+      assignError(
           error, "layer video output could not stage the decoded frame");
       return nullptr;
     }
@@ -430,7 +410,7 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
       // queue-management category is the only alternative. Refusing here keeps
       // the single construction site on the GL path rather than taking on
       // deprecated-API debt at birth (DESIGN.md section 8, risk 7).
-      assignErrorNoexcept(
+      assignError(
           error, "layer presentation requires macOS 14 or newer");
       return {};
     }
@@ -439,7 +419,7 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
       if (displayLayer != nullptr) {
         id candidate = (__bridge id)displayLayer;
         if (![candidate isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
-          assignErrorNoexcept(
+          assignError(
               error, "layer video output requires an AVSampleBufferDisplayLayer");
           return {};
         }
@@ -448,7 +428,7 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
         layer = [[AVSampleBufferDisplayLayer alloc] init];
       }
       if (layer == nil) {
-        assignErrorNoexcept(error,
+        assignError(error,
                             "layer video output could not obtain a display layer");
         return {};
       }
@@ -457,7 +437,7 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
         renderer = layer.sampleBufferRenderer;
       }
       if (renderer == nil) {
-        assignErrorNoexcept(
+        assignError(
             error, "layer video output requires macOS 14 sampleBufferRenderer");
         return {};
       }
@@ -474,7 +454,7 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
     retainNativeLayerPresentation();
     return output;
   } catch (...) {
-    assignErrorNoexcept(error, "layer video output construction threw");
+    assignError(error, "layer video output construction threw");
     return {};
   }
 }
@@ -534,14 +514,14 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
     error->clear();
   }
   if (!frame || !sequence.valid()) {
-    assignErrorNoexcept(error, "tracked layer video submission is invalid");
+    assignError(error, "tracked layer video submission is invalid");
     return NativeTrackedVideoSubmitStatus::Failed;
   }
   const FrameTiming& timing = frame.timing();
   // A frame that straddles the origin is admitted here and presented FROM the
   // origin by makeSampleBufferLocked, which keeps its end exact.
   if (!frameTimingPresentable(timing)) {
-    assignErrorNoexcept(error, "tracked layer video timing is invalid");
+    assignError(error, "tracked layer video timing is invalid");
     return NativeTrackedVideoSubmitStatus::Failed;
   }
   // The lease is cloned before the layer ever sees the surface: an accepted
@@ -549,7 +529,7 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
   // release theirs.
   std::optional<FrameLease> clone = frame.tryClone();
   if (!clone) {
-    assignErrorNoexcept(
+    assignError(
         error, "tracked layer video accounting token could not be cloned");
     return NativeTrackedVideoSubmitStatus::Failed;
   }
@@ -572,12 +552,12 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
         timing.generation, timing.generation == state->acceptedGeneration,
         state->usableLocked())) {
     case NativeTrackedVideoCapacity::Failed:
-      assignErrorNoexcept(error, state->failureMessage.empty()
+      assignError(error, state->failureMessage.empty()
                                      ? std::string("layer video output failed")
                                      : state->failureMessage);
       return NativeTrackedVideoSubmitStatus::Failed;
     case NativeTrackedVideoCapacity::StaleGeneration:
-      assignErrorNoexcept(error, "tracked layer video generation is stale");
+      assignError(error, "tracked layer video generation is stale");
       return NativeTrackedVideoSubmitStatus::StaleGeneration;
     case NativeTrackedVideoCapacity::Backpressure:
       return NativeTrackedVideoSubmitStatus::Backpressure;
@@ -587,7 +567,7 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
     if (!state->tracked.advances(sequence)) {
       state->latchFailureLocked(
           "layer video frame sequence repeated or regressed");
-      assignErrorNoexcept(error, state->failureMessage);
+      assignError(error, state->failureMessage);
       return NativeTrackedVideoSubmitStatus::Failed;
     }
 
@@ -596,14 +576,14 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
       AVSampleBufferVideoRenderer* renderer = state->renderer;
       if (renderer == nil) {
         state->latchFailureLocked("layer video output has no renderer");
-        assignErrorNoexcept(error, state->failureMessage);
+        assignError(error, state->failureMessage);
         return NativeTrackedVideoSubmitStatus::Failed;
       }
       if (renderer.requiresFlushToResumeDecoding) {
         ++state->healthCounters.requiresFlushNotifications;
         state->latchFailureLocked(
             "layer video renderer requires a flush to resume decoding");
-        assignErrorNoexcept(error, state->failureMessage);
+        assignError(error, state->failureMessage);
         return NativeTrackedVideoSubmitStatus::Failed;
       }
 
@@ -630,7 +610,7 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
       } @catch (NSException*) {
         CFRelease(sampleBuffer);
         state->latchFailureLocked("layer video renderer rejected the frame");
-        assignErrorNoexcept(error, state->failureMessage);
+        assignError(error, state->failureMessage);
         return NativeTrackedVideoSubmitStatus::Failed;
       }
       CFRelease(sampleBuffer);
@@ -643,13 +623,13 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
             rendererError != nil
                 ? rendererError.localizedDescription.UTF8String
                 : "layer video renderer entered the failed state");
-        assignErrorNoexcept(error, state->failureMessage);
+        assignError(error, state->failureMessage);
         return NativeTrackedVideoSubmitStatus::Failed;
       }
     }
     } else {
       state->latchFailureLocked("layer presentation requires macOS 14 or newer");
-      assignErrorNoexcept(error, state->failureMessage);
+      assignError(error, state->failureMessage);
       return NativeTrackedVideoSubmitStatus::Failed;
     }
 
@@ -673,7 +653,7 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
     }
     if (!signal) {
       state->latchFailureLocked("layer video event sequence exhausted");
-      assignErrorNoexcept(error, state->failureMessage);
+      assignError(error, state->failureMessage);
       result = NativeTrackedVideoSubmitStatus::Failed;
     }
 

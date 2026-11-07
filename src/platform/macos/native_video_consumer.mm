@@ -1,4 +1,5 @@
 #include "media/native_late_frame_trace.hpp"
+#include "platform/macos/native_primitives.hpp"
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
 #include <mach/mach_time.h>
 #endif
@@ -288,12 +289,6 @@ int gRetainedGraphs{0};
 std::atomic<std::uint64_t> gRejectedCreates{0};
 std::atomic<std::uint64_t> gQuarantineTransfers{0};
 std::atomic<std::uint64_t> gQuarantineRecoveries{0};
-
-void assignError(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
-}
 
 // Exact ceiling on decoded-surface ownership for one compressed admission.
 // kMaximumDecodedSurfaceOwnership is the documented share of the per-session

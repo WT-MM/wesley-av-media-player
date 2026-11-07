@@ -1,4 +1,5 @@
 #include "media/native_late_frame_trace.hpp"
+#include "platform/macos/native_primitives.hpp"
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
 #include <mach/mach_time.h>
 #endif
@@ -63,12 +64,6 @@ bool consumeCFAllocationFailure(
   return true;
 }
 #endif
-
-void assignError(std::string *error, std::string message) {
-  if (error != nullptr) {
-    *error = std::move(message);
-  }
-}
 
 std::string statusError(const char *operation, OSStatus status) {
   return std::string(operation) + " failed with OSStatus " +
