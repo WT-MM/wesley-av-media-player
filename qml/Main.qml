@@ -43,10 +43,6 @@ ApplicationWindow {
         if (enabled && !root.controller.cropActive)
             root.controller.setCrop(0.1, 0.1, 0.8, 0.8);
     }
-    // How the next media dialog result is delivered: into this window, or
-    // through the app-level opener that may create a new one. See openMedia()
-    // and openMediaInNewWindow() below.
-    property bool mediaDialogOpensNewWindow: false
     property bool quickEditInstantiated: false
     readonly property real quickEditWidth: Math.min(340, root.width - 24)
     readonly property real quickEditRightMargin: Math.max(16, SafeArea.margins.right + 16)
@@ -335,8 +331,7 @@ ApplicationWindow {
     // The empty player's own click, and the drag-and-drop-equivalent gesture:
     // whatever is chosen loads into THIS window.
     function openMedia() {
-        mediaDialogOpensNewWindow = false;
-        showMediaDialog();
+        showMediaDialog(false);
     }
 
     // File > Open and Cmd-O, routed here by WindowManager::openMedia(): the
@@ -346,11 +341,11 @@ ApplicationWindow {
     // up front to receive the result would leave a blank player behind every
     // time the dialog was cancelled.
     function openMediaInNewWindow() {
-        mediaDialogOpensNewWindow = true;
-        showMediaDialog();
+        showMediaDialog(true);
     }
 
-    function showMediaDialog() {
+    function showMediaDialog(opensNewWindow) {
+        mediaDialogLoader.opensNewWindow = opensNewWindow;
         rememberDialogFocus();
         if (mediaDialogLoader.item)
             mediaDialogLoader.item.open();
@@ -784,7 +779,7 @@ ApplicationWindow {
             fileMode: FileDialog.OpenFile
             nameFilters: [mediaFileNameFilter, "All files (*)"]
             onAccepted: {
-                if (root.mediaDialogOpensNewWindow)
+                if (mediaDialogLoader.opensNewWindow)
                     appHost.openUrl(selectedFile);
                 else
                     root.controller.open(selectedFile);
@@ -801,6 +796,9 @@ ApplicationWindow {
 
     Loader {
         id: mediaDialogLoader
+        // Where this dialog's result goes: through the app-level opener that
+        // may create a new window, or into this one.
+        property bool opensNewWindow: false
         active: false
         sourceComponent: mediaDialogComponent
         onLoaded: item.open()
