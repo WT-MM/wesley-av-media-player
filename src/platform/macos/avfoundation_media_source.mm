@@ -3371,7 +3371,7 @@ struct AVFoundationMediaSource::Impl final
     const std::optional<MediaTrackId> selected =
         video ? descriptor->selectedVideo : descriptor->selectedAudio;
     if (!selected) {
-      (video ? videoTerminal : audioTerminal) = true;
+      lane(video).end();
       return true;
     }
     for (std::size_t skipped = 0;;) {
@@ -3397,7 +3397,7 @@ struct AVFoundationMediaSource::Impl final
         return false;
       }
       if (copied.status == AVFoundationSampleReadStatus::EndOfStream) {
-        (video ? videoTerminal : audioTerminal) = true;
+        lane(video).end();
         if (admission) {
           assignError(error,
                       "selected AVFoundation output has no admission sample");
@@ -3462,8 +3462,7 @@ struct AVFoundationMediaSource::Impl final
           }
         }
       }
-      (video ? videoHead : audioHead) = std::move(head);
-      publishHeadFacts();
+      stageHead(video, std::move(*head));
       return true;
     }
   }
@@ -3479,6 +3478,7 @@ struct AVFoundationMediaSource::Impl final
                         MediaTime declaredMediaStart,
                         MediaTime declaredPresentationEnd,
                         MediaTime declaredAudioEnd) const noexcept {
+    const StagedSample* audioHead = audioLane.head();
     if (descriptor == nullptr || !descriptor->selectedAudio || !audioHead) {
       return std::nullopt;
     }

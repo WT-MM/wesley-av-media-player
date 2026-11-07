@@ -705,9 +705,10 @@ struct LibavformatMediaSource::Impl final
       }
       if(packet.stream!=context->selectedStream)continue;
       const auto* track=packetTrack(packet.stream);if(!track)continue;
-      if(track->video && (!packet.key || compareMediaTime(packet.pts,decodeStart)!=MediaTimeOrder::Equal))continue;
+      // selectedStream is the video stream: audio-only files returned above.
+      if(!track->video || !packet.key || compareMediaTime(packet.pts,decodeStart)!=MediaTimeOrder::Equal)continue;
       if(!normalize(packet,error))return false;
-      (track->video?videoPending:audioPending)=packet;
+      videoPending=packet;
       return stage(true,true,&error) && stage(false,true,&error) && stateWindow(error);
     }
     error="LibavformatInterleaveLimit";return false;
@@ -735,7 +736,7 @@ struct LibavformatMediaSource::Impl final
     const std::optional<MediaTrackId> selected =
         video ? descriptor->selectedVideo : descriptor->selectedAudio;
     if (!selected) {
-      (video ? videoTerminal : audioTerminal) = true;
+      lane(video).end();
       return true;
     }
     auto& pending = video ? videoPending : audioPending;
@@ -751,7 +752,7 @@ struct LibavformatMediaSource::Impl final
         LibavformatCursor::Packet packet;
         const auto rc = cursor.read(packet, message);
         if (rc == LibavformatCursor::Read::End) {
-          (video ? videoTerminal : audioTerminal) = true;
+          lane(video).end();
           if (admission) {
             assignNamed(error, "selected ", " output has no admission sample");
             return false;
@@ -783,9 +784,7 @@ struct LibavformatMediaSource::Impl final
     const std::size_t bytes = sample.payload.byteSize();
     const MediaTime order =
         sample.decodeTime.valid() ? sample.decodeTime : sample.presentationTime;
-    (video ? videoHead : audioHead) =
-        StagedSample{*selected, order, std::move(sample), bytes};
-    publishHeadFacts();
+    stageHead(video, StagedSample{*selected, order, std::move(sample), bytes});
     return true;
   }
   [[nodiscard]] GenerationStart begin(
@@ -836,8 +835,7 @@ struct LibavformatMediaSource::Impl final
     started.descriptor = descriptor;
     started.context = context;
     started.audioWindow = audioWindow;
-    open = true;
-    openSnapshot.store(true, std::memory_order_release);
+    publishOpen();
     if (t.enabled) std::fprintf(stderr,
         "WAM: libavformat open packets=%zu bytes=%llu cursor_ms=%.3f metadata_ms=%.3f scan_ms=%.3f read_ms=%.3f witness_ms=%.3f generation_ms=%.3f total_ms=%.3f\n",
         t.packets,static_cast<unsigned long long>(t.bytes),milliseconds(t.begun,t.cursorOpened),milliseconds(t.cursorOpened,t.scanStarted),

@@ -365,6 +365,7 @@ struct MpegTsMediaSource::Impl final
     if (!descriptor->selectedAudio) {
       return true;
     }
+    const auto* audioHead = this->audioLane.head();
     if (!audioHead || !audioAnchored) {
       assignError(error, "mpeg-ts audio generation staged no first unit");
       return false;
