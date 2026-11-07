@@ -3769,6 +3769,16 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
     if (impl_->commitPendingLocked() || impl_->commitReadySlot.has_value()) {
       return NativeMediaSessionCommandStatus::Invalid;
     }
+    // Main video has released its surfaces to the preview lane, and only a
+    // commit's generation flush or Stop gives them back. Playing now would run
+    // audio over a frozen picture with the dispatcher gated, so a scrub that
+    // ends without a landed commit cannot resume here: the refusal fails the
+    // route closed instead of stalling it.
+    if (!command.paused &&
+        (impl_->publicPreviewLane != Impl::PublicPreviewLane::Idle ||
+         impl_->publicPreviewPending)) {
+      return NativeMediaSessionCommandStatus::Invalid;
+    }
     if (impl_->published.ending) {
       if (!impl_->publishedPrepare.has_value() ||
           !protocol::runStateFollows(impl_->latestAcceptedStamp,
