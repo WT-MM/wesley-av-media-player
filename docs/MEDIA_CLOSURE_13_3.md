@@ -87,7 +87,7 @@ link and installation. No sandbox escape or retry loop was used. The updated
 receipt records the cache value, recipe hash and all 17 installed image hashes.
 
 The recipe's `nm` check verifies all 24 symbols listed by WAM's
-`src/playback/mpv/mpv_api.cpp`; a direct call returns client API 2.1. Evidence:
+`src/playback/mpv/mpv_api.hpp`; a direct call returns client API 2.1. Evidence:
 `share/wam-media/mpv-symbols.txt` and `mpv-api.txt`. FFmpeg's configuration is
 LGPL (GPL, version3, nonfree and autodetection disabled), with its built-in
 codec/container/parser/filter sets, libvpx, libopus, VideoToolbox, AudioToolbox,
