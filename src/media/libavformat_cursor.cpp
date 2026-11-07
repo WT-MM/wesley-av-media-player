@@ -20,6 +20,11 @@ extern "C" {
 
 namespace wam::media {
 namespace {
+
+// The demuxers the native libavformat route requires of the bundled library.
+constexpr std::array<const char *, 9> kRequiredDemuxers{
+    "mov", "avi", "flv", "ogg", "asf", "rm", "mpeg", "mpegts", "matroska"};
+
 struct FormatApi {
 #define WAM_AVFORMAT_API(X)                                                    \
   X(avformat_alloc_context)                                                    \
@@ -158,8 +163,7 @@ struct LibavformatCursor::Impl {
       error = "LibavformatBuildMismatch";
       return false;
     }
-    for (const char *name : {"mov", "avi", "flv", "ogg", "asf", "rm", "mpeg",
-                             "mpegts", "matroska"})
+    for (const char *name : kRequiredDemuxers)
       if (!api.av_find_input_format(name)) {
         error = "LibavformatDemuxerMissing";
         return false;
@@ -263,6 +267,17 @@ struct LibavformatCursor::Impl {
     return true;
   }
 };
+std::string LibavformatCursor::runtimeDescription() {
+  std::string text = "libavformat=" AV_STRINGIFY(LIBAVFORMAT_VERSION)
+                     " loading=lazy protocols=file demuxers=";
+  for (const char *name : kRequiredDemuxers) {
+    if (name != kRequiredDemuxers[0])
+      text += ',';
+    text += name;
+  }
+  return text;
+}
+
 std::string LibavformatCursor::runtimeFailure() {
   Impl runtime;
   std::string error;

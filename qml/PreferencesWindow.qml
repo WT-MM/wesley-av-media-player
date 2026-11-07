@@ -11,16 +11,9 @@ import QtQuick.Window
 Window {
     id: prefs
 
-    // The controller these settings live on. Every setting here is app-level
-    // and mirrored onto every open window, so ANY live controller is an
-    // equally valid view of them -- but with no window open there is no
-    // controller at all, and this panel outlives the last window (it belongs
-    // to the application, not to a window). It is therefore legitimately null
-    // sometimes, and every read below guards on that rather than assuming.
-    required property var player
-    readonly property bool hasPlayer: prefs.player !== null
-        && prefs.player !== undefined
-    property bool dark: false
+    // Every setting here is app-level: `appSettings` holds the one value and
+    // every open window follows it live.
+    readonly property bool dark: appHost.darkAppearance
 
     readonly property color foreground: dark ? "#f4f4f5" : "#17181b"
     readonly property color secondary: dark ? "#aeb0b7" : "#686a70"
@@ -106,13 +99,8 @@ Window {
                     selectedColor: prefs.accentColor
                     hoverColor: prefs.quietSurface
                     pressedColor: prefs.dark ? "#38ffffff" : "#18000000"
-                    enabled: prefs.hasPlayer
-                    selected: prefs.hasPlayer
-                        && prefs.player.seekStepSeconds === modelData
-                    onClicked: {
-                        if (prefs.hasPlayer)
-                            prefs.player.setSeekStepSeconds(modelData);
-                    }
+                    selected: appSettings.seekStepSeconds === modelData
+                    onClicked: appSettings.seekStepSeconds = modelData
                 }
             }
         }
@@ -130,8 +118,8 @@ Window {
 
             SpinBox {
                 id: customSpin
-                from: 1
-                to: 60
+                from: appSettings.minimumSeekStepSeconds
+                to: appSettings.maximumSeekStepSeconds
                 stepSize: 1
                 editable: true
                 focusPolicy: Qt.StrongFocus
@@ -140,13 +128,9 @@ Window {
                 textFromValue: (value, locale) => value + "s"
                 valueFromText: (text, locale) => {
                     const parsed = parseInt(text, 10);
-                    return isNaN(parsed) ? customSpin.value : Math.max(1, Math.min(60, parsed));
+                    return isNaN(parsed) ? customSpin.value : Math.max(customSpin.from, Math.min(customSpin.to, parsed));
                 }
-                enabled: prefs.hasPlayer
-                onValueModified: {
-                    if (prefs.hasPlayer)
-                        prefs.player.setSeekStepSeconds(value);
-                }
+                onValueModified: appSettings.seekStepSeconds = value
 
                 palette.text: prefs.foreground
                 palette.windowText: prefs.foreground
@@ -157,9 +141,7 @@ Window {
                 Binding {
                     target: customSpin
                     property: "value"
-                    value: prefs.hasPlayer
-                        ? Math.round(prefs.player.seekStepSeconds)
-                        : customSpin.value
+                    value: appSettings.seekStepSeconds
                     when: !customSpin.activeFocus
                     restoreMode: Binding.RestoreNone
                 }
@@ -206,23 +188,18 @@ Window {
             // detached forever after that first click. The Connections below
             // is what keeps this box honest afterward: it does not depend on
             // any binding surviving, it just re-writes `checked` imperatively
-            // every time the controller's real value changes, including
+            // every time the setting's real value changes, including
             // changes made from the View menu while this window is open.
-            enabled: prefs.hasPlayer
-            checked: prefs.hasPlayer ? prefs.player.windowHugsVideo : true
-            onToggled: {
-                if (prefs.hasPlayer)
-                    prefs.player.setWindowHugsVideo(checked);
-            }
+            checked: appSettings.windowHugsVideo
+            onToggled: appSettings.windowHugsVideo = checked
 
             palette.text: prefs.foreground
             palette.windowText: prefs.foreground
 
             Connections {
-                target: prefs.player
+                target: appSettings
                 function onWindowHugsVideoChanged() {
-                    if (prefs.player)
-                        hugsVideoCheck.checked = prefs.player.windowHugsVideo;
+                    hugsVideoCheck.checked = appSettings.windowHugsVideo;
                 }
             }
         }
@@ -259,23 +236,18 @@ Window {
             Accessible.name: "Preserve pitch at other speeds"
             // Same binding hazard, same guard as the box above: the first
             // click detaches the declarative binding, so the Connections
-            // below re-writes `checked` from the controller's real value
+            // below re-writes `checked` from the setting's real value
             // whenever it changes for any other reason.
-            enabled: prefs.hasPlayer
-            checked: prefs.hasPlayer ? prefs.player.preservePitch : true
-            onToggled: {
-                if (prefs.hasPlayer)
-                    prefs.player.setPreservePitch(checked);
-            }
+            checked: appSettings.preservePitch
+            onToggled: appSettings.preservePitch = checked
 
             palette.text: prefs.foreground
             palette.windowText: prefs.foreground
 
             Connections {
-                target: prefs.player
+                target: appSettings
                 function onPreservePitchChanged() {
-                    if (prefs.player)
-                        preservePitchCheck.checked = prefs.player.preservePitch;
+                    preservePitchCheck.checked = appSettings.preservePitch;
                 }
             }
         }
@@ -330,19 +302,10 @@ Window {
                     selectedColor: prefs.accentColor
                     hoverColor: prefs.quietSurface
                     pressedColor: prefs.dark ? "#38ffffff" : "#18000000"
-                    enabled: prefs.hasPlayer
-                    // The controller stores a normalized multiplier (1.0 =
-                    // 100%); these buttons speak percent. Rounding the
-                    // comparison rather than testing equality on a double
-                    // keeps 1.25 and 1.5 selectable without depending on
-                    // exact binary representations surviving a round trip
-                    // through the state file.
-                    selected: prefs.hasPlayer
-                        && Math.round(prefs.player.maximumVolume * 100) === modelData
-                    onClicked: {
-                        if (prefs.hasPlayer)
-                            prefs.player.setMaximumVolume(modelData / 100);
-                    }
+                    // The setting is a normalized multiplier (1.0 = 100%);
+                    // these buttons speak percent.
+                    selected: Math.round(appSettings.maximumVolume * 100) === modelData
+                    onClicked: appSettings.maximumVolume = modelData / 100
                 }
             }
         }
@@ -378,22 +341,16 @@ Window {
             text: "Scroll over video adjusts volume and seeks"
             Accessible.name: "Scroll over video adjusts volume and seeks"
             // Same binding hazard, same guard as the boxes above.
-            enabled: prefs.hasPlayer
-            checked: prefs.hasPlayer ? prefs.player.scrollGesturesEnabled : true
-            onToggled: {
-                if (prefs.hasPlayer)
-                    prefs.player.setScrollGesturesEnabled(checked);
-            }
+            checked: appSettings.scrollGesturesEnabled
+            onToggled: appSettings.scrollGesturesEnabled = checked
 
             palette.text: prefs.foreground
             palette.windowText: prefs.foreground
 
             Connections {
-                target: prefs.player
+                target: appSettings
                 function onScrollGesturesEnabledChanged() {
-                    if (prefs.player)
-                        scrollGesturesCheck.checked =
-                            prefs.player.scrollGesturesEnabled;
+                    scrollGesturesCheck.checked = appSettings.scrollGesturesEnabled;
                 }
             }
         }

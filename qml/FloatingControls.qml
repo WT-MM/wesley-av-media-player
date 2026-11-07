@@ -43,12 +43,7 @@ FocusScope {
     // speed slider gives 1x. 200% puts it at the midpoint, 400% at the
     // quarter point, and 100% at the very right edge -- at which point there is no boost region left at all and the
     // tick is redundant with the end of the track, so it is dropped.
-    //
-    // Guarded for the moment before `player` has published the property (and
-    // for any non-player stand-in): the default matches the setting's own.
-    readonly property real maximumVolume: root.player && root.player.maximumVolume > 0
-        ? root.player.maximumVolume
-        : 2
+    readonly property real maximumVolume: appSettings.maximumVolume
     readonly property real volumeDetentTravel: 1 / maximumVolume
     readonly property bool volumeBoostAvailable: maximumVolume > 1.0001
     // The readout is deliberately not always on: below unity the track says
@@ -605,7 +600,7 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             iconName: "backward5"
-            accessibleName: "Back " + root.formatStepSeconds(root.player.seekStepSeconds) + " seconds"
+            accessibleName: "Back " + root.formatStepSeconds(appSettings.seekStepSeconds) + " seconds"
             toolTip: accessibleName + " (Left Arrow)"
             onClicked: {
                 root.player.skipBackward();
@@ -634,7 +629,7 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             iconName: "forward5"
-            accessibleName: "Forward " + root.formatStepSeconds(root.player.seekStepSeconds) + " seconds"
+            accessibleName: "Forward " + root.formatStepSeconds(appSettings.seekStepSeconds) + " seconds"
             toolTip: accessibleName + " (Right Arrow)"
             onClicked: {
                 root.player.skipForward();

@@ -36,15 +36,6 @@ struct MpvRuntimeLoadResult final {
   }
 };
 
-// The macOS compatibility router's sole production entry point. Merely
-// constructing WAM's controller or native player never loads libmpv; the
-// router calls this only after it has selected the compatibility fallback.
-class MpvFallbackFactory final {
- public:
-  [[nodiscard]] static MpvRuntimeLoadResult load(
-      const QString& applicationDirectory);
-};
-
 // Non-Apple builds link libmpv normally. This factory captures those
 // linked functions in the same immutable dispatch table used by the lazy
 // macOS fallback, without making dynamic-loader or bundle-security claims.
@@ -73,8 +64,15 @@ class MpvRuntime final {
     return loaded_path_;
   }
 
+  // Loads and validates the bundled macOS fallback. Merely constructing WAM's
+  // controller or native player never loads libmpv; MpvEngine calls this only
+  // once the compatibility engine is actually needed. Failures are
+  // deliberately not cached, allowing a corrected app bundle to retry in the
+  // same process.
+  [[nodiscard]] static MpvRuntimeLoadResult load(
+      const QString& applicationDirectory);
+
  private:
-  friend class MpvFallbackFactory;
   friend class MpvLinkedRuntimeFactory;
   friend class MpvRuntimeTestAccess;
 
@@ -84,11 +82,6 @@ class MpvRuntime final {
   // test access seam. It owns no dynamic library.
   MpvRuntime(MpvApi api, unsigned long clientApiVersion,
              QString loadedPath);
-
-  // The factory is the sole production entry point. Failures are deliberately
-  // not cached, allowing a corrected app bundle to retry in the same process.
-  [[nodiscard]] static MpvRuntimeLoadResult load(
-      const QString& applicationDirectory);
 
   // Declared first so it is destroyed last if process teardown ever reaches
   // this object. The success cache intentionally keeps the runtime alive.
