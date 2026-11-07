@@ -576,7 +576,7 @@ completed endpoint guard and corrected regression.
 - `src/media/libavformat_cursor.hpp`, `src/media/libavformat_cursor.cpp` — expose container track identity to the witness.
 - `src/platform/macos/libavformat_aac_timing.hpp`, `src/platform/macos/libavformat_aac_timing.mm` — bounded CoreMedia priming/edit witness and exact endpoint.
 - `src/platform/macos/libavformat_media_source.mm` — separate demux/presentation origins, admit only witnessed priming, verify endpoint.
-- `src/wamkit/NativeTargets.cmake` — compile the witness with the libavformat backend.
+- `cmake/NativeTargets.cmake` — compile the witness with the libavformat backend.
 - `tests/libavformat_aac_oracle.mm` — independent AVAssetReader PCM/timestamp oracle.
 - `tests/libavformat_aac_timing_proof.py` — retained PCM/first-frame comparisons and named-refusal fixtures.
 - `CMakeLists.txt` — oracle target and `libavformat_aac_timing` CTest registration.

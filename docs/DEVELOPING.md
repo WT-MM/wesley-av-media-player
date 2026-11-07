@@ -191,9 +191,10 @@ cmake --build build --parallel
 
 The separate `third_party/ffmpeg-lgpl` SDK is still needed for the native demux
 stage: it has WAM's allocation patch and `-wamnative` library names. Do not
-replace it with the general-purpose media closure. Existing test fixture
-builders also need a development FFmpeg with GPL encoders; that executable
-must not become `WAM_DEV_FFMPEG_EXECUTABLE` in a release.
+replace it with the general-purpose media closure. Test fixture builders
+need a development FFmpeg with GPL encoders (`WAM_TEST_FFMPEG`, found on the
+host); that executable must not become `WAM_DEV_FFMPEG_EXECUTABLE` in a
+release.
 
 After installing/repairing Qt and supplying the caption runtime, bundle with:
 
@@ -216,9 +217,9 @@ it does not link libmpv into WAM.
 The closure includes `libopus` and `libvpx-vp9`. Both macOS H.264 encoder
 preferences use `h264_videotoolbox -allow_sw 1`; libx264 remains confined to
 the non-Apple export path. For export proofs against the closure while keeping
-GPL fixture generation on the development tool, configure
-`WAM_EXPORT_FFMPEG_EXECUTABLE` and `WAM_EXPORT_FFPROBE_EXECUTABLE` to the
-closure's tools. CTest's `export_presets` checks every macOS export preset;
+GPL fixture generation on the development tool, set
+`WAM_DEV_FFMPEG_EXECUTABLE` to the closure's ffmpeg as above: the export tests
+run the same FFmpeg the development app stages. CTest's `export_presets` checks every macOS export preset;
 `jobs` guards both H.264 preferences against requesting libx264.
 See [the local qualification report](MEDIA_CLOSURE_13_3.md) for measured
 results and remaining macOS 13.3 and fallback telemetry qualification.

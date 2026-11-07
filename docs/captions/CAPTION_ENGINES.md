@@ -108,7 +108,7 @@ teardown off-main. A cancelled service session is rebuilt for the next request.
 
 ## Build and ABI
 
-`src/wamkit/CaptionBackend.cmake` typechecks a SpeechAnalyzer SDK probe. A compiler
+`cmake/CaptionBackend.cmake` typechecks a SpeechAnalyzer SDK probe. A compiler
 or SDK without the API builds `caption_stub.cpp`; `WAM_ENABLE_APPLE_CAPTIONS=OFF`
 exercises that configuration explicitly. Swift declarations have macOS 26 guards,
 the adapter targets the application's macOS deployment floor, and Speech is weak

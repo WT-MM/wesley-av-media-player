@@ -227,7 +227,7 @@ proof of performance on every machine or driver.
 - `src/qt/player_controller.cpp`
 - `src/qt/player_controller.hpp`
 - `src/wamkit/CMakeLists.txt`
-- `src/wamkit/CaptionBackend.cmake`
+- `cmake/CaptionBackend.cmake`
 - `src/wamkit/apple_caption.swift`
 - `src/wamkit/caption_stub.cpp`
 - `src/wamkit/exports.txt`

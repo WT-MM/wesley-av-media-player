@@ -1,3 +1,23 @@
+if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
+  add_library(wam_ffmpeg_lgpl INTERFACE)
+  target_include_directories(wam_ffmpeg_lgpl INTERFACE "${WAM_FFMPEG_LGPL_ROOT}/include")
+  add_library(wam_avcodec_worker STATIC
+    src/media/avcodec/decode_worker.cpp
+    src/media/avcodec/runtime.cpp)
+  if(WAM_ENABLE_AVFORMAT_STAGE)
+    target_sources(wam_avcodec_worker PRIVATE
+      src/media/libavformat_cursor.cpp
+      src/media/byte_source.cpp)
+  endif()
+  if(WAM_ENABLE_AVCODEC_STAGE)
+    target_sources(wam_avcodec_worker PRIVATE
+      src/platform/macos/software_avcodec_audio_backend.cpp)
+  endif()
+  target_include_directories(wam_avcodec_worker PUBLIC src)
+  target_compile_features(wam_avcodec_worker PUBLIC cxx_std_20)
+  target_link_libraries(wam_avcodec_worker PUBLIC wam_ffmpeg_lgpl)
+endif()
+
 # The parser, timing and state core contains no Apple SDK dependencies.
 if(APPLE OR WAM_BUILD_APP)
   add_library(wam_native_core STATIC
@@ -73,6 +93,13 @@ if(APPLE OR WAM_BUILD_APP)
   target_compile_features(wam_native_core PUBLIC cxx_std_20)
   target_compile_options(wam_native_core PRIVATE
     -Wall -Wextra -Wpedantic)
+  if(WAM_ENABLE_AVCODEC_STAGE)
+    target_compile_definitions(wam_native_core PUBLIC WAM_ENABLE_AVCODEC_STAGE=1)
+  endif()
+  if(WAM_NATIVE_BENCHMARK_TELEMETRY)
+    target_compile_definitions(wam_native_core PUBLIC
+      WAM_NATIVE_BENCHMARK_TELEMETRY=1)
+  endif()
   if(WAM_ENABLE_SOFTWARE_VP8)
     # The demuxer must not name V_VP8 in a build whose platform layer cannot
     # decode it: admitting the track and then failing the open is a worse
@@ -138,8 +165,6 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
     target_sources(wam_macos_native_video_core PRIVATE
       src/platform/macos/software_avcodec_video_decoder.mm)
     target_link_libraries(wam_macos_native_video_core PUBLIC wam_avcodec_worker)
-    target_compile_definitions(wam_macos_native_video_core PUBLIC WAM_ENABLE_AVCODEC_STAGE=1)
-    target_compile_definitions(wam_native_core PRIVATE WAM_ENABLE_AVCODEC_STAGE=1)
   endif()
   set_target_properties(wam_macos_native_video_core PROPERTIES
     LINKER_LANGUAGE OBJCXX)
@@ -214,8 +239,6 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
       ${WAM_MACOS_NATIVE_BACKEND_SOURCES})
     if(WAM_ENABLE_AVFORMAT_STAGE)
       target_link_libraries(wam_macos_native_backend PUBLIC wam_avcodec_worker)
-      target_sources(wam_avcodec_worker PRIVATE src/media/libavformat_cursor.cpp
-        src/media/byte_source.cpp)
       target_sources(wam_macos_native_backend PRIVATE
         src/platform/macos/libavformat_media_source.mm
         src/platform/macos/libavformat_aac_timing.mm

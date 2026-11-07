@@ -20,7 +20,8 @@ set_target_properties(WAMKit PROPERTIES FRAMEWORK TRUE FRAMEWORK_VERSION A
   INSTALL_NAME_DIR "@rpath" BUILD_WITH_INSTALL_NAME_DIR YES)
 target_include_directories(WAMKit PRIVATE "${PROJECT_SOURCE_DIR}/src" include)
 target_compile_options(WAMKit PRIVATE -fobjc-arc -Wall -Wextra)
-target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system wamkit_public_layer "-framework AppKit")
+target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system wamkit_public_layer
+  wam_caption_runtime "-framework AppKit")
 target_link_options(WAMKit PRIVATE "LINKER:-u,_wam_caption_create_v1" "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.txt")
 set_property(TARGET WAMKit APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/exports.txt" "${PROJECT_SOURCE_DIR}/scripts/package_wamkit.py")
 add_custom_command(TARGET WAMKit POST_BUILD
@@ -28,7 +29,6 @@ add_custom_command(TARGET WAMKit POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/module.modulemap" "$<TARGET_BUNDLE_DIR:WAMKit>/Versions/A/Modules/module.modulemap")
 install(TARGETS WAMKit FRAMEWORK DESTINATION Library/Frameworks COMPONENT WAMKit)
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_custom_command(TARGET WAMKit POST_BUILD
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/package_wamkit.py"
     --framework "$<TARGET_BUNDLE_DIR:WAMKit>" --source "${PROJECT_SOURCE_DIR}" --ffmpeg "${WAM_FFMPEG_LGPL_ROOT}")
@@ -53,11 +53,10 @@ if(WAMKIT_BUILD_HOST)
 endif()
 
 if(BUILD_TESTING AND WAMKIT_BUILD_HOST)
-  find_program(WAMKIT_FIXTURE_FFMPEG ffmpeg REQUIRED)
   add_custom_command(OUTPUT "${WAMKIT_TEST_FIXTURE_DIR}/manifest.json"
     BYPRODUCTS "${WAMKIT_TEST_FIXTURE_DIR}/av.mp4" "${WAMKIT_TEST_FIXTURE_DIR}/av.mkv" "${WAMKIT_TEST_FIXTURE_DIR}/refused.m4a"
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/generate_wamkit_fixtures.py"
-      --ffmpeg "${WAMKIT_FIXTURE_FFMPEG}" --output "${WAMKIT_TEST_FIXTURE_DIR}"
+      --ffmpeg "${WAM_TEST_FFMPEG}" --output "${WAMKIT_TEST_FIXTURE_DIR}"
     DEPENDS "${PROJECT_SOURCE_DIR}/scripts/generate_wamkit_fixtures.py")
   add_custom_target(wamkit_fixtures DEPENDS "${WAMKIT_TEST_FIXTURE_DIR}/manifest.json")
   add_dependencies(WAMKitHost wamkit_fixtures)
