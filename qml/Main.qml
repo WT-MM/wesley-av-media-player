@@ -822,8 +822,8 @@ ApplicationWindow {
 
     // Up/Down: one wheel notch, with the scroll gesture's OSD and flash.
     function nudgeVolume(delta) {
-        root.controller.setVolume(Math.max(0, Math.min(appSettings.maximumVolume,
-                                                       root.controller.volume + delta)));
+        // setVolume clamps to [0, the configured maximum].
+        root.controller.setVolume(root.controller.volume + delta);
         transport.flashVolume();
         root.showVolumeOsd();
         root.revealControls();

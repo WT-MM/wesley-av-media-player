@@ -47,6 +47,10 @@ static_assert(wam::qt::kMaximumPlayerWindows ==
 namespace wam::qt {
 namespace {
 
+// A position is worth resuming only at least this far from both ends; save
+// and restore must agree on it.
+constexpr double kResumeMarginSeconds = 5.0;
+
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
 class StartupExposureObserver final : public QObject {
 public:
@@ -234,9 +238,9 @@ void PlayerWindow::rememberPosition(const ResumeSnapshot &snapshot) {
     return;
   ::wam::StateStore &store = manager_.stateStore();
   const std::string key = persistentKey(snapshot.local_source);
-  if (snapshot.position < 5.0 ||
+  if (snapshot.position < kResumeMarginSeconds ||
       (snapshot.duration > 0.0 &&
-       snapshot.position >= snapshot.duration - 5.0)) {
+       snapshot.position >= snapshot.duration - kResumeMarginSeconds)) {
     store.forget(key);
     return;
   }
@@ -262,8 +266,8 @@ void PlayerWindow::applyPendingResume() {
 
   resume_pending_ = false;
   ::wam::StateStore &store = manager_.stateStore();
-  if (resume_position_ < 5.0 ||
-      resume_position_ >= controller_->duration() - 5.0) {
+  if (resume_position_ < kResumeMarginSeconds ||
+      resume_position_ >= controller_->duration() - kResumeMarginSeconds) {
     store.forget(persistentKey(tracked_local_source));
     if (store.dirty())
       manager_.requestCheckpoint();
@@ -323,7 +327,7 @@ void PlayerWindow::wireResumeTracking() {
         tracked_local_source.isEmpty()
             ? 0.0
             : store.positionFor(persistentKey(tracked_local_source));
-    resume_pending_ = resume_position_ >= 5.0;
+    resume_pending_ = resume_position_ >= kResumeMarginSeconds;
     if (resume_pending_)
       applyPendingResume();
   });
