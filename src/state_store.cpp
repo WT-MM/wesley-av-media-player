@@ -13,6 +13,7 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace wam {
 namespace {
@@ -216,7 +217,8 @@ bool parseRecord(std::string_view line, PersistentState& state,
   double seconds = 0.0;
   if (!parseNumber(line, seconds) || !std::isfinite(seconds) || seconds < 0.0)
     return false;
-  state.positions.insert_or_assign(std::move(source), seconds);
+  state.positions.insert_or_assign(std::move(source),
+                                   ResumePosition{seconds, static_cast<std::uint64_t>(position_records)});
   return true;
 }
 
@@ -294,6 +296,7 @@ bool StateStore::load() {
   // positions if any record or size limit failed.
   if (!valid) loaded.positions.clear();
   state_ = std::move(loaded);
+  next_use_ = position_records + 1;
   rewrite_required_ = !valid;
   if (valid) persisted_state_ = state_;
   return valid;
@@ -305,12 +308,20 @@ bool StateStore::save() const {
   // therefore remains true and the checkpoint gate will schedule it again.
   const PersistentState snapshot = state_;
   if (snapshot.positions.size() > kMaxPositions) return false;
-  for (const auto& [source, seconds] : snapshot.positions) {
+  std::vector<const std::pair<const std::string, ResumePosition>*> oldest_first;
+  oldest_first.reserve(snapshot.positions.size());
+  for (const auto& entry : snapshot.positions) {
+    const auto& [source, position] = entry;
     if (source.empty() || source.size() > kMaxSourceBytes ||
         !lineSafeSource(source) ||
-        !std::isfinite(seconds) || seconds < 0.0)
+        !std::isfinite(position.seconds) || position.seconds < 0.0)
       return false;
+    oldest_first.push_back(&entry);
   }
+  std::sort(oldest_first.begin(), oldest_first.end(),
+            [](const auto* a, const auto* b) {
+              return a->second.used < b->second.used;
+            });
 
   std::error_code error;
   std::filesystem::create_directories(path_.parent_path(), error);
@@ -330,8 +341,9 @@ bool StateStore::save() const {
     output << "scroll_gestures " << (snapshot.scroll_gestures ? 1 : 0)
            << '\n';
     output << "max_volume " << snapshot.maximum_volume << '\n';
-    for (const auto& [source, seconds] : snapshot.positions)
-      output << "position " << std::quoted(source) << ' ' << seconds << '\n';
+    for (const auto* entry : oldest_first)
+      output << "position " << std::quoted(entry->first) << ' '
+             << entry->second.seconds << '\n';
     output.flush();
     if (!output) return false;
     output.close();
@@ -356,7 +368,7 @@ bool StateStore::dirty() const {
 double StateStore::positionFor(const std::string& source) const {
   if (!state_.restore_positions) return 0;
   const auto found = state_.positions.find(source);
-  return found == state_.positions.end() ? 0 : found->second;
+  return found == state_.positions.end() ? 0 : found->second.seconds;
 }
 
 void StateStore::remember(const std::string& source, double seconds) {
@@ -364,9 +376,19 @@ void StateStore::remember(const std::string& source, double seconds) {
       !lineSafeSource(source) || source.find("://") != std::string::npos ||
       !std::isfinite(seconds) || seconds < 5.0)
     return;
-  state_.positions[source] = seconds;
-  if (state_.positions.size() > kMaxPositions)
-    state_.positions.erase(state_.positions.begin());
+  const auto [found, inserted] = state_.positions.try_emplace(source);
+  ResumePosition& position = found->second;
+  position.seconds = seconds;
+  // Re-stamp only when another entry became newer, so re-remembering the
+  // newest entry at an unchanged position leaves the store clean.
+  if (inserted || position.used + 1 != next_use_) position.used = next_use_++;
+  if (state_.positions.size() <= kMaxPositions) return;
+  // Linear scan: the cache is bounded at kMaxPositions and this runs only
+  // when a new entry overflows it.
+  const auto oldest = std::min_element(
+      state_.positions.begin(), state_.positions.end(),
+      [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
+  state_.positions.erase(oldest);
 }
 
 void StateStore::forget(const std::string& source) { state_.positions.erase(source); }
