@@ -1,4 +1,5 @@
 #include "native_process_lifetime.hpp"
+#include "platform/macos/native_primitives.hpp"
 #include "native_audio_session.hpp"
 
 #include "media/adpcm_audio.hpp"
@@ -120,16 +121,6 @@ SessionQuarantine& gSessionQuarantine = gSessionQuarantineStorage.get();
 std::atomic<std::uint64_t> gRejectedCreates{0};
 std::atomic<std::uint64_t> gQuarantineTransfers{0};
 std::atomic<std::uint64_t> gQuarantineRecoveries{0};
-
-void assignError(std::string* error, const char* message) noexcept {
-  if (error == nullptr) {
-    return;
-  }
-  try {
-    *error = message;
-  } catch (...) {
-  }
-}
 
 [[nodiscard]] bool exactFrame(media::MediaTime time,
                               std::uint32_t sampleRate,
@@ -421,12 +412,6 @@ void assignError(std::string* error, const char* message) noexcept {
     return false;
   }
   return false;
-}
-
-void saturatingIncrement(std::uint64_t& counter) noexcept {
-  if (counter != std::numeric_limits<std::uint64_t>::max()) {
-    ++counter;
-  }
 }
 
 // Every operation that feeds the converter or drains it refuses once the

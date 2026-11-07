@@ -39,10 +39,10 @@ struct MpegTsSourceTraits {
       const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,
       CancellationToken cancellation) noexcept;
-  static constexpr auto adoptContext = &adoptPreparedMpegTsAssetContext;
+  static constexpr auto adoptContext = &MpegTsAssetContext::adopt;
   static constexpr auto noteCursorCreationAttempt =
-      &noteMpegTsAssetContextCursorCreationAttempt;
-  static constexpr auto noteCursorStarted = &noteMpegTsAssetContextCursorStarted;
+      &MpegTsAssetContext::noteCursorCreationAttempt;
+  static constexpr auto noteCursorStarted = &MpegTsAssetContext::noteCursorStarted;
   // The first video access unit's exact time, or empty when the asset states
   // none.
   [[nodiscard]] static std::optional<media::MediaTime> videoOrigin(

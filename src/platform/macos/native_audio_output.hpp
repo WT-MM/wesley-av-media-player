@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_audio_render_core.hpp"
+#include "platform/macos/native_primitives.hpp"
 #include "native_audio_stretch_stage.hpp"
 #include "native_audio_test_mute.hpp"
 #include "native_test_seams.hpp"
@@ -118,25 +119,6 @@ struct NativeAudioOutputWakeSeam {
          calls.stop != nullptr && calls.addPropertyListener != nullptr &&
          calls.removePropertyListener != nullptr &&
          calls.hostClockFrequency != nullptr;
-}
-
-// Saturating diagnostic counter add, usable from the real-time callback. The
-// compare-exchange is tried at most twice so the callback stays wait-free; a
-// contended (or spuriously failed) pair of attempts drops the increment, so
-// the counters are a lower bound, never an overcount.
-inline void saturatingAdd(std::atomic<std::uint64_t> &counter,
-                          std::uint64_t amount) noexcept {
-  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
-  std::uint64_t current = counter.load(std::memory_order_relaxed);
-  for (unsigned attempt = 0; attempt != 2; ++attempt) {
-    const std::uint64_t next =
-        amount > maximum - current ? maximum : current + amount;
-    if (counter.compare_exchange_weak(current, next,
-                                      std::memory_order_relaxed,
-                                      std::memory_order_relaxed)) {
-      return;
-    }
-  }
 }
 
 enum class NativeAudioOutputProgress : std::uint8_t {

@@ -3,7 +3,7 @@
 // A thread-safe, bounded DecodedFrameSink for decoder tests. It rejects
 // over-capacity and stale-generation frames instead of accumulating them.
 
-#include "platform/macos/native_video_presenter.hpp"
+#include "platform/macos/video_decoder_contract.hpp"
 
 #include <cstddef>
 #include <cstdint>

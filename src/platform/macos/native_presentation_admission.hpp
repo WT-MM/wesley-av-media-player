@@ -15,7 +15,7 @@ namespace wam::macos {
 [[nodiscard]] inline const char* nativePresentationRefusal(
     const media::MediaVideoFormat& video,
     const NativePresentationCapabilities& output,
-    media::MediaCodec codec = media::MediaCodec::Unknown) noexcept {
+    media::MediaCodec codec) noexcept {
   if (codec == media::MediaCodec::ProRes4444) {
     if (!output.samplesBeyondYuv420) return "SceneGraphProRes4444OpaqueUnsupported";
     if (media::mediaTransferIsHighDynamicRange(video.transferFunction))

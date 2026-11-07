@@ -571,6 +571,9 @@ if(APPLE)
         --source "$<TARGET_FILE:wam_native_coverage_source_probe>"
         --ffmpeg "${WAM_TEST_FFMPEG}")
     set_tests_properties(macos_native_coverage_integration PROPERTIES TIMEOUT 90)
+    add_test(NAME native_coverage_revert_anchors
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/native_coverage_revert.py" --check-anchors)
     add_test(NAME macos_native_phase0b_integration
       COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/native_phase0b_integration.py"
@@ -582,7 +585,7 @@ if(APPLE)
     add_executable(wam_native_audio_converter_test
       native_audio_converter_test.mm)
     target_link_libraries(wam_native_audio_converter_test PRIVATE
-      wam_macos_native_backend)
+      wam_macos_native_backend_test_seams)
     add_test(NAME macos_native_audio_converter
       COMMAND wam_native_audio_converter_test)
     set_tests_properties(macos_native_audio_converter PROPERTIES

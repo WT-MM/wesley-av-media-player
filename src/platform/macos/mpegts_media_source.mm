@@ -32,12 +32,10 @@ using media::mpegts::MpegTsCompressedSample;
 using media::mpegts::MpegTsGenerationPlan;
 
 // Frames Apple's decoder swallows at the head of a track before it emits its
-// first PCM frame. It is read from the shared codec-facts table, which
-// `native_audio_converter.mm`'s `decoderLeadInFrames()` also reads (its one
-// override, Vorbis, never travels in MPEG-TS); the two must agree because the
-// session proves the generation by checking that the converter's first
-// published frame lands exactly on the presentation floor: the source states
-// the decode start, the converter adds its lead-in, and the two have to meet.
+// first PCM frame: media::decoderLeadInFrames, the same function the converter
+// uses. The session proves the generation by checking that the converter's
+// first published frame lands exactly on the presentation floor: the source
+// states the decode start, the converter adds its lead-in, and the two meet.
 //
 // Matroska gets this for free -- it carries CodecDelay, and its demuxer places
 // access unit 0 that many frames before the presentation origin. A transport
@@ -46,9 +44,6 @@ using media::mpegts::MpegTsGenerationPlan;
 // published frame lands `leadIn` frames late and the whole generation is
 // refused. AAC swallows nothing -- its encoder priming is real audio at the
 // head of the elementary stream that the PES timestamps already describe.
-[[nodiscard]] std::int64_t audioDecoderLeadInFrames(MediaCodec codec) noexcept {
-  return media::mediaCodecFacts(codec).decoderLeadInFrames;
-}
 
 // Nearest audio frame ordinal to a container timestamp, computed in 128 bits.
 //
@@ -81,22 +76,7 @@ using media::mpegts::MpegTsGenerationPlan;
 // against timestamps from the 90 kHz base stay exact and cheap.
 [[nodiscard]] std::optional<MediaTime> audioFrameTime(
     std::int64_t frame, std::uint32_t sampleRate) noexcept {
-  if (sampleRate == 0) {
-    return std::nullopt;
-  }
-  auto numerator = frame;
-  auto denominator = static_cast<std::int64_t>(sampleRate);
-  const std::int64_t divisor =
-      std::gcd(numerator == 0 ? denominator : numerator, denominator);
-  if (divisor > 0) {
-    numerator /= divisor;
-    denominator /= divisor;
-  }
-  if (denominator <= 0 ||
-      denominator > std::numeric_limits<std::int32_t>::max()) {
-    return std::nullopt;
-  }
-  return MediaTime{numerator, static_cast<std::int32_t>(denominator)};
+  return media::mediaTimeFromTicks(frame, sampleRate);
 }
 
 }  // namespace
@@ -141,6 +121,11 @@ struct MpegTsMediaSource::Impl final
   // the audio timeline, and it never rounds after the seed.
   std::int64_t audioNextFrame{0};
   bool audioAnchored{false};
+
+  [[nodiscard]] std::int64_t audioLeadInFrames() const noexcept {
+    return media::decoderLeadInFrames(
+        audioCodec, static_cast<std::uint32_t>(audioFramesPerPacket));
+  }
 
   // Reset-not-freed workspaces. `readNext` allocates only when a payload is
   // larger than everything before it in this generation.
@@ -195,14 +180,14 @@ struct MpegTsMediaSource::Impl final
         // The anchor is the PES timestamp MINUS the decoder lead-in, so that
         // once the converter has swallowed that lead-in its first published
         // frame lands exactly on the presentation floor.
-        audioNextFrame = *pesFrame - audioDecoderLeadInFrames(audioCodec);
+        audioNextFrame = *pesFrame - audioLeadInFrames();
       } else {
         // Tolerance is one whole access unit. Anything larger is a dropped or
         // duplicated PES rather than muxer rounding, and continuing past it
         // would publish audio the converter's exact-contiguity check would
         // reject one sample later with a far less useful message.
-        const std::int64_t drift = *pesFrame - audioDecoderLeadInFrames(audioCodec) -
-                                   audioNextFrame;
+        const std::int64_t drift =
+            *pesFrame - audioLeadInFrames() - audioNextFrame;
         if (drift > audioFramesPerPacket || drift < -audioFramesPerPacket) {
           assignError(error,
                       "mpeg-ts audio access units are not contiguous on the "
@@ -289,8 +274,7 @@ struct MpegTsMediaSource::Impl final
       assignError(error, "mpeg-ts CoreMedia block does not carry the unit");
       return std::nullopt;
     }
-    auto storage = std::make_shared<CoreMediaSampleStorage>(owned.release(),
-                                                            retainedBytes);
+    auto storage = leaseSampleBuffer(std::move(owned), retainedBytes);
     MediaSample sample;
     sample.generation = generation;
     sample.track = *selected;

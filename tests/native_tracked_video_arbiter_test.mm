@@ -225,14 +225,6 @@ class FakeTrackedOutput final : public NativeTrackedVideoOutput {
     ++drawn_;
   }
 
-  void publishInvalidated(std::uint64_t generation) noexcept {
-    expect(!admitted_.valid() && !event_,
-           "fake lifecycle event requires an empty mailbox");
-    event_.emplace(NativeTrackedVideoEvent{
-        NativeTrackedVideoEventKind::GenerationInvalidated,
-        ++eventSequence_, {}, generation, {}});
-  }
-
   void markDirty() noexcept {
     submitted_ = 1;
   }
@@ -426,20 +418,6 @@ void mainLifecycleCancelsPreviewFirst() {
          "retired preview generation stays stale");
 }
 
-void lifecycleEventsAreMainOnly() {
-  Fixture fixture;
-  fixture.output->publishInvalidated(7);
-  expect(!fixture.preview->takeEvent(),
-         "typed preview port cannot observe lifecycle diagnostics");
-  const auto event = fixture.main->takeEvent();
-  expect(event &&
-             event->kind ==
-                 NativeTrackedVideoEventKind::GenerationInvalidated &&
-             !event->frameSequence.valid() && event->generation == 7 &&
-             event->eventSequence == 1,
-         "lifecycle diagnostic routes only to main event domain");
-}
-
 void portsOwnTheWrappedLifetime() {
   auto output = std::make_shared<FakeTrackedOutput>(7);
   std::weak_ptr<FakeTrackedOutput> weakOutput = output;
@@ -513,7 +491,6 @@ int main() {
   mainEventNeverAppearsAsPreview();
   ownersShareOneNonwrappingSequenceDomain();
   mainLifecycleCancelsPreviewFirst();
-  lifecycleEventsAreMainOnly();
   portsOwnTheWrappedLifetime();
   if (failures != 0) {
     return EXIT_FAILURE;

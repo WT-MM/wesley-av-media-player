@@ -2503,7 +2503,8 @@ void testPresentationAdmissionAndFallback() {
       state->directPresentation = direct;
       NullOutput output(direct);
       const char* refusal =
-          nativePresentationRefusal(video, output.presentationCapabilities());
+          nativePresentationRefusal(video, output.presentationCapabilities(),
+                                    source->tracks.front().codec);
       const bool refused = !direct && entry.refusal != nullptr;
       require(refused ? refusal && std::string(refusal) == entry.refusal
                      : refusal == nullptr,
