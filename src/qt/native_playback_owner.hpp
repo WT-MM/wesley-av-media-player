@@ -111,7 +111,7 @@ public:
                              std::uint64_t sourceKey) override;
   void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
                           std::uint64_t sourceKey) override;
-  void fallbackStopCommandReply(std::uint64_t replyUserdata,
+  void fallbackStopCommandReply(std::uint64_t replyId,
                                 int error) override;
   void fallbackIdleChanged(bool idle) override;
   void fallbackRenderStateChanged() override;

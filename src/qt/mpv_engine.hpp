@@ -21,6 +21,81 @@ namespace wam::qt {
 class PlayerController;
 class PlayerCore;
 
+// mpv echoes a command's 64-bit reply_userdata back with its reply. The top
+// bits name the protocol that issued the command and the rest is that
+// protocol's command id, so a reply can never be taken for another
+// protocol's. Every asynchronous command this window issues is tagged here.
+enum class MpvReply : std::uint8_t {
+  Untagged,
+  Open,
+  Scrub,
+  RenderRecovery,
+  FallbackStop,
+};
+
+struct MpvReplyTag {
+  MpvReply kind = MpvReply::Untagged;
+  std::uint64_t id = 0;
+};
+
+[[nodiscard]] constexpr std::uint64_t mpvReplyIdMask(MpvReply kind) noexcept {
+  return kind == MpvReply::Open || kind == MpvReply::Scrub
+             ? (1ULL << 61) - 1ULL
+             : (1ULL << 62) - 1ULL;
+}
+
+[[nodiscard]] constexpr std::uint64_t mpvReplyTagBits(MpvReply kind) noexcept {
+  switch (kind) {
+  case MpvReply::Open:
+    return 1ULL << 63;
+  case MpvReply::Scrub:
+    return (1ULL << 63) | (1ULL << 61);
+  case MpvReply::RenderRecovery:
+    return 1ULL << 62;
+  case MpvReply::FallbackStop:
+    return 3ULL << 62;
+  case MpvReply::Untagged:
+    break;
+  }
+  return 0;
+}
+
+[[nodiscard]] constexpr std::uint64_t mpvReplyUserdata(MpvReply kind,
+                                                       std::uint64_t id) noexcept {
+  return mpvReplyTagBits(kind) | (id & mpvReplyIdMask(kind));
+}
+
+[[nodiscard]] constexpr MpvReplyTag parseMpvReply(std::uint64_t userdata) noexcept {
+  for (const MpvReply kind : {MpvReply::Open, MpvReply::Scrub,
+                              MpvReply::RenderRecovery, MpvReply::FallbackStop}) {
+    const std::uint64_t mask = mpvReplyIdMask(kind);
+    if ((userdata & ~mask) == mpvReplyTagBits(kind))
+      return {kind, userdata & mask};
+  }
+  return {MpvReply::Untagged, userdata};
+}
+
+// Advances `counter` to the next nonzero id `kind` can carry and returns it.
+[[nodiscard]] constexpr std::uint64_t nextMpvReplyId(MpvReply kind,
+                                                     std::uint64_t &counter) noexcept {
+  counter = (counter + 1) & mpvReplyIdMask(kind);
+  if (counter == 0)
+    counter = 1;
+  return counter;
+}
+
+static_assert([] {
+  for (const MpvReply kind : {MpvReply::Open, MpvReply::Scrub,
+                              MpvReply::RenderRecovery, MpvReply::FallbackStop}) {
+    for (const std::uint64_t id : {1ULL, mpvReplyIdMask(kind)}) {
+      const MpvReplyTag tag = parseMpvReply(mpvReplyUserdata(kind, id));
+      if (tag.kind != kind || tag.id != id)
+        return false;
+    }
+  }
+  return parseMpvReply(0).kind == MpvReply::Untagged;
+}());
+
 // The compatibility (libmpv) engine of one window: its PlayerCore, the
 // runtime it is provisioned with, and the state of the file lineage it is
 // playing. PlayerController drives it; on macOS the playback router also

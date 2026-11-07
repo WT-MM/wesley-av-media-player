@@ -27,8 +27,6 @@
 namespace wam::qt {
 namespace {
 
-constexpr std::uint64_t kFallbackStopReplyNamespace = 3ULL << 62U;
-constexpr std::uint64_t kFallbackStopReplyIdMask = (1ULL << 62U) - 1ULL;
 constexpr unsigned kMaximumFallbackStopSubmissions = 2;
 constexpr int kFallbackStopWatchdogMilliseconds = 2'000;
 bool applied(const playback_router::Transition &transition) noexcept {
@@ -464,18 +462,14 @@ bool NativePlaybackOwner::submitFallbackStop() {
     return false;
   }
 
-  ++nextFallbackStopReplyId_;
-  nextFallbackStopReplyId_ &= kFallbackStopReplyIdMask;
-  if (nextFallbackStopReplyId_ == 0) {
-    nextFallbackStopReplyId_ = 1;
-  }
-  fallbackStop_->replyId = nextFallbackStopReplyId_;
+  fallbackStop_->replyId =
+      nextMpvReplyId(MpvReply::FallbackStop, nextFallbackStopReplyId_);
   ++fallbackStop_->submissions;
   fallbackStop_->commandReplied = false;
   fallbackStop_->idleObserved = false;
 
-  if (!host_.mpvEngine().submitStop(kFallbackStopReplyNamespace |
-                                   nextFallbackStopReplyId_)) {
+  if (!host_.mpvEngine().submitStop(
+          mpvReplyUserdata(MpvReply::FallbackStop, fallbackStop_->replyId))) {
     if (fallbackStop_->submissions < kMaximumFallbackStopSubmissions)
       return submitFallbackStop();
     exhaustFallbackStop(QStringLiteral(
@@ -658,14 +652,10 @@ void NativePlaybackOwner::fallbackOpenFailed(std::uint64_t attempt,
       {{native_protocol::AttemptId{attempt}, native_protocol::Serial{serial}}}));
 }
 
-void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyUserdata,
+void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyId,
                                                    int error) {
-  if (!fallbackStop_.has_value() ||
-      (replyUserdata & kFallbackStopReplyIdMask) != fallbackStop_->replyId ||
-      (replyUserdata & ~kFallbackStopReplyIdMask) !=
-          kFallbackStopReplyNamespace) {
+  if (!fallbackStop_.has_value() || replyId != fallbackStop_->replyId)
     return;
-  }
   if (error < 0) {
     if (fallbackStop_->submissions < kMaximumFallbackStopSubmissions) {
       static_cast<void>(submitFallbackStop());

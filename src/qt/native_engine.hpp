@@ -68,8 +68,8 @@ public:
                                      std::uint64_t sourceKey) = 0;
   virtual void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
                                   std::uint64_t sourceKey) = 0;
-  virtual void fallbackStopCommandReply(std::uint64_t replyUserdata,
-                                        int error) = 0;
+  // `replyId` is the MpvReply::FallbackStop command id.
+  virtual void fallbackStopCommandReply(std::uint64_t replyId, int error) = 0;
   virtual void fallbackIdleChanged(bool idle) = 0;
   virtual void fallbackRenderStateChanged() = 0;
   virtual void fallbackPlaybackFailed() = 0;

@@ -588,11 +588,11 @@ private:
   void handleRenderInitializationFailure(const QString &error,
                                          std::uint64_t render_stamp);
   void handleRenderInvalidated(std::uint64_t retired_render_stamp);
-  void observeOpenCommandReply(std::uint64_t reply_userdata, int error);
-  void handleOpenCommandReply(std::uint64_t reply_userdata, int error);
-  void handleRenderRecoveryCommandReply(std::uint64_t reply_userdata,
-                                        int error);
-  void handleScrubCommandReply(std::uint64_t reply_userdata, int error);
+  // Each takes the command id parseMpvReply extracted for its protocol.
+  void observeOpenCommandReply(std::uint64_t attempt_id, int error);
+  void handleOpenCommandReply(std::uint64_t attempt_id, int error);
+  void handleRenderRecoveryCommandReply(std::uint64_t attempt_id, int error);
+  void handleScrubCommandReply(std::uint64_t command, int error);
   void handleScrubPlaybackRestart();
   void dispatchScrubSeek(double target, bool exact);
   void maybeCompleteScrubSeek();

@@ -72,25 +72,6 @@ constexpr double kMinimumMaximumVolume = ScrollGestureModel::kDetentValue;
 // enough to ride out a trackpad momentum tail's own gaps and short enough that
 // a deliberate flick commits before the user reaches for anything else.
 constexpr int kScrollSettleMs = 200;
-constexpr std::uint64_t kCommandReplyNamespaceMask = 3ULL << 62;
-constexpr std::uint64_t kOpenCommandReplyNamespace = 1ULL << 63;
-constexpr std::uint64_t kRenderRecoveryCommandReplyNamespace = 1ULL << 62;
-constexpr std::uint64_t kCommandReplyIdMask = ~kCommandReplyNamespaceMask;
-constexpr std::uint64_t kScrubCommandReplyTag =
-    kOpenCommandReplyNamespace | (1ULL << 61);
-constexpr std::uint64_t kOpenCommandReplyIdMask = (1ULL << 61) - 1ULL;
-constexpr std::uint64_t kScrubCommandReplyIdMask = kOpenCommandReplyIdMask;
-constexpr std::uint64_t kScrubCommandReplyMask =
-    kCommandReplyNamespaceMask | (1ULL << 61);
-constexpr std::uint64_t kFallbackStopCommandReplyNamespace = 3ULL << 62;
-
-static_assert((kOpenCommandReplyNamespace & kScrubCommandReplyMask) !=
-              kScrubCommandReplyTag);
-static_assert((kRenderRecoveryCommandReplyNamespace &
-               kCommandReplyNamespaceMask) !=
-              (kScrubCommandReplyTag & kCommandReplyNamespaceMask));
-static_assert((3ULL << 62) !=
-              (kScrubCommandReplyTag & kCommandReplyNamespaceMask));
 
 bool nearlyEqual(double left, double right, double epsilon = 0.0005) {
   return std::abs(left - right) <= epsilon;
@@ -1871,12 +1852,9 @@ void PlayerController::dispatchScrubSeek(double target, bool exact) {
     return;
   }
 
-  ++next_scrub_command_id_;
-  next_scrub_command_id_ &= kScrubCommandReplyIdMask;
-  if (next_scrub_command_id_ == 0)
-    next_scrub_command_id_ = 1;
-  const std::uint64_t command = next_scrub_command_id_;
-  const std::uint64_t reply_userdata = kScrubCommandReplyTag | command;
+  const std::uint64_t command =
+      nextMpvReplyId(MpvReply::Scrub, next_scrub_command_id_);
+  const std::uint64_t reply_userdata = mpvReplyUserdata(MpvReply::Scrub, command);
 
   scrub_seek_->command = command;
   scrub_seek_->target = target;
@@ -1926,14 +1904,13 @@ void PlayerController::handleScrubTimeout(std::uint64_t gesture,
   }
   if (engineReady() && !scrub_seek_->abort_pending) {
     scrub_seek_->abort_pending = true;
-    mpv_.core->api().mpv_abort_async_command(mpv_.core->handle(),
-                                         kScrubCommandReplyTag | command);
+    mpv_.core->api().mpv_abort_async_command(
+        mpv_.core->handle(), mpvReplyUserdata(MpvReply::Scrub, command));
   }
 }
 
-void PlayerController::handleScrubCommandReply(std::uint64_t reply_userdata,
+void PlayerController::handleScrubCommandReply(std::uint64_t command,
                                                int error) {
-  const std::uint64_t command = reply_userdata & kScrubCommandReplyIdMask;
   if (!scrub_seek_ || scrub_seek_->request_serial != request_serial_ ||
       scrub_seek_->command != command) {
     return;
@@ -2041,7 +2018,7 @@ void PlayerController::finishScrubGesture(bool restore_transport) {
       mpv_.lineage.active_event_playlist_entry_id == scrub_seek_->playlist_entry_id;
   if (active_command != 0 && engineReady()) {
     mpv_.core->api().mpv_abort_async_command(
-        mpv_.core->handle(), kScrubCommandReplyTag | active_command);
+        mpv_.core->handle(), mpvReplyUserdata(MpvReply::Scrub, active_command));
   }
   scrub_seek_.reset();
   if (!restore_transport || !matching_lineage || !engineReady())
@@ -3384,25 +3361,21 @@ void PlayerController::drainMpvEvents() {
       break;
 
     if (event->event_id == MPV_EVENT_COMMAND_REPLY) {
-      const std::uint64_t reply_namespace =
-          event->reply_userdata & kCommandReplyNamespaceMask;
-      if (native_ &&
-          reply_namespace == kFallbackStopCommandReplyNamespace) {
-        native_->fallbackStopCommandReply(event->reply_userdata,
-                                                   event->error);
+      const MpvReplyTag reply = parseMpvReply(event->reply_userdata);
+      if (native_ && reply.kind == MpvReply::FallbackStop) {
+        native_->fallbackStopCommandReply(reply.id, event->error);
         continue;
       }
-      if ((event->reply_userdata & kScrubCommandReplyMask) ==
-          kScrubCommandReplyTag) {
-        handleScrubCommandReply(event->reply_userdata, event->error);
+      if (reply.kind == MpvReply::Scrub) {
+        handleScrubCommandReply(reply.id, event->error);
         continue;
       }
-      if (reply_namespace == kOpenCommandReplyNamespace) {
-        observeOpenCommandReply(event->reply_userdata, event->error);
+      if (reply.kind == MpvReply::Open) {
+        observeOpenCommandReply(reply.id, event->error);
         continue;
       }
-      if (reply_namespace == kRenderRecoveryCommandReplyNamespace) {
-        handleRenderRecoveryCommandReply(event->reply_userdata, event->error);
+      if (reply.kind == MpvReply::RenderRecovery) {
+        handleRenderRecoveryCommandReply(reply.id, event->error);
         continue;
       }
     }
@@ -3591,7 +3564,7 @@ void PlayerController::drainMpvEvents() {
         // accepted command using the matching START_FILE identity as well.
         if (mpv_.lineage.open_attempt && mpv_.lineage.open_attempt->reply_ready &&
             mpv_.lineage.open_attempt->playlist_entry_id == end->playlist_entry_id)
-          handleOpenCommandReply(kOpenCommandReplyNamespace | mpv_.lineage.open_attempt->id, 0);
+          handleOpenCommandReply(mpv_.lineage.open_attempt->id, 0);
         handleEndFile(*end);
       }
     }
@@ -3679,12 +3652,8 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
     return true;
   }
 
-  ++next_open_attempt_id_;
-  next_open_attempt_id_ &= kOpenCommandReplyIdMask;
-  if (next_open_attempt_id_ == 0)
-    next_open_attempt_id_ = 1;
-  const std::uint64_t reply_userdata =
-      kOpenCommandReplyNamespace | next_open_attempt_id_;
+  const std::uint64_t reply_userdata = mpvReplyUserdata(
+      MpvReply::Open, nextMpvReplyId(MpvReply::Open, next_open_attempt_id_));
   const QByteArray utf8 = argument.toUtf8();
   const int result = sendCommand(
       mpv_.core.get(),
@@ -3749,12 +3718,9 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
     return false;
   }
 
-  ++next_render_recovery_attempt_id_;
-  next_render_recovery_attempt_id_ &= kCommandReplyIdMask;
-  if (next_render_recovery_attempt_id_ == 0)
-    next_render_recovery_attempt_id_ = 1;
-  const std::uint64_t reply_userdata =
-      kRenderRecoveryCommandReplyNamespace | next_render_recovery_attempt_id_;
+  const std::uint64_t reply_userdata = mpvReplyUserdata(
+      MpvReply::RenderRecovery,
+      nextMpvReplyId(MpvReply::RenderRecovery, next_render_recovery_attempt_id_));
   int result = MPV_ERROR_INVALID_PARAMETER;
   bool restarted_playlist_entry = false;
   if (mpv_.lineage.render_recovery->mode == RenderRecoveryMode::VideoReselect) {
@@ -3822,10 +3788,10 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
   return true;
 }
 
-void PlayerController::observeOpenCommandReply(std::uint64_t reply_userdata,
+void PlayerController::observeOpenCommandReply(std::uint64_t attempt_id,
                                                int error) {
   if (error >= 0 && mpv_.lineage.open_attempt &&
-      mpv_.lineage.open_attempt->id == (reply_userdata & kOpenCommandReplyIdMask) &&
+      mpv_.lineage.open_attempt->id == attempt_id &&
       !mpv_.lineage.open_attempt->playback_restarted) {
     // Metadata reads in handleOpenCommandReply are synchronous. Before the
     // first frame they can wait on mpv's VO while Qt needs this GUI thread to
@@ -3836,16 +3802,15 @@ void PlayerController::observeOpenCommandReply(std::uint64_t reply_userdata,
   }
   const bool loaded = mpv_.lineage.open_attempt && mpv_.lineage.open_attempt->file_loaded;
   const bool restarted = mpv_.lineage.open_attempt && mpv_.lineage.open_attempt->playback_restarted;
-  handleOpenCommandReply(reply_userdata, error);
+  handleOpenCommandReply(attempt_id, error);
   if (error >= 0 && !mpv_.lineage.open_attempt && restarted) {
     if (loaded) handlePlaybackReady(true);
     handlePlaybackReady(false);
   }
 }
 
-void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
+void PlayerController::handleOpenCommandReply(std::uint64_t attempt_id,
                                               int error) {
-  const std::uint64_t attempt_id = reply_userdata & kOpenCommandReplyIdMask;
   if (!mpv_.lineage.open_attempt || mpv_.lineage.open_attempt->id != attempt_id)
     return;
 
@@ -3934,8 +3899,7 @@ std::int64_t PlayerController::authoritativePlaylistEntry(
 }
 
 void PlayerController::handleRenderRecoveryCommandReply(
-    std::uint64_t reply_userdata, int error) {
-  const std::uint64_t attempt_id = reply_userdata & kCommandReplyIdMask;
+    std::uint64_t attempt_id, int error) {
   if (!mpv_.lineage.render_recovery_attempt || mpv_.lineage.render_recovery_attempt->id != attempt_id) {
     return;
   }
@@ -4276,7 +4240,7 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
     else mpv_.lineage.open_attempt->playback_restarted = true;
     if (file_loaded || !mpv_.lineage.open_attempt->reply_ready) return;
     const auto attempt = *mpv_.lineage.open_attempt;
-    handleOpenCommandReply(kOpenCommandReplyNamespace | attempt.id, 0);
+    handleOpenCommandReply(attempt.id, 0);
     if (attempt.file_loaded) handlePlaybackReady(true);
   }
   if (file_loaded)

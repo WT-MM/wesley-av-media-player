@@ -102,12 +102,12 @@ class PlayerControllerTestAccess final {
 
   static void observeOpenReply(PlayerController &controller, std::uint64_t id,
                                int error = 0) {
-    controller.observeOpenCommandReply((1ULL << 63) | id, error);
+    controller.observeOpenCommandReply(id, error);
   }
 
   static void completeOpenAttempt(PlayerController &controller,
                                   std::uint64_t attempt_id, int error = 0) {
-    controller.handleOpenCommandReply((1ULL << 63) | attempt_id, error);
+    controller.handleOpenCommandReply(attempt_id, error);
   }
 
   static void renderInvalidated(PlayerController &controller,
@@ -298,8 +298,7 @@ class PlayerControllerTestAccess final {
   static void completeRecoveryAttempt(PlayerController &controller,
                                       std::uint64_t attempt_id,
                                       int error = 0) {
-    controller.handleRenderRecoveryCommandReply((1ULL << 62) | attempt_id,
-                                                error);
+    controller.handleRenderRecoveryCommandReply(attempt_id, error);
   }
 
   static bool flush(PlayerController &controller, RenderTicket ticket) {
@@ -516,9 +515,7 @@ class PlayerControllerTestAccess final {
 
   static void scrubCommandReply(PlayerController &controller,
                                 std::uint64_t command, int error = 0) {
-    controller.handleScrubCommandReply((1ULL << 63) | (1ULL << 61) |
-                                           command,
-                                       error);
+    controller.handleScrubCommandReply(command, error);
   }
 
   static void scrubSeekStarted(PlayerController &controller) {
