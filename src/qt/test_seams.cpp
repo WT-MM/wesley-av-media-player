@@ -365,7 +365,9 @@ constexpr Verb kVerbs[] = {
     // chrome without activating the window.
     {QLatin1StringView("controls"), [](const VerbContext &c) {
        if (PlayerWindow *window = c.window()) {
-         window->qmlRoot()->setProperty("controlsRevealed", c.fields.value(2).toInt() != 0);
+         QMetaObject::invokeMethod(window->qmlRoot(), "setChromeState",
+                                   Q_ARG(QVariant, c.fields.value(2).toInt() != 0 ? QStringLiteral("held")
+                                                                                  : QStringLiteral("hidden")));
          if (auto *bar = window->qmlRoot()->findChild<QQuickItem *>(QStringLiteral("transport")))
            bar->setProperty("suppressed", false);
        }
@@ -390,6 +392,13 @@ constexpr Verb kVerbs[] = {
        if (!QWindowSystemInterface::handleShortcutEvent(window->window(), 0, key.key(), key.keyboardModifiers(),
                                                         0, 0, 0, text))
          qCritical().noquote() << "WAM_TEST_WINDOW_SCRIPT: no shortcut took" << c.fields.value(2);
+     }},
+    // focus:<i>:<0|1>: give the window Qt's focus (so `active` turns true) or
+    // take it away; the app is never activated.
+    {QLatin1StringView("focus"), [](const VerbContext &c) {
+       if (PlayerWindow *window = c.window())
+         QWindowSystemInterface::handleFocusWindowChanged<QWindowSystemInterface::SynchronousDelivery>(
+             c.fields.value(2).toInt() != 0 ? window->window() : nullptr);
      }},
     // layout:<i>: report named overlay/control geometry and the loading title.
     {QLatin1StringView("layout"), [](const VerbContext &c) {

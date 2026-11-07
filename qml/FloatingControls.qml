@@ -71,7 +71,7 @@ FocusScope {
     // "active" too -- otherwise the idle timer in Main.qml can fade the
     // panel out from directly under a stationary cursor that is parked on
     // it, which is exactly the QuickTime-style pin the transport is meant
-    // to honor (see Main.qml's hideControlsIfIdle/transportInteractionChanged).
+    // to honor (see Main.qml's hideControls/transportInteractionChanged).
     readonly property bool interactionActive: hovered
         || volumePopupOpen
         || volumeFeedback

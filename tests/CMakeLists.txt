@@ -1146,7 +1146,7 @@ endif()
 if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
 # Quiet UI regressions use only generated, silent media and the in-process
 # window seam; run serially so probes do not compete for native admission.
-  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics gapseek badscript hdr fill)
+  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics gapseek badscript hdr fill chrome)
     add_test(NAME ui_${ui_case}
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/ui_regression_test.py"
         --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_TEST_FFMPEG}" --case "${ui_case}"

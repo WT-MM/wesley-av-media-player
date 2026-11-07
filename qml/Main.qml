@@ -49,12 +49,18 @@ ApplicationWindow {
     property bool quickEditInstantiated: false
     readonly property real quickEditWidth: Math.min(340, root.width - 24)
     readonly property real quickEditRightMargin: Math.max(16, SafeArea.margins.right + 16)
-    property bool controlsRevealed: true
-    // True while the pointer is anywhere in the titlebar band (see
-    // titlebarBand below). Pins the chrome revealed the same way
-    // transport.interactionActive does, so nothing fades out from under a
-    // cursor that is on its way to the close button.
-    property bool titlebarPinned: false
+    // The chrome (titlebar band, floating transport, traffic lights) is in
+    // exactly one of these states, and only setChromeState changes it:
+    //   "empty"     no media: always shown, never fades
+    //   "held"      a transport interaction holds it up
+    //   "pinned"    the pointer is in the titlebar band (see titlebarBand
+    //               below), so nothing fades out from under a cursor on its
+    //               way to the close button; fadeTimer re-checks
+    //   "countdown" shown; fadeTimer runs to the idle hide
+    //   "hidden"
+    property string chromeState: "empty"
+    readonly property bool controlsRevealed: chromeState !== "hidden"
+    readonly property bool titlebarPinned: chromeState === "pinned"
     // The chrome appears and disappears with no animation when the pointer
     // is not on the window at all (a window that has just gone inactive, or
     // one the pointer left) -- fading in chrome nobody is pointing at reads
@@ -270,28 +276,32 @@ ApplicationWindow {
         return root.windowChrome.pointerInTitlebarBand();
     }
 
-    function revealControls() {
-        fadeTimer.stop();
+    // The one transition function: also owns fadeTimer, which runs exactly in
+    // the two states that end in a re-check.
+    function setChromeState(next) {
+        chromeState = controller.hasMedia ? next : "empty";
+        if (chromeState === "countdown" || chromeState === "pinned")
+            fadeTimer.restart();
+        else
+            fadeTimer.stop();
+    }
 
-        // With media loaded, the chrome belongs to the pointer: it shows
-        // while the pointer is on this window (video surface or titlebar
-        // band) and stays hidden otherwise, so background playback and
-        // property changes cannot flash it onto an idle screen.
-        if (controller.hasMedia && !transport.interactionActive) {
+    // With media loaded, the chrome belongs to the pointer: it shows while
+    // the pointer is on this window (video surface or titlebar band) and
+    // stays hidden otherwise, so background playback and property changes
+    // cannot flash it onto an idle screen.
+    function revealControls() {
+        if (transport.interactionActive)
+            setChromeState("held");
+        else if (!root.active)
+            setChromeState("hidden");
+        else if (stageHover.hovered)
+            setChromeState("countdown");
+        else
             // Window activation comes through here, and the pointer can
             // already be resting in the band with no hover event to
             // announce it -- ask AppKit rather than assume it is not.
-            if (root.active && !stageHover.hovered)
-                titlebarPinned = pointerInTitlebar();
-            if (!root.active || (!stageHover.hovered && !root.titlebarPinned)) {
-                controlsRevealed = false;
-                return;
-            }
-        }
-
-        controlsRevealed = true;
-        if (controller.hasMedia && !transport.interactionActive)
-            fadeTimer.restart();
+            setChromeState(pointerInTitlebar() ? "pinned" : "hidden");
     }
 
     // revealControls() for a gesture that IS the pointer being on this window.
@@ -302,64 +312,27 @@ ApplicationWindow {
     // variant skips the gate and still re-arms the idle fade rather than
     // pinning the chrome up.
     function revealControlsForPointerGesture() {
-        fadeTimer.stop();
-        controlsRevealed = true;
-        if (controller.hasMedia && !transport.interactionActive)
-            fadeTimer.restart();
+        setChromeState(transport.interactionActive ? "held" : "countdown");
     }
 
-    function hideControlsIfIdle() {
-        if (!controller.hasMedia)
-            return;
-
-        if (transport.interactionActive) {
-            controlsRevealed = true;
-            return;
-        }
-
-        // The idle timeout is the one moment the pointer's real position
-        // decides something, so ask for it rather than trusting the last
-        // hover event: a cursor parked in the band (over the close button,
-        // say) must keep the whole chrome up, and re-arming the timer makes
-        // this a re-check rather than a permanent pin.
-        if (root.active && pointerInTitlebar()) {
-            titlebarPinned = true;
-            controlsRevealed = true;
-            fadeTimer.restart();
-            return;
-        }
-
-        titlebarPinned = false;
-        controlsRevealed = false;
-    }
-
-    function hideControlsImmediately() {
-        fadeTimer.stop();
+    // The idle timeout and a hover exit. Either is the moment the pointer's
+    // real position decides something, so ask for it rather than trusting
+    // the last hover event: a cursor parked in the band (over the close
+    // button, say) keeps the whole chrome up -- a hover exit that lands
+    // there is the pointer crossing from the QML scene onto the native strip
+    // above it, not leaving -- and the timer then re-checks rather than pins.
+    function hideControls() {
         if (transport.interactionActive)
-            return;
-
-        // A hover exit that lands in the titlebar band is not an exit at
-        // all: the pointer merely crossed from the QML scene onto the native
-        // strip above it. Hiding here is what made the chrome vanish while
-        // the user was reaching for the traffic lights.
-        if (root.active && pointerInTitlebar()) {
-            titlebarPinned = true;
-            controlsRevealed = true;
-            fadeTimer.restart();
-            return;
-        }
-
-        titlebarPinned = false;
-        controlsRevealed = false;
+            setChromeState("held");
+        else
+            setChromeState(root.active && pointerInTitlebar() ? "pinned" : "hidden");
     }
 
     function transportInteractionChanged() {
-        if (transport.interactionActive) {
-            fadeTimer.stop();
-            controlsRevealed = true;
-        } else {
+        if (transport.interactionActive)
+            setChromeState("held");
+        else
             revealControls();
-        }
     }
 
     // The empty player's own click, and the drag-and-drop-equivalent gesture:
@@ -745,11 +718,10 @@ ApplicationWindow {
     Timer {
         id: fadeTimer
         // QuickTime-feel idle timeout: 3s of no genuine pointer movement
-        // fades the chrome (revealControls/hideControlsIfIdle above still
-        // pin it while the pointer is on the transport or titlebar band).
+        // fades the chrome. Started and stopped only by setChromeState.
         interval: 3000
         repeat: false
-        onTriggered: root.hideControlsIfIdle()
+        onTriggered: root.hideControls()
     }
 
     Timer {
@@ -1303,10 +1275,8 @@ ApplicationWindow {
             HoverHandler {
                 id: titlebarHover
                 onHoveredChanged: {
-                    if (hovered) {
-                        root.titlebarPinned = true;
+                    if (hovered)
                         root.revealControls();
-                    }
                 }
             }
 
@@ -1321,10 +1291,8 @@ ApplicationWindow {
                 running: root.titlebarPinned && !titlebarHover.hovered
                     && root.visibility !== Window.FullScreen
                 onTriggered: {
-                    if (root.pointerInTitlebar())
-                        return;
-                    root.titlebarPinned = false;
-                    root.revealControls();
+                    if (!root.pointerInTitlebar())
+                        root.revealControls();
                 }
             }
 
@@ -1492,7 +1460,7 @@ ApplicationWindow {
                 if (hovered)
                     root.revealControls();
                 else
-                    root.hideControlsImmediately();
+                    root.hideControls();
             }
         }
 
@@ -1958,7 +1926,7 @@ ApplicationWindow {
         if (active)
             revealControls();
         else
-            hideControlsImmediately();
+            hideControls();
     }
 
     // FULLSCREEN TRANSITIONS.

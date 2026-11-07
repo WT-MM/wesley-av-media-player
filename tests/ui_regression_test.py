@@ -146,6 +146,11 @@ elif case == 'fill':
     rows = windows(reports)
     check(rows[1]['padded']==1 and rows[1]['geom']!=rows[0]['geom'], 'A refused un-fill keeps the window filled')
     check(rows[-1]['padded']==0 and rows[-1]['geom']==rows[0]['geom'], 'The next toggle restores the pre-fill frame')
+elif case == 'chrome':
+    # An empty window's chrome never fades, including when it loses focus.
+    _, reports, _ = run(case, media, 'new@1600,focus:1:1@100,focus:1:0@100,report@200')
+    rows = windows(reports)
+    check(rows[1]['media']==0 and rows[1]['chrome']==1, 'An empty window keeps its chrome when deactivated')
 elif case == 'menu':
     _, reports, _ = run(case, media, 'seekstep:1@1600,menu@50,seekstep:5@50,menu@50')
     items = menu_items(reports)

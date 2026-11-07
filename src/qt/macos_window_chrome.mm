@@ -427,7 +427,7 @@ void setTitlebarControlsRevealed(QWindow *window, bool revealed,
   // accessory's position -- it never touches each button's alphaValue. So a
   // windowed fade that left them at alpha 0 (and the idle fade below always
   // would, because pointerInTitlebarBand() is false in fullscreen by
-  // construction and hideControlsIfIdle therefore always hides) makes AppKit
+  // construction and hideControls therefore always hides) makes AppKit
   // slide three fully transparent traffic lights down under the menu bar:
   // the strip appears, the buttons do not, and there is no way to click
   // out of fullscreen.
