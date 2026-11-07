@@ -65,6 +65,9 @@ public:
   virtual void updateDuration(double duration) = 0;
   virtual void updatePosition(double position) = 0;
   virtual void setLastError(const QString &error) = 0;
+  // Replay-from-start at the end, and the controller's seek (either route).
+  [[nodiscard]] virtual bool atEndForReplay(double frame_duration) const = 0;
+  virtual void seekTo(double seconds) = 0;
   // A transport snapshot assigned in one step while the engine still gates
   // observations, then announced: no signal handler sees half of it.
   [[nodiscard]] virtual MpvTransportChange
@@ -396,6 +399,24 @@ public:
 
   void detachOwner();
 
+  // --- Transport ---------------------------------------------------------
+  // Starts a new file lineage: a routed open, a stop, a failed init.
+  void startNewLineage();
+  // An unrouted user open of `source` for the host's current request serial.
+  bool beginOpen(const QUrl &source);
+  // An open the native router handed to this engine.
+  void beginRoutedOpen(const QUrl &source, const RoutedFallbackOpen &routed);
+  [[nodiscard]] bool opening() const noexcept { return lineage.open_attempt.has_value(); }
+  [[nodiscard]] bool recovering() const noexcept { return lineage.render_recovery.has_value(); }
+  // Each records the intent in an in-flight recovery or startup sync of the
+  // current request, which restores it once mpv is back.
+  void play();
+  void pause();
+  void seek(double target);
+  // `sid` 0 deselects.
+  void selectSubtitleTrack(std::int64_t sid);
+  bool attachSubtitleFile(const std::filesystem::path &subtitle);
+
   // --- Observation gate -------------------------------------------------
   // True when an mpv property event describes the committed file of the
   // current request, with no open, scrub, recovery or startup sync in flight.
@@ -410,7 +431,6 @@ public:
   // False when no gesture is open (the caller seeks instead). `valid` false
   // ends the gesture without a seek.
   [[nodiscard]] bool endScrub(double target, bool valid);
-  void setScrubIntendedPaused(bool paused);
   void noteSeekStarted();
   // Feeds an observed time-pos to an open gesture; false when none is open.
   [[nodiscard]] bool observeScrubPosition(double position);
@@ -564,6 +584,8 @@ private:
     bool abort_pending = false;
   };
 
+  void overrideIntendedPause(bool paused);
+  void overrideIntendedPosition(double target);
   void dispatchScrubSeek(double target, bool exact);
   void maybeCompleteScrubSeek();
   [[nodiscard]] static const char *scrubSeekMode(bool exact);

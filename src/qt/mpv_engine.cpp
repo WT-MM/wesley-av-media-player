@@ -845,19 +845,8 @@ void MpvEngine::previewScrub(double target) {
     // the release path still performs one ordinary exact seek.
     return;
   }
-  const std::uint64_t request_serial = host_.requestSerial();
-  if (lineage.render_recovery && lineage.render_recovery->request_serial == request_serial) {
-    lineage.render_recovery->position = target;
-    lineage.render_recovery->transport_restored = false;
-    lineage.render_recovery->position_overridden = true;
-  }
-  if (lineage.startup_playback_sync &&
-      lineage.startup_playback_sync->request_serial == request_serial) {
-    lineage.startup_playback_sync->intended_position = target;
-    lineage.startup_playback_sync->position_overridden = true;
-  }
-
-  if (scrub_seek_->request_serial != request_serial) {
+  overrideIntendedPosition(target);
+  if (scrub_seek_->request_serial != host_.requestSerial()) {
     invalidateScrubGesture();
     return;
   }
@@ -885,11 +874,6 @@ bool MpvEngine::endScrub(double target, bool valid) {
   }
   host_.updatePosition(target);
   return true;
-}
-
-void MpvEngine::setScrubIntendedPaused(bool paused) {
-  if (scrub_seek_)
-    scrub_seek_->intended_paused = paused;
 }
 
 void MpvEngine::noteSeekStarted() {
@@ -2654,6 +2638,144 @@ void MpvEngine::applyObservedSubtitleTrack(
   lineage.selected_subtitle_track_id = subtitle_track_id >= 0 ? subtitle_track_id : -1;
   lineage.selected_tracks_playlist_entry_id = lineage.committed_open->playlist_entry_id;
 }
+
+
+void MpvEngine::startNewLineage() { lineage = {}; }
+
+bool MpvEngine::beginOpen(const QUrl &source) {
+  // Not a new lineage: the committed open, its entry source and the selected
+  // tracks stay, so an open whose loadfile is refused keeps the visible media
+  // (abandonPendingOpen) and a scene-graph loss still recovers it.
+  lineage.pending_source = source;
+  lineage.pending_request_serial = host_.requestSerial();
+  lineage.open_attempt.reset();
+  lineage.render_recovery.reset();
+  lineage.render_recovery_attempt.reset();
+  lineage.startup_playback_sync.reset();
+  lineage.observed_current_path = false;
+  lineage.terminal_playlist_entry_id = -1;
+  lineage.last_error_playlist_entry_id = -1;
+
+  // A renderer setup failure is latched for its generation. An explicit user
+  // open arms exactly one fresh generation; ordinary render passes do not.
+  static_cast<void>(core->retryFailedRenderContext());
+
+  if (const auto ticket = core->readyRenderTicket())
+    return flushPendingOpen(ticket->stamp);
+
+  host_.requestVideoUpdate();
+  return true;
+}
+
+void MpvEngine::beginRoutedOpen(const QUrl &source,
+                                const RoutedFallbackOpen &routed) {
+  core->allowRenderContext();
+  lineage.pending_source = source;
+  lineage.pending_request_serial = host_.requestSerial();
+  lineage.routed_fallback_open = routed;
+  static_cast<void>(core->retryFailedRenderContext());
+  host_.requestVideoUpdate();
+}
+
+void MpvEngine::overrideIntendedPause(bool paused) {
+  const std::uint64_t request_serial = host_.requestSerial();
+  if (lineage.render_recovery && lineage.render_recovery->request_serial == request_serial) {
+    if (paused && !lineage.render_recovery->paused &&
+        !lineage.render_recovery->position_overridden) {
+      const auto live_position = doubleProperty("time-pos");
+      if (live_position && std::isfinite(*live_position))
+        lineage.render_recovery->position = std::max(0.0, *live_position);
+    }
+    lineage.render_recovery->paused = paused;
+    lineage.render_recovery->transport_restored = false;
+  }
+  if (lineage.startup_playback_sync &&
+      lineage.startup_playback_sync->request_serial == request_serial) {
+    lineage.startup_playback_sync->intended_paused = paused;
+  }
+}
+
+void MpvEngine::overrideIntendedPosition(double target) {
+  const std::uint64_t request_serial = host_.requestSerial();
+  if (lineage.render_recovery && lineage.render_recovery->request_serial == request_serial) {
+    lineage.render_recovery->position = target;
+    lineage.render_recovery->transport_restored = false;
+    lineage.render_recovery->position_overridden = true;
+  }
+  if (lineage.startup_playback_sync &&
+      lineage.startup_playback_sync->request_serial == request_serial) {
+    lineage.startup_playback_sync->intended_position = target;
+    lineage.startup_playback_sync->position_overridden = true;
+  }
+}
+
+void MpvEngine::play() {
+  if (scrub_seek_) {
+    scrub_seek_->intended_paused = false;
+    host_.updatePause(false);
+    return;
+  }
+  if (host_.eofReached() && lineage.committed_open &&
+      lineage.terminal_playlist_entry_id == lineage.committed_open->playlist_entry_id) {
+    lineage.active_event_playlist_entry_id = lineage.terminal_playlist_entry_id;
+    lineage.terminal_playlist_entry_id = -1;
+  }
+  const double fps = doubleProperty("estimated-vf-fps").value_or(0.0);
+  if (host_.atEndForReplay(std::isfinite(fps) && fps > 0.0 ? 1.0 / fps : 0.0))
+    host_.seekTo(0.0);
+  host_.updateEof(false);
+  overrideIntendedPause(false);
+  int paused = 0;
+  setPropertyAsync("pause", MPV_FORMAT_FLAG, &paused);
+  host_.updatePause(false);
+}
+
+void MpvEngine::pause() {
+  if (scrub_seek_) {
+    scrub_seek_->intended_paused = true;
+    host_.updatePause(true);
+    return;
+  }
+  overrideIntendedPause(true);
+  int paused = 1;
+  setPropertyAsync("pause", MPV_FORMAT_FLAG, &paused);
+  host_.updatePause(true);
+}
+
+void MpvEngine::seek(double target) {
+  overrideIntendedPosition(target);
+  double value = target;
+  setPropertyAsync("time-pos", MPV_FORMAT_DOUBLE, &value);
+  host_.updatePosition(target);
+}
+
+void MpvEngine::selectSubtitleTrack(std::int64_t sid) {
+  static_cast<void>(setTrackSelection("sid", sid));
+  lineage.selected_subtitle_track_id = sid;
+}
+
+bool MpvEngine::attachSubtitleFile(
+    const std::filesystem::path &subtitle) {
+  if (!ready() || subtitle.empty())
+    return false;
+  const QByteArray path = displayPath(subtitle).toUtf8();
+  std::array<const char *, 4> arguments{"sub-add", path.constData(), "select",
+                                        nullptr};
+  const int result =
+      commandNow(arguments.data());
+  if (result < 0)
+    return false;
+  if (std::find(lineage.attached_subtitle_files.begin(),
+                lineage.attached_subtitle_files.end(),
+                subtitle) == lineage.attached_subtitle_files.end()) {
+    lineage.attached_subtitle_files.push_back(subtitle);
+  }
+  // Deliberately NOT setCaptionsVisible(true): selecting the source
+  // is what turns subtitles on, and doing both would fight over which track
+  // the switch restores.
+  return true;
+}
+
 
 void MpvEngine::detachOwner() {
   if (core)

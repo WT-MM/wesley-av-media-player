@@ -289,7 +289,7 @@ public:
   Q_INVOKABLE void togglePlayPause();
   Q_INVOKABLE void stop();
   Q_INVOKABLE void beginScrub();
-  Q_INVOKABLE void seekTo(double seconds);
+  Q_INVOKABLE void seekTo(double seconds) override;
   Q_INVOKABLE void previewSeekTo(double seconds);
   Q_INVOKABLE void endScrub(double seconds);
   Q_INVOKABLE void seekRelative(double seconds);
@@ -591,7 +591,7 @@ private:
   // Play at the end, or within one frame of it (never less than 50 ms),
   // replays from the start. `frame_duration` is the playing engine's own
   // frame duration, 0 when it knows none.
-  [[nodiscard]] bool atEndForReplay(double frame_duration) const noexcept;
+  [[nodiscard]] bool atEndForReplay(double frame_duration) const noexcept override;
   [[nodiscard]] bool nativeSeekInFlight() const noexcept override {
     return native_scrub_intent_ || native_seek_intent_;
   }
@@ -696,7 +696,6 @@ private:
   void cleanupExportStaging() noexcept;
   void startWorkPolling();
   void pollBackgroundWork();
-  bool attachSubtitleFile(const std::filesystem::path &subtitle);
 
   MpvEngine mpv_;
   // Null when this build has no native engine.
@@ -789,7 +788,7 @@ private:
   std::uint64_t request_serial_ = 0;
   std::uint64_t next_native_seek_gesture_id_ = 0;
   std::uint64_t next_native_seek_request_id_ = 0;
-  // The subset of mpv_.lineage.attached_subtitle_files this player GENERATED,
+  // The subset of MpvEngine's attached subtitle files this player GENERATED,
   // so the Subtitles menu can name them honestly. A file the user loaded is
   // not a generated caption.
   std::vector<std::filesystem::path> generated_caption_files_;

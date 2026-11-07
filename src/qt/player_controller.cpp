@@ -237,7 +237,7 @@ bool PlayerController::initializePlaybackEngine() {
   const bool was_available = available();
   if (!mpv_.initialize()) {
     requested_source_.clear();
-    mpv_.lineage = {};
+    mpv_.startNewLineage();
     setLastError(mpv_.core->initializationError());
     if (was_available != available())
       emit availableChanged();
@@ -326,25 +326,7 @@ bool PlayerController::open(const QUrl &source) {
   if (request_serial_ == 0)
     ++request_serial_;
   requested_source_ = source;
-  mpv_.lineage.pending_source = source;
-  mpv_.lineage.pending_request_serial = request_serial_;
-  mpv_.lineage.open_attempt.reset();
-  mpv_.lineage.render_recovery.reset();
-  mpv_.lineage.render_recovery_attempt.reset();
-  mpv_.lineage.startup_playback_sync.reset();
-  mpv_.lineage.observed_current_path = false;
-  mpv_.lineage.terminal_playlist_entry_id = -1;
-  mpv_.lineage.last_error_playlist_entry_id = -1;
-
-  // A renderer setup failure is latched for its generation. An explicit user
-  // open arms exactly one fresh generation; ordinary render passes do not.
-  static_cast<void>(mpv_.core->retryFailedRenderContext());
-
-  if (const auto ticket = mpv_.core->readyRenderTicket())
-    return mpv_.flushPendingOpen(ticket->stamp);
-
-  requestVideoUpdate();
-  return true;
+  return mpv_.beginOpen(source);
 }
 
 void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
@@ -365,7 +347,7 @@ void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
   if (request_serial_ == 0)
     ++request_serial_;
   requested_source_ = source;
-  mpv_.lineage = {};
+  mpv_.startNewLineage();
 }
 
 bool PlayerController::nativeRouteAdmissionAllowed() const noexcept {
@@ -392,13 +374,7 @@ bool PlayerController::beginRoutedFallbackOpen(
     return false;
   }
 
-  mpv_.core->allowRenderContext();
-  mpv_.lineage.pending_source = source;
-  mpv_.lineage.pending_request_serial = request_serial_;
-  mpv_.lineage.routed_fallback_open =
-      RoutedFallbackOpen{attempt, serial, source_key, source_class};
-  static_cast<void>(mpv_.core->retryFailedRenderContext());
-  requestVideoUpdate();
+  mpv_.beginRoutedOpen(source, {attempt, serial, source_key, source_class});
 
   // Keep router action execution non-reentrant. A pre-existing Ready render
   // ticket can submit the load on this queued GUI turn; otherwise the normal
@@ -449,34 +425,8 @@ void PlayerController::play() {
       return;
     }
   }
-  if (!engineReady())
-    return;
-  if (mpv_.scrubbing()) {
-    mpv_.setScrubIntendedPaused(false);
-    updatePause(false);
-    return;
-  }
-  if (eof_reached_ && mpv_.lineage.committed_open &&
-      mpv_.lineage.terminal_playlist_entry_id == mpv_.lineage.committed_open->playlist_entry_id) {
-    mpv_.lineage.active_event_playlist_entry_id = mpv_.lineage.terminal_playlist_entry_id;
-    mpv_.lineage.terminal_playlist_entry_id = -1;
-  }
-  const double fps = mpv_.doubleProperty("estimated-vf-fps").value_or(0.0);
-  if (atEndForReplay(std::isfinite(fps) && fps > 0.0 ? 1.0 / fps : 0.0))
-    seekTo(0.0);
-  updateEof(false);
-  if (mpv_.lineage.render_recovery && mpv_.lineage.render_recovery->request_serial == request_serial_) {
-    mpv_.lineage.render_recovery->paused = false;
-    mpv_.lineage.render_recovery->transport_restored = false;
-  }
-  if (mpv_.lineage.startup_playback_sync &&
-      mpv_.lineage.startup_playback_sync->request_serial == request_serial_) {
-    mpv_.lineage.startup_playback_sync->intended_paused = false;
-  }
-  int paused = 0;
-  mpv_.setPropertyAsync("pause",
-                                      MPV_FORMAT_FLAG, &paused);
-  updatePause(false);
+  if (engineReady())
+    mpv_.play();
 }
 
 void PlayerController::pause() {
@@ -496,30 +446,8 @@ void PlayerController::pause() {
       return;
     }
   }
-  if (!engineReady())
-    return;
-  if (mpv_.scrubbing()) {
-    mpv_.setScrubIntendedPaused(true);
-    updatePause(true);
-    return;
-  }
-  if (mpv_.lineage.render_recovery && mpv_.lineage.render_recovery->request_serial == request_serial_) {
-    if (!mpv_.lineage.render_recovery->paused && !mpv_.lineage.render_recovery->position_overridden) {
-      const auto live_position = mpv_.doubleProperty("time-pos");
-      if (live_position && std::isfinite(*live_position))
-        mpv_.lineage.render_recovery->position = std::max(0.0, *live_position);
-    }
-    mpv_.lineage.render_recovery->paused = true;
-    mpv_.lineage.render_recovery->transport_restored = false;
-  }
-  if (mpv_.lineage.startup_playback_sync &&
-      mpv_.lineage.startup_playback_sync->request_serial == request_serial_) {
-    mpv_.lineage.startup_playback_sync->intended_paused = true;
-  }
-  int paused = 1;
-  mpv_.setPropertyAsync("pause",
-                                      MPV_FORMAT_FLAG, &paused);
-  updatePause(true);
+  if (engineReady())
+    mpv_.pause();
 }
 
 bool PlayerController::atEndForReplay(double frame_duration) const noexcept {
@@ -557,7 +485,7 @@ void PlayerController::finishStopUi(bool stop_compatibility_engine) {
   if (request_serial_ == 0)
     ++request_serial_;
   requested_source_.clear();
-  mpv_.lineage = {};
+  mpv_.startNewLineage();
   cancelCaptionsForMediaChange();
   if (stop_compatibility_engine && engineReady())
     mpv_.sendCommand({QByteArrayLiteral("stop")});
@@ -1164,21 +1092,7 @@ void PlayerController::seekTo(double seconds) {
     endScrub(seconds);
     return;
   }
-  const double target = boundedSeekTarget(seconds);
-  if (mpv_.lineage.render_recovery && mpv_.lineage.render_recovery->request_serial == request_serial_) {
-    mpv_.lineage.render_recovery->position = target;
-    mpv_.lineage.render_recovery->transport_restored = false;
-    mpv_.lineage.render_recovery->position_overridden = true;
-  }
-  if (mpv_.lineage.startup_playback_sync &&
-      mpv_.lineage.startup_playback_sync->request_serial == request_serial_) {
-    mpv_.lineage.startup_playback_sync->intended_position = target;
-    mpv_.lineage.startup_playback_sync->position_overridden = true;
-  }
-  double value = target;
-  mpv_.setPropertyAsync("time-pos",
-                                      MPV_FORMAT_DOUBLE, &value);
-  updatePosition(target);
+  mpv_.seek(boundedSeekTarget(seconds));
 }
 
 void PlayerController::previewSeekTo(double seconds) {
@@ -1256,7 +1170,7 @@ void PlayerController::seekRelative(double seconds) {
   }
   if (!engineReady() || !std::isfinite(seconds))
     return;
-  if (mpv_.scrubbing() || mpv_.lineage.render_recovery || position_ + seconds < 0.0 ||
+  if (mpv_.scrubbing() || mpv_.recovering() || position_ + seconds < 0.0 ||
       (duration_ > 0.0 && position_ + seconds >= duration_)) {
     seekTo(duration_ > 0.0 ? std::clamp(position_ + seconds, 0.0,
         std::max(0.0, duration_ - 0.001)) : position_ + seconds);
@@ -1740,7 +1654,7 @@ void PlayerController::buildMpvSubtitleSources() {
       source.filePath = path;
       // Recognize this player's own caption output, so the menu says what the
       // user actually did rather than showing them a temp file name. Keyed on
-      // the caption outputs specifically, NOT on mpv_.lineage.attached_subtitle_files:
+      // the caption outputs specifically, NOT on the engine's attached files:
       // that list holds every `sub-add`ed path including files the user chose,
       // and calling one of those "Generated Captions" is simply false.
       if (std::find(generated_caption_files_.begin(),
@@ -1831,7 +1745,7 @@ void PlayerController::applySubtitleDefaultPolicy() {
 }
 
 void PlayerController::refreshSubtitleSources() {
-  if (mpv_.lineage.open_attempt) return; // refreshed after first-frame startup completion
+  if (mpv_.opening()) return; // refreshed after first-frame startup completion
   if (!subtitles_ || source_.isEmpty())
     return;
   const bool native = nativeRouteActive();
@@ -1893,8 +1807,7 @@ void PlayerController::selectSubtitleTrack(int id) {
   } else if (source->mpvSid > 0) {
     // Compatibility route: mpv owns selection and timing; the overlay is fed
     // by the sub-text observation.
-    static_cast<void>(mpv_.setTrackSelection("sid", source->mpvSid));
-    mpv_.lineage.selected_subtitle_track_id = source->mpvSid;
+    mpv_.selectSubtitleTrack(source->mpvSid);
     publishSubtitleText({});
   } else {
     // Native route: this process reads the cues, off the playback graph.
@@ -1903,8 +1816,7 @@ void PlayerController::selectSubtitleTrack(int id) {
   }
 
   if (id == SubtitleSources::kOffId && engineReady()) {
-    static_cast<void>(mpv_.setTrackSelection("sid", 0));
-    mpv_.lineage.selected_subtitle_track_id = 0;
+    mpv_.selectSubtitleTrack(0);
   }
 
   const bool visible = id != SubtitleSources::kOffId;
@@ -1942,7 +1854,7 @@ bool PlayerController::attachSubtitleSource(const std::filesystem::path &path,
     // Compatibility route: hand it to mpv, which then reports it in
     // track-list and times it for us. The TrackListCount observation turns
     // that into a menu entry.
-    if (!attachSubtitleFile(path))
+    if (!mpv_.attachSubtitleFile(path))
       return false;
     refreshSubtitleSources();
     const int id = subtitles_->idForMpvSid(
@@ -2515,28 +2427,6 @@ void PlayerController::pollBackgroundWork() {
       work_timer_) {
     work_timer_->stop();
   }
-}
-
-bool PlayerController::attachSubtitleFile(
-    const std::filesystem::path &subtitle) {
-  if (!engineReady() || subtitle.empty())
-    return false;
-  const QByteArray path = displayPath(subtitle).toUtf8();
-  std::array<const char *, 4> arguments{"sub-add", path.constData(), "select",
-                                        nullptr};
-  const int result =
-      mpv_.commandNow(arguments.data());
-  if (result < 0)
-    return false;
-  if (std::find(mpv_.lineage.attached_subtitle_files.begin(),
-                mpv_.lineage.attached_subtitle_files.end(),
-                subtitle) == mpv_.lineage.attached_subtitle_files.end()) {
-    mpv_.lineage.attached_subtitle_files.push_back(subtitle);
-  }
-  // Deliberately NOT setCaptionsVisible(true): selecting the source
-  // is what turns subtitles on, and doing both would fight over which track
-  // the switch restores.
-  return true;
 }
 
 void PlayerController::requestVideoUpdate() {
