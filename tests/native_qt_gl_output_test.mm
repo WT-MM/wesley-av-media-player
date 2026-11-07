@@ -1,4 +1,4 @@
-#include "platform/macos/native_qt_gl_output.hpp"
+#include "qt/macos/native_qt_gl_output.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>

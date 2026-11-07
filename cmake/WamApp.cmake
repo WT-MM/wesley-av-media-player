@@ -95,7 +95,7 @@ qt_add_qml_module(wam
     qml/AppMenuBar.qml
     qml/AppMenu.qml)
 
-target_include_directories(wam PRIVATE src src/qt)
+target_include_directories(wam PRIVATE src)
 target_compile_definitions(wam PRIVATE WAM_VERSION="${PROJECT_VERSION}")
 target_link_libraries(wam PRIVATE
   Qt6::Core
@@ -231,10 +231,10 @@ if(APPLE)
   find_library(WAM_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
 
   add_library(wam_macos_native_qt_tracked STATIC
-    src/platform/macos/native_qt_gl_output.hpp
-    src/platform/macos/native_qt_gl_output.mm
-    src/platform/macos/qt_gl_video_item.hpp
-    src/platform/macos/qt_gl_video_item.mm)
+    src/qt/macos/native_qt_gl_output.hpp
+    src/qt/macos/native_qt_gl_output.mm
+    src/qt/macos/qt_gl_video_item.hpp
+    src/qt/macos/qt_gl_video_item.mm)
   target_include_directories(wam_macos_native_qt_tracked PUBLIC src)
   target_compile_features(wam_macos_native_qt_tracked PUBLIC cxx_std_20)
   target_compile_definitions(wam_macos_native_qt_tracked PRIVATE
@@ -314,7 +314,7 @@ if(APPLE)
       src/qt/native_playback_owner.hpp
       src/qt/native_playback_owner.mm
       src/qt/native_media_session_adapter.hpp
-      src/platform/macos/qt_native_presentation_adapter.mm)
+      src/qt/macos/qt_native_presentation_adapter.mm)
     target_compile_definitions(wam PRIVATE
       WAM_HAS_MACOS_NATIVE_PLAYBACK=1)
     target_compile_options(wam PRIVATE

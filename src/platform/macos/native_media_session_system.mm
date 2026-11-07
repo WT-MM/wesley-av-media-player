@@ -52,14 +52,14 @@ class AudioSessionAuthority final : public SessionClockAuthority {
   NativeAudioSessionProgress setMuted(bool muted) noexcept override {
     return session_.setMuted(muted);
   }
-  NativeAudioSessionProgress setRate(NativePlaybackRate rate,
+  NativeAudioSessionProgress setRate(media::NativePlaybackRate rate,
                                      bool preservePitch) noexcept override {
     return session_.setRate(rate, preservePitch);
   }
   NativeAudioSessionProgress stop() noexcept override {
     return session_.stop();
   }
-  NativeMediaClockSnapshot visibleClock() const noexcept override {
+  media::NativeMediaClockSnapshot visibleClock() const noexcept override {
     return session_.visibleClock();
   }
   media::MediaGeneration highestExposedGeneration() const noexcept override {
@@ -71,7 +71,7 @@ class AudioSessionAuthority final : public SessionClockAuthority {
   }
   // renderStats() reads only relaxed callback-owned atomics; it is still
   // sampled on the worker so one pass publishes the whole set.
-  std::optional<NativeAudioRenderStats> renderStats() const noexcept override {
+  std::optional<media::NativeAudioRenderStats> renderStats() const noexcept override {
     return session_.renderStats();
   }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
+#include "media/software_decoder_reservation.hpp"
 #include "native_concurrency_limits.hpp"
 
 #include <CoreVideo/CoreVideo.h>
@@ -152,26 +153,9 @@ static_assert(kNativeSurfaceBudgetProcessMaximumBytes <
               "the process byte pool must stay within one window's headroom "
               "of the complement it exists to bound");
 
-// Decoder admission uses softwareDecoderReservation plus an enforced private allocator domain.
-inline constexpr std::uint64_t kNativeSoftwareMaximumPicturePixels = media::MediaSourceLimits::kHardMaximumCodedPixels;
-inline constexpr std::size_t kNativeSoftwarePacketSlots = 4;
-inline constexpr std::size_t kNativeSoftwarePacketBytes = 4U * 1024U * 1024U;
-inline constexpr std::size_t kNativeSoftwarePacketPaddingBytes = 64;
-inline constexpr std::size_t kNativeSoftwareWorkerPacketStorageBytes =
-    kNativeSoftwarePacketSlots * (kNativeSoftwarePacketBytes + kNativeSoftwarePacketPaddingBytes);
-inline constexpr unsigned kNativeSoftwareDecoderThreads = 1;
-inline constexpr unsigned kNativeSoftwareProcessWorkers = kMaximumConcurrentPlayerWindows;
-// A combined software audio/video session reserves two workers; eight consume all sixteen.
-inline constexpr unsigned kNativeSoftwareCombinedAudioVideoWorkers = 2;
-inline constexpr std::size_t kNativeSoftwareAudioConversionScratchBytes = 4096U * 8U * sizeof(float);
-inline constexpr std::size_t kNativeSoftwareSessionConversionScratchBytes =
-    kNativeSoftwarePacketBytes + kNativeSoftwareAudioConversionScratchBytes;
-inline constexpr std::size_t kNativeSoftwareProcessPacketStorageBytes =
-    kNativeSoftwareProcessWorkers * kNativeSoftwareWorkerPacketStorageBytes;
-static_assert(kNativeSoftwareWorkerPacketStorageBytes == 16'777'472);
-static_assert(kNativeSoftwareSessionConversionScratchBytes == 4'325'376);
-static_assert(kNativeSoftwareProcessPacketStorageBytes == 268'439'552);
-static_assert(kNativeSoftwareProcessWorkers * kNativeSoftwareDecoderThreads == 16);
+static_assert(media::kNativeSoftwareProcessWorkers ==
+                  static_cast<unsigned>(kMaximumConcurrentPlayerWindows),
+              "one software decode worker per window");
 
 struct NativeSurfaceBudgetStats {
   std::uint64_t currentSurfaces{0};

@@ -3,7 +3,7 @@
 #include "media/live_caption_feed.hpp"
 #include "media/native_media_dispatcher.hpp"
 #include "native_concurrency_limits.hpp"
-#include "native_media_clock.hpp"
+#include "media/native_media_clock.hpp"
 #include "native_surface_budget.hpp"
 #include "native_tracked_video_output.hpp"
 #include "software_presentation_pool.hpp"
@@ -38,7 +38,7 @@ struct NativeVideoConsumerWakeSeam {
 };
 
 using NativeVideoClockSample =
-    NativeMediaClockSnapshot (*)(void* context) noexcept;
+    media::NativeMediaClockSnapshot (*)(void* context) noexcept;
 
 // Immutable owner-thread view of the audio-authoritative media clock. The
 // consumer calls sample only from its dispatcher worker; the seam creates no

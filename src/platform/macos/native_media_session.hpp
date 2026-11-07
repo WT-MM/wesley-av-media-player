@@ -127,7 +127,7 @@ class NativeMediaSessionWake final {
   void publishVideoDueHostTicks(std::uint64_t hostTicks) noexcept;
   // Video deadlines wake independently of audio callback cadence; only silent
   // generations need a heartbeat when no video deadline is armed.
-  void setHostPacedDeadlines(NativeMediaHostClock hostClock,
+  void setHostPacedDeadlines(media::NativeMediaHostClock hostClock,
                             bool heartbeat = true) noexcept;
 
   std::unique_ptr<Impl> impl_;
@@ -181,7 +181,7 @@ struct NativeMediaSessionDependencies {
   // Typed, lifecycle-free view of the same tracked presenter. Required so
   // preview frames cannot consume main-video event identities.
   std::shared_ptr<NativeTrackedVideoPreviewPort> previewOutput;
-  NativeMediaHostClock hostClock{};
+  media::NativeMediaHostClock hostClock{};
   NativeAudioUnitCallTable audioUnitCalls{};
   std::unique_ptr<NativeAudioConverterBackend> audioConverterBackend;
   // The live closed-caption tap the video consumer feeds; null when no one

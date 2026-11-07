@@ -1,5 +1,6 @@
 #pragma once
 #include "media/native_media_source.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 namespace wam::media {
@@ -11,6 +12,28 @@ struct SoftwareDecoderReservation {
     return packetBytes + extradataBytes + conversionBytes + privateBytes;
   }
 };
+// Software decode worker limits, one worker per player window (asserted in
+// platform/macos/native_surface_budget.hpp). Decoder admission charges
+// softwareDecoderReservation against them.
+inline constexpr std::uint64_t kNativeSoftwareMaximumPicturePixels = MediaSourceLimits::kHardMaximumCodedPixels;
+inline constexpr std::size_t kNativeSoftwarePacketSlots = 4;
+inline constexpr std::size_t kNativeSoftwarePacketBytes = 4U * 1024U * 1024U;
+inline constexpr std::size_t kNativeSoftwarePacketPaddingBytes = 64;
+inline constexpr std::size_t kNativeSoftwareWorkerPacketStorageBytes =
+    kNativeSoftwarePacketSlots * (kNativeSoftwarePacketBytes + kNativeSoftwarePacketPaddingBytes);
+inline constexpr unsigned kNativeSoftwareDecoderThreads = 1;
+inline constexpr unsigned kNativeSoftwareProcessWorkers = 16;
+// A combined software audio/video session reserves two workers; eight consume all sixteen.
+inline constexpr unsigned kNativeSoftwareCombinedAudioVideoWorkers = 2;
+inline constexpr std::size_t kNativeSoftwareAudioConversionScratchBytes = 4096U * 8U * sizeof(float);
+inline constexpr std::size_t kNativeSoftwareSessionConversionScratchBytes =
+    kNativeSoftwarePacketBytes + kNativeSoftwareAudioConversionScratchBytes;
+inline constexpr std::size_t kNativeSoftwareProcessPacketStorageBytes =
+    kNativeSoftwareProcessWorkers * kNativeSoftwareWorkerPacketStorageBytes;
+static_assert(kNativeSoftwareWorkerPacketStorageBytes == 16'777'472);
+static_assert(kNativeSoftwareSessionConversionScratchBytes == 4'325'376);
+static_assert(kNativeSoftwareProcessPacketStorageBytes == 268'439'552);
+static_assert(kNativeSoftwareProcessWorkers * kNativeSoftwareDecoderThreads == 16);
 inline constexpr std::uint64_t kSoftwarePrivateAllocationMaximumBytes = 384ULL << 20;
 inline constexpr std::uint64_t kSoftwareProcessReservationMaximumBytes = 2ULL << 30;
 // Capacity includes aligned allocation headers; the worker allocator enforces ancillary storage too.
@@ -19,11 +42,11 @@ inline constexpr std::uint64_t kSoftwareProcessReservationMaximumBytes = 2ULL <<
     unsigned depth, unsigned chroma, std::uint64_t extradata) noexcept {
   if(extradata > MediaSourceLimits::kHardMaximumCodecConfigurationBytes) return {};
   SoftwareDecoderReservation r;
-  r.packetBytes=4ULL*((4ULL<<20)+64);
+  r.packetBytes=kNativeSoftwareWorkerPacketStorageBytes;
   r.extradataBytes=2*(extradata+64);
   const bool audio=codec==MediaCodec::Dts || codec==MediaCodec::TrueHd || codec==MediaCodec::Mlp;
   if(audio) {
-    r.conversionBytes=4096ULL*8*sizeof(float);
+    r.conversionBytes=kNativeSoftwareAudioConversionScratchBytes;
     r.privateScratchBytes=16ULL<<20;
   } else {
     if(!width || !height || std::uint64_t(width)*height>MediaSourceLimits::kHardMaximumCodedPixels ||

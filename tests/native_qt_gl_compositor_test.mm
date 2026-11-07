@@ -1,4 +1,4 @@
-#include "platform/macos/qt_gl_video_item.hpp"
+#include "qt/macos/qt_gl_video_item.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>

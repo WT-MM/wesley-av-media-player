@@ -21,8 +21,8 @@ constexpr std::array ids{AV_CODEC_ID_H264, AV_CODEC_ID_MPEG4, AV_CODEC_ID_VP9,
                         AV_CODEC_ID_DTS, AV_CODEC_ID_TRUEHD, AV_CODEC_ID_MLP};
 std::atomic<unsigned> activeWorkers{0}, queuedWorkers{0}, peakWorkers{0};
 std::atomic<std::uint64_t> reservedBytes{0};
-constexpr unsigned kMaximumWorkers = macos::kNativeSoftwareProcessWorkers;
-static_assert(AV_INPUT_BUFFER_PADDING_SIZE == macos::kNativeSoftwarePacketPaddingBytes);
+constexpr unsigned kMaximumWorkers = kNativeSoftwareProcessWorkers;
+static_assert(AV_INPUT_BUFFER_PADDING_SIZE == kNativeSoftwarePacketPaddingBytes);
 struct Provenance { PacketTiming timing; AVBufferRef* reference{}; };
 void releaseProvenance(void*, std::uint8_t*) {}
 bool timestampTicks(MediaTime time, std::int32_t scale, std::int64_t& result) {
@@ -110,7 +110,7 @@ struct DecodeWorker::Impl {
     packet = wam::media::avcodec::api().av_packet_alloc();
     frame = wam::media::avcodec::api().av_frame_alloc();
     if (!context || !packet || !frame) { fail("AvcodecAllocationFailed"); return false; }
-    context->thread_count = macos::kNativeSoftwareDecoderThreads;
+    context->thread_count = kNativeSoftwareDecoderThreads;
     context->thread_type = 0;
     context->err_recognition = AV_EF_BITSTREAM | AV_EF_BUFFER | AV_EF_EXPLODE;
     context->flags |= AV_CODEC_FLAG_COPY_OPAQUE;

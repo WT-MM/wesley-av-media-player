@@ -1,7 +1,7 @@
 #pragma once
 
-#include "native_scheduled_frame_output.hpp"
-#include "native_tracked_video_output.hpp"
+#include "platform/macos/native_scheduled_frame_output.hpp"
+#include "platform/macos/native_tracked_video_output.hpp"
 #include "qt_gl_video_item.hpp"
 
 #include <atomic>

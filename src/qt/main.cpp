@@ -10,7 +10,7 @@
 #include "subtitle_bitmap_provider.hpp"
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
-#include "native_playback_owner.hpp"
+#include "qt/native_playback_owner.hpp"
 #include "platform/macos/native_embedding_support.hpp"
 #endif
 #if defined(Q_OS_MACOS)

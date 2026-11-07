@@ -325,8 +325,8 @@ if(TARGET wam_native_core)
   # with the production wam_native_core object.
   add_executable(wam_native_media_clock_test
     native_media_clock_test.cpp
-    ${PROJECT_SOURCE_DIR}/src/platform/macos/native_media_clock.hpp
-    ${PROJECT_SOURCE_DIR}/src/platform/macos/native_media_clock.cpp)
+    ${PROJECT_SOURCE_DIR}/src/media/native_media_clock.hpp
+    ${PROJECT_SOURCE_DIR}/src/media/native_media_clock.cpp)
   target_include_directories(wam_native_media_clock_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(wam_native_media_clock_test PRIVATE wam_native_core)
   target_compile_definitions(wam_native_media_clock_test PRIVATE
@@ -343,7 +343,7 @@ if(TARGET wam_native_core)
   # clock test does for its token domain.
   add_executable(wam_native_audio_render_core_test
     native_audio_render_core_test.cpp
-    ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_render_core.cpp)
+    ${PROJECT_SOURCE_DIR}/src/media/native_audio_render_core.cpp)
   target_include_directories(wam_native_audio_render_core_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_compile_definitions(wam_native_audio_render_core_test PRIVATE
     WAM_NATIVE_TEST_SEAMS=1)
@@ -856,7 +856,7 @@ if(APPLE)
       native_audio_output_test.mm
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_output.hpp
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_output.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_render_core.cpp
+      ${PROJECT_SOURCE_DIR}/src/media/native_audio_render_core.cpp
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_stretch_stage.hpp
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_audio_stretch_stage.mm)
     target_include_directories(wam_native_audio_output_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -1299,8 +1299,8 @@ if(APPLE)
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_source.mm
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_media_session.hpp
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_media_session.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_media_clock.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_media_clock.cpp
+      ${PROJECT_SOURCE_DIR}/src/media/native_media_clock.hpp
+      ${PROJECT_SOURCE_DIR}/src/media/native_media_clock.cpp
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_silent_timebase.hpp
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_silent_timebase.cpp
       ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_frame_lane.hpp
@@ -1430,8 +1430,8 @@ if(APPLE)
     # production seam compiles it but does not register or construct it.
     add_executable(wam_native_qt_gl_compositor_test
       native_qt_gl_compositor_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/qt_gl_video_item.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/qt_gl_video_item.mm)
+      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.hpp
+      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.mm)
     target_include_directories(wam_native_qt_gl_compositor_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_compile_definitions(wam_native_qt_gl_compositor_test PRIVATE
       WAM_NATIVE_GL_VIDEO_TESTING=1
@@ -1460,10 +1460,10 @@ if(APPLE)
     # the production archive.
     add_executable(wam_native_qt_gl_output_test
       native_qt_gl_output_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_qt_gl_output.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_qt_gl_output.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/qt_gl_video_item.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/qt_gl_video_item.mm)
+      ${PROJECT_SOURCE_DIR}/src/qt/macos/native_qt_gl_output.hpp
+      ${PROJECT_SOURCE_DIR}/src/qt/macos/native_qt_gl_output.mm
+      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.hpp
+      ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.mm)
     target_include_directories(wam_native_qt_gl_output_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_compile_definitions(wam_native_qt_gl_output_test PRIVATE
       WAM_NATIVE_GL_VIDEO_TESTING=1

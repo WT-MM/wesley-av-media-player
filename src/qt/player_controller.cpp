@@ -11,7 +11,7 @@
 #include "subtitle_sources.hpp"
 
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-#include "native_playback_owner.hpp"
+#include "qt/native_playback_owner.hpp"
 #endif
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "platform/macos/native_embedding_support.hpp"

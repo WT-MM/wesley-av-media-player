@@ -84,7 +84,7 @@ struct TimelinePlan {
   std::uint64_t leadInSilenceFrames{0};
   // The same facts in generation-local cursor frames, as the render core takes
   // them. Derived once here so the arithmetic exists in exactly one place.
-  NativeAudioDeclaredSilence declaredSilence{};
+  media::NativeAudioDeclaredSilence declaredSilence{};
   // Absolute audio frame at which this generation's PRESENTATION must end when
   // the container declares trailing silence (a video tail past the end of the
   // selected audio). Zero means "the audio's own end".
@@ -396,9 +396,9 @@ void assignError(std::string* error, const char* message) noexcept {
 // saturation that goes with it.
 [[nodiscard]] float normalizedGain(float gain) noexcept {
   return std::isfinite(gain)
-             ? std::clamp(gain, NativeAudioRenderCore::kMinimumGain,
-                          NativeAudioRenderCore::kMaximumGain)
-             : NativeAudioRenderCore::kMinimumGain;
+             ? std::clamp(gain, media::NativeAudioRenderCore::kMinimumGain,
+                          media::NativeAudioRenderCore::kMaximumGain)
+             : media::NativeAudioRenderCore::kMinimumGain;
 }
 
 [[nodiscard]] bool acceptsAudioControls(
@@ -445,7 +445,7 @@ struct NativeAudioSessionControl final {
   NativeAudioSessionControl(
       media::MediaGeneration initialGeneration,
       std::shared_ptr<void> external,
-      NativeMediaHostClock hostClock,
+      media::NativeMediaHostClock hostClock,
       NativeAudioUnitCallTable outputCalls,
       NativeAudioOutputWakeSeam outputWake,
       std::unique_ptr<NativeAudioConverterBackend> backend)
@@ -479,12 +479,12 @@ struct NativeAudioSessionControl final {
   // Destruction order is intentional: output, converter, render core, clock,
   // and ring are destroyed before the external callback lifetime token.
   std::shared_ptr<void> externalLifetime;
-  const NativeMediaHostClock hostClock;
+  const media::NativeMediaHostClock hostClock;
   const NativeAudioUnitCallTable outputCalls;
   const NativeAudioOutputWakeSeam outputWake;
-  NativePcmRing ring;
-  NativeMediaClock clock;
-  NativeAudioRenderCore renderCore;
+  media::NativePcmRing ring;
+  media::NativeMediaClock clock;
+  media::NativeAudioRenderCore renderCore;
   NativeAudioConverter converter;
   std::shared_ptr<NativeAudioOutput> output;
 
@@ -520,7 +520,7 @@ struct NativeAudioSessionControl final {
   bool requestedPaused{true};
   float requestedGain{1.0F};
   bool requestedMuted{false};
-  NativePlaybackRate requestedRate{};
+  media::NativePlaybackRate requestedRate{};
   bool requestedPreservePitch{true};
   std::uint64_t controlRevision{0};
   bool endOfStreamRequested{false};
@@ -542,6 +542,9 @@ struct NativeAudioSessionControl final {
 
 
 #if defined(WAM_NATIVE_TEST_SEAMS)
+}  // namespace wam::macos
+
+namespace wam::media {
 struct NativeAudioRenderCoreTestAccess {
   static void setAfterPreflightHook(
       NativeAudioRenderCore& core,
@@ -551,6 +554,9 @@ struct NativeAudioRenderCoreTestAccess {
     core.after_preflight_context_ = context;
   }
 };
+}  // namespace wam::media
+
+namespace wam::macos {
 
 std::unique_ptr<NativeAudioSession>
 NativeAudioSessionTestAccess::recoverQuarantined() noexcept {
@@ -592,7 +598,7 @@ NativeAudioSubmitResult NativeAudioSessionTestAccess::occupyConverter(
 void NativeAudioSessionTestAccess::setAfterRenderPreflightHook(
     NativeAudioSession& session, CallbackHook hook,
     void* context) noexcept {
-  NativeAudioRenderCoreTestAccess::setAfterPreflightHook(
+  media::NativeAudioRenderCoreTestAccess::setAfterPreflightHook(
       session.control_->renderCore, hook, context);
 }
 
@@ -676,18 +682,18 @@ void quarantine(
 }
 
 [[nodiscard]] const char* renderFailureName(
-    NativeAudioRenderFailure failure) noexcept {
+    media::NativeAudioRenderFailure failure) noexcept {
   switch (failure) {
-  case NativeAudioRenderFailure::None: return "None";
-  case NativeAudioRenderFailure::InvalidInput: return "InvalidInput";
-  case NativeAudioRenderFailure::ReentrantCallback:
+  case media::NativeAudioRenderFailure::None: return "None";
+  case media::NativeAudioRenderFailure::InvalidInput: return "InvalidInput";
+  case media::NativeAudioRenderFailure::ReentrantCallback:
     return "ReentrantCallback";
-  case NativeAudioRenderFailure::ResumeRejected: return "ResumeRejected";
-  case NativeAudioRenderFailure::RingContractViolation:
+  case media::NativeAudioRenderFailure::ResumeRejected: return "ResumeRejected";
+  case media::NativeAudioRenderFailure::RingContractViolation:
     return "RingContractViolation";
-  case NativeAudioRenderFailure::ClockCommitFailed:
+  case media::NativeAudioRenderFailure::ClockCommitFailed:
     return "ClockCommitFailed";
-  case NativeAudioRenderFailure::StretchStageFailed:
+  case media::NativeAudioRenderFailure::StretchStageFailed:
     return "StretchStageFailed";
   }
   return "Unknown";
@@ -732,7 +738,7 @@ void publishFailureText(NativeAudioSessionControl& control,
     const NativeAudioOutputFailure outputFailure =
         control.output != nullptr ? control.output->facts().failure
                                   : NativeAudioOutputFailure::None;
-    const NativeAudioRenderFailure renderFailure = control.renderCore.failure();
+    const media::NativeAudioRenderFailure renderFailure = control.renderCore.failure();
     if (outputFailure != NativeAudioOutputFailure::None) {
       control.failureText =
           std::string("audio output: ") + nativeAudioOutputFailureName(outputFailure) +
@@ -740,7 +746,7 @@ void publishFailureText(NativeAudioSessionControl& control,
           std::to_string(
               static_cast<long long>(control.output->facts().osStatus)) +
           ")";
-    } else if (renderFailure != NativeAudioRenderFailure::None) {
+    } else if (renderFailure != media::NativeAudioRenderFailure::None) {
       control.failureText =
           std::string("audio render core: ") + renderFailureName(renderFailure);
     } else if (control.failure != NativeAudioSessionFailure::None) {
@@ -762,7 +768,7 @@ void publishFailureText(NativeAudioSessionControl& control,
     control.latch(NativeAudioSessionFailure::Output);
     return true;
   }
-  if (control.renderCore.failure() != NativeAudioRenderFailure::None) {
+  if (control.renderCore.failure() != media::NativeAudioRenderFailure::None) {
     control.latch(NativeAudioSessionFailure::Output);
     return true;
   }
@@ -1141,11 +1147,11 @@ failRetire(NativeAudioSessionControl& control,
 }
 
 [[nodiscard]] bool
-clockPausable(const NativeMediaClockSnapshot& clock) noexcept {
+clockPausable(const media::NativeMediaClockSnapshot& clock) noexcept {
   return clock.publicationCurrent && clock.valid && clock.generation != 0;
 }
 
-[[nodiscard]] bool clockPaused(const NativeMediaClockSnapshot& clock) noexcept {
+[[nodiscard]] bool clockPaused(const media::NativeMediaClockSnapshot& clock) noexcept {
   return clock.publicationCurrent && clock.valid && !clock.running;
 }
 
@@ -1153,7 +1159,7 @@ clockPausable(const NativeMediaClockSnapshot& clock) noexcept {
 // once where it performs the stop and once in its final audit -- so it is
 // stated once and the two proofs cannot drift apart.
 [[nodiscard]] bool
-clockInvalidatedTo(const NativeMediaClockSnapshot& clock,
+clockInvalidatedTo(const media::NativeMediaClockSnapshot& clock,
                    media::MediaGeneration invalidation) noexcept {
   return clock.publicationCurrent && !clock.valid && !clock.running &&
          clock.generation == invalidation;
@@ -1187,7 +1193,7 @@ beginRetire(NativeAudioSessionControl& control,
   const NativeAudioOutputFacts output = control.output != nullptr
                                             ? control.output->facts()
                                             : NativeAudioOutputFacts{};
-  const NativeMediaClockSnapshot clock = control.clock.sample();
+  const media::NativeMediaClockSnapshot clock = control.clock.sample();
   media::MediaGeneration highestInstalled = control.ring.generation();
   highestInstalled = std::max(highestInstalled, control.generation);
   highestInstalled = std::max(highestInstalled, converter.generation);
@@ -1246,7 +1252,7 @@ retireStopOutput(NativeAudioSessionControl& control) noexcept {
   }
 
   if (control.clockActivated) {
-    NativeMediaClockSnapshot clock = control.clock.sample();
+    media::NativeMediaClockSnapshot clock = control.clock.sample();
     if (!clockPausable(clock) || !control.clock.pause(clock.generation)) {
       return failRetire(control, NativeAudioSessionFailure::ClockTransition,
                         media::NativeMediaConsumerProgress::Failed);
@@ -1285,7 +1291,7 @@ retireInvalidateGraph(NativeAudioSessionControl& control) noexcept {
   }
 
   if (control.clockActivated) {
-    const NativeMediaClockSnapshot clock = control.clock.sample();
+    const media::NativeMediaClockSnapshot clock = control.clock.sample();
     if (clock.generation != invalidation &&
         (!clock.valid || clock.generation == 0 ||
          !control.clock.stop(clock.generation, invalidation))) {
@@ -1553,7 +1559,7 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
     control.output->setPreservePitch(control.requestedPreservePitch);
     if (!control.requestedRate.unity() &&
         !control.output->setRate(control.requestedRate)) {
-      control.requestedRate = NativePlaybackRate{};
+      control.requestedRate = media::NativePlaybackRate{};
     }
   }
   if (outputConfigured != NativeAudioOutputProgress::Done) {
@@ -1865,7 +1871,7 @@ NativeAudioSession::suspendOutputForPause() noexcept {
   // !running early return, publishing nothing and moving nothing. Suspending
   // before the boundary would be equally exact but would freeze the clock up
   // to one device period earlier than an in-place pause does.
-  const NativeMediaClockSnapshot clock = control.clock.sample();
+  const media::NativeMediaClockSnapshot clock = control.clock.sample();
   if (!clockPaused(clock) || clock.generation != control.generation) {
     return NativeAudioSessionProgress::Invalid;
   }
@@ -1889,7 +1895,7 @@ NativeAudioSessionProgress NativeAudioSession::setGain(float gain) noexcept {
 }
 
 NativeAudioSessionProgress NativeAudioSession::setRate(
-    NativePlaybackRate rate, bool preservePitch) noexcept {
+    media::NativePlaybackRate rate, bool preservePitch) noexcept {
   if (control_ == nullptr || !rate.valid()) {
     return NativeAudioSessionProgress::Invalid;
   }
@@ -2286,7 +2292,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
   return media::NativeMediaConsumerProgress::Done;
 }
 
-NativeMediaClockSnapshot NativeAudioSession::visibleClock() const noexcept {
+media::NativeMediaClockSnapshot NativeAudioSession::visibleClock() const noexcept {
   if (control_ == nullptr) {
     return {};
   }
@@ -2299,7 +2305,7 @@ NativeMediaClockSnapshot NativeAudioSession::visibleClock() const noexcept {
   return control_->renderCore.visibleClock();
 }
 
-NativeAudioRenderStats NativeAudioSession::renderStats() const noexcept {
+media::NativeAudioRenderStats NativeAudioSession::renderStats() const noexcept {
   if (control_ == nullptr) {
     return {};
   }
@@ -2320,7 +2326,7 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.track = control.track;
   result.sampleRate = control.active.sampleRate;
   result.presentationFloorFrame = control.active.floorFrame;
-  const NativePcmRing::Stats ring = control.ring.stats();
+  const media::NativePcmRing::Stats ring = control.ring.stats();
   result.ringGeneration = ring.generation;
   result.queuedSlabs = ring.queuedSlabs;
   result.resourceEntered = control.resourceEntered;
@@ -2332,7 +2338,7 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.endOfStreamRequested = control.endOfStreamRequested;
   result.terminalPublished = control.terminalPublished;
   result.terminalObserved = terminalObserved(control);
-  const NativeMediaClockSnapshot clock = control.clock.sample();
+  const media::NativeMediaClockSnapshot clock = control.clock.sample();
   result.clockGeneration = clock.generation;
   result.clockValid = clock.valid;
   result.highestExposedGeneration = control.highestExposedGeneration;

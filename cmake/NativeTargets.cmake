@@ -83,12 +83,12 @@ if(APPLE OR WAM_BUILD_APP)
     src/media/native_playback_contract.hpp
     src/media/playback_router.hpp
     src/media/playback_router.cpp
-    src/platform/macos/native_media_clock.hpp
-    src/platform/macos/native_media_clock.cpp
-    src/platform/macos/native_pcm_ring.hpp
-    src/platform/macos/native_pcm_ring.cpp
-    src/platform/macos/native_audio_render_core.hpp
-    src/platform/macos/native_audio_render_core.cpp)
+    src/media/native_media_clock.hpp
+    src/media/native_media_clock.cpp
+    src/media/native_pcm_ring.hpp
+    src/media/native_pcm_ring.cpp
+    src/media/native_audio_render_core.hpp
+    src/media/native_audio_render_core.cpp)
   target_include_directories(wam_native_core PUBLIC src)
   target_compile_features(wam_native_core PUBLIC cxx_std_20)
   target_compile_options(wam_native_core PRIVATE

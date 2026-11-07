@@ -1,4 +1,4 @@
-#include "platform/macos/native_pcm_ring.hpp"
+#include "media/native_pcm_ring.hpp"
 
 #include <algorithm>
 #include <array>
@@ -16,7 +16,7 @@
 
 #include "support/expect.hpp"
 
-namespace wam::macos {
+namespace wam::media {
 
 struct NativePcmRingTestAccess {
   static void setGenerationWithoutFlush(NativePcmRing &ring,
@@ -68,12 +68,12 @@ struct NativePcmRingTestAccess {
   }
 };
 
-} // namespace wam::macos
+} // namespace wam::media
 
 namespace {
 
-using wam::macos::NativePcmRing;
-using wam::macos::NativePcmRingTestAccess;
+using wam::media::NativePcmRing;
+using wam::media::NativePcmRingTestAccess;
 
 
 template <typename Range> bool allEqual(const Range &values, float expected) {

@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace wam::macos {
+namespace wam::media {
 
 using NativeMediaHostTickReader =
     std::uint64_t (*)(void *context) noexcept;
@@ -244,4 +244,4 @@ private:
   std::uint64_t reservation_serial_{0};
 };
 
-} // namespace wam::macos
+} // namespace wam::media

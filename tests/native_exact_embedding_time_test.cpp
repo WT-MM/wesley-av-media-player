@@ -1,5 +1,5 @@
 #include "media/native_exact_playback.hpp"
-#include "platform/macos/native_media_clock.hpp"
+#include "media/native_media_clock.hpp"
 #include <bit>
 #include <cfenv>
 #include <cstdlib>
@@ -30,7 +30,7 @@ int main() {
   expect(!media::mediaTimeSecondsAtHostTicks({std::numeric_limits<std::int64_t>::max(),1},
       1, std::numeric_limits<std::uint64_t>::max(),{17,64}), "rational host-clock overflow fails closed");
   std::uint64_t now = 1000;
-  macos::NativeMediaClock clock({ticks,&now,24000000});
+  media::NativeMediaClock clock({ticks,&now,24000000});
   expect(clock.anchor(1,{1,3},{},false), "exact anchor is admitted");
   expect(clock.sample().exactPausedTarget == media::MediaTime{1,3}, "paused proof retains original rational");
   expect(clock.run(1,{}), "exact clock runs");

@@ -3,11 +3,11 @@
 namespace wam::macos {
 
 NativeSilentTimebase::NativeSilentTimebase(
-    NativeMediaHostClock hostClock) noexcept
+    media::NativeMediaHostClock hostClock) noexcept
     : clock_(hostClock) {}
 
 std::unique_ptr<NativeSilentTimebase> NativeSilentTimebase::create(
-    NativeMediaHostClock hostClock) noexcept {
+    media::NativeMediaHostClock hostClock) noexcept {
   if (hostClock.readTicks == nullptr || hostClock.ticksPerSecond == 0) {
     return {};
   }
@@ -62,7 +62,7 @@ NativeAudioSessionProgress NativeSilentTimebase::setPaused(
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::setRate(
-    NativePlaybackRate rate, bool) noexcept {
+    media::NativePlaybackRate rate, bool) noexcept {
   if (retired_ || !rate.valid()) {
     return NativeAudioSessionProgress::Invalid;
   }
@@ -103,7 +103,7 @@ NativeAudioSessionProgress NativeSilentTimebase::stop() noexcept {
   return NativeAudioSessionProgress::Done;
 }
 
-NativeMediaClockSnapshot NativeSilentTimebase::visibleClock() const noexcept {
+media::NativeMediaClockSnapshot NativeSilentTimebase::visibleClock() const noexcept {
   return clock_.sample();
 }
 

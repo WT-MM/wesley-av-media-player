@@ -132,7 +132,7 @@ No hardened-runtime exception was added. Quick Look retains its existing app-san
 
 ### Dogfooding boundary
 
-The audit found direct Qt access to the native session pointer for metrics, seek ceiling and observation draining, redundant session/preview includes, and an unused direct session-construction function. These are removed. Session and observation-bridge ownership are now private in the common owner; both WAMKit and Qt consume the same owner accessors. Host policy crosses `NativeEmbeddingSupport`, while Qt presentation construction resides in `src/platform/macos/qt_native_presentation_adapter.mm`.
+The audit found direct Qt access to the native session pointer for metrics, seek ceiling and observation draining, redundant session/preview includes, and an unused direct session-construction function. These are removed. Session and observation-bridge ownership are now private in the common owner; both WAMKit and Qt consume the same owner accessors. Host policy crosses `NativeEmbeddingSupport`, while Qt presentation construction resides in `src/qt/macos/qt_native_presentation_adapter.mm`.
 
 The [guard](../../tests/wamkit_dogfooding_test.py) rejects direct or relative includes into unexposed macOS internals and native session/backend access tokens. Its explicit boundaries are the shared native owner, preflight and host-policy headers, plus the Qt scenegraph presentation item in its app adapter. This is source-layer enforcement, not a claim that the Qt app loads the dynamic framework. The [HEAD baseline audit](proofs/continuation/dogfooding-baseline.log) fails; [negative controls](proofs/continuation/dogfooding-negative.json) reject internal includes and direct session access while accepting the owner boundary. The refactored tree passes.
 
