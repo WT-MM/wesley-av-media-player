@@ -95,12 +95,12 @@ private:
                         Clock clock, Sink sink, Flusher flusher,
                         void *sinkContext) noexcept;
 
-  // Widest-case playback_sample line: 369 bytes of literal punctuation and
-  // keys plus twelve 20-digit u64s and two 24-character doubles is 657 bytes,
-  // which exceeds this bound; such a line fails closed (JsonLine never
-  // truncates). One fixed allocation made once at construction, so formatting
-  // never allocates.
-  static constexpr std::size_t kMaximumJsonLineBytes = 640;
+  // Widest playback_sample line: 369 bytes of keys and punctuation, twelve
+  // 20-digit u64s and two 24-character %.17g doubles, plus snprintf's NUL is
+  // 658 bytes (tests/native_late_frame_json_test.cpp writes it). A wider line
+  // fails closed (JsonLine never truncates). Allocated once at construction,
+  // so formatting never allocates.
+  static constexpr std::size_t kMaximumJsonLineBytes = 1024;
 
   bool enabled_{false};
   unsigned intervalMilliseconds_{kDefaultIntervalMilliseconds};

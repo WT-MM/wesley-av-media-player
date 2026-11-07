@@ -23,3 +23,4 @@ assert trace['slow_wait_since_submission']['due_ticks'] == 2**64 - 1
 assert trace['output_path_ticks'] == [2**64 - 1] * 10
 assert health['lost_or_unavailable'] == 0
 assert sample['discarded_late_frames'] == 2**64 - 1
+assert sample['decoder_discarded_frames'] == 2**64 - 1
