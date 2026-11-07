@@ -27,13 +27,9 @@ struct NativeBenchmarkTelemetryTestAccess;
          std::strcmp(value, "ON") == 0;
 }
 
-// The armed-test answer. The telemetry stream and the window chrome's
-// benchmark mode key on it directly; main.cpp's WAM_TEST_* seams and the
-// owner's WAM_TEST_OPEN_DELAY_MS key on the telemetry instance's enabled(),
-// which is derived from it. Not every seam is behind it:
-// WAM_TEST_CAPTION_METRICS / WAM_TEST_CAPTION_ENGINE (player_controller.cpp)
-// are read ungated, and WAM_TEST_CAPTURE_PHYSICAL is read only by
-// captureWindowToFile, which only the gated videograb verb calls.
+// The telemetry opt-in. The stream additionally needs a valid run identity
+// (enabled()), and every WAM_TEST_* seam keys on enabled() through
+// testSeams() (test_seams.hpp).
 [[nodiscard]] inline bool nativeBenchmarkTelemetryArmed() noexcept {
   return wamEnvironmentTruth("WAM_NATIVE_BENCHMARK_TELEMETRY");
 }

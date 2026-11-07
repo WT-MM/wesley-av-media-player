@@ -5,6 +5,7 @@
 
 #include "mpv_video_item.hpp"
 #include "playback_policy.hpp"
+#include "test_seams.hpp"
 #include "player_core_p.hpp"
 #include "subtitle_bitmap_provider.hpp"
 #include "subtitle_sources.hpp"
@@ -3333,8 +3334,9 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   request.output_srt = *output;
   request.tools = ::wam::findCaptionTools(nullptr);
   request.options.overwrite = true;
-  if (qEnvironmentVariableIsSet("WAM_TEST_CAPTION_METRICS") &&
-      qgetenv("WAM_TEST_CAPTION_ENGINE") == "whisper") request.options.prefer_apple = false;
+  const TestSeams *const seams = testSeams();
+  if (seams != nullptr && seams->captionMetrics && seams->captionEngineWhisper)
+    request.options.prefer_apple = false;
   auto bridge = std::shared_ptr<CaptionLiveBridge>(new CaptionLiveBridge,
       [](CaptionLiveBridge* p) { p->deleteLater(); });
   caption_live_bridge_ = bridge;
@@ -3362,7 +3364,7 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
     caption_track_committed_ = snapshot->committed;
     emit subtitleTracksChanged();
     updateSubtitleForPosition();
-    if (snapshot->committed && qEnvironmentVariableIsSet("WAM_TEST_CAPTION_METRICS"))
+    if (snapshot->committed && testSeams() != nullptr && testSeams()->captionMetrics)
       qInfo() << "caption-track: committed";
   }, Qt::QueuedConnection);
   request.live_segments = [bridge](std::vector<::wam::CaptionSegment> segments) {

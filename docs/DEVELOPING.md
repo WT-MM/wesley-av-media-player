@@ -299,7 +299,11 @@ presentation route, which widened WAM's side of the margin further.
   (`RUN_ID`, …) are never read, and `uuidgen` emits uppercase — either mistake
   silently disables the channel and every `WAM_TEST_*` seam with it.
   `WAM_TEST_REOPEN_SCRIPT` entries are `delayMs@path`, comma-separated,
-  delays cumulative. See **Quiet launch seams** below for `WAM_TEST_BACKGROUND`,
+  delays cumulative. The `WAM_TEST_*` seams are compiled only into a
+  `-DWAM_NATIVE_BENCHMARK_TELEMETRY=ON` build and are all parsed in
+  `src/qt/test_seams.cpp`; a malformed script entry or unknown window verb
+  fails the launch with exit code 2. `tests/support/wam_launch.py` builds the
+  launch environment and reads the JSON reports. See **Quiet launch seams** below for `WAM_TEST_BACKGROUND`,
   `WAM_TEST_GEOMETRY` and `WAM_TEST_MUTED`.
 - `benchmarks/macos/player_resource_trial.py` — cross-player resource trials
   (CPU/GPU/memory/energy) with parked-window geometry.
@@ -318,7 +322,7 @@ Truthy values are the telemetry opt-in's own vocabulary (`1`, `true`, `yes`,
 `on`, and upper-case forms); anything else, junk included, is off.
 
 - `WAM_TEST_BACKGROUND=1` — launches without ever becoming the frontmost
-  application. Two mechanisms, both needed: `main.cpp` sets
+  application. Two mechanisms, both needed: `test_seams.cpp` sets
   `QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM` before `QGuiApplication`
   (that is the Qt cocoa plugin's own guard on the
   `-[NSApplication activateIgnoringOtherApps:YES]` it performs "to avoid

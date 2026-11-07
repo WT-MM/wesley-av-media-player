@@ -162,7 +162,7 @@ public:
 
   [[nodiscard]] ::wam::StateStore &stateStore() { return store_; }
 
-  // Launch seams, decided in main.cpp before any window exists and applied to
+  // Launch seams, decided in test_seams.cpp before any window exists and applied to
   // every window this process creates. WAM_TEST_BACKGROUND keeps windows on
   // screen and composited without ever activating the process;
   // WAM_TEST_GEOMETRY parks the FIRST window at an exact rectangle (later test
