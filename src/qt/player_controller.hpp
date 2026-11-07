@@ -820,12 +820,15 @@ private:
   double subtitle_bitmap_width_{0.0};
   double subtitle_bitmap_height_{0.0};
   bool subtitle_bitmap_visible_{false};
-  // The source the subtitle list was last built for, and under which engine.
-  // A route flip (native admission refused mid-open) must rebuild the list
-  // from the engine that actually ended up playing.
-  QUrl subtitle_sources_source_;
-  bool subtitle_sources_native_ = false;
-  bool subtitle_sources_built_ = false;
+  // The source the subtitle list was last built for, and under which engine;
+  // empty until built for this media. A route flip (native admission refused
+  // mid-open) must rebuild the list from the engine that actually ended up
+  // playing.
+  struct SubtitleListStamp {
+    QUrl source;
+    bool native = false;
+  };
+  std::optional<SubtitleListStamp> subtitle_list_built_;
 
   // What the player holds. Empty <=> source_ is empty. Opening is the
   // native route's open in flight, carrying the URL the user asked for (the

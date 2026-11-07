@@ -1045,9 +1045,9 @@ void PlayerController::publishNativeMainPosition(double position) {
   // up owning this file, which is exactly when the Subtitles menu can be built
   // from the container instead of from mpv. Guarded so this is one boolean
   // test per drawn frame after the first.
-  if (subtitles_ && (!subtitle_sources_built_ ||
-                     subtitle_sources_source_ != source_ ||
-                     !subtitle_sources_native_)) {
+  if (subtitles_ && !(subtitle_list_built_ &&
+                       subtitle_list_built_->source == source_ &&
+                       subtitle_list_built_->native)) {
     refreshSubtitleSources();
   }
   // During a pointer gesture the optimistic target and its exact preview
@@ -1648,8 +1648,7 @@ void PlayerController::resetSubtitlesForMediaChange() {
   if (caption_feed_)
     caption_feed_->clear();
   subtitles_->clear();
-  subtitle_sources_built_ = false;
-  subtitle_sources_source_.clear();
+  subtitle_list_built_.reset();
   publishSubtitleText({});
   emit subtitleTracksChanged();
   emit activeSubtitleTrackChanged();
@@ -1796,9 +1795,9 @@ void PlayerController::refreshSubtitleSources() {
   if (!subtitles_ || source_.isEmpty())
     return;
   const bool native = nativeRouteActive();
-  const bool same_media = subtitle_sources_source_ == source_;
-  const bool rebuild_only =
-      subtitle_sources_built_ && same_media && subtitle_sources_native_ == native;
+  const bool same_media =
+      subtitle_list_built_ && subtitle_list_built_->source == source_;
+  const bool rebuild_only = same_media && subtitle_list_built_->native == native;
 
   // Capture the SELECTION by identity, not by id: a rebuild renumbers the
   // list, so an id held across it names a different track or none at all.
@@ -1813,9 +1812,7 @@ void PlayerController::refreshSubtitleSources() {
   else
     buildMpvSubtitleSources();
 
-  subtitle_sources_source_ = source_;
-  subtitle_sources_native_ = native;
-  subtitle_sources_built_ = true;
+  subtitle_list_built_ = SubtitleListStamp{source_, native};
   emit subtitleTracksChanged();
 
   if (rebuild_only) {
