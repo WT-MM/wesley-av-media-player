@@ -393,6 +393,9 @@ signals:
   void playingChanged();
   void pausedChanged();
   void positionChanged();
+  // A seek, scrub or frame step was asked for (by the user or on their
+  // behalf), before any engine acted on it.
+  void seekRequested();
   void durationChanged();
   void videoDisplaySizeChanged();
   void volumeChanged();

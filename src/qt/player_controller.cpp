@@ -1074,6 +1074,7 @@ void PlayerController::updatePosition(double position) {
 }
 
 void PlayerController::beginScrub() {
+  emit seekRequested();
   if (nativeRouteActive()) {
     if (!beginNativeScrubIntent())
       return;
@@ -1102,6 +1103,7 @@ void PlayerController::beginScrub() {
 }
 
 void PlayerController::seekTo(double seconds) {
+  emit seekRequested();
   if (nativeRouteActive()) {
     // Native accurate seek requires an exactly representable rational target;
     // exactNativeSeekTarget owns that rule for every native entry point, and
@@ -1177,6 +1179,7 @@ void PlayerController::previewSeekTo(double seconds) {
 }
 
 void PlayerController::endScrub(double seconds) {
+  emit seekRequested();
   if (nativeRouteActive()) {
     std::optional<NativeSeekIntent> intent;
     if (std::holds_alternative<NativeScrubbing>(native_gesture_)) {
@@ -1199,6 +1202,7 @@ void PlayerController::endScrub(double seconds) {
 }
 
 void PlayerController::seekRelative(double seconds) {
+  emit seekRequested();
   if (nativeRouteActive()) {
     if (std::isfinite(seconds))
       seekTo(position_ + seconds);
@@ -1231,6 +1235,7 @@ void PlayerController::skipForward() {
 void PlayerController::stepFrame(int direction) {
   if (direction == 0 || !hasMedia())
     return;
+  emit seekRequested();
   const bool forward = direction > 0;
 
   // Stepping is a paused-transport gesture. Pressing "." while playing pauses

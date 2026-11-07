@@ -253,7 +253,7 @@ void PlayerWindow::rememberTrackedPosition() {
 
 void PlayerWindow::applyPendingResume() {
   const QString &tracked_local_source = resume_tracker_.snapshot().local_source;
-  if (!resume_pending_ || tracked_local_source.isEmpty() ||
+  if (!pending_resume_ || tracked_local_source.isEmpty() ||
       controller_->duration() <= 0.0)
     return;
   // Wait for the transport to actually be running. Duration and source both
@@ -264,10 +264,11 @@ void PlayerWindow::applyPendingResume() {
   if (!controller_->playing() || controller_->position() <= 0.0)
     return;
 
-  resume_pending_ = false;
+  const double position = *pending_resume_;
+  pending_resume_.reset();
   ::wam::StateStore &store = manager_.stateStore();
-  if (resume_position_ < kResumeMarginSeconds ||
-      resume_position_ >= controller_->duration() - kResumeMarginSeconds) {
+  if (position < kResumeMarginSeconds ||
+      position >= controller_->duration() - kResumeMarginSeconds) {
     store.forget(persistentKey(tracked_local_source));
     if (store.dirty())
       manager_.requestCheckpoint();
@@ -277,7 +278,7 @@ void PlayerWindow::applyPendingResume() {
   // seeking admits only an exactly representable target. Snapping it is
   // PlayerController::exactNativeSeekTarget's job and only its job; the guard
   // above already holds this value strictly inside the duration.
-  controller_->seekTo(resume_position_);
+  controller_->seekTo(position);
 }
 
 void PlayerWindow::wireResumeTracking() {
@@ -323,14 +324,20 @@ void PlayerWindow::wireResumeTracking() {
       manager_.requestCheckpoint();
     const QString &tracked_local_source =
         resume_tracker_.snapshot().local_source;
-    resume_position_ =
+    pending_resume_.reset();
+    const double remembered =
         tracked_local_source.isEmpty()
             ? 0.0
             : store.positionFor(persistentKey(tracked_local_source));
-    resume_pending_ = resume_position_ >= kResumeMarginSeconds;
-    if (resume_pending_)
+    if (remembered >= kResumeMarginSeconds) {
+      pending_resume_ = remembered;
       applyPendingResume();
+    }
   });
+  // A seek the user makes before the resume could apply is the position they
+  // want; the remembered one must not override it when playback starts.
+  connect(controller_, &PlayerController::seekRequested, this,
+          [this] { pending_resume_.reset(); });
 }
 
 // ---------------------------------------------------------------------------

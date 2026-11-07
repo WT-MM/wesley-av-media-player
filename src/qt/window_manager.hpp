@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 class QQmlComponent;
 class QQmlContext;
@@ -149,8 +150,9 @@ private:
   QQuickWindow *window_ = nullptr;
 
   ResumeTracker resume_tracker_;
-  double resume_position_ = 0.0;
-  bool resume_pending_ = false;
+  // The remembered position to resume this media at, until it applies or the
+  // user seeks first.
+  std::optional<double> pending_resume_;
 };
 
 // ---------------------------------------------------------------------------

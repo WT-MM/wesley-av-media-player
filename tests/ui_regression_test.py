@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -34,10 +35,10 @@ subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-i', str(media), '-an',
 (root / 'truncated.mp4').write_bytes(media.read_bytes()[:10000])
 (root / 'cue.srt').write_text('1\n00:00:00,000 --> 00:00:19,900\nA subtitle near the bottom\n')
 
-def run(name, source, script, ms=6500, expect=0, **extra):
+def run(name, source, script, ms=6500, expect=0, home=None, **extra):
     out = root / name
     out.mkdir(exist_ok=True)
-    home = out / ('home-' + uuid.uuid4().hex)
+    home = home or out / ('home-' + uuid.uuid4().hex)
     home.mkdir(exist_ok=True)
     # Cocoa is required for native menus; no window is activated.
     env = wam_launch.seam_env(home, WAM_TEST_QUIT_AFTER_MS=ms, WAM_TEST_WINDOW_SCRIPT=script,
@@ -85,6 +86,18 @@ elif case == 'multiopen':
     check(of(reports, 'test_windows', count=2), 'Each file gets its own window')
     check(sorted(r['source'] for r in windows(reports)) == ['fixture.mp4', 'last.mp4'],
           'Both files are open')
+elif case == 'resume':
+    # A remembered position must not override a seek the user made before
+    # playback started (pause during the open, seek, then play).
+    home = root / 'resume-home'
+    shutil.rmtree(home, ignore_errors=True)
+    _, reports, _ = run('resume-first', fallback, 'skip:0:9@1800,pause:0@100,report@500', ms=4000, home=home)
+    check(9 < windows(reports)[-1]['pos'] < 14, 'First run leaves a resume point')
+    _, reports, _ = run('resume-second', fallback, 'pause:0@80,report@1700,skip:0:2@1,report@600,play:0@1,report@1200',
+                        home=home)
+    rows = windows(reports)
+    check(rows[0]['playing'] == 0, 'Exercise a paused open')
+    check(rows[-1]['playing'] == 1 and rows[-1]['pos'] < 6, "The user's seek wins over the resume point")
 elif case == 'failed':
     _, reports, _ = run(case, root/'garbage.mp4', f'report@1800,menu@1,load:0:{media}@50,report@3000')
     rows = windows(reports)
