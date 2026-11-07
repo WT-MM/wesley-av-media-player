@@ -142,6 +142,32 @@ class NativeSourceCore {
     return media::validateMediaSample(sample, *descriptor, limits, error);
   }
 
+  // A generation must begin on a real, positive-duration sync picture: the
+  // plan always starts video at a random access point, and restating it keeps
+  // a malformed index from admitting a generation that can never decode. A
+  // positive duration is required because every downstream video consumer
+  // compares the sample's exact interval against the timeline.
+  //
+  // allowPreroll admits a negative presentation time. On a movie timeline the
+  // random-access point a head-trimmed edit list makes the reader walk back to
+  // legitimately precedes the origin: it decodes the picture AT the origin and
+  // is preroll, marked decodeOnly and retired against the presentation floor.
+  [[nodiscard]] static bool admitsFirstVideoSample(
+      const media::MediaSample& sample, bool allowPreroll,
+      std::string* error) {
+    if (!sample.keyFrame || !sample.presentationTime.valid() ||
+        (!allowPreroll && sample.presentationTime.value < 0) ||
+        !sample.duration.valid() || sample.duration.value <= 0) {
+      assignError(error, allowPreroll
+                             ? "first video sample is not a positive-duration "
+                               "sync access unit"
+                             : "first video sample is not a nonnegative "
+                               "positive-duration sync access unit");
+      return false;
+    }
+    return true;
+  }
+
   // ---- derived hooks with defaults ---------------------------------------
 
   void cancellationPublished(media::MediaGeneration) noexcept {}
@@ -795,18 +821,9 @@ class NativeCustomSourceCore : public NativeSourceCore<Derived, Traits> {
     }
     const media::MediaSample& sample = std::get<media::MediaSample>(head->value);
     head->orderTime = Traits::mergeOrderKey(sample);
-    if (admission && video) {
-      // The plan always starts video at a random access point; restating it
-      // here keeps a malformed index from admitting a generation that can never
-      // decode. A positive duration is required because every downstream video
-      // consumer compares the sample's exact interval against the timeline.
-      if (!sample.keyFrame || sample.presentationTime.value < 0 ||
-          !sample.duration.valid() || sample.duration.value <= 0) {
-        assignError(error,
-                    "first video sample is not a nonnegative positive-duration "
-                    "sync access unit");
-        return false;
-      }
+    if (admission && video &&
+        !Base::admitsFirstVideoSample(sample, false, error)) {
+      return false;
     }
     (video ? videoHead : audioHead) = std::move(head);
     publishHeadFacts();

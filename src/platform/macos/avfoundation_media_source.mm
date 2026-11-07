@@ -3437,24 +3437,15 @@ struct AVFoundationMediaSource::Impl final
         continue;
       }
       if (admission && video) {
+        // A head-trimmed edit list's random-access point is preroll before
+        // the movie origin, so a negative presentation time is admitted.
         const auto* sample = std::get_if<MediaSample>(&head->value);
-        // Nonnegativity is deliberately NOT required of this sample. On the
-        // movie timeline the random-access point a head-trimmed edit list
-        // makes the reader walk back to legitimately precedes the origin --
-        // it is the sample that decodes the picture AT the origin, and it is
-        // preroll, marked decodeOnly and retired against the presentation
-        // floor rather than presented. This is the video reading of the same
-        // fact MediaTime already states for the audio lane's priming access
-        // unit: "negative values are valid (for example, edit-list and preroll
-        // timestamps)". What this generation must still begin on is a real,
-        // positive-duration SYNC picture, and that is what is checked.
-        if (sample == nullptr || !sample->keyFrame ||
-            !sample->presentationTime.valid() ||
-            !sample->duration.valid() || sample->duration.value <= 0) {
-          assignError(
-              error,
-              "first video sample is not a positive-duration sync access "
-              "unit");
+        if (sample == nullptr) {
+          assignError(error, "first video sample is not a positive-duration "
+                             "sync access unit");
+          return false;
+        }
+        if (!admitsFirstVideoSample(*sample, true, error)) {
           return false;
         }
       }
