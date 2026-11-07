@@ -190,14 +190,16 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
         run(command)
         result = run([a.routed_probe,short_video,root/'tail.f32','0'])
         assert 'exact=1 drained=1' in result.stderr, result.stderr
-        # Bytes after the last box route 48 kHz AAC MP4 to libavformat. Its
-        # seeks must preroll a few packets, not decode from the origin.
+        # A box cut short after the last complete one routes 48 kHz AAC MP4 to
+        # libavformat. Its seeks must preroll a few packets, not decode from
+        # the origin.
         trailing = root/'trailing.mp4'
         command = generation.copy()
         command[command.index('aac_at')] = 'aac'
         command[-1] = trailing
         run(command)
-        trailing.write_bytes(trailing.read_bytes() + bytes(6))
+        complete = trailing.read_bytes()
+        trailing.write_bytes(complete + b'\0\0\0\x40free')
         whole = run([a.routed_probe,trailing,root/'whole.f32','0'])
         seek = run([a.routed_probe,trailing,root/'seek.f32','3'])
         assert 'stage=Libavformat' in seek.stderr and 'exact=1 drained=1' in seek.stderr, seek.stderr
@@ -205,6 +207,12 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
         full = np.fromfile(root/'whole.f32',dtype='<f4').reshape(-1,2)
         part = np.fromfile(root/'seek.f32',dtype='<f4').reshape(-1,2)
         assert len(part) == len(full)-144000 and np.max(np.abs(full[144000:]-part)) < .002, seek.stderr
+        # Fewer than 8 trailing bytes cannot hold a box, so the complete file
+        # keeps the AVFoundation route and decodes the same PCM.
+        trailing.write_bytes(complete + bytes(6))
+        junk = run([a.routed_probe,trailing,root/'junk.f32','0'])
+        assert 'stage=Libavformat' not in junk.stderr and 'exact=1 drained=1' in junk.stderr, junk.stderr
+        assert np.array_equal(np.fromfile(root/'junk.f32',dtype='<f4').reshape(-1,2), full), junk.stderr
 
     def counts(log):
         return {key: int(re.search(r'\b'+key+r'=(\d+)', log).group(1))

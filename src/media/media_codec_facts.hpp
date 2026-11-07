@@ -170,6 +170,10 @@ struct MediaCodecFacts {
   // reset must rebuild the converter instead.
   bool decoderResetRebuilds{false};
 
+  // Frames a decoder must decode and discard after a seek before its output
+  // converges, where the codec states more than two access units' worth.
+  std::uint16_t seekPrerollFrames{0};
+
   // Decoded by the libavcodec software stage rather than AudioToolbox.
   bool softwareDecoded{false};
 
@@ -256,7 +260,10 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      .decoderLeadInFrames =
          static_cast<std::uint16_t>(codec::kOpusDecoderDelayFrames),
      .coreAudioFormatTag = 0x6F707573U /* 'opus' */,
-     .decoderResetRebuilds = true, .precedesStreamOrigin = true},
+     .decoderResetRebuilds = true,
+     .seekPrerollFrames =
+         static_cast<std::uint16_t>(codec::kOpusSeekPrerollFrames),
+     .precedesStreamOrigin = true},
     // 'vorb'. AudioToolbox registers a Vorbis decoder under this fourcc --
     // kAudioFormatProperty_DecodeFormatIDs reports it -- but publishes no
     // kAudioFormatVorbis constant for it. Vorbis precedes the origin for

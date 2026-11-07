@@ -43,7 +43,6 @@ public:
   unsigned selectedStream{};
   FileIdentity identity{};
   bool audioOnly{};
-  bool aacBoundedSeek{};
   std::shared_ptr<AacPacketTimeline> aacTimeline;
   std::optional<unsigned> audioStream;
   std::uint32_t audioPacketFrames{};
@@ -123,11 +122,11 @@ public:
     if (!buildCompressedSampleBuffer(block, track.audio ? audioFormat : format,
                                      shape, "libavformat", &owned, &error))
       return false;
-    if (track.codec == MediaCodec::Aac) {
+    if (track.audio) {
       const auto floor=audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track.audio->sampleRate));
       const auto frame=exactAudioFrameIndex(packet.pts,static_cast<std::uint32_t>(track.audio->sampleRate));
       const auto floorFrame=floor ? exactAudioFrameIndex(*floor,static_cast<std::uint32_t>(track.audio->sampleRate)) : std::nullopt;
-      if (floorFrame && frame && *floorFrame-*frame>=audioPrimingFrames(codec::kAacLcSamplesPerAccessUnit))
+      if (floorFrame && frame && *floorFrame-*frame>=audioPrimingFrames(track.codec,track.audio->framesPerPacket))
         static_cast<void>(statedImmediatePlayoutFrame(owned.get()));
     }
     *free = std::make_shared<CoreMediaSampleStorage>(owned.release(), size);
@@ -474,10 +473,6 @@ struct LibavformatMediaSource::Impl final
   context->audioOnly=audioOnly;context->audioStream=audio;
   context->audioOrigin=audioOrigin;
   context->audioDemuxOrigin=audioOrigin;
-  // AAC seeks use bounded preroll; decoding from the origin makes seek cost
-  // grow with the target time. FLV AAC still decodes from the origin.
-  context->aacBoundedSeek=audio && audioTrack.codec==MediaCodec::Aac &&
-      std::string_view(reader->cursor.formatName())!="flv";
   if(audio)context->audioQuantum=reader->cursor.stream(*audio).timeBase;
   if(audioOnly)context->raps.push_back({0,1});
   LibavformatCursor::Packet packet;
@@ -637,55 +632,80 @@ struct LibavformatMediaSource::Impl final
   }
     return context;
   }
+  // Positions the audio lane a bounded preroll before the target rather than
+  // at the stream origin, so seek cost does not grow with the target time.
+  bool seekAudio(std::string& error) {
+    const auto& context = assetContext;
+    auto& cursor=context->audioOnly ? reader->cursor : *reader->audioCursor;
+    const auto* track=packetTrack(*context->audioStream);
+    const auto rate=static_cast<std::uint32_t>(context->audioOrigin.timescale);
+    const auto floor=audioFrameAtOrAfter(target,rate);
+    const auto frame=floor ? exactAudioFrameIndex(*floor,rate) : std::nullopt;
+    if(!track || !frame) {error="LibavformatAudioSeekTarget";return false;}
+    const std::int64_t packetFrames=context->audioPacketFrames;
+    const auto preroll=audioPrimingFrames(track->codec,packetFrames);
+    const auto demuxOrigin=context->audioDemuxOrigin;
+    const auto demuxFrame=*frame-context->audioOrigin.value+demuxOrigin.value;
+    // Backs off twice the preroll, so a container seek landing up to one
+    // preroll late still leaves the whole preroll ahead of the target.
+    MediaTime seekTime=demuxOrigin;
+    if(context->aacTimeline) {
+      // An elapsed-time backoff alone can land inside declared silence,
+      // with no decoder warm-up at all. Require actual packets too.
+      const auto targetIndex=context->aacTimeline->indexAtFrame(demuxFrame);
+      const auto index=std::min(targetIndex > kAacSeekBackoffPackets ? targetIndex-kAacSeekBackoffPackets : 0,
+          context->aacTimeline->indexAtFrame(demuxFrame-2*preroll));
+      seekTime=context->aacTimeline->packets()[index].observed;
+    } else if(demuxFrame-2*preroll>demuxOrigin.value) {
+      const auto ordinal=(demuxFrame-2*preroll-demuxOrigin.value)/packetFrames;
+      seekTime={demuxOrigin.value+ordinal*packetFrames,demuxOrigin.timescale};
+    }
+    // A landing that is not the first packet yet does not begin after the
+    // audio media start is neither an origin generation nor a primed one;
+    // it restarts from the origin.
+    for(bool retry=false;;retry=true) {
+      if(!cursor.seek(*context->audioStream,retry ? demuxOrigin : seekTime,error))return false;
+      LibavformatCursor::Packet packet;
+      for(unsigned skipped=0;;++skipped) {
+        if(skipped==4096 || cursor.read(packet,error)!=LibavformatCursor::Read::Packet) {
+          error="LibavformatAudioSeekHeadUnavailable";return false;
+        }
+        if(packet.stream==*context->audioStream)break;
+      }
+      if(context->aacTimeline) {
+        const auto* proof=context->aacTimeline->find(packet.pts);
+        if (!proof) {error="LibavformatAudioSeekOrdinal";return false;}
+        audioOrdinal=static_cast<std::uint64_t>(proof-context->aacTimeline->packets().data());
+      } else {
+        // The nearest ordinal on the constant grid; normalize then holds the
+        // packet to within one container tick of it.
+        const __int128 offset=packet.pts.valid() ?
+            __int128(packet.pts.value)*rate-__int128(demuxOrigin.value)*packet.pts.timescale : -1;
+        const __int128 unit=__int128(packetFrames)*packet.pts.timescale;
+        if(!packet.pts.valid() || offset<-unit/2) {error="LibavformatAudioSeekOrdinal";return false;}
+        audioOrdinal=static_cast<std::uint64_t>((offset+unit/2)/unit);
+      }
+      audioStartsAtOrigin=audioOrdinal==0;
+      if(!normalize(packet,error))return false;
+      audioDecodeStart=packet.pts;
+      if(!audioStartsAtOrigin && !retry &&
+         compareMediaTime(audioDecodeStart,context->audioMediaStart)!=MediaTimeOrder::Greater)continue;
+      if(!audioStartsAtOrigin && *frame-audioDecodeStart.value < preroll) {
+        error="LibavformatAudioSeekPrerollUnproven";return false;
+      }
+      audioPending=packet;
+      return true;
+    }
+  }
   bool start(MediaTime requested, MediaSeekMode mode, std::string &error) {
     const auto& context = assetContext;
     target=requested;audioTail=false;audioOrdinal=0;
     decodeStart=preceding(*context,target);
     if(mode==MediaSeekMode::KeyFrame && compareMediaTime(decodeStart,target)!=MediaTimeOrder::Greater)target=decodeStart;
     audioDecodeStart=context->audioOrigin;audioStartsAtOrigin=true;
-    if(reader->audioCursor) {
-      const auto* audioTrack=packetTrack(*context->audioStream);
-      MediaTime seekTime=context->audioDemuxOrigin;
-      if (audioTrack && context->aacBoundedSeek) {
-        const auto floor=audioFrameAtOrAfter(target,context->audioOrigin.timescale);
-        const auto frame=floor ? exactAudioFrameIndex(*floor,context->audioOrigin.timescale) : std::nullopt;
-        if (!frame) {error="LibavformatAudioSeekTarget";return false;}
-        const auto demuxFrame=*frame-context->audioOrigin.value+context->audioDemuxOrigin.value;
-        const auto targetIndex=context->aacTimeline->indexAtFrame(demuxFrame);
-        // An elapsed-time backoff alone can land inside declared silence,
-        // with no decoder warm-up at all. Require four actual packets too.
-        const auto index=std::min(targetIndex > kAacSeekBackoffPackets ? targetIndex-kAacSeekBackoffPackets : 0,
-            context->aacTimeline->indexAtFrame(demuxFrame-4096));
-        seekTime=context->aacTimeline->packets()[index].observed;
-      }
-      if(!reader->audioCursor->seek(*context->audioStream,seekTime,error))return false;
-      for(unsigned skipped=0;;++skipped) {
-        LibavformatCursor::Packet packet;
-        if(skipped==4096 || reader->audioCursor->read(packet,error)!=LibavformatCursor::Read::Packet) {
-          error="LibavformatAudioSeekHeadUnavailable";return false;
-        }
-        if(packet.stream!=*context->audioStream)continue;
-        if(audioTrack->codec==MediaCodec::Aac) {
-          const auto* proof=context->aacTimeline->find(packet.pts);
-          if (!proof) {error="LibavformatAudioSeekOrdinal";return false;}
-          audioOrdinal=static_cast<std::uint64_t>(proof-context->aacTimeline->packets().data());
-        }
-        audioStartsAtOrigin=context->aacTimeline ?
-            compareMediaTime(packet.pts,context->aacTimeline->packets().front().observed)==MediaTimeOrder::Equal : audioOrdinal==0;
-        if(!normalize(packet,error))return false;
-        audioDecodeStart=packet.pts;
-        if(!audioStartsAtOrigin) {
-          const auto floor=audioFrameAtOrAfter(target,context->audioOrigin.timescale);
-          const auto frame=floor ? exactAudioFrameIndex(*floor,context->audioOrigin.timescale) : std::nullopt;
-          if(!frame || *frame-audioDecodeStart.value < audioPrimingFrames(codec::kAacLcSamplesPerAccessUnit)) {
-            error="LibavformatAudioSeekPrerollUnproven";return false;
-          }
-        }
-        audioPending=packet;
-        break;
-      }
-    }
-    if(!reader->cursor.seek(context->selectedStream,context->audioOnly?context->audioOrigin:decodeStart,error))return false;
+    if(context->audioStream && !seekAudio(error))return false;
+    if(context->audioOnly)return stage(true,true,&error) && stage(false,true,&error) && stateWindow(error);
+    if(!reader->cursor.seek(context->selectedStream,decodeStart,error))return false;
     LibavformatCursor::Packet packet;
     for(unsigned skipped=0;skipped<4096;++skipped) {
       if(reader->cursor.read(packet,error)!=LibavformatCursor::Read::Packet) {
