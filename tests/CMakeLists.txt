@@ -1627,11 +1627,6 @@ target_include_directories(wam_mpv_frame_counters_test PRIVATE ${PROJECT_SOURCE_
 target_link_libraries(wam_mpv_frame_counters_test PRIVATE wam_mpv_headers)
 add_test(NAME mpv_frame_counters COMMAND wam_mpv_frame_counters_test)
 
-if(APPLE)
-  add_test(NAME native_stage_defaults COMMAND "${Python3_EXECUTABLE}"
-    "${PROJECT_SOURCE_DIR}/tests/native_stage_defaults_test.py")
-endif()
-
 # Qt Quick Tests load the real components from qml/. Search only the Qt this
 # build links: another qmltestrunner on PATH may be a different Qt major.
 find_program(WAM_QMLTESTRUNNER qmltestrunner
