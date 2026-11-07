@@ -1,5 +1,7 @@
+#include "support/expect.hpp"
 #include "metal_frame_mapper.hpp"
 #include "bounded_frame_queue.hpp"
+#include "platform/macos/core_media_carriage.hpp"
 #include "platform/macos/video_toolbox_decoder.hpp"
 #include "platform/macos/native_video_limits.hpp"
 
@@ -9,6 +11,8 @@
 #import <OpenGL/gl3.h>
 #import <VideoToolbox/VideoToolbox.h>
 
+#include <mach/mach.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -33,23 +37,6 @@
 #include <vector>
 
 namespace {
-
-void check(bool condition, const char *expression, int line,
-           const std::string &detail = {}) {
-  if (!condition) {
-    std::cerr << "CHECK failed at line " << line << ": " << expression;
-    if (!detail.empty()) {
-      std::cerr << " (" << detail << ')';
-    }
-    std::cerr << '\n';
-    std::exit(EXIT_FAILURE);
-  }
-}
-
-#define WAM_CHECK(expression)                                                  \
-  check(static_cast<bool>(expression), #expression, __LINE__)
-#define WAM_CHECK_DETAIL(expression, detail)                                   \
-  check(static_cast<bool>(expression), #expression, __LINE__, (detail))
 
 // Valid Main-profile hvcC containing VPS/SPS/PPS. Keeping this metadata in the
 // binary makes the limits-only gate independent of external or cloud-backed
@@ -94,21 +81,22 @@ void testSharedLimitBoundaries() {
   static_assert(!acceptsVideoCodecConfigurationSize(
       kMaximumVideoCodecConfigurationBytes + 1));
 
-  WAM_CHECK(acceptsCompressedVideoAccessUnitSize(
+  REQUIRE(acceptsCompressedVideoAccessUnitSize(
       kMaximumCompressedVideoAccessUnitBytes));
-  WAM_CHECK(!acceptsCompressedVideoAccessUnitSize(
+  REQUIRE(!acceptsCompressedVideoAccessUnitSize(
       kMaximumCompressedVideoAccessUnitBytes + 1));
-  WAM_CHECK(acceptsVideoCodecConfigurationSize(
+  REQUIRE(acceptsVideoCodecConfigurationSize(
       kMaximumVideoCodecConfigurationBytes));
-  WAM_CHECK(!acceptsVideoCodecConfigurationSize(
+  REQUIRE(!acceptsVideoCodecConfigurationSize(
       kMaximumVideoCodecConfigurationBytes + 1));
 }
 
+// One access unit re-carried the way the demuxing backends carry theirs:
+// its payload copied into a carriage block and wrapped by the shared
+// CoreMedia sample builder, then submitted through the production ingress.
 struct OwnedPacket {
-  std::vector<std::byte> bytes;
+  wam::macos::ScopedSampleBuffer sample;
   CMTime presentationTime{kCMTimeInvalid};
-  CMTime decodeTime{kCMTimeInvalid};
-  CMTime duration{kCMTimeInvalid};
   bool keyFrame{false};
 };
 
@@ -160,16 +148,16 @@ private:
 ScopedCMSampleBuffer makeGuardedCompressedSample(
     void *inaccessibleBytes, std::size_t byteCount,
     CMVideoFormatDescriptionRef format) {
-  WAM_CHECK(inaccessibleBytes != nullptr);
-  WAM_CHECK(byteCount != 0);
-  WAM_CHECK(format != nullptr);
+  REQUIRE(inaccessibleBytes != nullptr);
+  REQUIRE(byteCount != 0);
+  REQUIRE(format != nullptr);
 
   CMBlockBufferRef block = nullptr;
   const OSStatus blockStatus = CMBlockBufferCreateWithMemoryBlock(
       kCFAllocatorDefault, inaccessibleBytes, byteCount, kCFAllocatorNull,
       nullptr, 0, byteCount, 0, &block);
-  WAM_CHECK(blockStatus == noErr);
-  WAM_CHECK(block != nullptr);
+  REQUIRE(blockStatus == noErr);
+  REQUIRE(block != nullptr);
 
   const CMSampleTimingInfo timing{CMTimeMake(1, 30), kCMTimeZero,
                                   kCMTimeInvalid};
@@ -178,8 +166,8 @@ ScopedCMSampleBuffer makeGuardedCompressedSample(
       kCFAllocatorDefault, block, format, 1, 1, &timing, 1, &byteCount,
       &sample);
   CFRelease(block);
-  WAM_CHECK(sampleStatus == noErr);
-  WAM_CHECK(sample != nullptr);
+  REQUIRE(sampleStatus == noErr);
+  REQUIRE(sample != nullptr);
   return ScopedCMSampleBuffer(sample);
 }
 
@@ -300,9 +288,9 @@ void testCodecReorderDepthCarriesItsAuthority() {
     const auto depth = VideoToolboxDecoderTestAccess::codecReorderDepth(
         h264RecordConfiguration(expectation.record, expectation.width,
                                 expectation.height, generation));
-    WAM_CHECK(depth.has_value());
-    WAM_CHECK(depth->frames == expectation.frames);
-    WAM_CHECK(depth->origin == expectation.origin);
+    REQUIRE(depth.has_value());
+    REQUIRE(depth->frames == expectation.frames);
+    REQUIRE(depth->origin == expectation.origin);
   }
 }
 
@@ -320,12 +308,12 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     wam::macos::VideoToolboxDecoder decoder(options);
     wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         decoder.configure(h264RecordConfiguration(kScreenRecordingAvcC, 2804,
                                                   1658, generation),
                           queue, &error),
         error);
-    WAM_CHECK(decoder.stats().codecReorderFrames == 4);
+    REQUIRE(decoder.stats().codecReorderFrames == 4);
     decoder.close();
   }
 
@@ -338,12 +326,12 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     wam::macos::VideoToolboxDecoder decoder(options);
     wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         decoder.configure(
             h264RecordConfiguration(kSmallPictureAvcC, 640, 360, generation),
             queue, &error),
         error);
-    WAM_CHECK(decoder.stats().codecReorderFrames == 4);
+    REQUIRE(decoder.stats().codecReorderFrames == 4);
     decoder.close();
   }
 
@@ -356,12 +344,12 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     wam::macos::VideoToolboxDecoder decoder(options);
     wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         decoder.configure(h264RecordConfiguration(kScreenRecordingAvcC, 2804,
                                                   1658, generation),
                           queue, &error),
         error);
-    WAM_CHECK(decoder.stats().codecReorderFrames == 6);
+    REQUIRE(decoder.stats().codecReorderFrames == 6);
     decoder.close();
   }
 
@@ -374,12 +362,12 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     wam::macos::VideoToolboxDecoder decoder(options);
     wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         decoder.configure(h264RecordConfiguration(kDeclaredSameGeometryAvcC,
                                                   2804, 1658, generation),
                           queue, &error),
         error);
-    WAM_CHECK(decoder.stats().codecReorderFrames == 2);
+    REQUIRE(decoder.stats().codecReorderFrames == 2);
     decoder.close();
   }
 
@@ -393,13 +381,13 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     wam::macos::VideoToolboxDecoder decoder(options);
     wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
-    WAM_CHECK(!decoder.configure(
+    REQUIRE(!decoder.configure(
         h264RecordConfiguration(kDeclaredSameGeometryAvcC, 2804, 1658,
                                 generation),
         queue, &error));
-    WAM_CHECK(error.find("exceeding the configured bound") !=
+    REQUIRE(error.find("exceeding the configured bound") !=
               std::string::npos);
-    WAM_CHECK(!decoder.stats().configured);
+    REQUIRE(!decoder.stats().configured);
   }
 }
 
@@ -410,18 +398,18 @@ void testFixtureFreeProductionLimitAdmission() {
 
   std::string error;
   CMVideoFormatDescriptionRef format = nullptr;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::copyFormatDescription(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::copyFormatDescription(
                        fixtureFreeStreamConfiguration(generation), &format,
                        &error),
                    error);
-  WAM_CHECK(format != nullptr);
+  REQUIRE(format != nullptr);
   CMVideoFormatDescriptionRef equivalentFormat = nullptr;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::copyFormatDescription(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::copyFormatDescription(
                        fixtureFreeStreamConfiguration(generation),
                        &equivalentFormat, &error),
                    error);
-  WAM_CHECK(equivalentFormat != nullptr);
-  WAM_CHECK_DETAIL(
+  REQUIRE(equivalentFormat != nullptr);
+  REQUIRE_DETAIL(
       VideoToolboxDecoderTestAccess::equivalentFormatConfigurations(
           format, equivalentFormat, &error),
       error);
@@ -435,14 +423,14 @@ void testFixtureFreeProductionLimitAdmission() {
       {std::byte{0xFC}, std::byte{0xFF}, std::byte{0xFA}, std::byte{0}});
   hinted.codecConfiguration = hintedBytes;
   CMVideoFormatDescriptionRef repaired = nullptr;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::copyFormatDescription(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::copyFormatDescription(
       hinted, &repaired, &error), error);
   if (repaired) {
     auto atoms = static_cast<CFDictionaryRef>(CMFormatDescriptionGetExtension(
         repaired, kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms));
     auto avc = static_cast<CFDataRef>(CFDictionaryGetValue(atoms, CFSTR("avcC")));
-    WAM_CHECK(avc && CFDataGetLength(avc) == static_cast<CFIndex>(coreSize));
-    WAM_CHECK(avc && std::memcmp(CFDataGetBytePtr(avc),
+    REQUIRE(avc && CFDataGetLength(avc) == static_cast<CFIndex>(coreSize));
+    REQUIRE(avc && std::memcmp(CFDataGetBytePtr(avc),
         hinted.codecConfiguration.data(), coreSize) == 0);
     const auto rawFormat = [&](const std::vector<std::byte> &bytes) {
       CFDataRef data = CFDataCreate(kCFAllocatorDefault,
@@ -458,19 +446,19 @@ void testFixtureFreeProductionLimitAdmission() {
           extensionKeys, extensionValues, 1, &kCFTypeDictionaryKeyCallBacks,
           &kCFTypeDictionaryValueCallBacks);
       CMVideoFormatDescriptionRef result = nullptr;
-      WAM_CHECK(CMVideoFormatDescriptionCreate(kCFAllocatorDefault,
+      REQUIRE(CMVideoFormatDescriptionCreate(kCFAllocatorDefault,
           kCMVideoCodecType_H264, 1280, 720, extensions, &result) == noErr);
       CFRelease(extensions); CFRelease(rawAtoms); CFRelease(data);
       return result;
     };
     auto raw = rawFormat(hintedBytes);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::equivalentFormatConfigurations(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::equivalentFormatConfigurations(
         repaired, raw, &error), error);
     CFRelease(raw);
     auto changedSps = hintedBytes;
     changedSps[12] ^= std::byte{1};
     raw = rawFormat(changedSps);
-    WAM_CHECK(!VideoToolboxDecoderTestAccess::equivalentFormatConfigurations(
+    REQUIRE(!VideoToolboxDecoderTestAccess::equivalentFormatConfigurations(
         repaired, raw, &error));
     CFRelease(raw);
     CFRelease(repaired);
@@ -485,21 +473,21 @@ void testFixtureFreeProductionLimitAdmission() {
   void *guardedConfiguration =
       mmap(nullptr, guardedConfigurationBytes, PROT_NONE,
            MAP_PRIVATE | MAP_ANON, -1, 0);
-  WAM_CHECK(guardedConfiguration != MAP_FAILED);
+  REQUIRE(guardedConfiguration != MAP_FAILED);
   const auto exerciseDirectConfiguration =
       [&](std::size_t byteCount, bool expectedAdmission) {
         CFDataRef atom = CFDataCreateWithBytesNoCopy(
             kCFAllocatorDefault,
             static_cast<const UInt8 *>(guardedConfiguration),
             static_cast<CFIndex>(byteCount), kCFAllocatorNull);
-        WAM_CHECK(atom != nullptr);
+        REQUIRE(atom != nullptr);
         const void *atomKeys[] = {CFSTR("hvcC")};
         const void *atomValues[] = {atom};
         CFDictionaryRef atoms = CFDictionaryCreate(
             kCFAllocatorDefault, atomKeys, atomValues, 1,
             &kCFTypeDictionaryKeyCallBacks,
             &kCFTypeDictionaryValueCallBacks);
-        WAM_CHECK(atoms != nullptr);
+        REQUIRE(atoms != nullptr);
         const void *extensionKeys[] = {
             kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms};
         const void *extensionValues[] = {atoms};
@@ -507,19 +495,19 @@ void testFixtureFreeProductionLimitAdmission() {
             kCFAllocatorDefault, extensionKeys, extensionValues, 1,
             &kCFTypeDictionaryKeyCallBacks,
             &kCFTypeDictionaryValueCallBacks);
-        WAM_CHECK(extensions != nullptr);
+        REQUIRE(extensions != nullptr);
 
         std::size_t admittedBytes = 0;
         const bool admitted =
             VideoToolboxDecoderTestAccess::inspectDirectConfigurationExtensions(
                 kCMVideoCodecType_HEVC, extensions, &admittedBytes, &error);
-        WAM_CHECK(admitted == expectedAdmission);
+        REQUIRE(admitted == expectedAdmission);
         if (expectedAdmission) {
-          WAM_CHECK(error.empty());
-          WAM_CHECK(admittedBytes == byteCount);
+          REQUIRE(error.empty());
+          REQUIRE(admittedBytes == byteCount);
         } else {
-          WAM_CHECK(error.find("256 KiB") != std::string::npos);
-          WAM_CHECK(admittedBytes == 0);
+          REQUIRE(error.find("256 KiB") != std::string::npos);
+          REQUIRE(admittedBytes == 0);
         }
         CFRelease(extensions);
         CFRelease(atoms);
@@ -528,7 +516,7 @@ void testFixtureFreeProductionLimitAdmission() {
   exerciseDirectConfiguration(kMaximumVideoCodecConfigurationBytes, true);
   exerciseDirectConfiguration(kMaximumVideoCodecConfigurationBytes + 1,
                               false);
-  WAM_CHECK(munmap(guardedConfiguration, guardedConfigurationBytes) == 0);
+  REQUIRE(munmap(guardedConfiguration, guardedConfigurationBytes) == 0);
 
   // The production metadata gate admits the exact boundary without touching
   // it. The full production builder must reject cap+1 before CFDataCreate can
@@ -538,31 +526,31 @@ void testFixtureFreeProductionLimitAdmission() {
   void *inaccessibleConfiguration =
       mmap(nullptr, oversizedConfigurationBytes, PROT_NONE,
            MAP_PRIVATE | MAP_ANON, -1, 0);
-  WAM_CHECK(inaccessibleConfiguration != MAP_FAILED);
+  REQUIRE(inaccessibleConfiguration != MAP_FAILED);
   auto boundaryConfiguration = fixtureFreeStreamConfiguration(generation);
   boundaryConfiguration.codecConfiguration = std::span<const std::byte>(
       static_cast<const std::byte *>(inaccessibleConfiguration),
       kMaximumVideoCodecConfigurationBytes);
-  WAM_CHECK(VideoToolboxDecoderTestAccess::admitsConfigurationMetadata(
+  REQUIRE(VideoToolboxDecoderTestAccess::admitsConfigurationMetadata(
       boundaryConfiguration));
   auto oversizedConfiguration = fixtureFreeStreamConfiguration(generation);
   oversizedConfiguration.codecConfiguration = std::span<const std::byte>(
       static_cast<const std::byte *>(inaccessibleConfiguration),
       oversizedConfigurationBytes);
-  WAM_CHECK(!VideoToolboxDecoderTestAccess::admitsConfigurationMetadata(
+  REQUIRE(!VideoToolboxDecoderTestAccess::admitsConfigurationMetadata(
       oversizedConfiguration));
   CMVideoFormatDescriptionRef rejectedFormat = nullptr;
-  WAM_CHECK(!VideoToolboxDecoderTestAccess::copyFormatDescription(
+  REQUIRE(!VideoToolboxDecoderTestAccess::copyFormatDescription(
       oversizedConfiguration, &rejectedFormat, &error));
-  WAM_CHECK(rejectedFormat == nullptr);
-  WAM_CHECK(munmap(inaccessibleConfiguration,
+  REQUIRE(rejectedFormat == nullptr);
+  REQUIRE(munmap(inaccessibleConfiguration,
                    oversizedConfigurationBytes) == 0);
 
   const auto exerciseDirectMetadata =
       [&](std::size_t byteCount, bool expectedAdmission) {
         void *inaccessibleBytes =
             mmap(nullptr, byteCount, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-        WAM_CHECK(inaccessibleBytes != MAP_FAILED);
+        REQUIRE(inaccessibleBytes != MAP_FAILED);
         {
           ScopedCMSampleBuffer sample = makeGuardedCompressedSample(
               inaccessibleBytes, byteCount, format);
@@ -572,19 +560,19 @@ void testFixtureFreeProductionLimitAdmission() {
               VideoToolboxDecoderTestAccess::inspectDirectSampleMetadata(
                   sample.get(), &admittedBytes,
                   &admittedConfigurationBytes, &error);
-          WAM_CHECK(admitted == expectedAdmission);
+          REQUIRE(admitted == expectedAdmission);
           if (expectedAdmission) {
-            WAM_CHECK(error.empty());
-            WAM_CHECK(admittedBytes == byteCount);
-            WAM_CHECK(admittedConfigurationBytes ==
+            REQUIRE(error.empty());
+            REQUIRE(admittedBytes == byteCount);
+            REQUIRE(admittedConfigurationBytes ==
                       sizeof(kFixtureFreeHvcC));
           } else {
-            WAM_CHECK(error.find("8 MiB") != std::string::npos);
-            WAM_CHECK(admittedBytes == 0);
-            WAM_CHECK(admittedConfigurationBytes == 0);
+            REQUIRE(error.find("8 MiB") != std::string::npos);
+            REQUIRE(admittedBytes == 0);
+            REQUIRE(admittedConfigurationBytes == 0);
           }
         }
-        WAM_CHECK(munmap(inaccessibleBytes, byteCount) == 0);
+        REQUIRE(munmap(inaccessibleBytes, byteCount) == 0);
       };
 
   // Both calls traverse the real direct-CMSampleBuffer metadata validator.
@@ -602,33 +590,33 @@ TestInputs parseTestInputs(int argc, char **argv) {
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument(argv[index]);
     if (argument == "--require-hardware") {
-      WAM_CHECK_DETAIL(!result.requireHardware,
+      REQUIRE_DETAIL(!result.requireHardware,
                        "--require-hardware was supplied more than once");
       result.requireHardware = true;
     } else if (argument == "--callback-allocation-only") {
-      WAM_CHECK_DETAIL(!result.callbackAllocationOnly,
+      REQUIRE_DETAIL(!result.callbackAllocationOnly,
                        "--callback-allocation-only was supplied more than once");
       result.callbackAllocationOnly = true;
     } else if (argument == "--direct-sample-only") {
-      WAM_CHECK_DETAIL(!result.directSampleOnly,
+      REQUIRE_DETAIL(!result.directSampleOnly,
                        "--direct-sample-only was supplied more than once");
       result.directSampleOnly = true;
     } else {
-      WAM_CHECK_DETAIL(!argument.starts_with("--"),
+      REQUIRE_DETAIL(!argument.starts_with("--"),
                        "unknown VideoToolbox test option");
       mediaPaths.push_back(argv[index]);
     }
   }
 
-  WAM_CHECK_DETAIL(mediaPaths.size() == 1 || mediaPaths.size() == 2,
+  REQUIRE_DETAIL(mediaPaths.size() == 1 || mediaPaths.size() == 2,
                    "usage: wam_video_toolbox_decoder_test "
                    "[--require-hardware] [--callback-allocation-only | "
                    "--direct-sample-only] "
                    "sample-h264.mp4 "
                    "[sample-main10-hevc.mp4]");
-  WAM_CHECK_DETAIL(!(result.callbackAllocationOnly && result.directSampleOnly),
+  REQUIRE_DETAIL(!(result.callbackAllocationOnly && result.directSampleOnly),
                    "isolated decoder test modes are mutually exclusive");
-  WAM_CHECK_DETAIL(!result.requireHardware || mediaPaths.size() == 2,
+  REQUIRE_DETAIL(!result.requireHardware || mediaPaths.size() == 2,
                    "--require-hardware requires both H.264 and Main 10 HEVC "
                    "fixtures");
   result.h264Path = mediaPaths[0];
@@ -653,7 +641,7 @@ DemuxedVideo readCompressedVideo(const char *path,
                                  CMVideoCodecType expectedCodec,
                                  std::size_t minimumPackets,
                                  std::size_t maximumPackets) {
-  WAM_CHECK(maximumPackets >= minimumPackets);
+  REQUIRE(maximumPackets >= minimumPackets);
   NSString *filePath = [NSString stringWithUTF8String:path];
   NSURL *url = [NSURL fileURLWithPath:filePath];
   AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
@@ -663,17 +651,17 @@ DemuxedVideo readCompressedVideo(const char *path,
   NSArray<AVAssetTrack *> *tracks =
       [asset tracksWithMediaType:AVMediaTypeVideo];
 #pragma clang diagnostic pop
-  WAM_CHECK(tracks.count > 0);
+  REQUIRE(tracks.count > 0);
   AVAssetTrack *track = tracks.firstObject;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
   NSArray *formatDescriptions = track.formatDescriptions;
 #pragma clang diagnostic pop
-  WAM_CHECK(formatDescriptions.count > 0);
+  REQUIRE(formatDescriptions.count > 0);
   CMVideoFormatDescriptionRef sourceFormat =
       (__bridge CMVideoFormatDescriptionRef)formatDescriptions.firstObject;
-  WAM_CHECK(sourceFormat != nullptr);
+  REQUIRE(sourceFormat != nullptr);
 
   DemuxedVideo video;
   video.codec = CMFormatDescriptionGetMediaSubType(sourceFormat);
@@ -686,9 +674,9 @@ DemuxedVideo readCompressedVideo(const char *path,
       video.codec == kCMVideoCodecType_H264   ? CFSTR("avcC")
       : video.codec == kCMVideoCodecType_HEVC ? CFSTR("hvcC")
                                                : nullptr;
-  WAM_CHECK(atomName != nullptr);
+  REQUIRE(atomName != nullptr);
   auto atom = static_cast<CFDataRef>(CFDictionaryGetValue(atoms, atomName));
-  WAM_CHECK(atom != nullptr);
+  REQUIRE(atom != nullptr);
   const CFIndex configurationLength = CFDataGetLength(atom);
   video.configuration.resize(static_cast<std::size_t>(configurationLength));
   std::memcpy(video.configuration.data(), CFDataGetBytePtr(atom),
@@ -697,7 +685,7 @@ DemuxedVideo readCompressedVideo(const char *path,
   NSError *readerError = nil;
   AVAssetReader *reader = [[AVAssetReader alloc] initWithAsset:asset
                                                          error:&readerError];
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       reader != nil,
       readerError == nil
           ? std::string("unknown AVAssetReader error")
@@ -705,9 +693,9 @@ DemuxedVideo readCompressedVideo(const char *path,
   AVAssetReaderTrackOutput *output =
       [[AVAssetReaderTrackOutput alloc] initWithTrack:track outputSettings:nil];
   output.alwaysCopiesSampleData = NO;
-  WAM_CHECK([reader canAddOutput:output]);
+  REQUIRE([reader canAddOutput:output]);
   [reader addOutput:output];
-  WAM_CHECK([reader startReading]);
+  REQUIRE([reader startReading]);
 
   for (std::size_t readAttempt = 0;
        readAttempt < 64 && video.packets.size() < maximumPackets;
@@ -724,24 +712,37 @@ DemuxedVideo readCompressedVideo(const char *path,
       continue;
     }
     OwnedPacket packet;
-    packet.bytes.resize(CMBlockBufferGetDataLength(block));
-    const OSStatus copyStatus = CMBlockBufferCopyDataBytes(
-        block, 0, packet.bytes.size(), packet.bytes.data());
-    WAM_CHECK(copyStatus == noErr);
     packet.presentationTime = CMSampleBufferGetPresentationTimeStamp(sample);
-    packet.decodeTime = CMSampleBufferGetDecodeTimeStamp(sample);
-    packet.duration = CMSampleBufferGetDuration(sample);
     packet.keyFrame = sampleIsKeyFrame(sample);
+    const std::size_t bytes = CMBlockBufferGetDataLength(block);
+    CMBlockBufferRef carriage = nullptr;
+    std::span<std::byte> destination;
+    std::string carriageError;
+    REQUIRE_DETAIL(wam::macos::allocateSampleBlock(bytes, "test", &carriage,
+                                                     &destination,
+                                                     &carriageError),
+                     carriageError);
+    REQUIRE(CMBlockBufferCopyDataBytes(block, 0, bytes,
+                                         destination.data()) == noErr);
+    wam::macos::CompressedSampleShape shape;
+    shape.timing = {CMSampleBufferGetDuration(sample), packet.presentationTime,
+                    CMSampleBufferGetDecodeTimeStamp(sample)};
+    shape.sizes = &bytes;
+    shape.videoKeyFrame = packet.keyFrame;
+    REQUIRE_DETAIL(wam::macos::buildCompressedSampleBuffer(
+                         carriage, CMSampleBufferGetFormatDescription(sample),
+                         shape, "test", &packet.sample, &carriageError),
+                     carriageError);
     video.packets.push_back(std::move(packet));
     CFRelease(sample);
   }
 
-  WAM_CHECK(reader.status == AVAssetReaderStatusReading ||
+  REQUIRE(reader.status == AVAssetReaderStatusReading ||
             reader.status == AVAssetReaderStatusCompleted);
-  WAM_CHECK(video.codec == expectedCodec);
-  WAM_CHECK(video.dimensions.width > 0 && video.dimensions.height > 0);
-  WAM_CHECK(!video.configuration.empty());
-  WAM_CHECK(video.packets.size() >= minimumPackets);
+  REQUIRE(video.codec == expectedCodec);
+  REQUIRE(video.dimensions.width > 0 && video.dimensions.height > 0);
+  REQUIRE(!video.configuration.empty());
+  REQUIRE(video.packets.size() >= minimumPackets);
   return video;
 }
 
@@ -756,13 +757,13 @@ ScopedCMSampleBuffer copyFirstCompressedKeySample(
   NSArray<AVAssetTrack *> *tracks =
       [asset tracksWithMediaType:AVMediaTypeVideo];
 #pragma clang diagnostic pop
-  WAM_CHECK(tracks.count > 0);
+  REQUIRE(tracks.count > 0);
   AVAssetTrack *track = tracks.firstObject;
 
   NSError *readerError = nil;
   AVAssetReader *reader = [[AVAssetReader alloc] initWithAsset:asset
                                                          error:&readerError];
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       reader != nil,
       readerError == nil
           ? std::string("unknown AVAssetReader error")
@@ -770,9 +771,9 @@ ScopedCMSampleBuffer copyFirstCompressedKeySample(
   AVAssetReaderTrackOutput *output =
       [[AVAssetReaderTrackOutput alloc] initWithTrack:track outputSettings:nil];
   output.alwaysCopiesSampleData = NO;
-  WAM_CHECK([reader canAddOutput:output]);
+  REQUIRE([reader canAddOutput:output]);
   [reader addOutput:output];
-  WAM_CHECK([reader startReading]);
+  REQUIRE([reader startReading]);
 
   for (std::size_t readAttempt = 0; readAttempt < 64; ++readAttempt) {
     CMSampleBufferRef sample = [output copyNextSampleBuffer];
@@ -798,7 +799,7 @@ ScopedCMSampleBuffer copyFirstCompressedKeySample(
           ? std::string("AVAssetReader did not yield a compressed key sample")
           : std::string(reader.error.localizedDescription.UTF8String);
   [reader cancelReading];
-  WAM_CHECK_DETAIL(false, diagnostic);
+  REQUIRE_DETAIL(false, diagnostic);
   return ScopedCMSampleBuffer();
 }
 
@@ -813,41 +814,35 @@ streamConfiguration(const DemuxedVideo &video, std::uint64_t generation,
           generation};
 }
 
-wam::macos::CompressedVideoPacket packetView(const OwnedPacket &packet,
-                                             std::uint64_t generation) {
-  return {std::span<const std::byte>(packet.bytes),
-          packet.presentationTime,
-          packet.decodeTime,
-          packet.duration,
-          generation,
-          packet.keyFrame,
-          false};
+wam::macos::VideoDecodeSubmitResult submitPacket(
+    wam::macos::VideoToolboxDecoder &decoder, const OwnedPacket &packet,
+    std::uint64_t generation, std::string *error) {
+  return decoder.submitCMSampleBuffer(packet.sample.get(), generation, error);
 }
 
-wam::macos::CompressedVideoPacket endOfStream(std::uint64_t generation) {
-  wam::macos::CompressedVideoPacket packet;
-  packet.generation = generation;
-  packet.endOfStream = true;
-  return packet;
+CMVideoFormatDescriptionRef packetFormat(const OwnedPacket &packet) {
+  return CMSampleBufferGetFormatDescription(packet.sample.get());
 }
 
 // End of stream is a bounded owner drain: while a real decode is still in
-// flight the exact same packet answers Backpressure and must be resubmitted.
-wam::macos::VideoDecodeSubmitResult submitDrainedEndOfStream(
+// flight drainEndOfStream() answers Progress or Quiescing and is retried.
+wam::macos::VideoDecodeDrainProgress drainToEndOfStream(
     wam::macos::VideoToolboxDecoder &decoder, std::uint64_t generation,
     std::string *error) {
-  wam::macos::VideoDecodeSubmitResult result =
-      wam::macos::VideoDecodeSubmitResult::Backpressure;
+  using wam::macos::VideoDecodeDrainProgress;
+  VideoDecodeDrainProgress progress =
+      decoder.beginEndOfStream(generation, error);
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(10);
-  while (result == wam::macos::VideoDecodeSubmitResult::Backpressure &&
+  while ((progress == VideoDecodeDrainProgress::Progress ||
+          progress == VideoDecodeDrainProgress::Quiescing) &&
          std::chrono::steady_clock::now() < deadline) {
-    result = decoder.submit(endOfStream(generation), error);
-    if (result == wam::macos::VideoDecodeSubmitResult::Backpressure) {
+    progress = decoder.drainEndOfStream(generation, error);
+    if (progress == VideoDecodeDrainProgress::Quiescing) {
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
   }
-  return result;
+  return progress;
 }
 
 std::size_t firstKeyFrame(const DemuxedVideo &video) {
@@ -890,8 +885,8 @@ CVPixelBufferRef createIOSurfacePixelBuffer(OSType format,
       kCFAllocatorDefault, width, height, format, attributes, &result);
   CFRelease(empty);
   CFRelease(attributes);
-  WAM_CHECK(status == kCVReturnSuccess);
-  WAM_CHECK(result != nullptr);
+  REQUIRE(status == kCVReturnSuccess);
+  REQUIRE(result != nullptr);
   return result;
 }
 
@@ -913,32 +908,32 @@ public:
       usedCoreProfileFallback_ = false;
     } else {
       usedCoreProfileFallback_ = true;
-      WAM_CHECK_DETAIL(choosePixelFormat(coreProfileAttributes, &pixelFormat_),
+      REQUIRE_DETAIL(choosePixelFormat(coreProfileAttributes, &pixelFormat_),
                        "no OpenGL 3.2 core CGL pixel format is available");
     }
 
     GLint profile = 0;
     const CGLError profileStatus = CGLDescribePixelFormat(
         pixelFormat_, 0, kCGLPFAOpenGLProfile, &profile);
-    WAM_CHECK_DETAIL(profileStatus == kCGLNoError,
+    REQUIRE_DETAIL(profileStatus == kCGLNoError,
                      CGLErrorString(profileStatus));
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         profile == static_cast<GLint>(kCGLOGLPVersion_3_2_Core),
         "CGL selected a pixel format outside the OpenGL 3.2 core contract");
     GLint accelerated = 0;
     const CGLError describeStatus = CGLDescribePixelFormat(
         pixelFormat_, 0, kCGLPFAAccelerated, &accelerated);
-    WAM_CHECK_DETAIL(describeStatus == kCGLNoError,
+    REQUIRE_DETAIL(describeStatus == kCGLNoError,
                      CGLErrorString(describeStatus));
     accelerated_ = accelerated != 0;
-    WAM_CHECK_DETAIL(usedCoreProfileFallback_ || accelerated_,
+    REQUIRE_DETAIL(usedCoreProfileFallback_ || accelerated_,
                      "the acceleration-constrained CGL selection was not "
                      "accelerated");
     const CGLError createStatus =
         CGLCreateContext(pixelFormat_, nullptr, &context_);
-    WAM_CHECK_DETAIL(createStatus == kCGLNoError,
+    REQUIRE_DETAIL(createStatus == kCGLNoError,
                      CGLErrorString(createStatus));
-    WAM_CHECK(context_ != nullptr);
+    REQUIRE(context_ != nullptr);
   }
 
   CGLInteropContext(const CGLInteropContext &) = delete;
@@ -987,17 +982,17 @@ private:
 
 void bindIOSurfacePlanesWithCGL(CGLContextObj context,
                                 CVPixelBufferRef pixelBuffer) {
-  WAM_CHECK(context != nullptr);
-  WAM_CHECK(pixelBuffer != nullptr);
+  REQUIRE(context != nullptr);
+  REQUIRE(pixelBuffer != nullptr);
   IOSurfaceRef surface = CVPixelBufferGetIOSurface(pixelBuffer);
-  WAM_CHECK(surface != nullptr);
-  WAM_CHECK(CGLSetCurrentContext(context) == kCGLNoError);
+  REQUIRE(surface != nullptr);
+  REQUIRE(CGLSetCurrentContext(context) == kCGLNoError);
 
   const OSType format = CVPixelBufferGetPixelFormatType(pixelBuffer);
   const bool tenBit =
       format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ||
       format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
-  WAM_CHECK(tenBit ||
+  REQUIRE(tenBit ||
             format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
             format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange);
   const std::array<GLenum, 2> internalFormats{
@@ -1008,8 +1003,8 @@ void bindIOSurfacePlanesWithCGL(CGLContextObj context,
 
   std::array<GLuint, 2> textures{};
   glGenTextures(static_cast<GLsizei>(textures.size()), textures.data());
-  WAM_CHECK(textures[0] != 0);
-  WAM_CHECK(textures[1] != 0);
+  REQUIRE(textures[0] != 0);
+  REQUIRE(textures[1] != 0);
   for (std::size_t plane = 0; plane < textures.size(); ++plane) {
     glBindTexture(GL_TEXTURE_RECTANGLE, textures[plane]);
     const CGLError importStatus = CGLTexImageIOSurface2D(
@@ -1018,18 +1013,18 @@ void bindIOSurfacePlanesWithCGL(CGLContextObj context,
         static_cast<GLsizei>(
             CVPixelBufferGetHeightOfPlane(pixelBuffer, plane)),
         externalFormats[plane], type, surface, static_cast<GLuint>(plane));
-    WAM_CHECK_DETAIL(importStatus == kCGLNoError,
+    REQUIRE_DETAIL(importStatus == kCGLNoError,
                      CGLErrorString(importStatus));
-    WAM_CHECK(glGetError() == GL_NO_ERROR);
+    REQUIRE(glGetError() == GL_NO_ERROR);
   }
   glBindTexture(GL_TEXTURE_RECTANGLE, 0);
   glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
-  WAM_CHECK(glGetError() == GL_NO_ERROR);
+  REQUIRE(glGetError() == GL_NO_ERROR);
 }
 
 void testForcedCGLCoreProfileFallback() {
   CGLInteropContext fallbackContext(true);
-  WAM_CHECK(fallbackContext.usedCoreProfileFallback());
+  REQUIRE(fallbackContext.usedCoreProfileFallback());
   CVPixelBufferRef nv12 = createIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 128, 64,
       wam::macos::VideoDecoderOutputInterop::OpenGL);
@@ -1043,28 +1038,28 @@ void testForcedCGLCoreProfileFallback() {
 
 void testFiniteAdmissionNeverEnablesTemporalProcessing() {
   wam::macos::VideoToolboxDecoder asynchronous;
-  WAM_CHECK(asynchronous.stats().outputInterop ==
+  REQUIRE(asynchronous.stats().outputInterop ==
             wam::macos::VideoDecoderOutputInterop::Metal);
   const std::uint32_t asynchronousFlags =
       wam::macos::VideoToolboxDecoderTestAccess::decodeFlags(asynchronous);
-  WAM_CHECK((asynchronousFlags &
+  REQUIRE((asynchronousFlags &
              kVTDecodeFrame_EnableAsynchronousDecompression) != 0);
-  WAM_CHECK((asynchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
+  REQUIRE((asynchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
 
-  wam::macos::VideoDecoderOptions synchronousOptions;
-  synchronousOptions.enableAsynchronousDecompression = false;
-  wam::macos::VideoToolboxDecoder synchronous(synchronousOptions);
+  wam::macos::VideoToolboxDecoder synchronous;
+  wam::macos::VideoToolboxDecoderTestAccess::setAsynchronousDecompression(
+      synchronous, false);
   const std::uint32_t synchronousFlags =
       wam::macos::VideoToolboxDecoderTestAccess::decodeFlags(synchronous);
-  WAM_CHECK((synchronousFlags &
+  REQUIRE((synchronousFlags &
              kVTDecodeFrame_EnableAsynchronousDecompression) == 0);
-  WAM_CHECK((synchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
+  REQUIRE((synchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
 
   wam::macos::VideoDecoderOptions openGLOptions;
   openGLOptions.outputInterop =
       wam::macos::VideoDecoderOutputInterop::OpenGL;
   wam::macos::VideoToolboxDecoder openGL(openGLOptions);
-  WAM_CHECK(openGL.stats().outputInterop ==
+  REQUIRE(openGL.stats().outputInterop ==
             wam::macos::VideoDecoderOutputInterop::OpenGL);
 }
 
@@ -1085,45 +1080,42 @@ void testPersistentFrameRefConSlotLifecycle() {
   options.maxPendingPresentationFrames = 1;
   VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, firstSink, firstGeneration, &error),
                    error);
 
   auto slots = VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(slots.capacity == capacity);
-  WAM_CHECK(slots.available == capacity);
-  WAM_CHECK(slots.submitted == 0);
-  WAM_CHECK(slots.callbackComplete == 0);
-  WAM_CHECK(slots.inFlight == 0);
+  REQUIRE(slots.capacity == capacity);
+  REQUIRE(slots.available == capacity);
+  REQUIRE(slots.submitted == 0);
+  REQUIRE(slots.callbackComplete == 0);
+  REQUIRE(slots.inFlight == 0);
 
   std::array<std::uint64_t, capacity> sequences{};
   constexpr std::array<std::size_t, capacity> compressedBytes{11, 17, 19};
-  constexpr std::array<bool, capacity> directStorage{true, false, true};
   for (std::size_t index = 0; index < capacity; ++index) {
     const FrameTiming timing{CMTimeMake(static_cast<std::int64_t>(index), 30),
                              CMTimeMake(1, 30), firstGeneration, index == 0};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
                          decoder, timing, &sequences[index], &error,
-                         compressedBytes[index], directStorage[index]) ==
+                         compressedBytes[index]) ==
                          VideoDecodeSubmitResult::Accepted,
                      error);
-    WAM_CHECK(sequences[index] == index);
+    REQUIRE(sequences[index] == index);
   }
   slots = VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(slots.available == 0);
-  WAM_CHECK(slots.submitted == capacity);
-  WAM_CHECK(slots.inFlight == capacity);
+  REQUIRE(slots.available == 0);
+  REQUIRE(slots.submitted == capacity);
+  REQUIRE(slots.inFlight == capacity);
   auto memory = decoder.memoryFacts();
-  WAM_CHECK(memory.inFlightFrames == capacity);
-  WAM_CHECK(memory.presentationFrames == 0);
-  WAM_CHECK(memory.currentDirectCompressedBytes == 30);
-  WAM_CHECK(memory.peakDirectCompressedBytes == 30);
-  WAM_CHECK(memory.currentCopiedCompressedBytes == 17);
-  WAM_CHECK(memory.peakCopiedCompressedBytes == 17);
-  WAM_CHECK(memory.currentCompressedBytes == 47);
-  WAM_CHECK(memory.peakCompressedBytes == 47);
+  REQUIRE(memory.inFlightFrames == capacity);
+  REQUIRE(memory.presentationFrames == 0);
+  REQUIRE(memory.currentDirectCompressedBytes == 47);
+  REQUIRE(memory.peakDirectCompressedBytes == 47);
+  REQUIRE(memory.currentCompressedBytes == 47);
+  REQUIRE(memory.peakCompressedBytes == 47);
   std::uint64_t rejectedSequence = 0;
-  WAM_CHECK(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
+  REQUIRE(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
                 decoder,
                 FrameTiming{CMTimeMake(3, 30), CMTimeMake(1, 30),
                             firstGeneration, false},
@@ -1134,96 +1126,92 @@ void testPersistentFrameRefConSlotLifecycle() {
   // its slot or admission credit before the missing earlier sequence.
   const FrameTiming secondTiming{CMTimeMake(1, 30), CMTimeMake(1, 30),
                                  firstGeneration, false};
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                        decoder, sequences[1], nullptr, secondTiming, noErr,
                        kVTDecodeInfo_FrameDropped, &error),
                    error);
   slots = VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(slots.submitted == capacity - 1);
-  WAM_CHECK(slots.callbackComplete == 1);
-  WAM_CHECK(slots.available == 0);
-  WAM_CHECK(slots.inFlight == capacity);
+  REQUIRE(slots.submitted == capacity - 1);
+  REQUIRE(slots.callbackComplete == 1);
+  REQUIRE(slots.available == 0);
+  REQUIRE(slots.inFlight == capacity);
   memory = decoder.memoryFacts();
-  WAM_CHECK(memory.inFlightFrames == capacity);
-  WAM_CHECK(memory.currentDirectCompressedBytes == 30);
-  WAM_CHECK(memory.currentCopiedCompressedBytes == 17);
-  WAM_CHECK(memory.currentCompressedBytes == 47);
+  REQUIRE(memory.inFlightFrames == capacity);
+  REQUIRE(memory.currentDirectCompressedBytes == 47);
+  REQUIRE(memory.currentCompressedBytes == 47);
 
   // An immediate DecodeFrame API rejection is guaranteed not to receive a
   // callback. Its synthetic tombstone owns and retires the same slot exactly
   // once, but remains ordered behind sequence zero.
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::rejectInjectedSubmission(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::rejectInjectedSubmission(
                        decoder, sequences[2], paramErr, &error),
                    error);
   slots = VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(slots.submitted == 1);
-  WAM_CHECK(slots.callbackComplete == 2);
-  WAM_CHECK(slots.inFlight == capacity);
+  REQUIRE(slots.submitted == 1);
+  REQUIRE(slots.callbackComplete == 2);
+  REQUIRE(slots.inFlight == capacity);
   memory = decoder.memoryFacts();
-  WAM_CHECK(memory.inFlightFrames == capacity);
-  WAM_CHECK(memory.currentDirectCompressedBytes == 30);
-  WAM_CHECK(memory.currentCopiedCompressedBytes == 17);
-  WAM_CHECK(memory.currentCompressedBytes == 47);
+  REQUIRE(memory.inFlightFrames == capacity);
+  REQUIRE(memory.currentDirectCompressedBytes == 47);
+  REQUIRE(memory.currentCompressedBytes == 47);
 
   const FrameTiming firstTiming{CMTimeMake(0, 30), CMTimeMake(1, 30),
                                 firstGeneration, true};
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                        decoder, sequences[0], nullptr, firstTiming, noErr,
                        kVTDecodeInfo_FrameDropped, &error),
                    error);
   slots = VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(slots.available == capacity);
-  WAM_CHECK(slots.submitted == 0);
-  WAM_CHECK(slots.callbackComplete == 0);
-  WAM_CHECK(slots.inFlight == 0);
-  WAM_CHECK(slots.activeCallbacks == 0);
+  REQUIRE(slots.available == capacity);
+  REQUIRE(slots.submitted == 0);
+  REQUIRE(slots.callbackComplete == 0);
+  REQUIRE(slots.inFlight == 0);
+  REQUIRE(slots.activeCallbacks == 0);
   memory = decoder.memoryFacts();
-  WAM_CHECK(memory.inFlightFrames == 0);
-  WAM_CHECK(memory.currentDirectCompressedBytes == 0);
-  WAM_CHECK(memory.currentCopiedCompressedBytes == 0);
-  WAM_CHECK(memory.currentCompressedBytes == 0);
-  WAM_CHECK(memory.peakDirectCompressedBytes == 30);
-  WAM_CHECK(memory.peakCopiedCompressedBytes == 17);
-  WAM_CHECK(memory.peakCompressedBytes == 47);
-  WAM_CHECK(decoder.takeLastError().has_value());
+  REQUIRE(memory.inFlightFrames == 0);
+  REQUIRE(memory.currentDirectCompressedBytes == 0);
+  REQUIRE(memory.currentCompressedBytes == 0);
+  REQUIRE(memory.peakDirectCompressedBytes == 47);
+  REQUIRE(memory.peakCompressedBytes == 47);
+  REQUIRE(decoder.takeLastError().has_value());
 
   // Reconfiguration is a generation barrier and reuses, rather than grows,
   // the same fixed slot pool. Closing returns with every slot available.
   wam::test::BoundedFrameQueue secondSink(capacity, secondGeneration);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, secondSink, secondGeneration, &error),
                    error);
   slots = VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(slots.capacity == capacity);
-  WAM_CHECK(slots.available == capacity);
-  WAM_CHECK(slots.generation == secondGeneration);
+  REQUIRE(slots.capacity == capacity);
+  REQUIRE(slots.available == capacity);
+  REQUIRE(slots.generation == secondGeneration);
   memory = decoder.memoryFacts();
-  WAM_CHECK(memory.inFlightFrames == 0);
-  WAM_CHECK(memory.presentationFrames == 0);
-  WAM_CHECK(memory.currentCompressedBytes == 0);
-  WAM_CHECK(memory.peakCompressedBytes == 0);
+  REQUIRE(memory.inFlightFrames == 0);
+  REQUIRE(memory.presentationFrames == 0);
+  REQUIRE(memory.currentCompressedBytes == 0);
+  REQUIRE(memory.peakCompressedBytes == 0);
   std::uint64_t oldSequence = 0;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
                        decoder,
                        FrameTiming{CMTimeMake(0, 1), CMTimeMake(1, 30),
                                    firstGeneration, true},
                        &oldSequence, &error) ==
                        VideoDecodeSubmitResult::Accepted,
                    error);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                        decoder, oldSequence, nullptr,
                        FrameTiming{CMTimeMake(0, 1), CMTimeMake(1, 30),
                                    firstGeneration, true},
                        noErr, kVTDecodeInfo_FrameDropped, &error),
                    error);
-  WAM_CHECK(decoder.stats().droppedFrames >= 1);
+  REQUIRE(decoder.stats().droppedFrames >= 1);
   decoder.close();
   slots = VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(slots.available == capacity);
-  WAM_CHECK(slots.submitted == 0);
-  WAM_CHECK(slots.callbackComplete == 0);
-  WAM_CHECK(slots.inFlight == 0);
-  WAM_CHECK(slots.activeCallbacks == 0);
+  REQUIRE(slots.available == capacity);
+  REQUIRE(slots.submitted == 0);
+  REQUIRE(slots.callbackComplete == 0);
+  REQUIRE(slots.inFlight == 0);
+  REQUIRE(slots.activeCallbacks == 0);
 }
 
 class BlockingProgressProbe final {
@@ -1248,10 +1236,15 @@ public:
 private:
   static void notify(void *context) noexcept {
     // Deliberately blocking test-only handler: production handlers obey the
-    // nonblocking contract. This gate makes the post-notification callback
-    // tail observable so close() can prove it waits through callback return.
+    // nonblocking contract. Only the first notification -- the callback's --
+    // blocks: this gate makes the post-notification callback tail observable,
+    // while close()'s own notifications pass, so close() can only be held
+    // back by its wait for the callback to return.
     auto &probe = *static_cast<BlockingProgressProbe *>(context);
     std::unique_lock lock(probe.mutex_);
+    if (probe.entered_) {
+      return;
+    }
     probe.entered_ = true;
     probe.condition_.notify_all();
     probe.condition_.wait(lock, [&probe] { return probe.released_; });
@@ -1273,64 +1266,71 @@ void testPersistentCallbackTailBlocksClose() {
   options.progressHandler = probe.handler();
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
           decoder, sink, generation, &error),
       error);
   std::uint64_t sequence = 0;
   const wam::macos::FrameTiming timing{
       CMTimeMake(0, 1), CMTimeMake(1, 30), generation, true};
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
           decoder, timing, &sequence, &error) ==
           wam::macos::VideoDecodeSubmitResult::Accepted,
       error);
 
   std::atomic<bool> callbackReturned{false};
-  std::atomic<bool> closeEntered{false};
   std::atomic<bool> closeReturned{false};
   std::thread callback([&] {
     std::string callbackError;
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
             decoder, sequence, nullptr, timing, noErr,
             kVTDecodeInfo_FrameDropped, &callbackError),
         callbackError);
     callbackReturned.store(true, std::memory_order_release);
   });
-  WAM_CHECK_DETAIL(probe.waitUntilEntered(),
+  REQUIRE_DETAIL(probe.waitUntilEntered(),
                    "persistent callback did not reach progress tail");
   auto active =
       wam::macos::VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(active.inFlight == 0);
-  WAM_CHECK(active.activeCallbacks == 1);
-  WAM_CHECK(active.available == 1);
+  REQUIRE(active.inFlight == 0);
+  REQUIRE(active.activeCallbacks == 1);
+  REQUIRE(active.available == 1);
 
+  // close() must not return while the callback is still inside its tail. The
+  // probe is released only once close() has either returned (the bug) or
+  // parked its thread in the kernel waiting for the tail -- an event, not a
+  // timeout -- so a close() that skips the wait is caught on every run.
   std::thread closer([&] {
-    closeEntered.store(true, std::memory_order_release);
     decoder.close();
     closeReturned.store(true, std::memory_order_release);
   });
-  const auto closeDeadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (!closeEntered.load(std::memory_order_acquire) &&
-         std::chrono::steady_clock::now() < closeDeadline) {
+  const thread_act_t closerThread =
+      pthread_mach_thread_np(closer.native_handle());
+  auto closerIsWaiting = [&] {
+    thread_basic_info_data_t info{};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    return thread_info(closerThread, THREAD_BASIC_INFO,
+                       reinterpret_cast<thread_info_t>(&info),
+                       &count) == KERN_SUCCESS &&
+           info.run_state == TH_STATE_WAITING;
+  };
+  while (!closeReturned.load(std::memory_order_acquire) && !closerIsWaiting()) {
     std::this_thread::yield();
   }
-  WAM_CHECK(closeEntered.load(std::memory_order_acquire));
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  WAM_CHECK(!callbackReturned.load(std::memory_order_acquire));
-  WAM_CHECK(!closeReturned.load(std::memory_order_acquire));
+  REQUIRE_DETAIL(!closeReturned.load(std::memory_order_acquire),
+                   "close() returned while a callback was still running");
   probe.release();
   callback.join();
   closer.join();
-  WAM_CHECK(callbackReturned.load(std::memory_order_acquire));
-  WAM_CHECK(closeReturned.load(std::memory_order_acquire));
+  REQUIRE(callbackReturned.load(std::memory_order_acquire));
+  REQUIRE(closeReturned.load(std::memory_order_acquire));
   const auto closed =
       wam::macos::VideoToolboxDecoderTestAccess::frameRefConSlotStats(decoder);
-  WAM_CHECK(closed.available == 1);
-  WAM_CHECK(closed.inFlight == 0);
-  WAM_CHECK(closed.activeCallbacks == 0);
+  REQUIRE(closed.available == 1);
+  REQUIRE(closed.inFlight == 0);
+  REQUIRE(closed.activeCallbacks == 0);
 }
 
 class SurfaceBudgetTrackingSink final : public wam::macos::DecodedFrameSink {
@@ -1406,6 +1406,7 @@ void testEventDrivenDecoderProgressWake() {
   using wam::test::BoundedFrameQueue;
   using wam::macos::FrameLease;
   using wam::macos::FrameTiming;
+  using wam::macos::VideoDecodeDrainProgress;
   using wam::macos::NativeSurfaceBudget;
   using wam::macos::VideoDecodeSubmitResult;
   using wam::macos::VideoToolboxDecoder;
@@ -1427,32 +1428,32 @@ void testEventDrivenDecoderProgressWake() {
     VideoToolboxDecoder decoder(options);
     probe.decoder = &decoder;
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 2, &error),
                      error);
     const FrameTiming timing{CMTimeMake(0, 1), CMTimeMake(1, 30), generation,
                              true};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                          decoder, 0, nullptr, timing, noErr,
                          kVTDecodeInfo_FrameDropped, &error),
                      error);
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.callbackLocksWereAvailable.load(
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 1);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 1);
+    REQUIRE(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
-    WAM_CHECK(decoder.stats().inFlightFrames == 1);
+    REQUIRE(decoder.stats().inFlightFrames == 1);
 
     const FrameTiming secondTiming{CMTimeMake(1, 30), CMTimeMake(1, 30),
                                    generation, false};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                          decoder, 1, nullptr, secondTiming, noErr,
                          kVTDecodeInfo_FrameDropped, &error),
                      error);
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 2);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 2);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 0);
     decoder.close();
   }
 
@@ -1470,27 +1471,27 @@ void testEventDrivenDecoderProgressWake() {
     VideoToolboxDecoder decoder(options);
     probe.decoder = &decoder;
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 1, &error),
                      error);
     CVPixelBufferRef surface = createIOSurfacePixelBuffer(
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
     const FrameTiming timing{CMTimeMake(0, 1), CMTimeMake(1, 30), generation,
                              true};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                          decoder, 0, surface, timing, noErr, 0, &error),
                      error);
     CVPixelBufferRelease(surface);
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
-    WAM_CHECK(probe.callbackLocksWereAvailable.load(
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 1);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    REQUIRE(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
-    WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+    REQUIRE(decoder.drainPresentation(generation, &error) ==
               wam::macos::VideoDecodeDrainProgress::Progress);
-    WAM_CHECK(sink.tryTake().has_value());
+    REQUIRE(sink.tryTake().has_value());
     decoder.close();
   }
 
@@ -1507,10 +1508,10 @@ void testEventDrivenDecoderProgressWake() {
     VideoToolboxDecoder decoder(options);
     probe.decoder = &decoder;
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 1, &error),
                      error);
     VideoToolboxDecoderTestAccess::failNextCallbackAllocation(
@@ -1518,17 +1519,17 @@ void testEventDrivenDecoderProgressWake() {
         wam::macos::VideoToolboxDecoderTestAllocationPoint::CompletedDecode);
     const FrameTiming timing{CMTimeMake(0, 1), CMTimeMake(1, 30), generation,
                              true};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                          decoder, 0, nullptr, timing, noErr, 0, &error),
                      error);
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
-    WAM_CHECK(probe.callbackLocksWereAvailable.load(
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 1);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    REQUIRE(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
-    WAM_CHECK(decoder.stats().inFlightFrames == 0);
+    REQUIRE(decoder.stats().inFlightFrames == 0);
     const auto callbackError = decoder.takeLastError();
-    WAM_CHECK(callbackError.has_value());
-    WAM_CHECK(callbackError->find("exhausted bounded storage") !=
+    REQUIRE(callbackError.has_value());
+    REQUIRE(callbackError->find("exhausted bounded storage") !=
               std::string::npos);
     decoder.close();
   }
@@ -1547,25 +1548,25 @@ void testEventDrivenDecoderProgressWake() {
     VideoToolboxDecoder decoder(options);
     probe.decoder = &decoder;
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
     decoder.flush(nextGeneration);
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 1);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 1, &error),
                      error);
     const FrameTiming staleTiming{CMTimeMake(0, 1), CMTimeMake(1, 30),
                                   generation, true};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                          decoder, 0, nullptr, staleTiming, noErr, 0, &error),
                      error);
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 2);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
-    WAM_CHECK(probe.callbackLocksWereAvailable.load(
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 2);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    REQUIRE(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
-    WAM_CHECK(decoder.stats().droppedFrames == 1);
+    REQUIRE(decoder.stats().droppedFrames == 1);
     decoder.close();
   }
 
@@ -1582,10 +1583,10 @@ void testEventDrivenDecoderProgressWake() {
     VideoToolboxDecoder decoder(options);
     probe.decoder = &decoder;
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 1, &error),
                      error);
     CVPixelBufferRef mismatchedSurface = nullptr;
@@ -1595,31 +1596,31 @@ void testEventDrivenDecoderProgressWake() {
     }
     const FrameTiming timing{CMTimeMake(0, 1), CMTimeMake(1, 30), generation,
                              true};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                          decoder, 0, mismatchedSurface, timing,
                          formatFailure ? noErr : -1, 0, &error),
                      error);
     if (mismatchedSurface != nullptr) {
       CVPixelBufferRelease(mismatchedSurface);
     }
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
-    WAM_CHECK(probe.callbackLocksWereAvailable.load(
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 1);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    REQUIRE(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
-    WAM_CHECK(decoder.stats().inFlightFrames == 0);
-    WAM_CHECK(decoder.takeLastError().has_value());
+    REQUIRE(decoder.stats().inFlightFrames == 0);
+    REQUIRE(decoder.takeLastError().has_value());
     // close() is a separate lifecycle-capacity edge.
     const std::uint64_t callbackCalls =
         probe.calls.load(std::memory_order_acquire);
     decoder.close();
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) ==
+    REQUIRE(probe.calls.load(std::memory_order_acquire) ==
               callbackCalls + 1);
   }
 
   // Surface-budget denial is a recoverable ordered no-frame completion and
   // therefore has the same event-driven retry edge as every other callback.
   {
-    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+    REQUIRE(NativeSurfaceBudget::stats().currentSurfaces == 0);
     std::array<FrameLease,
                static_cast<std::size_t>(
                    kNativeSurfaceBudgetProcessMaximumSurfaces)>
@@ -1629,7 +1630,7 @@ void testEventDrivenDecoderProgressWake() {
           kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
       occupant = FrameLease(pixelBuffer);
       CVPixelBufferRelease(pixelBuffer);
-      WAM_CHECK(occupant);
+      REQUIRE(occupant);
     }
 
     constexpr std::uint64_t generation = 85;
@@ -1642,34 +1643,34 @@ void testEventDrivenDecoderProgressWake() {
     VideoToolboxDecoder decoder(options);
     probe.decoder = &decoder;
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 1, &error),
                      error);
     CVPixelBufferRef deniedSurface = createIOSurfacePixelBuffer(
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
     const FrameTiming timing{CMTimeMake(0, 1), CMTimeMake(1, 30), generation,
                              true};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                          decoder, 0, deniedSurface, timing, noErr, 0, &error),
                      error);
     CVPixelBufferRelease(deniedSurface);
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
-    WAM_CHECK(probe.callbackLocksWereAvailable.load(
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 1);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    REQUIRE(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
-    WAM_CHECK(decoder.stats().surfaceBudgetRejections == 1);
+    REQUIRE(decoder.stats().surfaceBudgetRejections == 1);
     const std::uint64_t callbackCalls =
         probe.calls.load(std::memory_order_acquire);
     decoder.close();
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) ==
+    REQUIRE(probe.calls.load(std::memory_order_acquire) ==
               callbackCalls + 1);
     for (FrameLease &occupant : occupants) {
       occupant.reset();
     }
-    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+    REQUIRE(NativeSurfaceBudget::stats().currentSurfaces == 0);
   }
 
   // End-of-stream can release presentation-reorder capacity without another
@@ -1685,20 +1686,20 @@ void testEventDrivenDecoderProgressWake() {
     VideoToolboxDecoder decoder(options);
     probe.decoder = &decoder;
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(decoder.submit(endOfStream(generation), &error) ==
-                         VideoDecodeSubmitResult::Accepted,
+    REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                         VideoDecodeDrainProgress::Done,
                      error);
-    // Compatibility submit performs two bounded owner-visible transitions:
-    // EOS begins, then the zero-frame tail is finalized at the sink.
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 2);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
-    WAM_CHECK(sink.reachedEndOfStream());
+    // Two bounded owner-visible transitions: EOS begins, then the zero-frame
+    // tail is finalized at the sink.
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == 2);
+    REQUIRE(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    REQUIRE(sink.reachedEndOfStream());
     const std::uint64_t eosCalls = probe.calls.load(std::memory_order_acquire);
     decoder.close();
-    WAM_CHECK(probe.calls.load(std::memory_order_acquire) == eosCalls + 1);
+    REQUIRE(probe.calls.load(std::memory_order_acquire) == eosCalls + 1);
   }
 }
 
@@ -1720,55 +1721,55 @@ void testExactDecoderRetirement() {
   VideoToolboxDecoder decoder(options);
   probe.decoder = &decoder;
   std::string error;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, sink, generation, &error),
                    error);
-  WAM_CHECK(decoder.retire(generation - 1, invalidation) ==
+  REQUIRE(decoder.retire(generation - 1, invalidation) ==
             VideoDecoderRetireProgress::StaleGeneration);
-  WAM_CHECK(decoder.stats().configured);
-  WAM_CHECK(decoder.stats().generation == generation);
-  WAM_CHECK(decoder.retire(generation, generation) ==
+  REQUIRE(decoder.stats().configured);
+  REQUIRE(decoder.stats().generation == generation);
+  REQUIRE(decoder.retire(generation, generation) ==
             VideoDecoderRetireProgress::Failed);
-  WAM_CHECK(decoder.stats().generation == generation);
+  REQUIRE(decoder.stats().generation == generation);
 
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                        decoder, 1, &error),
                    error);
   CVPixelBufferRef surface = createIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
   const wam::macos::FrameTiming timing{
       CMTimeMake(0, 1), CMTimeMake(1, 30), generation, true};
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, 0, surface, timing, &error),
                    error);
   CVPixelBufferRelease(surface);
-  WAM_CHECK(decoder.stats().pendingPresentationFrames == 1);
+  REQUIRE(decoder.stats().pendingPresentationFrames == 1);
 
   const std::uint64_t callsBefore =
       probe.calls.load(std::memory_order_acquire);
-  WAM_CHECK(decoder.retire(generation, invalidation) ==
+  REQUIRE(decoder.retire(generation, invalidation) ==
             VideoDecoderRetireProgress::Done);
   const auto retired = decoder.stats();
-  WAM_CHECK(!retired.configured);
-  WAM_CHECK(retired.generation == invalidation);
-  WAM_CHECK(retired.inFlightFrames == 0);
-  WAM_CHECK(retired.retainedPresentationFrames == 0);
-  WAM_CHECK(retired.pendingPresentationFrames == 0);
-  WAM_CHECK(!retired.acceptsCompressedSample);
-  WAM_CHECK(sink.generation() == invalidation);
-  WAM_CHECK(probe.calls.load(std::memory_order_acquire) == callsBefore + 1);
-  WAM_CHECK(decoder.retire(generation, invalidation) ==
+  REQUIRE(!retired.configured);
+  REQUIRE(retired.generation == invalidation);
+  REQUIRE(retired.inFlightFrames == 0);
+  REQUIRE(retired.retainedPresentationFrames == 0);
+  REQUIRE(retired.pendingPresentationFrames == 0);
+  REQUIRE(!retired.acceptsCompressedSample);
+  REQUIRE(sink.generation() == invalidation);
+  REQUIRE(probe.calls.load(std::memory_order_acquire) == callsBefore + 1);
+  REQUIRE(decoder.retire(generation, invalidation) ==
             VideoDecoderRetireProgress::Done);
-  WAM_CHECK(decoder.retire(generation, invalidation + 1) ==
+  REQUIRE(decoder.retire(generation, invalidation + 1) ==
             VideoDecoderRetireProgress::StaleGeneration);
-  WAM_CHECK(decoder.stats().generation == invalidation);
+  REQUIRE(decoder.stats().generation == invalidation);
   decoder.flush(invalidation + 10);
-  WAM_CHECK(decoder.stats().generation == invalidation);
-  WAM_CHECK(!decoder.configure(fixtureFreeStreamConfiguration(140), sink,
+  REQUIRE(decoder.stats().generation == invalidation);
+  REQUIRE(!decoder.configure(fixtureFreeStreamConfiguration(140), sink,
                                &error));
-  WAM_CHECK(error == "VideoToolbox decoder was terminally retired");
+  REQUIRE(error == "VideoToolbox decoder was terminally retired");
   decoder.close();
-  WAM_CHECK(decoder.stats().generation == invalidation);
+  REQUIRE(decoder.stats().generation == invalidation);
 }
 
 void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
@@ -1779,8 +1780,8 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
   using wam::macos::VideoToolboxDecoderTestAccess;
   using wam::macos::kNativeSurfaceBudgetProcessMaximumSurfaces;
 
-  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
-  WAM_CHECK(NativeSurfaceBudget::stats().currentBytes == 0);
+  REQUIRE(NativeSurfaceBudget::stats().currentSurfaces == 0);
+  REQUIRE(NativeSurfaceBudget::stats().currentBytes == 0);
 
   // A delivered old-generation frame remains accounted and keeps its
   // IOSurface alive until the sink's generation flush explicitly releases it.
@@ -1793,36 +1794,36 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
     options.maxPendingPresentationFrames = 1;
     VideoToolboxDecoder decoder(options);
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 1, &error),
                      error);
     CVPixelBufferRef pixelBuffer = createIOSurfacePixelBuffer(
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
     const wam::macos::FrameTiming timing{
         CMTimeMake(0, 1), CMTimeMake(1, 30), generation, true};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                          decoder, 0, pixelBuffer, timing, &error),
                      error);
     CVPixelBufferRelease(pixelBuffer);
 
-    WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+    REQUIRE(decoder.drainPresentation(generation, &error) ==
               wam::macos::VideoDecodeDrainProgress::Progress);
-    WAM_CHECK(sink.enqueueCalls == 1);
-    WAM_CHECK(sink.heldFrame);
-    WAM_CHECK(decoder.stats().inFlightFrames == 0);
-    WAM_CHECK(decoder.stats().surfaceBudgetRejections == 0);
-    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 1);
+    REQUIRE(sink.enqueueCalls == 1);
+    REQUIRE(sink.heldFrame);
+    REQUIRE(decoder.stats().inFlightFrames == 0);
+    REQUIRE(decoder.stats().surfaceBudgetRejections == 0);
+    REQUIRE(NativeSurfaceBudget::stats().currentSurfaces == 1);
     decoder.flush(nextGeneration);
-    WAM_CHECK(sink.flushCalls == 2);
-    WAM_CHECK(sink.lastFlushGeneration == nextGeneration);
-    WAM_CHECK(sink.bufferAliveAtHeldFlush);
-    WAM_CHECK(sink.surfaceCountAtHeldFlush == 1);
-    WAM_CHECK(sink.surfaceCountAfterHeldFlush == 0);
-    WAM_CHECK(!sink.heldFrame);
-    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+    REQUIRE(sink.flushCalls == 2);
+    REQUIRE(sink.lastFlushGeneration == nextGeneration);
+    REQUIRE(sink.bufferAliveAtHeldFlush);
+    REQUIRE(sink.surfaceCountAtHeldFlush == 1);
+    REQUIRE(sink.surfaceCountAfterHeldFlush == 0);
+    REQUIRE(!sink.heldFrame);
+    REQUIRE(NativeSurfaceBudget::stats().currentSurfaces == 0);
     decoder.close();
   }
 
@@ -1837,10 +1838,10 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
     options.maxPendingPresentationFrames = 1;
     VideoToolboxDecoder decoder(options);
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 1, &error),
                      error);
     VideoToolboxDecoderTestAccess::failNextCallbackAllocation(
@@ -1851,18 +1852,18 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
     const wam::macos::FrameTiming timing{
         CMTimeMake(0, 1), CMTimeMake(1, 30), generation, true};
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                          decoder, 0, pixelBuffer, timing, &error),
                      error);
     CVPixelBufferRelease(pixelBuffer);
-    WAM_CHECK(decoder.stats().inFlightFrames == 0);
-    WAM_CHECK(decoder.stats().deliveredFrames == 0);
-    WAM_CHECK(sink.enqueueCalls == 0);
-    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
-    WAM_CHECK(NativeSurfaceBudget::stats().currentBytes == 0);
+    REQUIRE(decoder.stats().inFlightFrames == 0);
+    REQUIRE(decoder.stats().deliveredFrames == 0);
+    REQUIRE(sink.enqueueCalls == 0);
+    REQUIRE(NativeSurfaceBudget::stats().currentSurfaces == 0);
+    REQUIRE(NativeSurfaceBudget::stats().currentBytes == 0);
     const auto callbackError = decoder.takeLastError();
-    WAM_CHECK(callbackError.has_value());
-    WAM_CHECK(callbackError->find("exhausted bounded storage") !=
+    REQUIRE(callbackError.has_value());
+    REQUIRE(callbackError->find("exhausted bounded storage") !=
               std::string::npos);
     decoder.close();
   }
@@ -1882,9 +1883,9 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
           kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
       occupant = FrameLease(pixelBuffer);
       CVPixelBufferRelease(pixelBuffer);
-      WAM_CHECK(occupant);
+      REQUIRE(occupant);
     }
-    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
+    REQUIRE(NativeSurfaceBudget::stats().currentSurfaces ==
               kNativeSurfaceBudgetProcessMaximumSurfaces);
 
     SurfaceBudgetTrackingSink sink;
@@ -1893,10 +1894,10 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
     options.maxPendingPresentationFrames = 1;
     VideoToolboxDecoder decoder(options);
     std::string error;
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          decoder, sink, generation, &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          decoder, 2, &error),
                      error);
     CVPixelBufferRef firstDeniedBuffer = createIOSurfacePixelBuffer(
@@ -1910,62 +1911,62 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
 
     // The later denial must remain behind the missing earlier callback and
     // may not prematurely retire its own admission credit.
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                          decoder, 1, secondDeniedBuffer, secondTiming, &error),
                      error);
-    WAM_CHECK(decoder.stats().inFlightFrames == 2);
-    WAM_CHECK(sink.enqueueCalls == 0);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+    REQUIRE(decoder.stats().inFlightFrames == 2);
+    REQUIRE(sink.enqueueCalls == 0);
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                          decoder, 0, firstDeniedBuffer, firstTiming, &error),
                      error);
     CVPixelBufferRelease(firstDeniedBuffer);
     CVPixelBufferRelease(secondDeniedBuffer);
 
     const auto stats = decoder.stats();
-    WAM_CHECK(stats.inFlightFrames == 0);
-    WAM_CHECK(stats.deliveredFrames == 0);
-    WAM_CHECK(stats.droppedFrames == 2);
-    WAM_CHECK(stats.surfaceBudgetRejections == 2);
-    WAM_CHECK(stats.pendingPresentationFrames == 0);
-    WAM_CHECK(sink.enqueueCalls == 0);
-    WAM_CHECK(!sink.heldFrame);
-    WAM_CHECK(!decoder.takeLastError().has_value());
+    REQUIRE(stats.inFlightFrames == 0);
+    REQUIRE(stats.deliveredFrames == 0);
+    REQUIRE(stats.droppedFrames == 2);
+    REQUIRE(stats.surfaceBudgetRejections == 2);
+    REQUIRE(stats.pendingPresentationFrames == 0);
+    REQUIRE(sink.enqueueCalls == 0);
+    REQUIRE(!sink.heldFrame);
+    REQUIRE(!decoder.takeLastError().has_value());
     decoder.close();
 
     // The public statistic is saturating: another denied callback at the
     // numeric ceiling cannot wrap the counter to zero.
     SurfaceBudgetTrackingSink saturationSink;
     VideoToolboxDecoder saturationDecoder(options);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                          saturationDecoder, saturationSink, generation,
                          &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::setSurfaceBudgetRejections(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::setSurfaceBudgetRejections(
                          saturationDecoder,
                          std::numeric_limits<std::uint64_t>::max(), &error),
                      error);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                          saturationDecoder, 1, &error),
                      error);
     CVPixelBufferRef saturationDeniedBuffer = createIOSurfacePixelBuffer(
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
-    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+    REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                          saturationDecoder, 0, saturationDeniedBuffer,
                          firstTiming, &error),
                      error);
     CVPixelBufferRelease(saturationDeniedBuffer);
-    WAM_CHECK(saturationDecoder.stats().inFlightFrames == 0);
-    WAM_CHECK(saturationDecoder.stats().surfaceBudgetRejections ==
+    REQUIRE(saturationDecoder.stats().inFlightFrames == 0);
+    REQUIRE(saturationDecoder.stats().surfaceBudgetRejections ==
               std::numeric_limits<std::uint64_t>::max());
-    WAM_CHECK(saturationSink.enqueueCalls == 0);
+    REQUIRE(saturationSink.enqueueCalls == 0);
     saturationDecoder.close();
     for (FrameLease &occupant : occupants) {
       occupant.reset();
     }
   }
 
-  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
-  WAM_CHECK(NativeSurfaceBudget::stats().currentBytes == 0);
+  REQUIRE(NativeSurfaceBudget::stats().currentSurfaces == 0);
+  REQUIRE(NativeSurfaceBudget::stats().currentBytes == 0);
 }
 
 void testInjectedCallbackOrderUsesDecodeSequence(
@@ -1978,17 +1979,17 @@ void testInjectedCallbackOrderUsesDecodeSequence(
   options.maxPendingPresentationFrames = 4;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         queue, &error),
       error);
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
           decoder, reorderDepth, &error),
       error);
   // Injected callbacks answer submitted refcon slots, so the four submissions
   // are reserved rather than decoded.
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
           decoder, 4, &error),
       error);
@@ -2008,7 +2009,7 @@ void testInjectedCallbackOrderUsesDecodeSequence(
     const wam::macos::FrameTiming timing{
         CMTimeMake(decodeOrderPts[sequence], 1), CMTimeMake(1, 1), generation,
         sequence == 0};
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
             decoder, sequence, buffers[sequence], timing, &error),
         error);
@@ -2018,8 +2019,8 @@ void testInjectedCallbackOrderUsesDecodeSequence(
   }
   // The reorder window holds the last reorderDepth frames back until end of
   // stream proves no earlier presentation time can still arrive.
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, generation, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
   while (decoder.drainPresentation(generation, &error) ==
          wam::macos::VideoDecodeDrainProgress::Progress) {
@@ -2029,16 +2030,16 @@ void testInjectedCallbackOrderUsesDecodeSequence(
   while (auto frame = queue.tryTake()) {
     deliveredPts.push_back(frame->timing().presentationTime.value);
   }
-  WAM_CHECK((deliveredPts == std::vector<std::int64_t>{0, 1, 2, 3}));
+  REQUIRE((deliveredPts == std::vector<std::int64_t>{0, 1, 2, 3}));
   const auto stats = decoder.stats();
-  WAM_CHECK(stats.codecReorderFrames == reorderDepth);
-  WAM_CHECK(stats.peakPendingPresentationFrames <=
+  REQUIRE(stats.codecReorderFrames == reorderDepth);
+  REQUIRE(stats.peakPendingPresentationFrames <=
             reorderDepth + options.maxInFlightFrames);
-  WAM_CHECK(stats.deliveredFrames == 4);
-  WAM_CHECK(stats.droppedFrames == 0);
-  WAM_CHECK(stats.outOfOrderDrops == 0);
-  WAM_CHECK(stats.inFlightFrames == 0);
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(stats.deliveredFrames == 4);
+  REQUIRE(stats.droppedFrames == 0);
+  REQUIRE(stats.outOfOrderDrops == 0);
+  REQUIRE(stats.inFlightFrames == 0);
+  REQUIRE(!decoder.takeLastError().has_value());
   decoder.close();
 }
 
@@ -2094,10 +2095,10 @@ void testOwnerProgressiveDeliveryRetainsBackpressureIdentity() {
   options.maxPendingPresentationFrames = 2;
   VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, sink, generation, &error),
                    error);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                        decoder, 2, &error),
                    error);
 
@@ -2105,13 +2106,13 @@ void testOwnerProgressiveDeliveryRetainsBackpressureIdentity() {
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
   CVPixelBufferRef second = createIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, 0, first,
                        FrameTiming{CMTimeMake(0, 1), CMTimeMake(1, 1),
                                    generation, true},
                        &error),
                    error);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, 1, second,
                        FrameTiming{CMTimeMake(1, 1), CMTimeMake(1, 1),
                                    generation, false},
@@ -2120,46 +2121,46 @@ void testOwnerProgressiveDeliveryRetainsBackpressureIdentity() {
   CVPixelBufferRelease(first);
   CVPixelBufferRelease(second);
 
-  WAM_CHECK(sink.attemptedBuffers.empty());
-  WAM_CHECK(decoder.stats().pendingPresentationFrames == 2);
-  WAM_CHECK(!decoder.stats().acceptsCompressedSample);
-  WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+  REQUIRE(sink.attemptedBuffers.empty());
+  REQUIRE(decoder.stats().pendingPresentationFrames == 2);
+  REQUIRE(!decoder.stats().acceptsCompressedSample);
+  REQUIRE(decoder.drainPresentation(generation, &error) ==
             VideoDecodeDrainProgress::Progress);
-  WAM_CHECK(sink.held.has_value());
-  WAM_CHECK(sink.held->timing().presentationTime.value == 0);
-  WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+  REQUIRE(sink.held.has_value());
+  REQUIRE(sink.held->timing().presentationTime.value == 0);
+  REQUIRE(decoder.drainPresentation(generation, &error) ==
             VideoDecodeDrainProgress::Quiescing);
-  WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+  REQUIRE(decoder.drainPresentation(generation, &error) ==
             VideoDecodeDrainProgress::Quiescing);
-  WAM_CHECK(sink.attemptedBuffers.size() == 3);
-  WAM_CHECK(sink.attemptedBuffers[1] == sink.attemptedBuffers[2]);
-  WAM_CHECK(sink.attemptedTimes[1] == 1);
-  WAM_CHECK(sink.attemptedTimes[2] == 1);
-  WAM_CHECK(decoder.stats().pendingPresentationFrames == 1);
-  WAM_CHECK(decoder.stats().droppedFrames == 0);
-  WAM_CHECK(decoder.stats().sinkBackpressureRetries == 2);
+  REQUIRE(sink.attemptedBuffers.size() == 3);
+  REQUIRE(sink.attemptedBuffers[1] == sink.attemptedBuffers[2]);
+  REQUIRE(sink.attemptedTimes[1] == 1);
+  REQUIRE(sink.attemptedTimes[2] == 1);
+  REQUIRE(decoder.stats().pendingPresentationFrames == 1);
+  REQUIRE(decoder.stats().droppedFrames == 0);
+  REQUIRE(decoder.stats().sinkBackpressureRetries == 2);
 
   auto firstTaken = sink.take();
-  WAM_CHECK(firstTaken.has_value());
+  REQUIRE(firstTaken.has_value());
   firstTaken.reset();
-  WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+  REQUIRE(decoder.drainPresentation(generation, &error) ==
             VideoDecodeDrainProgress::Progress);
-  WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+  REQUIRE(decoder.drainPresentation(generation, &error) ==
             VideoDecodeDrainProgress::Quiescing);
   auto secondTaken = sink.take();
-  WAM_CHECK(secondTaken.has_value());
-  WAM_CHECK(secondTaken->timing().presentationTime.value == 1);
+  REQUIRE(secondTaken.has_value());
+  REQUIRE(secondTaken->timing().presentationTime.value == 1);
   secondTaken.reset();
 
-  WAM_CHECK(decoder.beginEndOfStream(generation, &error) ==
+  REQUIRE(decoder.beginEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Progress);
-  WAM_CHECK(decoder.drainEndOfStream(generation, &error) ==
+  REQUIRE(decoder.drainEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Done);
-  WAM_CHECK(sink.endCalls == 1);
-  WAM_CHECK(sink.endGeneration == generation);
-  WAM_CHECK(decoder.drainEndOfStream(generation, &error) ==
+  REQUIRE(sink.endCalls == 1);
+  REQUIRE(sink.endGeneration == generation);
+  REQUIRE(decoder.drainEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Done);
-  WAM_CHECK(sink.endCalls == 1);
+  REQUIRE(sink.endCalls == 1);
   decoder.close();
 }
 
@@ -2176,48 +2177,48 @@ void testOwnerProgressiveCallbacksStraddleEndOfStream() {
   options.maxPendingPresentationFrames = 2;
   VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, sink, generation, &error), error);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                        decoder, 2, &error), error);
 
   CVPixelBufferRef first = createIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
   CVPixelBufferRef second = createIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, 0, first,
                        FrameTiming{CMTimeMake(0, 1), CMTimeMake(1, 1),
                                    generation, true},
                        &error), error);
-  WAM_CHECK(decoder.beginEndOfStream(generation, &error) ==
+  REQUIRE(decoder.beginEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Quiescing);
-  WAM_CHECK(decoder.drainEndOfStream(generation, &error) ==
+  REQUIRE(decoder.drainEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Quiescing);
-  WAM_CHECK(sink.attemptedBuffers.empty());
+  REQUIRE(sink.attemptedBuffers.empty());
 
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, 1, second,
                        FrameTiming{CMTimeMake(1, 1), CMTimeMake(1, 1),
                                    generation, false},
                        &error), error);
   CVPixelBufferRelease(first);
   CVPixelBufferRelease(second);
-  WAM_CHECK(decoder.drainEndOfStream(generation, &error) ==
+  REQUIRE(decoder.drainEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Progress);
   auto firstTaken = sink.take();
-  WAM_CHECK(firstTaken.has_value());
-  WAM_CHECK(firstTaken->timing().presentationTime.value == 0);
+  REQUIRE(firstTaken.has_value());
+  REQUIRE(firstTaken->timing().presentationTime.value == 0);
   firstTaken.reset();
-  WAM_CHECK(decoder.drainEndOfStream(generation, &error) ==
+  REQUIRE(decoder.drainEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Done);
   auto secondTaken = sink.take();
-  WAM_CHECK(secondTaken.has_value());
-  WAM_CHECK(secondTaken->timing().presentationTime.value == 1);
+  REQUIRE(secondTaken.has_value());
+  REQUIRE(secondTaken->timing().presentationTime.value == 1);
   secondTaken.reset();
-  WAM_CHECK(sink.endCalls == 1);
-  WAM_CHECK(decoder.stats().pendingPresentationFrames == 0);
-  WAM_CHECK(decoder.stats().droppedFrames == 0);
+  REQUIRE(sink.endCalls == 1);
+  REQUIRE(decoder.stats().pendingPresentationFrames == 0);
+  REQUIRE(decoder.stats().droppedFrames == 0);
   decoder.close();
 }
 
@@ -2235,26 +2236,26 @@ void testOwnerProgressiveTailFlushInvalidatesRetainedFrame() {
   options.maxPendingPresentationFrames = 2;
   VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, sink, generation, &error), error);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                        decoder, 1, &error), error);
   CVPixelBufferRef frame = createIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, 0, frame,
                        FrameTiming{CMTimeMake(7, 1), CMTimeMake(1, 1),
                                    generation, true},
                        &error), error);
   CVPixelBufferRelease(frame);
-  WAM_CHECK(decoder.beginEndOfStream(generation, &error) ==
+  REQUIRE(decoder.beginEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Progress);
-  WAM_CHECK(decoder.stats().pendingPresentationFrames == 1);
+  REQUIRE(decoder.stats().pendingPresentationFrames == 1);
   decoder.flush(nextGeneration);
-  WAM_CHECK(decoder.stats().pendingPresentationFrames == 0);
-  WAM_CHECK(decoder.drainEndOfStream(generation, &error) ==
+  REQUIRE(decoder.stats().pendingPresentationFrames == 0);
+  REQUIRE(decoder.drainEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::StaleGeneration);
-  WAM_CHECK(sink.attemptedBuffers.empty());
+  REQUIRE(sink.attemptedBuffers.empty());
   decoder.close();
 }
 
@@ -2270,35 +2271,35 @@ void testOwnerProgressiveZeroFrameEndOfStream() {
   options.maxPendingPresentationFrames = 1;
   VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, sink, generation, &error), error);
-  WAM_CHECK(decoder.beginEndOfStream(generation, &error) ==
+  REQUIRE(decoder.beginEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Progress);
-  WAM_CHECK(decoder.drainEndOfStream(generation, &error) ==
+  REQUIRE(decoder.drainEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Done);
-  WAM_CHECK(decoder.drainEndOfStream(generation, &error) ==
+  REQUIRE(decoder.drainEndOfStream(generation, &error) ==
             VideoDecodeDrainProgress::Done);
-  WAM_CHECK(sink.endCalls == 1);
-  WAM_CHECK(sink.attemptedBuffers.empty());
+  REQUIRE(sink.endCalls == 1);
+  REQUIRE(sink.attemptedBuffers.empty());
   decoder.close();
 
   OneSlotIdentitySink failingSink;
   VideoToolboxDecoder failingDecoder(options);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        failingDecoder, failingSink, generation + 1, &error),
                    error);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
                        failingDecoder, 1, &error), error);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrameResult(
                        failingDecoder, 0, nullptr,
                        wam::macos::FrameTiming{CMTimeMake(0, 1),
                                                CMTimeMake(1, 1),
                                                generation + 1, true},
                        -1, 0, &error), error);
-  WAM_CHECK(failingDecoder.beginEndOfStream(generation + 1, &error) ==
+  REQUIRE(failingDecoder.beginEndOfStream(generation + 1, &error) ==
             VideoDecodeDrainProgress::Failed);
-  WAM_CHECK(!error.empty());
-  WAM_CHECK(failingSink.endCalls == 0);
+  REQUIRE(!error.empty());
+  REQUIRE(failingSink.endCalls == 0);
   failingDecoder.close();
 }
 
@@ -2311,15 +2312,15 @@ void testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
   options.maxPendingPresentationFrames = 2;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         queue, &error),
       error);
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
           decoder, 0, &error),
       error);
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
           decoder, 2, &error),
       error);
@@ -2332,51 +2333,53 @@ void testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
       video.dimensions.width, video.dimensions.height);
   const wam::macos::FrameTiming secondTiming{
       CMTimeMake(1, 1), CMTimeMake(1, 1), generation, false};
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
           decoder, 1, second, secondTiming, &error),
       error);
 
   // A later callback must not free its admission credit while sequence zero is
   // still missing. PROT_NONE makes a premature packet copy fail deterministically.
-  WAM_CHECK(decoder.stats().inFlightFrames == 2);
+  REQUIRE(decoder.stats().inFlightFrames == 2);
   const long pageSize = sysconf(_SC_PAGESIZE);
-  WAM_CHECK(pageSize > 0);
+  REQUIRE(pageSize > 0);
   void *inaccessibleBytes = mmap(nullptr, static_cast<std::size_t>(pageSize),
                                  PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-  WAM_CHECK(inaccessibleBytes != MAP_FAILED);
-  auto guardedPacket = packetView(video.packets[keyIndex], generation);
-  guardedPacket.bytes = std::span<const std::byte>(
-      static_cast<const std::byte *>(inaccessibleBytes),
-      static_cast<std::size_t>(pageSize));
-  WAM_CHECK(decoder.submit(guardedPacket, &error) ==
-            wam::macos::VideoDecodeSubmitResult::Backpressure);
-  WAM_CHECK(munmap(inaccessibleBytes, static_cast<std::size_t>(pageSize)) == 0);
+  REQUIRE(inaccessibleBytes != MAP_FAILED);
+  {
+    ScopedCMSampleBuffer guarded = makeGuardedCompressedSample(
+        inaccessibleBytes, static_cast<std::size_t>(pageSize),
+        packetFormat(video.packets[keyIndex]));
+    REQUIRE(decoder.submitCMSampleBuffer(guarded.get(), generation,
+                                           &error) ==
+              wam::macos::VideoDecodeSubmitResult::Backpressure);
+  }
+  REQUIRE(munmap(inaccessibleBytes, static_cast<std::size_t>(pageSize)) == 0);
 
   const wam::macos::FrameTiming firstTiming{
       CMTimeMake(0, 1), CMTimeMake(1, 1), generation, true};
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
           decoder, 0, first, firstTiming, &error),
       error);
   CVPixelBufferRelease(first);
   CVPixelBufferRelease(second);
 
-  WAM_CHECK(decoder.stats().inFlightFrames == 0);
-  WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+  REQUIRE(decoder.stats().inFlightFrames == 0);
+  REQUIRE(decoder.drainPresentation(generation, &error) ==
             wam::macos::VideoDecodeDrainProgress::Progress);
-  WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+  REQUIRE(decoder.drainPresentation(generation, &error) ==
             wam::macos::VideoDecodeDrainProgress::Progress);
   auto firstOutput = queue.tryTake();
   auto secondOutput = queue.tryTake();
-  WAM_CHECK(firstOutput.has_value());
-  WAM_CHECK(secondOutput.has_value());
-  WAM_CHECK(CMTimeCompare(firstOutput->timing().presentationTime,
+  REQUIRE(firstOutput.has_value());
+  REQUIRE(secondOutput.has_value());
+  REQUIRE(CMTimeCompare(firstOutput->timing().presentationTime,
                           CMTimeMake(0, 1)) == 0);
-  WAM_CHECK(CMTimeCompare(secondOutput->timing().presentationTime,
+  REQUIRE(CMTimeCompare(secondOutput->timing().presentationTime,
                           CMTimeMake(1, 1)) == 0);
-  WAM_CHECK(decoder.stats().backpressuredSubmissions == 1);
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(decoder.stats().backpressuredSubmissions == 1);
+  REQUIRE(!decoder.takeLastError().has_value());
   decoder.close();
 }
 
@@ -2393,11 +2396,11 @@ void testCallbackAllocationFailureFailsClosedAndRetiresInOrder() {
     options.maxPendingPresentationFrames = 2;
     wam::macos::VideoToolboxDecoder decoder(options);
     std::string error;
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
             decoder, queue, generation, &error),
         error);
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
             decoder, 2, &error),
         error);
@@ -2409,28 +2412,28 @@ void testCallbackAllocationFailureFailsClosedAndRetiresInOrder() {
                                 generation, false}};
     wam::macos::VideoToolboxDecoderTestAccess::failNextCallbackAllocation(
         decoder, point);
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
             decoder, failingSequence, nullptr, timings[failingSequence],
             &error),
         error);
-    WAM_CHECK(decoder.stats().inFlightFrames == expectedAfterFailure);
+    REQUIRE(decoder.stats().inFlightFrames == expectedAfterFailure);
 
     const std::uint64_t remainingSequence = failingSequence == 0 ? 1 : 0;
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
             decoder, remainingSequence, nullptr,
             timings[remainingSequence], &error),
         error);
 
     const auto stats = decoder.stats();
-    WAM_CHECK(stats.inFlightFrames == 0);
-    WAM_CHECK(stats.deliveredFrames == 0);
-    WAM_CHECK(stats.pendingPresentationFrames == 0);
-    WAM_CHECK(!queue.tryTake().has_value());
+    REQUIRE(stats.inFlightFrames == 0);
+    REQUIRE(stats.deliveredFrames == 0);
+    REQUIRE(stats.pendingPresentationFrames == 0);
+    REQUIRE(!queue.tryTake().has_value());
     const auto callbackError = decoder.takeLastError();
-    WAM_CHECK(callbackError.has_value());
-    WAM_CHECK(callbackError->find("exhausted bounded storage") !=
+    REQUIRE(callbackError.has_value());
+    REQUIRE(callbackError->find("exhausted bounded storage") !=
               std::string::npos);
     decoder.close();
   };
@@ -2456,17 +2459,17 @@ void testCoreFoundationAllocationFailuresFailClosed() {
     TestAccess::failNextCFAllocation(point);
     CMVideoFormatDescriptionRef format = nullptr;
     std::string error;
-    WAM_CHECK(!TestAccess::copyFormatDescription(
+    REQUIRE(!TestAccess::copyFormatDescription(
         fixtureFreeStreamConfiguration(451), &format, &error));
-    WAM_CHECK(format == nullptr);
-    WAM_CHECK(!error.empty());
+    REQUIRE(format == nullptr);
+    REQUIRE(!error.empty());
 
     // Every injected fault is one-shot. The same production builder must be
     // usable immediately afterward and must not retain a partial CF object.
-    WAM_CHECK_DETAIL(TestAccess::copyFormatDescription(
+    REQUIRE_DETAIL(TestAccess::copyFormatDescription(
                          fixtureFreeStreamConfiguration(452), &format, &error),
                      error);
-    WAM_CHECK(format != nullptr);
+    REQUIRE(format != nullptr);
     CFRelease(format);
   }
 
@@ -2481,10 +2484,10 @@ void testCoreFoundationAllocationFailuresFailClosed() {
     wam::macos::VideoToolboxDecoder decoder;
     TestAccess::failNextCFAllocation(point);
     std::string error;
-    WAM_CHECK(!decoder.configure(fixtureFreeStreamConfiguration(generation),
+    REQUIRE(!decoder.configure(fixtureFreeStreamConfiguration(generation),
                                  queue, &error));
-    WAM_CHECK(!decoder.stats().configured);
-    WAM_CHECK(error.find("allocate") != std::string::npos);
+    REQUIRE(!decoder.stats().configured);
+    REQUIRE(error.find("allocate") != std::string::npos);
     decoder.close();
     ++generation;
   }
@@ -2503,7 +2506,7 @@ void testDecodedDimensionMismatchFailsBeforeSurfaceAdmission() {
   options.maxPendingPresentationFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, queue, generation, &error),
                    error);
 
@@ -2511,7 +2514,7 @@ void testDecodedDimensionMismatchFailsBeforeSurfaceAdmission() {
   std::uint64_t sequence = 0;
   const FrameTiming timing{CMTimeMake(0, 1), CMTimeMake(1, 30), generation,
                            true};
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
                        decoder, timing, &sequence, &error) ==
                        VideoDecodeSubmitResult::Accepted,
                    error);
@@ -2519,26 +2522,26 @@ void testDecodedDimensionMismatchFailsBeforeSurfaceAdmission() {
   const CVReturn createStatus = CVPixelBufferCreate(
       kCFAllocatorDefault, 128, 64, kCVPixelFormatType_32BGRA, nullptr,
       &malformedDimensions);
-  WAM_CHECK(createStatus == kCVReturnSuccess);
-  WAM_CHECK(malformedDimensions != nullptr);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE(createStatus == kCVReturnSuccess);
+  REQUIRE(malformedDimensions != nullptr);
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, sequence, malformedDimensions, timing, &error),
                    error);
   CVPixelBufferRelease(malformedDimensions);
 
   const auto rejected = decoder.stats();
-  WAM_CHECK(rejected.inFlightFrames == 0);
-  WAM_CHECK(rejected.deliveredFrames == 0);
-  WAM_CHECK(rejected.droppedFrames == 1);
-  WAM_CHECK(rejected.pendingPresentationFrames == 0);
-  WAM_CHECK(rejected.actualOutputPixelFormat == 0);
-  WAM_CHECK(!queue.tryTake().has_value());
+  REQUIRE(rejected.inFlightFrames == 0);
+  REQUIRE(rejected.deliveredFrames == 0);
+  REQUIRE(rejected.droppedFrames == 1);
+  REQUIRE(rejected.pendingPresentationFrames == 0);
+  REQUIRE(rejected.actualOutputPixelFormat == 0);
+  REQUIRE(!queue.tryTake().has_value());
   const auto budgetAfter = NativeSurfaceBudget::stats();
-  WAM_CHECK(budgetAfter.currentSurfaces == budgetBefore.currentSurfaces);
-  WAM_CHECK(budgetAfter.currentBytes == budgetBefore.currentBytes);
+  REQUIRE(budgetAfter.currentSurfaces == budgetBefore.currentSurfaces);
+  REQUIRE(budgetAfter.currentBytes == budgetBefore.currentBytes);
   const auto callbackError = decoder.takeLastError();
-  WAM_CHECK(callbackError.has_value());
-  WAM_CHECK(callbackError->find("dimensions") != std::string::npos);
+  REQUIRE(callbackError.has_value());
+  REQUIRE(callbackError->find("dimensions") != std::string::npos);
   decoder.close();
 }
 
@@ -2546,16 +2549,16 @@ void testDecodedSdrColorAttachmentMatrix() {
   using TestAccess = wam::macos::VideoToolboxDecoderTestAccess;
 
   CVPixelBufferRef pixelBuffer = nullptr;
-  WAM_CHECK(CVPixelBufferCreate(kCFAllocatorDefault, 64, 32,
+  REQUIRE(CVPixelBufferCreate(kCFAllocatorDefault, 64, 32,
                                 kCVPixelFormatType_32BGRA, nullptr,
                                 &pixelBuffer) == kCVReturnSuccess);
-  WAM_CHECK(pixelBuffer != nullptr);
+  REQUIRE(pixelBuffer != nullptr);
   std::string error;
   const auto validates = [&](bool expected) {
     const bool result =
         TestAccess::validateDecodedColorAttachments(pixelBuffer, &error);
-    WAM_CHECK(result == expected);
-    WAM_CHECK(expected ? error.empty() : !error.empty());
+    REQUIRE(result == expected);
+    REQUIRE(expected ? error.empty() : !error.empty());
   };
   const auto resetAttachments = [&] {
     CVBufferRemoveAllAttachments(pixelBuffer);
@@ -2619,15 +2622,15 @@ void testDecodedSdrColorAttachmentMatrix() {
 
   const std::uint8_t metadataByte = 1;
   CFDataRef metadata = CFDataCreate(kCFAllocatorDefault, &metadataByte, 1);
-  WAM_CHECK(metadata != nullptr);
+  REQUIRE(metadata != nullptr);
   const std::int32_t metadataInteger = 1;
   CFNumberRef number = CFNumberCreate(
       kCFAllocatorDefault, kCFNumberSInt32Type, &metadataInteger);
-  WAM_CHECK(number != nullptr);
+  REQUIRE(number != nullptr);
   CFDictionaryRef dictionary = CFDictionaryCreate(
       kCFAllocatorDefault, nullptr, nullptr, 0,
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  WAM_CHECK(dictionary != nullptr);
+  REQUIRE(dictionary != nullptr);
   const auto rejectsPresence = [&](CFStringRef key, CFTypeRef value) {
     resetAttachments();
     CVBufferSetAttachment(pixelBuffer, key, value,
@@ -2704,20 +2707,20 @@ void testDecodedColorCallbackRejectsHdrBeforeLease() {
   options.maxPendingPresentationFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, queue, generation, &error),
                    error);
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       VideoToolboxDecoderTestAccess::setPermitSyntheticOutputSurface(
           decoder, true, &error),
       error);
 
   const auto createColorBuffer = [](CFStringRef transfer) {
     CVPixelBufferRef result = nullptr;
-    WAM_CHECK(CVPixelBufferCreate(kCFAllocatorDefault, 64, 32,
+    REQUIRE(CVPixelBufferCreate(kCFAllocatorDefault, 64, 32,
                                   kCVPixelFormatType_32BGRA, nullptr,
                                   &result) == kCVReturnSuccess);
-    WAM_CHECK(result != nullptr);
+    REQUIRE(result != nullptr);
     CVBufferSetAttachment(result, kCVImageBufferColorPrimariesKey,
                           kCVImageBufferColorPrimaries_ITU_R_709_2,
                           kCVAttachmentMode_ShouldNotPropagate);
@@ -2730,7 +2733,7 @@ void testDecodedColorCallbackRejectsHdrBeforeLease() {
   std::uint64_t sequence = 0;
   const FrameTiming hdrTiming{CMTimeMake(0, 1), CMTimeMake(1, 30), generation,
                               true};
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
                        decoder, hdrTiming, &sequence, &error) ==
                        VideoDecodeSubmitResult::Accepted,
                    error);
@@ -2739,45 +2742,45 @@ void testDecodedColorCallbackRejectsHdrBeforeLease() {
   // nothing in the presentation path implements it.
   CVPixelBufferRef refusedTransfer =
       createColorBuffer(kCVImageBufferTransferFunction_sRGB);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, sequence, refusedTransfer, hdrTiming, &error),
                    error);
   CVPixelBufferRelease(refusedTransfer);
   const auto rejected = decoder.stats();
-  WAM_CHECK(rejected.inFlightFrames == 0);
-  WAM_CHECK(rejected.deliveredFrames == 0);
-  WAM_CHECK(rejected.droppedFrames == 1);
-  WAM_CHECK(rejected.pendingPresentationFrames == 0);
-  WAM_CHECK(rejected.actualOutputPixelFormat == 0);
-  WAM_CHECK(!queue.tryTake().has_value());
+  REQUIRE(rejected.inFlightFrames == 0);
+  REQUIRE(rejected.deliveredFrames == 0);
+  REQUIRE(rejected.droppedFrames == 1);
+  REQUIRE(rejected.pendingPresentationFrames == 0);
+  REQUIRE(rejected.actualOutputPixelFormat == 0);
+  REQUIRE(!queue.tryTake().has_value());
   const auto budgetAfterHdr = NativeSurfaceBudget::stats();
-  WAM_CHECK(budgetAfterHdr.currentSurfaces == budgetBefore.currentSurfaces);
-  WAM_CHECK(budgetAfterHdr.currentBytes == budgetBefore.currentBytes);
+  REQUIRE(budgetAfterHdr.currentSurfaces == budgetBefore.currentSurfaces);
+  REQUIRE(budgetAfterHdr.currentBytes == budgetBefore.currentBytes);
   const auto callbackError = decoder.takeLastError();
-  WAM_CHECK(callbackError.has_value());
-  WAM_CHECK(callbackError->find("color or HDR") != std::string::npos);
+  REQUIRE(callbackError.has_value());
+  REQUIRE(callbackError->find("color or HDR") != std::string::npos);
 
   const FrameTiming sdrTiming{
       CMTimeMake(1, 30), CMTimeMake(1, 30), generation, false};
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::reserveInjectedSubmission(
                        decoder, sdrTiming, &sequence, &error) ==
                        VideoDecodeSubmitResult::Accepted,
                    error);
   CVPixelBufferRef bt709 =
       createColorBuffer(kCVImageBufferTransferFunction_ITU_R_709_2);
-  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
+  REQUIRE_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
                        decoder, sequence, bt709, sdrTiming, &error),
                    error);
   CVPixelBufferRelease(bt709);
-  WAM_CHECK(decoder.stats().pendingPresentationFrames == 1);
-  WAM_CHECK(decoder.drainPresentation(generation, &error) ==
+  REQUIRE(decoder.stats().pendingPresentationFrames == 1);
+  REQUIRE(decoder.drainPresentation(generation, &error) ==
             VideoDecodeDrainProgress::Progress);
-  WAM_CHECK(queue.tryTake().has_value());
-  WAM_CHECK(decoder.stats().deliveredFrames == 1);
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(queue.tryTake().has_value());
+  REQUIRE(decoder.stats().deliveredFrames == 1);
+  REQUIRE(!decoder.takeLastError().has_value());
   const auto budgetAfterSdr = NativeSurfaceBudget::stats();
-  WAM_CHECK(budgetAfterSdr.currentSurfaces == budgetBefore.currentSurfaces);
-  WAM_CHECK(budgetAfterSdr.currentBytes == budgetBefore.currentBytes);
+  REQUIRE(budgetAfterSdr.currentSurfaces == budgetBefore.currentSurfaces);
+  REQUIRE(budgetAfterSdr.currentBytes == budgetBefore.currentBytes);
   decoder.close();
 }
 
@@ -2790,7 +2793,7 @@ void testConfigurationByteBound(const DemuxedVideo &video) {
   void *inaccessibleBytes =
       mmap(nullptr, oversizedConfigurationBytes, PROT_NONE,
            MAP_PRIVATE | MAP_ANON, -1, 0);
-  WAM_CHECK(inaccessibleBytes != MAP_FAILED);
+  REQUIRE(inaccessibleBytes != MAP_FAILED);
 
   wam::test::BoundedFrameQueue queue(1, generation);
   wam::macos::VideoToolboxDecoder decoder;
@@ -2799,9 +2802,9 @@ void testConfigurationByteBound(const DemuxedVideo &video) {
       static_cast<const std::byte *>(inaccessibleBytes),
       oversizedConfigurationBytes);
   std::string error;
-  WAM_CHECK(!decoder.configure(configuration, queue, &error));
-  WAM_CHECK(!error.empty());
-  WAM_CHECK(munmap(inaccessibleBytes, oversizedConfigurationBytes) == 0);
+  REQUIRE(!decoder.configure(configuration, queue, &error));
+  REQUIRE(!error.empty());
+  REQUIRE(munmap(inaccessibleBytes, oversizedConfigurationBytes) == 0);
 }
 
 void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
@@ -2810,23 +2813,23 @@ void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
   const auto reorderDepth =
       wam::macos::VideoToolboxDecoderTestAccess::codecReorderDepth(
           configuration);
-  WAM_CHECK(reorderDepth.has_value());
+  REQUIRE(reorderDepth.has_value());
   const auto reorderFrames =
       reorderDepth ? std::optional<std::size_t>(reorderDepth->frames)
                    : std::nullopt;
-  WAM_CHECK(*reorderFrames > 0);
-  WAM_CHECK(*reorderFrames <= 8);
+  REQUIRE(*reorderFrames > 0);
+  REQUIRE(*reorderFrames <= 8);
 
   auto appendToFirstSps = [&](std::initializer_list<std::byte> suffix) {
     std::vector<std::byte> malformed = video.configuration;
-    WAM_CHECK(malformed.size() >= 8);
+    REQUIRE(malformed.size() >= 8);
     const std::size_t spsLength =
         (static_cast<std::size_t>(std::to_integer<std::uint8_t>(malformed[6]))
          << 8U) |
         std::to_integer<std::uint8_t>(malformed[7]);
-    WAM_CHECK(spsLength <= malformed.size() - 8);
+    REQUIRE(spsLength <= malformed.size() - 8);
     const std::size_t expandedLength = spsLength + suffix.size();
-    WAM_CHECK(expandedLength <= std::numeric_limits<std::uint16_t>::max());
+    REQUIRE(expandedLength <= std::numeric_limits<std::uint16_t>::max());
     malformed.insert(malformed.begin() + static_cast<std::ptrdiff_t>(8 + spsLength),
                      suffix.begin(), suffix.end());
     malformed[6] =
@@ -2842,7 +2845,7 @@ void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
                              std::byte{0x03}, std::byte{0x04}})}) {
     auto malformedConfiguration = configuration;
     malformedConfiguration.codecConfiguration = malformed;
-    WAM_CHECK(
+    REQUIRE(
         !wam::macos::VideoToolboxDecoderTestAccess::codecReorderDepth(
              malformedConfiguration)
              .has_value());
@@ -2854,8 +2857,8 @@ void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
   wam::macos::VideoToolboxDecoder decoder(options);
   wam::test::BoundedFrameQueue queue(2, generation);
   std::string error;
-  WAM_CHECK(!decoder.configure(configuration, queue, &error));
-  WAM_CHECK(error.find("exceeding the configured bound") != std::string::npos);
+  REQUIRE(!decoder.configure(configuration, queue, &error));
+  REQUIRE(error.find("exceeding the configured bound") != std::string::npos);
 }
 
 void testDefaultBoundMakesProgressBeforeEndOfStream(
@@ -2867,7 +2870,7 @@ void testDefaultBoundMakesProgressBeforeEndOfStream(
   options.maxInFlightFrames = 2;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         queue, &error),
       error);
@@ -2877,29 +2880,29 @@ void testDefaultBoundMakesProgressBeforeEndOfStream(
         std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (true) {
       const auto result =
-          decoder.submit(packetView(video.packets[index], generation), &error);
+          submitPacket(decoder, video.packets[index], generation, &error);
       if (result == wam::macos::VideoDecodeSubmitResult::Accepted) {
         break;
       }
-      WAM_CHECK_DETAIL(result ==
+      REQUIRE_DETAIL(result ==
                            wam::macos::VideoDecodeSubmitResult::Backpressure,
                        error);
-      WAM_CHECK_DETAIL(std::chrono::steady_clock::now() < deadline,
+      REQUIRE_DETAIL(std::chrono::steady_clock::now() < deadline,
                        "finite decoder admission stalled before EOS");
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   }
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, generation, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
   const auto stats = decoder.stats();
-  WAM_CHECK(stats.submittedFrames == packetCount);
-  WAM_CHECK(stats.deliveredFrames == packetCount);
-  WAM_CHECK(stats.droppedFrames == 0);
+  REQUIRE(stats.submittedFrames == packetCount);
+  REQUIRE(stats.deliveredFrames == packetCount);
+  REQUIRE(stats.droppedFrames == 0);
   if (requireHardware) {
-    WAM_CHECK(stats.usingHardwareAcceleratedDecoder);
+    REQUIRE(stats.usingHardwareAcceleratedDecoder);
   }
-  WAM_CHECK(stats.inFlightFrames == 0);
+  REQUIRE(stats.inFlightFrames == 0);
   decoder.close();
 }
 
@@ -2908,7 +2911,7 @@ void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
                                                bool requireHardware) {
   constexpr std::uint64_t generation = 40;
   const std::size_t packetCount = video.packets.size() - keyIndex;
-  WAM_CHECK(packetCount >= 3);
+  REQUIRE(packetCount >= 3);
 
   bool decodeOrderDiffersFromPresentationOrder = false;
   for (std::size_t index = keyIndex + 1; index < video.packets.size();
@@ -2917,61 +2920,61 @@ void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
         earlier(video.packets[index].presentationTime,
                 video.packets[index - 1].presentationTime);
   }
-  WAM_CHECK_DETAIL(decodeOrderDiffersFromPresentationOrder,
+  REQUIRE_DETAIL(decodeOrderDiffersFromPresentationOrder,
                    "H.264 fixture must contain B-frame PTS reordering");
 
   wam::test::BoundedFrameQueue queue(packetCount + 1, generation);
   wam::macos::VideoToolboxDecoder decoder({packetCount + 1});
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         queue, &error),
       error);
 
   for (std::size_t index = keyIndex; index < video.packets.size(); ++index) {
-    WAM_CHECK_DETAIL(
-        decoder.submit(packetView(video.packets[index], generation), &error) ==
+    REQUIRE_DETAIL(
+        submitPacket(decoder, video.packets[index], generation, &error) ==
             wam::macos::VideoDecodeSubmitResult::Accepted,
         error);
   }
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, generation, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
 
   const wam::macos::VideoDecoderStats stats = decoder.stats();
-  WAM_CHECK(stats.submittedFrames == packetCount);
-  WAM_CHECK(stats.deliveredFrames == packetCount);
-  WAM_CHECK(stats.droppedFrames == 0);
-  WAM_CHECK(stats.outOfOrderDrops == 0);
-  WAM_CHECK(stats.codecReorderFrames > 0);
-  WAM_CHECK(stats.codecReorderFrames <= 8);
-  WAM_CHECK(stats.requestedOutputPixelFormat ==
+  REQUIRE(stats.submittedFrames == packetCount);
+  REQUIRE(stats.deliveredFrames == packetCount);
+  REQUIRE(stats.droppedFrames == 0);
+  REQUIRE(stats.outOfOrderDrops == 0);
+  REQUIRE(stats.codecReorderFrames > 0);
+  REQUIRE(stats.codecReorderFrames <= 8);
+  REQUIRE(stats.requestedOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
-  WAM_CHECK(stats.actualOutputPixelFormat ==
+  REQUIRE(stats.actualOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
 
   auto metalCache = wam::macos::MetalTextureCache::create(nullptr, &error);
-  WAM_CHECK_DETAIL(metalCache != nullptr, error);
+  REQUIRE_DETAIL(metalCache != nullptr, error);
 
   std::vector<CMTime> outputTimes;
   outputTimes.reserve(packetCount);
   while (auto frame = queue.tryTake()) {
-    WAM_CHECK(frame->isIOSurfaceBacked());
-    WAM_CHECK(frame->pixelFormat() == stats.actualOutputPixelFormat);
-    WAM_CHECK(CMTIME_IS_VALID(frame->timing().presentationTime));
-    WAM_CHECK(CMTIME_IS_VALID(frame->timing().duration));
+    REQUIRE(frame->isIOSurfaceBacked());
+    REQUIRE(frame->pixelFormat() == stats.actualOutputPixelFormat);
+    REQUIRE(CMTIME_IS_VALID(frame->timing().presentationTime));
+    REQUIRE(CMTIME_IS_VALID(frame->timing().duration));
     if (!outputTimes.empty()) {
-      WAM_CHECK(!earlier(frame->timing().presentationTime, outputTimes.back()));
+      REQUIRE(!earlier(frame->timing().presentationTime, outputTimes.back()));
     }
     outputTimes.push_back(frame->timing().presentationTime);
 
     auto metalFrame = metalCache->importFrame(*frame, &error);
-    WAM_CHECK_DETAIL(metalFrame.has_value(), error);
-    WAM_CHECK(metalFrame->planeCount() == 2);
-    WAM_CHECK(metalFrame->nativeTexture(0) != nullptr);
-    WAM_CHECK(metalFrame->nativeTexture(1) != nullptr);
+    REQUIRE_DETAIL(metalFrame.has_value(), error);
+    REQUIRE(metalFrame->planeCount() == 2);
+    REQUIRE(metalFrame->nativeTexture(0) != nullptr);
+    REQUIRE(metalFrame->nativeTexture(1) != nullptr);
   }
-  WAM_CHECK(outputTimes.size() == packetCount);
+  REQUIRE(outputTimes.size() == packetCount);
 
   std::vector<CMTime> expectedTimes;
   expectedTimes.reserve(packetCount);
@@ -2981,9 +2984,9 @@ void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
   std::sort(expectedTimes.begin(), expectedTimes.end(),
             [](CMTime left, CMTime right) { return earlier(left, right); });
   for (std::size_t index = 0; index < expectedTimes.size(); ++index) {
-    WAM_CHECK(CMTimeCompare(outputTimes[index], expectedTimes[index]) == 0);
+    REQUIRE(CMTimeCompare(outputTimes[index], expectedTimes[index]) == 0);
   }
-  WAM_CHECK(queue.reachedEndOfStream());
+  REQUIRE(queue.reachedEndOfStream());
   decoder.close();
 }
 
@@ -2999,36 +3002,36 @@ void testDecodedNV12OpenGLInterop(const DemuxedVideo &video,
   options.outputInterop = wam::macos::VideoDecoderOutputInterop::OpenGL;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         queue, &error),
       error);
   for (std::size_t index = keyIndex; index < video.packets.size(); ++index) {
-    WAM_CHECK_DETAIL(
-        decoder.submit(packetView(video.packets[index], generation), &error) ==
+    REQUIRE_DETAIL(
+        submitPacket(decoder, video.packets[index], generation, &error) ==
             wam::macos::VideoDecodeSubmitResult::Accepted,
         error);
   }
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, generation, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
 
   const auto stats = decoder.stats();
-  WAM_CHECK(stats.outputInterop ==
+  REQUIRE(stats.outputInterop ==
             wam::macos::VideoDecoderOutputInterop::OpenGL);
-  WAM_CHECK(stats.requestedOutputPixelFormat ==
+  REQUIRE(stats.requestedOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
-  WAM_CHECK(stats.actualOutputPixelFormat ==
+  REQUIRE(stats.actualOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
-  WAM_CHECK(stats.deliveredFrames == packetCount);
-  WAM_CHECK(stats.droppedFrames == 0);
+  REQUIRE(stats.deliveredFrames == packetCount);
+  REQUIRE(stats.droppedFrames == 0);
   if (requireHardware) {
-    WAM_CHECK(stats.usingHardwareAcceleratedDecoder);
+    REQUIRE(stats.usingHardwareAcceleratedDecoder);
   }
 
   std::size_t importedFrames = 0;
   while (auto frame = queue.tryTake()) {
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
             frame->pixelBuffer(), stats.requestedOutputPixelFormat,
             wam::macos::VideoDecoderOutputInterop::OpenGL, &error),
@@ -3036,9 +3039,9 @@ void testDecodedNV12OpenGLInterop(const DemuxedVideo &video,
     bindIOSurfacePlanesWithCGL(cglContext, frame->pixelBuffer());
     ++importedFrames;
   }
-  WAM_CHECK(importedFrames == packetCount);
-  WAM_CHECK(queue.reachedEndOfStream());
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(importedFrames == packetCount);
+  REQUIRE(queue.reachedEndOfStream());
+  REQUIRE(!decoder.takeLastError().has_value());
   std::cout << "NV12 VT-to-CGL decode passed ("
             << (stats.usingHardwareAcceleratedDecoder ? "hardware" : "software")
             << " VideoToolbox)\n";
@@ -3051,43 +3054,43 @@ void testDecodedP010OpenGLInterop(const DemuxedVideo &video,
                                   CGLContextObj cglContext) {
   constexpr std::uint64_t generation = 46;
   const std::size_t packetCount = video.packets.size() - keyIndex;
-  WAM_CHECK(packetCount > 0);
+  REQUIRE(packetCount > 0);
   wam::test::BoundedFrameQueue queue(packetCount + 1, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = packetCount + 1;
   options.outputInterop = wam::macos::VideoDecoderOutputInterop::OpenGL;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         queue, &error),
       error);
   for (std::size_t index = keyIndex; index < video.packets.size(); ++index) {
-    WAM_CHECK_DETAIL(
-        decoder.submit(packetView(video.packets[index], generation), &error) ==
+    REQUIRE_DETAIL(
+        submitPacket(decoder, video.packets[index], generation, &error) ==
             wam::macos::VideoDecodeSubmitResult::Accepted,
         error);
   }
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, generation, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
 
   const auto stats = decoder.stats();
-  WAM_CHECK(stats.outputInterop ==
+  REQUIRE(stats.outputInterop ==
             wam::macos::VideoDecoderOutputInterop::OpenGL);
-  WAM_CHECK(stats.requestedOutputPixelFormat ==
+  REQUIRE(stats.requestedOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
-  WAM_CHECK(stats.actualOutputPixelFormat ==
+  REQUIRE(stats.actualOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
-  WAM_CHECK(stats.deliveredFrames == packetCount);
-  WAM_CHECK(stats.droppedFrames == 0);
+  REQUIRE(stats.deliveredFrames == packetCount);
+  REQUIRE(stats.droppedFrames == 0);
   if (requireHardware) {
-    WAM_CHECK(stats.usingHardwareAcceleratedDecoder);
+    REQUIRE(stats.usingHardwareAcceleratedDecoder);
   }
 
   std::size_t importedFrames = 0;
   while (auto frame = queue.tryTake()) {
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
             frame->pixelBuffer(), stats.requestedOutputPixelFormat,
             wam::macos::VideoDecoderOutputInterop::OpenGL, &error),
@@ -3095,9 +3098,9 @@ void testDecodedP010OpenGLInterop(const DemuxedVideo &video,
     bindIOSurfacePlanesWithCGL(cglContext, frame->pixelBuffer());
     ++importedFrames;
   }
-  WAM_CHECK(importedFrames == packetCount);
-  WAM_CHECK(queue.reachedEndOfStream());
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(importedFrames == packetCount);
+  REQUIRE(queue.reachedEndOfStream());
+  REQUIRE(!decoder.takeLastError().has_value());
   std::cout << "P010 VT-to-CGL decode passed ("
             << (stats.usingHardwareAcceleratedDecoder ? "hardware" : "software")
             << " VideoToolbox)\n";
@@ -3109,17 +3112,17 @@ void testSyntheticP010LayoutRejection(CGLContextObj cglContext) {
       kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, 128, 64,
       wam::macos::VideoDecoderOutputInterop::OpenGL);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
           p010, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
           wam::macos::VideoDecoderOutputInterop::OpenGL, &error),
       error);
   bindIOSurfacePlanesWithCGL(cglContext, p010);
 
-  WAM_CHECK(!wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
+  REQUIRE(!wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
       p010, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
       wam::macos::VideoDecoderOutputInterop::OpenGL, &error));
-  WAM_CHECK(error.find("pixel format") != std::string::npos);
+  REQUIRE(error.find("pixel format") != std::string::npos);
   CVPixelBufferRelease(p010);
 }
 
@@ -3131,18 +3134,17 @@ void testSinkBackpressureIsRecoverable(const DemuxedVideo &video,
   wam::test::BoundedFrameQueue queue(1, firstGeneration);
   wam::macos::VideoToolboxDecoder decoder({video.packets.size() + 1});
   std::string error;
-  WAM_CHECK_DETAIL(decoder.configure(streamConfiguration(video, firstGeneration,
+  REQUIRE_DETAIL(decoder.configure(streamConfiguration(video, firstGeneration,
                                                          requireHardware),
                                      queue, &error),
                    error);
   for (std::size_t index = keyIndex; index < video.packets.size(); ++index) {
     while (true) {
-      const auto submitted = decoder.submit(
-          packetView(video.packets[index], firstGeneration), &error);
+      const auto submitted = submitPacket(decoder, video.packets[index], firstGeneration, &error);
       if (submitted == wam::macos::VideoDecodeSubmitResult::Accepted) {
         break;
       }
-      WAM_CHECK_DETAIL(
+      REQUIRE_DETAIL(
           submitted == wam::macos::VideoDecodeSubmitResult::Backpressure,
           error);
       (void)decoder.drainPresentation(firstGeneration, &error);
@@ -3150,124 +3152,108 @@ void testSinkBackpressureIsRecoverable(const DemuxedVideo &video,
       }
     }
   }
-  WAM_CHECK(decoder.beginEndOfStream(firstGeneration, &error) !=
+  REQUIRE(decoder.beginEndOfStream(firstGeneration, &error) !=
             wam::macos::VideoDecodeDrainProgress::Failed);
   while (decoder.drainEndOfStream(firstGeneration, &error) !=
          wam::macos::VideoDecodeDrainProgress::Done) {
     (void)queue.tryTake();
   }
-  WAM_CHECK(decoder.stats().droppedFrames == 0);
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(decoder.stats().droppedFrames == 0);
+  REQUIRE(!decoder.takeLastError().has_value());
 
   decoder.flush(secondGeneration);
-  WAM_CHECK_DETAIL(
-      decoder.submit(packetView(video.packets[keyIndex], secondGeneration),
-                     &error) == wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(
+      submitPacket(decoder, video.packets[keyIndex], secondGeneration, &error) == wam::macos::VideoDecodeSubmitResult::Accepted,
       error);
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, secondGeneration, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, secondGeneration, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
-  WAM_CHECK(queue.tryTake().has_value());
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(queue.tryTake().has_value());
+  REQUIRE(!decoder.takeLastError().has_value());
   decoder.close();
 }
 
-void testAdmissionBeforeCopy(const DemuxedVideo &video, std::size_t keyIndex,
-                             bool requireHardware) {
+void testAdmissionBeforePayloadAccess(const DemuxedVideo &video,
+                                      std::size_t keyIndex,
+                                      bool requireHardware) {
   constexpr std::uint64_t generation = 6;
   wam::test::BoundedFrameQueue queue(2, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         queue, &error),
       error);
 
   // The test-only source build can reserve the decoder's one real admission
   // slot without depending on whether VideoToolbox invokes callbacks inline.
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::occupyInFlightCapacity(
           decoder, &error),
       error);
-  WAM_CHECK(decoder.stats().inFlightFrames == 1);
+  REQUIRE(decoder.stats().inFlightFrames == 1);
 
-  wam::macos::CompressedVideoPacket guardedPacket =
-      packetView(video.packets[keyIndex], generation);
+  // PROT_NONE makes any payload read before the admission gate fail
+  // deterministically.
   const long pageSize = sysconf(_SC_PAGESIZE);
-  WAM_CHECK(pageSize > 0);
+  REQUIRE(pageSize > 0);
   void *inaccessibleBytes = mmap(nullptr, static_cast<std::size_t>(pageSize),
                                  PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-  WAM_CHECK(inaccessibleBytes != MAP_FAILED);
-  guardedPacket.bytes = std::span<const std::byte>(
-      static_cast<const std::byte *>(inaccessibleBytes),
-      static_cast<std::size_t>(pageSize));
-  WAM_CHECK(decoder.submit(guardedPacket, &error) ==
-            wam::macos::VideoDecodeSubmitResult::Backpressure);
-  WAM_CHECK(munmap(inaccessibleBytes, static_cast<std::size_t>(pageSize)) == 0);
-  WAM_CHECK(error.empty());
-  WAM_CHECK(decoder.stats().inFlightFrames == 1);
-  WAM_CHECK(decoder.stats().backpressuredSubmissions == 1);
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(inaccessibleBytes != MAP_FAILED);
+  {
+    ScopedCMSampleBuffer guarded = makeGuardedCompressedSample(
+        inaccessibleBytes, static_cast<std::size_t>(pageSize),
+        packetFormat(video.packets[keyIndex]));
+    REQUIRE(decoder.submitCMSampleBuffer(guarded.get(), generation,
+                                           &error) ==
+              wam::macos::VideoDecodeSubmitResult::Backpressure);
+  }
+  REQUIRE(munmap(inaccessibleBytes, static_cast<std::size_t>(pageSize)) == 0);
+  REQUIRE(error.empty());
+  REQUIRE(decoder.stats().inFlightFrames == 1);
+  REQUIRE(decoder.stats().backpressuredSubmissions == 1);
+  REQUIRE(!decoder.takeLastError().has_value());
 
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::releaseInFlightCapacity(
           decoder, &error),
       error);
-  WAM_CHECK(decoder.stats().inFlightFrames == 0);
-
-  // A media-controlled packet larger than the decoder contract must reject
-  // before touching or copying its payload. PROT_NONE turns that ordering into
-  // a deterministic safety assertion without allocating 8 MiB of resident RAM.
-  constexpr std::size_t oversizedPacketBytes =
-      wam::macos::native_video_limits::
-          kMaximumCompressedVideoAccessUnitBytes +
-      1ULL;
-  void *oversizedBytes = mmap(nullptr, oversizedPacketBytes, PROT_NONE,
-                              MAP_PRIVATE | MAP_ANON, -1, 0);
-  WAM_CHECK(oversizedBytes != MAP_FAILED);
-  auto oversizedPacket = packetView(video.packets[keyIndex], generation);
-  oversizedPacket.bytes = std::span<const std::byte>(
-      static_cast<const std::byte *>(oversizedBytes), oversizedPacketBytes);
-  WAM_CHECK(decoder.submit(oversizedPacket, &error) ==
-            wam::macos::VideoDecodeSubmitResult::Rejected);
-  WAM_CHECK(error.find("8 MiB") != std::string::npos);
-  WAM_CHECK(munmap(oversizedBytes, oversizedPacketBytes) == 0);
+  REQUIRE(decoder.stats().inFlightFrames == 0);
 
   // Removing the synthetic reservation must leave the real decode lifecycle
   // usable; this catches a seam that accidentally poisons production state.
-  WAM_CHECK_DETAIL(
-      decoder.submit(packetView(video.packets[keyIndex], generation), &error) ==
+  REQUIRE_DETAIL(
+      submitPacket(decoder, video.packets[keyIndex], generation, &error) ==
           wam::macos::VideoDecodeSubmitResult::Accepted,
       error);
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, generation, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
-  WAM_CHECK(decoder.stats().submittedFrames == 1);
-  WAM_CHECK(decoder.stats().inFlightFrames == 0);
-  WAM_CHECK(queue.tryTake().has_value());
+  REQUIRE(decoder.stats().submittedFrames == 1);
+  REQUIRE(decoder.stats().inFlightFrames == 0);
+  REQUIRE(queue.tryTake().has_value());
   decoder.close();
 }
 
 void testDirectCMSampleBufferSubmission(
-    const char *path, const DemuxedVideo &video, std::size_t keyIndex,
-    bool requireHardware) {
+    const char *path, const DemuxedVideo &video, bool requireHardware) {
   constexpr std::uint64_t generation = 51;
   ScopedCMSampleBuffer sample =
       copyFirstCompressedKeySample(path, video.codec);
-  WAM_CHECK(sample);
+  REQUIRE(sample);
   CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample.get());
-  WAM_CHECK(block != nullptr);
+  REQUIRE(block != nullptr);
   const std::size_t sampleBytes = CMBlockBufferGetDataLength(block);
-  WAM_CHECK(sampleBytes != 0);
+  REQUIRE(sampleBytes != 0);
 
   wam::test::BoundedFrameQueue queue(4, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         queue, &error),
       error);
@@ -3282,90 +3268,64 @@ void testDirectCMSampleBufferSubmission(
   void *inaccessibleDirectBytes =
       mmap(nullptr, oversizedDirectBytes, PROT_NONE,
            MAP_PRIVATE | MAP_ANON, -1, 0);
-  WAM_CHECK(inaccessibleDirectBytes != MAP_FAILED);
+  REQUIRE(inaccessibleDirectBytes != MAP_FAILED);
   {
     ScopedCMSampleBuffer oversizedDirect = makeGuardedCompressedSample(
         inaccessibleDirectBytes, oversizedDirectBytes,
         CMSampleBufferGetFormatDescription(sample.get()));
-    WAM_CHECK(decoder.submitCMSampleBuffer(oversizedDirect.get(), generation,
+    REQUIRE(decoder.submitCMSampleBuffer(oversizedDirect.get(), generation,
                                            &error) ==
               wam::macos::VideoDecodeSubmitResult::Rejected);
-    WAM_CHECK(error.find("8 MiB") != std::string::npos);
+    REQUIRE(error.find("8 MiB") != std::string::npos);
     const auto oversizedStats = decoder.stats();
-    WAM_CHECK(oversizedStats.submittedFrames == 0);
-    WAM_CHECK(oversizedStats.directSampleBufferSubmissions == 0);
-    WAM_CHECK(oversizedStats.directSampleBufferBytes == 0);
-    WAM_CHECK(oversizedStats.copiedSpanSubmissions == 0);
-    WAM_CHECK(oversizedStats.copiedSpanBytes == 0);
+    REQUIRE(oversizedStats.submittedFrames == 0);
+    REQUIRE(oversizedStats.directSampleBufferSubmissions == 0);
+    REQUIRE(oversizedStats.directSampleBufferBytes == 0);
   }
-  WAM_CHECK(munmap(inaccessibleDirectBytes, oversizedDirectBytes) == 0);
+  REQUIRE(munmap(inaccessibleDirectBytes, oversizedDirectBytes) == 0);
 
   // Generation rejection is metadata-only and cannot consume or retain this
   // caller-owned sample.
-  WAM_CHECK(decoder.submitCMSampleBuffer(sample.get(), generation + 1,
+  REQUIRE(decoder.submitCMSampleBuffer(sample.get(), generation + 1,
                                          &error) ==
             wam::macos::VideoDecodeSubmitResult::Rejected);
-  WAM_CHECK(error.find("stale generation") != std::string::npos);
-  WAM_CHECK(decoder.stats().directSampleBufferSubmissions == 0);
+  REQUIRE(error.find("stale generation") != std::string::npos);
+  REQUIRE(decoder.stats().directSampleBufferSubmissions == 0);
 
   // A saturated decoder must return typed backpressure without accepting the
   // sample or accounting any copied/direct bytes. The same retained sample is
   // then safe to retry after capacity is released.
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::occupyInFlightCapacity(
           decoder, &error),
       error);
-  WAM_CHECK(decoder.submitCMSampleBuffer(sample.get(), generation, &error) ==
+  REQUIRE(decoder.submitCMSampleBuffer(sample.get(), generation, &error) ==
             wam::macos::VideoDecodeSubmitResult::Backpressure);
-  WAM_CHECK(error.empty());
+  REQUIRE(error.empty());
   auto stats = decoder.stats();
-  WAM_CHECK(stats.directSampleBufferSubmissions == 0);
-  WAM_CHECK(stats.directSampleBufferBytes == 0);
-  WAM_CHECK(stats.copiedSpanSubmissions == 0);
-  WAM_CHECK(stats.copiedSpanBytes == 0);
-  WAM_CHECK_DETAIL(
+  REQUIRE(stats.directSampleBufferSubmissions == 0);
+  REQUIRE(stats.directSampleBufferBytes == 0);
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::releaseInFlightCapacity(
           decoder, &error),
       error);
 
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.submitCMSampleBuffer(sample.get(), generation, &error) ==
           wam::macos::VideoDecodeSubmitResult::Accepted,
       error);
   stats = decoder.stats();
-  WAM_CHECK(stats.submittedFrames == 1);
-  WAM_CHECK(stats.directSampleBufferSubmissions == 1);
-  WAM_CHECK(stats.directSampleBufferBytes == sampleBytes);
-  WAM_CHECK(stats.copiedSpanSubmissions == 0);
-  WAM_CHECK(stats.copiedSpanBytes == 0);
+  REQUIRE(stats.submittedFrames == 1);
+  REQUIRE(stats.directSampleBufferSubmissions == 1);
+  REQUIRE(stats.directSampleBufferBytes == sampleBytes);
   // VideoToolbox must own everything it needs after Accepted. Match the
   // AVAssetReader worker contract by releasing the caller's +1 immediately,
   // before asynchronous completion or end-of-stream draining.
   sample.reset();
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, generation, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
-  WAM_CHECK(queue.tryTake().has_value());
-
-  // The generic backend contract remains available and truthfully accounts
-  // its one required payload copy after a generation-changing flush.
-  constexpr std::uint64_t copiedGeneration = generation + 1;
-  decoder.flush(copiedGeneration);
-  WAM_CHECK_DETAIL(
-      decoder.submit(packetView(video.packets[keyIndex], copiedGeneration),
-                     &error) ==
-          wam::macos::VideoDecodeSubmitResult::Accepted,
-      error);
-  WAM_CHECK_DETAIL(
-      submitDrainedEndOfStream(decoder, copiedGeneration, &error) ==
-          wam::macos::VideoDecodeSubmitResult::Accepted,
-      error);
-  stats = decoder.stats();
-  WAM_CHECK(stats.directSampleBufferSubmissions == 1);
-  WAM_CHECK(stats.directSampleBufferBytes == sampleBytes);
-  WAM_CHECK(stats.copiedSpanSubmissions == 1);
-  WAM_CHECK(stats.copiedSpanBytes == video.packets[keyIndex].bytes.size());
-  WAM_CHECK(queue.tryTake().has_value());
+  REQUIRE(queue.tryTake().has_value());
   decoder.close();
 }
 
@@ -3442,24 +3402,25 @@ void testCallbackScheduling(const DemuxedVideo &video, std::size_t keyIndex,
   GatedSink sink(generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
-  options.enableAsynchronousDecompression = allowAsynchronousDecode;
   options.progressHandler = callbackProbe.handler();
   // Temporal processing is disabled in every build because it may retain a
   // frame indefinitely until EOS, defeating finite admission. This test only
   // varies whether the callback may run asynchronously.
   wam::macos::VideoToolboxDecoder decoder(options);
+  wam::macos::VideoToolboxDecoderTestAccess::setAsynchronousDecompression(
+      decoder, allowAsynchronousDecode);
   std::string configurationError;
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         sink, &configurationError),
       configurationError);
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
           decoder, 0, &configurationError),
       configurationError);
 
   const std::size_t deliveryIndex = keyIndex + 1;
-  WAM_CHECK(deliveryIndex < video.packets.size());
+  REQUIRE(deliveryIndex < video.packets.size());
 
   struct SubmissionResults {
     wam::macos::VideoDecodeSubmitResult first{
@@ -3471,15 +3432,16 @@ void testCallbackScheduling(const DemuxedVideo &video, std::size_t keyIndex,
 
   std::thread submitter([&] {
     @autoreleasepool {
-      auto trackedSubmit = [&](const wam::macos::CompressedVideoPacket &packet) {
+      auto trackedSubmit = [&](const OwnedPacket &packet) {
         submissionActive.store(true, std::memory_order_release);
-        const auto result = decoder.submit(packet, &results.error);
+        const auto result =
+            submitPacket(decoder, packet, generation, &results.error);
         submissionActive.store(false, std::memory_order_release);
         return result;
       };
 
       results.first =
-          trackedSubmit(packetView(video.packets[keyIndex], generation));
+          trackedSubmit(video.packets[keyIndex]);
       if (results.first != wam::macos::VideoDecodeSubmitResult::Accepted) {
         return;
       }
@@ -3505,48 +3467,38 @@ void testCallbackScheduling(const DemuxedVideo &video, std::size_t keyIndex,
         return;
       }
       results.second =
-          trackedSubmit(packetView(video.packets[deliveryIndex], generation));
+          trackedSubmit(video.packets[deliveryIndex]);
     }
   });
 
   const bool callbackArrived = callbackProbe.waitForCalls(1);
   submitter.join();
-  WAM_CHECK_DETAIL(callbackArrived, "decoded-frame callback did not arrive");
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(callbackArrived, "decoded-frame callback did not arrive");
+  REQUIRE_DETAIL(
       results.first == wam::macos::VideoDecodeSubmitResult::Accepted,
       results.error);
-  WAM_CHECK_DETAIL(
+  REQUIRE_DETAIL(
       results.second == wam::macos::VideoDecodeSubmitResult::Accepted,
       results.error);
   if (!allowAsynchronousDecode) {
-    WAM_CHECK_DETAIL(
+    REQUIRE_DETAIL(
         callbackProbe.overlappedSubmit(),
         "synchronous VideoToolbox mode returned before its output callback");
   }
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(!decoder.takeLastError().has_value());
 
   std::string error;
-  wam::macos::VideoDecodeSubmitResult eosResult =
-      wam::macos::VideoDecodeSubmitResult::Backpressure;
-  const auto eosDeadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (eosResult == wam::macos::VideoDecodeSubmitResult::Backpressure &&
-         std::chrono::steady_clock::now() < eosDeadline) {
-    eosResult = decoder.submit(endOfStream(generation), &error);
-    if (eosResult == wam::macos::VideoDecodeSubmitResult::Backpressure) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-  }
-  WAM_CHECK_DETAIL(
-      eosResult == wam::macos::VideoDecodeSubmitResult::Accepted, error);
-  WAM_CHECK(decoder.stats().inFlightFrames == 0);
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, generation, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
+                   error);
+  REQUIRE(decoder.stats().inFlightFrames == 0);
   auto frame = sink.tryTake();
-  WAM_CHECK(frame.has_value());
-  WAM_CHECK(frame->isIOSurfaceBacked());
-  WAM_CHECK(frame->timing().generation == generation);
+  REQUIRE(frame.has_value());
+  REQUIRE(frame->isIOSurfaceBacked());
+  REQUIRE(frame->timing().generation == generation);
   decoder.close();
   decoder.close();
-  WAM_CHECK(!decoder.stats().configured);
+  REQUIRE(!decoder.stats().configured);
 }
 
 void testLifecycleAndGeneration(const DemuxedVideo &video, std::size_t keyIndex,
@@ -3556,66 +3508,62 @@ void testLifecycleAndGeneration(const DemuxedVideo &video, std::size_t keyIndex,
   wam::test::BoundedFrameQueue queue(8, firstGeneration);
   wam::macos::VideoToolboxDecoder decoder({4});
   std::string error;
-  WAM_CHECK_DETAIL(decoder.configure(streamConfiguration(video, firstGeneration,
+  REQUIRE_DETAIL(decoder.configure(streamConfiguration(video, firstGeneration,
                                                          requireHardware),
                                      queue, &error),
                    error);
-  WAM_CHECK(decoder.stats().configured);
+  REQUIRE(decoder.stats().configured);
   if (requireHardware) {
-    WAM_CHECK(decoder.stats().usingHardwareAcceleratedDecoder);
+    REQUIRE(decoder.stats().usingHardwareAcceleratedDecoder);
   }
-  WAM_CHECK_DETAIL(
-      decoder.submit(packetView(video.packets[keyIndex], firstGeneration),
-                     &error) == wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(
+      submitPacket(decoder, video.packets[keyIndex], firstGeneration, &error) == wam::macos::VideoDecodeSubmitResult::Accepted,
       error);
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, firstGeneration, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, firstGeneration, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
   auto firstFrame = queue.tryTake();
-  WAM_CHECK(firstFrame.has_value());
-  WAM_CHECK(firstFrame->isIOSurfaceBacked());
-  WAM_CHECK(firstFrame->timing().generation == firstGeneration);
+  REQUIRE(firstFrame.has_value());
+  REQUIRE(firstFrame->isIOSurfaceBacked());
+  REQUIRE(firstFrame->timing().generation == firstGeneration);
 
   decoder.flush(secondGeneration);
-  WAM_CHECK(queue.generation() == secondGeneration);
-  WAM_CHECK(decoder.stats().generation == secondGeneration);
-  WAM_CHECK(decoder.stats().awaitingKeyFrame);
-  WAM_CHECK(decoder.submit(packetView(video.packets[keyIndex], firstGeneration),
-                           &error) ==
+  REQUIRE(queue.generation() == secondGeneration);
+  REQUIRE(decoder.stats().generation == secondGeneration);
+  REQUIRE(decoder.stats().awaitingKeyFrame);
+  REQUIRE(submitPacket(decoder, video.packets[keyIndex], firstGeneration, &error) ==
             wam::macos::VideoDecodeSubmitResult::Rejected);
-  WAM_CHECK(error == "compressed packet belongs to a stale generation");
+  REQUIRE(error ==
+            "compressed CoreMedia sample belongs to a stale generation");
 
   std::size_t nonKeyIndex = keyIndex + 1;
   while (nonKeyIndex < video.packets.size() &&
          video.packets[nonKeyIndex].keyFrame) {
     ++nonKeyIndex;
   }
-  WAM_CHECK(nonKeyIndex < video.packets.size());
-  WAM_CHECK(
-      decoder.submit(packetView(video.packets[nonKeyIndex], secondGeneration),
-                     &error) == wam::macos::VideoDecodeSubmitResult::Rejected);
-  WAM_CHECK(error == "decoder requires a key frame after configure or flush");
+  REQUIRE(nonKeyIndex < video.packets.size());
+  REQUIRE(
+      submitPacket(decoder, video.packets[nonKeyIndex], secondGeneration, &error) == wam::macos::VideoDecodeSubmitResult::Rejected);
+  REQUIRE(error == "decoder requires a key frame after configure or flush");
 
-  WAM_CHECK_DETAIL(
-      decoder.submit(packetView(video.packets[keyIndex], secondGeneration),
-                     &error) == wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(
+      submitPacket(decoder, video.packets[keyIndex], secondGeneration, &error) == wam::macos::VideoDecodeSubmitResult::Accepted,
       error);
-  WAM_CHECK_DETAIL(submitDrainedEndOfStream(decoder, secondGeneration, &error) ==
-                       wam::macos::VideoDecodeSubmitResult::Accepted,
+  REQUIRE_DETAIL(drainToEndOfStream(decoder, secondGeneration, &error) ==
+                       wam::macos::VideoDecodeDrainProgress::Done,
                    error);
   auto secondFrame = queue.tryTake();
-  WAM_CHECK(secondFrame.has_value());
-  WAM_CHECK(secondFrame->isIOSurfaceBacked());
-  WAM_CHECK(secondFrame->timing().generation == secondGeneration);
-  WAM_CHECK(decoder.stats().inFlightFrames == 0);
-  WAM_CHECK(!decoder.takeLastError().has_value());
+  REQUIRE(secondFrame.has_value());
+  REQUIRE(secondFrame->isIOSurfaceBacked());
+  REQUIRE(secondFrame->timing().generation == secondGeneration);
+  REQUIRE(decoder.stats().inFlightFrames == 0);
+  REQUIRE(!decoder.takeLastError().has_value());
 
   decoder.close();
-  WAM_CHECK(!decoder.stats().configured);
-  WAM_CHECK(
-      decoder.submit(packetView(video.packets[keyIndex], secondGeneration),
-                     &error) == wam::macos::VideoDecodeSubmitResult::Rejected);
-  WAM_CHECK(error == "VideoToolbox decoder is not configured");
+  REQUIRE(!decoder.stats().configured);
+  REQUIRE(
+      submitPacket(decoder, video.packets[keyIndex], secondGeneration, &error) == wam::macos::VideoDecodeSubmitResult::Rejected);
+  REQUIRE(error == "VideoToolbox decoder is not configured");
 }
 
 void testHevcConfiguration(bool requireHardware) {
@@ -3626,14 +3574,14 @@ void testHevcConfiguration(bool requireHardware) {
   configuration.preferHardwareDecode = true;
   configuration.requireHardwareDecode = requireHardware;
   std::string error;
-  WAM_CHECK_DETAIL(decoder.configure(configuration, queue, &error), error);
-  WAM_CHECK(decoder.stats().configured);
-  WAM_CHECK(decoder.stats().codecReorderFrames <= 8);
+  REQUIRE_DETAIL(decoder.configure(configuration, queue, &error), error);
+  REQUIRE(decoder.stats().configured);
+  REQUIRE(decoder.stats().codecReorderFrames <= 8);
   if (requireHardware) {
-    WAM_CHECK(decoder.stats().usingHardwareAcceleratedDecoder);
+    REQUIRE(decoder.stats().usingHardwareAcceleratedDecoder);
   }
   decoder.close();
-  WAM_CHECK(!decoder.stats().configured);
+  REQUIRE(!decoder.stats().configured);
 }
 
 } // namespace
@@ -3668,25 +3616,25 @@ void testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces() {
 
   wam::macos::VideoStreamConfiguration configuration;
   configuration.codec = kCMVideoCodecType_AppleProRes4444;
-  WAM_CHECK(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
+  REQUIRE(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
             kCVPixelFormatType_30RGBLEPackedWideGamut);
   configuration.codec = kCMVideoCodecType_AppleProRes4444XQ;
-  WAM_CHECK(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
+  REQUIRE(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
             kCVPixelFormatType_30RGBLEPackedWideGamut);
   configuration.codec = kCMVideoCodecType_HEVC;
   configuration.codecConfiguration = std::as_bytes(std::span(kHevcMain422TenHvcC));
-  WAM_CHECK(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
+  REQUIRE(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
             kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange);
   for (const OSType format : {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange,
                              kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
                              kCVPixelFormatType_30RGBLEPackedWideGamut}) {
-    WAM_CHECK(admits(format, format, VideoDecoderOutputInterop::DisplayLayer));
-    WAM_CHECK(!admits(format, format, VideoDecoderOutputInterop::OpenGL));
-    WAM_CHECK(!admits(format, format, VideoDecoderOutputInterop::Metal));
+    REQUIRE(admits(format, format, VideoDecoderOutputInterop::DisplayLayer));
+    REQUIRE(!admits(format, format, VideoDecoderOutputInterop::OpenGL));
+    REQUIRE(!admits(format, format, VideoDecoderOutputInterop::Metal));
   }
-  WAM_CHECK(!admits(0x70343232U, kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
+  REQUIRE(!admits(0x70343232U, kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
                     VideoDecoderOutputInterop::DisplayLayer));
-  WAM_CHECK(admits(kCVPixelFormatType_422YpCbCr10BiPlanarFullRange,
+  REQUIRE(admits(kCVPixelFormatType_422YpCbCr10BiPlanarFullRange,
                    kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
                    VideoDecoderOutputInterop::DisplayLayer));
   constexpr OSType videoRange8 =
@@ -3703,43 +3651,43 @@ void testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces() {
       kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
 
   // The whole 8-bit family an unpinned display-layer session can return.
-  WAM_CHECK(admits(videoRange8, videoRange8,
+  REQUIRE(admits(videoRange8, videoRange8,
                    VideoDecoderOutputInterop::DisplayLayer));
-  WAM_CHECK(admits(losslessVideoRange8, videoRange8,
+  REQUIRE(admits(losslessVideoRange8, videoRange8,
                    VideoDecoderOutputInterop::DisplayLayer));
-  WAM_CHECK(admits(fullRange8, videoRange8,
+  REQUIRE(admits(fullRange8, videoRange8,
                    VideoDecoderOutputInterop::DisplayLayer));
   // The exact format measured on both specimen files.
-  WAM_CHECK(admits(losslessFullRange8, videoRange8,
+  REQUIRE(admits(losslessFullRange8, videoRange8,
                    VideoDecoderOutputInterop::DisplayLayer));
 
   // Same rule at 10 bits: a 10-bit SDR stream also leaves the format unpinned.
-  WAM_CHECK(admits(fullRange10, videoRange10,
+  REQUIRE(admits(fullRange10, videoRange10,
                    VideoDecoderOutputInterop::DisplayLayer));
 
   // DEPTH stays exact. Widening the range must not widen the bit depth: the
   // surface budget and every sampler are sized from it.
-  WAM_CHECK(!admits(videoRange10, videoRange8,
+  REQUIRE(!admits(videoRange10, videoRange8,
                     VideoDecoderOutputInterop::DisplayLayer));
-  WAM_CHECK(!admits(fullRange10, videoRange8,
+  REQUIRE(!admits(fullRange10, videoRange8,
                     VideoDecoderOutputInterop::DisplayLayer));
-  WAM_CHECK(!admits(videoRange8, videoRange10,
+  REQUIRE(!admits(videoRange8, videoRange10,
                     VideoDecoderOutputInterop::DisplayLayer));
   // And an unrelated format is still refused.
-  WAM_CHECK(!admits(kCVPixelFormatType_32BGRA, videoRange8,
+  REQUIRE(!admits(kCVPixelFormatType_32BGRA, videoRange8,
                     VideoDecoderOutputInterop::DisplayLayer));
 
   // Every other interop PINS the output format (pinOutputPixelFormat is true
   // whenever the interop is not DisplayLayer), so for those routes a format
   // that is not the requested one is a genuine contract violation and stays
   // refused -- including the range sibling.
-  WAM_CHECK(admits(videoRange8, videoRange8,
+  REQUIRE(admits(videoRange8, videoRange8,
                    VideoDecoderOutputInterop::OpenGL));
-  WAM_CHECK(!admits(fullRange8, videoRange8,
+  REQUIRE(!admits(fullRange8, videoRange8,
                     VideoDecoderOutputInterop::OpenGL));
-  WAM_CHECK(!admits(losslessFullRange8, videoRange8,
+  REQUIRE(!admits(losslessFullRange8, videoRange8,
                     VideoDecoderOutputInterop::OpenGL));
-  WAM_CHECK(!admits(losslessVideoRange8, videoRange8,
+  REQUIRE(!admits(losslessVideoRange8, videoRange8,
                     VideoDecoderOutputInterop::Metal));
 }
 
@@ -3784,7 +3732,7 @@ int main(int argc, char **argv) {
   DemuxedVideo video =
       readCompressedVideo(inputs.h264Path, kCMVideoCodecType_H264, 3, 4);
   const std::size_t keyIndex = firstKeyFrame(video);
-  WAM_CHECK(keyIndex < video.packets.size());
+  REQUIRE(keyIndex < video.packets.size());
   DemuxedVideo main10Video;
   std::size_t main10KeyIndex = 0;
   const bool hasMain10Fixture = inputs.main10Path != nullptr;
@@ -3792,13 +3740,13 @@ int main(int argc, char **argv) {
     main10Video =
         readCompressedVideo(inputs.main10Path, kCMVideoCodecType_HEVC, 1, 2);
     main10KeyIndex = firstKeyFrame(main10Video);
-    WAM_CHECK(main10KeyIndex < main10Video.packets.size());
+    REQUIRE(main10KeyIndex < main10Video.packets.size());
   }
 
   if (inputs.requireHardware) {
-    WAM_CHECK_DETAIL(VTIsHardwareDecodeSupported(kCMVideoCodecType_H264),
+    REQUIRE_DETAIL(VTIsHardwareDecodeSupported(kCMVideoCodecType_H264),
                      "this runner reports no hardware H.264 decoder");
-    WAM_CHECK_DETAIL(VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
+    REQUIRE_DETAIL(VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
                      "this runner reports no hardware HEVC decoder");
   }
   if (inputs.callbackAllocationOnly) {
@@ -3807,7 +3755,7 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
   }
   if (inputs.directSampleOnly) {
-    testDirectCMSampleBufferSubmission(inputs.h264Path, video, keyIndex,
+    testDirectCMSampleBufferSubmission(inputs.h264Path, video,
                                        inputs.requireHardware);
     std::cout << "VideoToolbox direct CMSampleBuffer submission passed\n";
     return EXIT_SUCCESS;
@@ -3829,8 +3777,8 @@ int main(int argc, char **argv) {
   testOwnerProgressiveZeroFrameEndOfStream();
   testConfigurationByteBound(video);
   testCodecParserAndDeclaredReorderBound(video);
-  testAdmissionBeforeCopy(video, keyIndex, inputs.requireHardware);
-  testDirectCMSampleBufferSubmission(inputs.h264Path, video, keyIndex,
+  testAdmissionBeforePayloadAccess(video, keyIndex, inputs.requireHardware);
+  testDirectCMSampleBufferSubmission(inputs.h264Path, video,
                                      inputs.requireHardware);
   testDefaultBoundMakesProgressBeforeEndOfStream(video, keyIndex,
                                                  inputs.requireHardware);

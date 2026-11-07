@@ -1,5 +1,7 @@
 #include "caption_service.hpp"
 #include "jobs.hpp"
+#include "support/expect.hpp"
+#include "support/process_wait.hpp"
 
 #include <array>
 #include <chrono>
@@ -30,11 +32,6 @@ namespace {
 #ifndef _WIN32
 void exitSuccessfullyOnTerm(int) { _exit(0); }
 #endif
-
-void check(bool condition, const char *message) {
-  if (!condition)
-    throw std::runtime_error(message);
-}
 
 std::string readFile(const fs::path &path) {
   std::ifstream input(path, std::ios::binary);
@@ -135,8 +132,10 @@ int runFakeCaptionTool(int argc, char **argv) {
       std::this_thread::sleep_for(80ms);
       std::cout << "[00:00:02.000 --> 00:00:03.000] EOF sentence." << std::flush;
     }
+    // Runs until the cancellation under test terminates it.
     if (name.find("slow") != std::string::npos)
-      std::this_thread::sleep_for(5s);
+      for (;;)
+        std::this_thread::sleep_for(1h);
     fs::path srt = output_base;
     srt += ".srt";
     if (name.find("empty") != std::string::npos)
@@ -207,37 +206,6 @@ void waitForStage(wam::CaptionService &service, wam::CaptionStage stage) {
   throw std::runtime_error("caption service did not reach expected stage");
 }
 
-#ifndef _WIN32
-bool waitForFile(const fs::path &path,
-                 std::chrono::steady_clock::duration timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    std::error_code error;
-    if (fs::is_regular_file(path, error) && fs::file_size(path, error) > 0)
-      return true;
-    std::this_thread::sleep_for(10ms);
-  }
-  return false;
-}
-
-bool processExists(pid_t process) {
-  if (kill(process, 0) == 0)
-    return true;
-  return errno == EPERM;
-}
-
-bool waitForProcessExit(pid_t process,
-                        std::chrono::steady_clock::duration timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (!processExists(process))
-      return true;
-    std::this_thread::sleep_for(10ms);
-  }
-  return !processExists(process);
-}
-#endif
-
 } // namespace
 
 int main(int argc, char **argv) {
@@ -265,10 +233,10 @@ int main(int argc, char **argv) {
     const fs::path awkward_wav = temporary.path / "audio ' ; & $ file.wav";
     const auto audio_command =
         wam::buildCaptionAudioCommand(fake_ffmpeg, awkward, awkward_wav);
-    check(audio_command.find(wam::quoteArg(awkward.string())) !=
+    expect(audio_command.find(wam::quoteArg(awkward.string())) !=
               std::string::npos,
           "caption diagnostic command must quote the input path");
-    check(audio_command.find("-nostdin") != std::string::npos,
+    expect(audio_command.find("-nostdin") != std::string::npos,
           "FFmpeg command must not read from the app's input");
 
     const fs::path wav_log = temporary.path / "wav-path.log";
@@ -282,13 +250,13 @@ int main(int argc, char **argv) {
     {
       wam::CaptionOptions options;
       auto command = wam::buildCaptionWhisperCommand("whisper","model","audio","output",options);
-      check(command.find("-ng") == std::string::npos,"default must use Metal");
+      expect(command.find("-ng") == std::string::npos,"default must use Metal");
       options.use_gpu=false;
       auto cpu = wam::buildCaptionWhisperCommand("whisper","model","audio","output",options);
-      check(cpu.find("-ng") != std::string::npos,"CPU opt-out must pass -ng");
+      expect(cpu.find("-ng") != std::string::npos,"CPU opt-out must pass -ng");
       // quoteArg wraps each argument, so the token is ' -ng' or " -ng" plus quotes.
       auto strip = [](std::string s){ for (const char* tok : {" '-ng'", " \"-ng\"", " -ng"}) { auto at = s.find(tok); if (at != std::string::npos) { s.erase(at, std::string(tok).size()); break; } } return s; };
-      check(strip(cpu) == command,"CPU opt-out changed argv beyond -ng");
+      expect(strip(cpu) == command,"CPU opt-out changed argv beyond -ng");
     }
 #ifndef _WIN32
     // No real GPU required: hung Metal leader + TERM-ignoring descendant must
@@ -298,16 +266,24 @@ int main(int argc, char **argv) {
       const auto log = temporary.path/"watchdog-descendant.pid";
       setenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG",log.c_str(),1);
       auto request=requestFor(temporary.path,fake_ffmpeg,gpu,"watchdog.srt");
-      request.options.use_gpu=true; request.options.gpu_watchdog_ms=150;
+      // The window never expires in real time; the test expires it by
+      // skewing the watchdog clock once the descendant exists.
+      constexpr unsigned kWindowMs = 60'000;
+      request.options.use_gpu=true; request.options.gpu_watchdog_ms=kWindowMs;
       wam::CaptionService service;
-      const auto start=std::chrono::steady_clock::now();
-      check(service.start(request),"watchdog request refused");
+      expect(service.start(request),"watchdog request refused");
+      const bool descendant_started = waitForFile(log,10s);
+      expect(descendant_started,"GPU descendant not started");
+      const auto expired=std::chrono::steady_clock::now();
+      wam::detail::captionWatchdogClockSkewMs += kWindowMs;
       service.wait();
-      check(service.succeeded(),"watchdog CPU retry must succeed");
-      check(std::chrono::steady_clock::now()-start < 3s,"watchdog wedged");
-      check(waitForFile(log,1s),"GPU descendant not started");
-      check(waitForProcessExit(static_cast<pid_t>(std::stol(readFile(log))),1s),"watchdog leaked descendant");
-      check(readFile(request.output_srt).find("Hello from WAM")!=std::string::npos,"retry not committed");
+      wam::detail::captionWatchdogClockSkewMs = 0;
+      expect(service.succeeded(),"watchdog CPU retry must succeed");
+      expect(std::chrono::steady_clock::now()-expired < 3s,"watchdog wedged");
+      expect(descendant_started &&
+             waitForProcessExit(static_cast<pid_t>(std::stol(readFile(log))),1s),
+             "watchdog leaked descendant");
+      expect(readFile(request.output_srt).find("Hello from WAM")!=std::string::npos,"retry not committed");
       unsetenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG");
     }
 #endif
@@ -317,12 +293,12 @@ int main(int argc, char **argv) {
                                 "missing-model.srt");
       request.tools.model = temporary.path / "missing-model.bin";
       wam::CaptionService service;
-      check(service.start(request), "missing model request starts validation");
+      expect(service.start(request), "missing model request starts validation");
       service.wait();
       const auto error = service.status().error;
-      check(error.find("caption model") != std::string::npos && error.size() < 100,
+      expect(error.find("caption model") != std::string::npos && error.size() < 100,
             "missing model has a short actionable explanation");
-      check(error.find(temporary.path.string()) == std::string::npos,
+      expect(error.find(temporary.path.string()) == std::string::npos,
             "model search paths stay out of the user error");
     }
 
@@ -331,20 +307,19 @@ int main(int argc, char **argv) {
     {
       auto tool = copyAsTool(this_executable,temporary.path,"fake-whisper-stream");
       auto request = requestFor(temporary.path,fake_ffmpeg,tool,"stream.srt");
-      request.options.gpu_watchdog_ms = 200;
       std::vector<wam::CaptionSegment> delivered;
       const auto caller = std::this_thread::get_id();
       bool offMain = true, beforeCommit = false;
       wam::CaptionService service;
       request.live_segments = [&](auto segments) {
         offMain &= std::this_thread::get_id() != caller;
-        check(service.transcribing(),"segment must arrive during backend transcription");
+        expect(service.transcribing(),"segment must arrive during backend transcription");
         beforeCommit |= !fs::exists(request.output_srt);
         delivered = std::move(segments);
       };
-      check(service.start(request),"stream request refused"); service.wait();
-      check(service.succeeded() && offMain && beforeCommit,"live delivery missing");
-      check(delivered.size()==3 && delivered[0].text=="First sentence." &&
+      expect(service.start(request),"stream request refused"); service.wait();
+      expect(service.succeeded() && offMain && beforeCommit,"live delivery missing");
+      expect(delivered.size()==3 && delivered[0].text=="First sentence." &&
             delivered[1].start==1 && delivered[2].text=="EOF sentence.",
             "fragmented stdout must yield ordered live segments exactly once");
     }
@@ -355,33 +330,33 @@ int main(int argc, char **argv) {
                                 "captions without extension");
       writeFile(request.output_srt.string() + ".srt", "old captions");
       wam::CaptionService service;
-      check(service.start(request), "valid caption request should start");
-      check(!service.start(request),
+      expect(service.start(request), "valid caption request should start");
+      expect(!service.start(request),
             "a second concurrent request must be refused");
       const auto deadline = std::chrono::steady_clock::now() + 3s;
       while (!service.finished() && std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(5ms);
-      check(service.finished(), "caption worker did not publish completion");
-      check(captionTemporaryCount(temporary.path) == 0,
+      expect(service.finished(), "caption worker did not publish completion");
+      expect(captionTemporaryCount(temporary.path) == 0,
             "terminal status was published before staging cleanup");
-      check(!fs::exists(fs::path(readFile(wav_log))),
+      expect(!fs::exists(fs::path(readFile(wav_log))),
             "terminal status was published before audio cleanup");
       service.wait();
       const auto status = service.status();
-      check(status.stage == wam::CaptionStage::Completed,
+      expect(status.stage == wam::CaptionStage::Completed,
             "valid caption pipeline should complete");
-      check(status.succeeded && status.finished && !status.running,
+      expect(status.succeeded && status.finished && !status.running,
             "successful status flags are inconsistent");
-      check(status.progress == 1.0f, "successful progress must reach one");
-      check(status.output_srt.extension() == ".srt",
+      expect(status.progress == 1.0f, "successful progress must reach one");
+      expect(status.output_srt.extension() == ".srt",
             "service should normalize the SRT extension");
-      check(readFile(status.output_srt).find("Hello from WAM") !=
+      expect(readFile(status.output_srt).find("Hello from WAM") !=
                 std::string::npos,
             "generated SRT was not committed");
-      check(captionTemporaryCount(temporary.path) == 0,
+      expect(captionTemporaryCount(temporary.path) == 0,
             "successful captioning leaked a staging file");
       const fs::path used_wav = readFile(wav_log);
-      check(!used_wav.empty() && !fs::exists(used_wav),
+      expect(!used_wav.empty() && !fs::exists(used_wav),
             "temporary WAV was not cleaned up");
     }
 
@@ -391,15 +366,15 @@ int main(int argc, char **argv) {
                                 "no-overwrite-success.srt");
       request.options.overwrite = false;
       wam::CaptionService service;
-      check(service.start(request), "no-overwrite request should start");
+      expect(service.start(request), "no-overwrite request should start");
       service.wait();
       const auto status = service.status();
-      check(status.stage == wam::CaptionStage::Completed && status.succeeded,
+      expect(status.stage == wam::CaptionStage::Completed && status.succeeded,
             "no-overwrite request should commit to a free destination");
-      check(readFile(request.output_srt).find("Hello from WAM") !=
+      expect(readFile(request.output_srt).find("Hello from WAM") !=
                 std::string::npos,
             "no-overwrite commit did not save the generated SRT");
-      check(captionTemporaryCount(temporary.path) == 0,
+      expect(captionTemporaryCount(temporary.path) == 0,
             "no-overwrite captioning leaked a staging file");
     }
 
@@ -410,15 +385,15 @@ int main(int argc, char **argv) {
       request.options.overwrite = false;
       writeFile(request.output_srt, "keep existing captions");
       wam::CaptionService service;
-      check(service.start(request),
+      expect(service.start(request),
             "existing no-overwrite request should validate asynchronously");
       service.wait();
       const auto status = service.status();
-      check(status.stage == wam::CaptionStage::Failed && !status.succeeded,
+      expect(status.stage == wam::CaptionStage::Failed && !status.succeeded,
             "no-overwrite request must fail for an existing destination");
-      check(readFile(request.output_srt) == "keep existing captions",
+      expect(readFile(request.output_srt) == "keep existing captions",
             "no-overwrite request modified an existing destination");
-      check(captionTemporaryCount(temporary.path) == 0,
+      expect(captionTemporaryCount(temporary.path) == 0,
             "failed no-overwrite request leaked a staging file");
     }
 
@@ -428,16 +403,16 @@ int main(int argc, char **argv) {
                                 "empty-output.srt");
       writeFile(request.output_srt, "existing captions must survive");
       wam::CaptionService service;
-      check(service.start(request), "empty-output request should start");
+      expect(service.start(request), "empty-output request should start");
       service.wait();
       const auto status = service.status();
-      check(status.stage == wam::CaptionStage::Failed && !status.succeeded,
+      expect(status.stage == wam::CaptionStage::Failed && !status.succeeded,
             "empty SRT must fail even when whisper exits zero");
-      check(status.error.find("non-empty SRT") != std::string::npos,
+      expect(status.error.find("non-empty SRT") != std::string::npos,
             "empty SRT failure should be actionable");
-      check(readFile(request.output_srt) == "existing captions must survive",
+      expect(readFile(request.output_srt) == "existing captions must survive",
             "invalid staged SRT must not modify an existing output");
-      check(captionTemporaryCount(temporary.path) == 0,
+      expect(captionTemporaryCount(temporary.path) == 0,
             "failed captioning leaked a staging file");
     }
 
@@ -447,12 +422,12 @@ int main(int argc, char **argv) {
                                 "validation.srt");
       request.input = temporary.path / "missing-input.mov";
       wam::CaptionService service;
-      check(service.start(request), "invalid request should enter validation");
+      expect(service.start(request), "invalid request should enter validation");
       service.wait();
       const auto status = service.status();
-      check(status.stage == wam::CaptionStage::Failed,
+      expect(status.stage == wam::CaptionStage::Failed,
             "missing input should fail validation");
-      check(status.error.find("Input media was not found") != std::string::npos,
+      expect(status.error.find("Input media was not found") != std::string::npos,
             "missing input error should identify the input");
     }
 
@@ -463,35 +438,35 @@ int main(int argc, char **argv) {
                                 "cancelled.srt");
       writeFile(request.output_srt, "existing captions must survive cancel");
       wam::CaptionService service;
-      check(service.start(request), "cancellable request should start");
+      expect(service.start(request), "cancellable request should start");
       waitForStage(service, wam::CaptionStage::Transcribing);
       const auto started = std::chrono::steady_clock::now();
       service.cancel();
       service.wait();
       const auto elapsed = std::chrono::steady_clock::now() - started;
       const auto status = service.status();
-      check(status.stage == wam::CaptionStage::Cancelled && status.cancelled,
+      expect(status.stage == wam::CaptionStage::Cancelled && status.cancelled,
             "cancelled request should have terminal cancelled state");
-      check(elapsed < 2s, "cancelling a caption subprocess took too long");
-      check(readFile(request.output_srt) ==
+      expect(elapsed < 2s, "cancelling a caption subprocess took too long");
+      expect(readFile(request.output_srt) ==
                 "existing captions must survive cancel",
             "cancelled captions must not modify an existing output");
-      check(captionTemporaryCount(temporary.path) == 0,
+      expect(captionTemporaryCount(temporary.path) == 0,
             "cancelled captioning leaked a staging file");
       const fs::path used_wav = readFile(wav_log);
-      check(!used_wav.empty() && !fs::exists(used_wav),
+      expect(!used_wav.empty() && !fs::exists(used_wav),
             "cancelled request leaked its temporary WAV");
 
       auto retry = requestFor(temporary.path, fake_ffmpeg, fake_whisper,
                               "retry-after-cancel.srt");
-      check(service.start(retry),
+      expect(service.start(retry),
             "caption service should be reusable after cancellation");
       service.wait();
       const auto retry_status = service.status();
-      check(retry_status.stage == wam::CaptionStage::Completed &&
+      expect(retry_status.stage == wam::CaptionStage::Completed &&
                 retry_status.succeeded,
             "caption reuse must clear the previous cancellation request");
-      check(readFile(retry.output_srt).find("Hello from WAM") !=
+      expect(readFile(retry.output_srt).find("Hello from WAM") !=
                 std::string::npos,
             "caption reuse did not commit the retry output");
     }
@@ -507,14 +482,14 @@ int main(int argc, char **argv) {
                                 descendant_whisper, "descendant-cancel.srt");
       writeFile(request.output_srt, "preserve captions during group cancel");
       wam::CaptionService service;
-      check(service.start(request), "descendant caption request should start");
+      expect(service.start(request), "descendant caption request should start");
       waitForStage(service, wam::CaptionStage::Transcribing);
-      check(waitForFile(descendant_log, 2s),
+      expect(waitForFile(descendant_log, 2s),
             "caption descendant should report its PID");
       const pid_t descendant =
           static_cast<pid_t>(std::stol(readFile(descendant_log)));
       const pid_t descendant_group = getpgid(descendant);
-      check(descendant_group > 0 && descendant_group != getpgrp(),
+      expect(descendant_group > 0 && descendant_group != getpgrp(),
             "caption helper must be isolated from the test runner group");
 
       const auto started = std::chrono::steady_clock::now();
@@ -527,16 +502,16 @@ int main(int argc, char **argv) {
       if (!descendant_gone)
         kill(descendant, SIGKILL);
 
-      check(status.stage == wam::CaptionStage::Cancelled && status.cancelled,
+      expect(status.stage == wam::CaptionStage::Cancelled && status.cancelled,
             "descendant caption request should finish as cancelled");
-      check(descendant_gone,
+      expect(descendant_gone,
             "caption cancellation must kill a TERM-ignoring descendant");
-      check(elapsed < 2s,
+      expect(elapsed < 2s,
             "repeated caption cancellation must not extend the deadline");
-      check(readFile(request.output_srt) ==
+      expect(readFile(request.output_srt) ==
                 "preserve captions during group cancel",
             "descendant cancellation must preserve an existing output");
-      check(captionTemporaryCount(temporary.path) == 0,
+      expect(captionTemporaryCount(temporary.path) == 0,
             "descendant cancellation leaked a staging file");
       unsetenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG");
     }
@@ -555,17 +530,19 @@ int main(int argc, char **argv) {
           ::stat(request.input.c_str(), &information) == 0 &&
           (information.st_flags & SF_DATALESS) != 0) {
         wam::CaptionService service;
-        check(service.start(request), "dataless request should validate");
+        expect(service.start(request), "dataless request should validate");
         service.wait();
         const auto status = service.status();
-        check(status.stage == wam::CaptionStage::Failed && !status.succeeded,
+        expect(status.stage == wam::CaptionStage::Failed && !status.succeeded,
               "dataless media must fail before extraction");
-        check(status.error.find("not downloaded") != std::string::npos,
+        expect(status.error.find("not downloaded") != std::string::npos,
               "dataless error should tell the user to download the media");
       }
     }
 #endif
 
+    if (failures != 0)
+      return 1;
     std::cout << "caption service tests passed\n";
     return 0;
   } catch (const std::exception &exception) {

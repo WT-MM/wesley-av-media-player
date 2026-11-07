@@ -4,6 +4,8 @@
 
 #include "platform/macos/native_video_limits.hpp"
 
+#include "support/expect.hpp"
+
 #include <CoreVideo/CoreVideo.h>
 
 #include <atomic>
@@ -23,17 +25,6 @@ namespace {
 
 using namespace wam;
 using namespace wam::macos;
-
-[[noreturn]] void fail(const char* message) {
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    fail(message);
-  }
-}
 
 void wake(void* context) noexcept {
   static_cast<std::atomic<std::uint64_t>*>(context)->fetch_add(
@@ -311,13 +302,13 @@ FrameLease frame(std::uint64_t generation, std::int64_t pts,
   const CVReturn created = CVPixelBufferCreateWithBytes(
       kCFAllocatorDefault, kWidth, kHeight, kCVPixelFormatType_32BGRA,
       pixels->data(), kBytesPerRow, nullptr, nullptr, nullptr, &buffer);
-  expect(created == kCVReturnSuccess && buffer != nullptr,
+  require(created == kCVReturnSuccess && buffer != nullptr,
          "CPU-backed pixel buffer creation succeeds");
   FrameLease result(buffer,
                     {CMTimeMake(pts, scale), CMTimeMake(duration, scale),
                      generation, true});
   CVPixelBufferRelease(buffer);
-  expect(static_cast<bool>(result), "CPU-backed frame lease succeeds");
+  require(static_cast<bool>(result), "CPU-backed frame lease succeeds");
   return result;
 }
 
@@ -335,7 +326,7 @@ struct Fixture {
     consumer = NativeVideoConsumer::create(
         lifetime, clock.seam(), output,
         NativeVideoConsumerWakeSeam{&wake, &wakes});
-    expect(consumer != nullptr, "consumer accepts complete dependencies");
+    require(consumer != nullptr, "consumer accepts complete dependencies");
   }
 
   ~Fixture() {
@@ -1179,7 +1170,7 @@ void testQuiescingDestructionRetainsCallbackLifetime() {
   auto consumer = NativeVideoConsumer::create(
       lifetime, clock.seam(), output,
       NativeVideoConsumerWakeSeam{&wake, &wakes});
-  expect(consumer != nullptr, "quarantine fixture creates");
+  require(consumer != nullptr, "quarantine fixture creates");
   lifetime.reset();
   consumer.reset();
   expect(!observedLifetime.expired() &&
@@ -1187,7 +1178,7 @@ void testQuiescingDestructionRetainsCallbackLifetime() {
          "quiescing destruction retains every callback context");
 
   auto recovered = NativeVideoConsumer::recoverQuarantined();
-  expect(recovered != nullptr, "the bounded quarantine is recoverable");
+  require(recovered != nullptr, "the bounded quarantine is recoverable");
   output->setCloseBlocked(false);
   expect(recovered->close() == media::NativeMediaConsumerProgress::Done,
          "recovered exact close reaches Done");
@@ -1217,7 +1208,7 @@ void testBoundedProcessGraphEnvelope() {
     graphs.push_back(NativeVideoConsumer::create(
         std::make_shared<int>(window), clock.seam(), outputs.back(),
         consumerWake));
-    expect(graphs.back() != nullptr,
+    require(graphs.back() != nullptr,
            "every window inside the process envelope is admitted");
   }
 
@@ -1227,7 +1218,7 @@ void testBoundedProcessGraphEnvelope() {
   auto overflow = NativeVideoConsumer::create(
       std::make_shared<int>(0), clock.seam(), spareOutput, consumerWake,
       &error);
-  expect(overflow == nullptr &&
+  require(overflow == nullptr &&
              error == "a native video graph is already retained",
          "the graph past the last window is refused with the documented text");
 
@@ -1242,12 +1233,12 @@ void testBoundedProcessGraphEnvelope() {
   auto refusedByQuarantine = NativeVideoConsumer::create(
       std::make_shared<int>(0), clock.seam(), spareOutput, consumerWake,
       &error);
-  expect(refusedByQuarantine == nullptr &&
+  require(refusedByQuarantine == nullptr &&
              error == "a native video graph is already retained",
          "a quarantined graph keeps consuming its slot in the envelope");
 
   auto recovered = NativeVideoConsumer::recoverQuarantined();
-  expect(recovered != nullptr,
+  require(recovered != nullptr,
          "the bounded registry hands the quarantined graph back");
   outputs.back()->setCloseBlocked(false);
   expect(recovered->close() == media::NativeMediaConsumerProgress::Done,
@@ -1258,7 +1249,7 @@ void testBoundedProcessGraphEnvelope() {
 
   auto replacement = NativeVideoConsumer::create(
       std::make_shared<int>(0), clock.seam(), spareOutput, consumerWake);
-  expect(replacement != nullptr,
+  require(replacement != nullptr,
          "the slot reopens only after the quarantined graph proves Done");
   expect(replacement->close() == media::NativeMediaConsumerProgress::Done,
          "the replacement graph closes cleanly");
@@ -1365,6 +1356,9 @@ int main() {
   testBoundedProcessGraphEnvelope();
   testMalformedFailureCannotAuthorizeClose();
   testDoneOutputMayNotStillClaimAnAdmittedFrame();
+  if (failures != 0) {
+    return EXIT_FAILURE;
+  }
   std::cout << "native video consumer fixture-free checks passed\n";
   return EXIT_SUCCESS;
 }

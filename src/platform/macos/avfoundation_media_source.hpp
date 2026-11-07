@@ -149,7 +149,7 @@ class AVFoundationMediaSource final : public media::MediaSource, public media::A
   std::unique_ptr<Impl> impl_;
 };
 
-#if defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 namespace avfoundation_media_source_testing {
 
 // How many audio access units of the given per-unit duration (stated as a

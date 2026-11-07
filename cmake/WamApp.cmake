@@ -45,8 +45,9 @@ endif()
 
 qt_standard_project_setup(REQUIRES 6.10)
 
-qt_add_executable(wam MACOSX_BUNDLE WIN32
-  src/qt/main.cpp
+# Everything in the app but its entry point. Tests build a seam-enabled twin
+# (wam_app_test_seams in tests/CMakeLists.txt) from this same list.
+set(WAM_APP_SOURCES
   src/qt/player_controller.cpp
   src/qt/player_controller.hpp
   src/qt/app_settings.cpp
@@ -76,6 +77,8 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/caption_service.hpp
   src/state_store.cpp
   src/state_store.hpp)
+
+qt_add_executable(wam MACOSX_BUNDLE WIN32 src/qt/main.cpp ${WAM_APP_SOURCES})
 
 qt_add_qml_module(wam
   URI Wam

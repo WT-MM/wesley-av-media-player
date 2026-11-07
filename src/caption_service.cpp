@@ -54,11 +54,19 @@ struct ProcessResult {
   std::string launch_error;
 };
 
+std::chrono::steady_clock::time_point watchdogNow() {
+  auto now = std::chrono::steady_clock::now();
+#if defined(WAM_CAPTION_SERVICE_TESTING)
+  now += std::chrono::milliseconds(detail::captionWatchdogClockSkewMs.load());
+#endif
+  return now;
+}
+
 struct ProcessMonitor {
   unsigned timeout_ms = 0;
   CaptionBackendEvents events;
   double watermark = -1;
-  std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+  std::chrono::steady_clock::time_point last = watchdogNow();
   std::string pending;
   bool overflow = false;
   void consume(const char* bytes, std::size_t size) {
@@ -86,12 +94,12 @@ struct ProcessMonitor {
     auto first = text.find_first_not_of(" \t\r");
     if (first == std::string::npos) return;
     text = text.substr(first, text.find_last_not_of(" \t\r")-first+1);
-    watermark = end; last = std::chrono::steady_clock::now();
+    watermark = end; last = watchdogNow();
     if (events.segment) events.segment({start,end,std::move(text),true});
   }
   void finish() { if (!pending.empty() && !overflow) line(); pending.clear(); }
   bool stalled() const {
-    return timeout_ms && std::chrono::steady_clock::now()-last >= std::chrono::milliseconds(timeout_ms);
+    return timeout_ms && watchdogNow()-last >= std::chrono::milliseconds(timeout_ms);
   }
 };
 

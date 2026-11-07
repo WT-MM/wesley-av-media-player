@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "support/expect.hpp"
+#include "support/fake_converter_backend.hpp"
 
 namespace {
 
@@ -231,81 +232,6 @@ MediaSample makeSample(const MediaTrackDescriptor &track,
                                                         byteCount));
   return sample;
 }
-
-struct Script {
-  std::size_t consume{0};
-  std::size_t produce{0};
-  bool finalInputReleased{false};
-  bool needsInput{false};
-  bool drained{false};
-  bool failed{false};
-};
-
-// Same shape as the frozen contract's fake backend, but its per-call frame
-// production is the whole point here: every case states exactly how many PCM
-// frames the decoder emits for the packets it consumed.
-class FakeBackend final : public NativeAudioConverterBackend {
-public:
-  [[nodiscard]] bool
-  configure(const NativeAudioBackendConfiguration &configuration,
-            std::string *) override {
-    ++configureCalls;
-    configuredRate = configuration.outputSampleRate;
-    configuredChannels = configuration.outputChannels;
-    configuredFormatTag = configuration.input.formatTag;
-    configuredFramesPerPacket = configuration.input.framesPerPacket;
-    configuredLayoutTag = configuration.input.channelLayoutTag;
-    cookieSize = configuration.codecConfiguration.size();
-    return true;
-  }
-
-  [[nodiscard]] NativeAudioBackendResult
-  convert(NativeAudioBackendInput input,
-          std::span<float> interleavedOutput) override {
-    ++convertCalls;
-    observedPacketCount = input.packets.size();
-    observedEof = input.endOfStream;
-    const Script current =
-        scripts[scriptIndex < scriptCount ? scriptIndex++ : scriptCount];
-    const std::size_t samples = std::min(
-        interleavedOutput.size(),
-        current.produce * static_cast<std::size_t>(configuredChannels));
-    for (std::size_t index = 0; index < samples; ++index) {
-      interleavedOutput[index] =
-          static_cast<float>(100 * convertCalls + index + 1);
-    }
-    return {current.consume,    current.produce, current.finalInputReleased,
-            current.needsInput, current.drained, current.failed};
-  }
-
-  [[nodiscard]] bool reset(std::string *) override {
-    ++resetCalls;
-    return true;
-  }
-  void close() noexcept override { ++closeCalls; }
-
-  void setScripts(std::initializer_list<Script> values) {
-    scriptCount = values.size();
-    scriptIndex = 0;
-    std::copy(values.begin(), values.end(), scripts.begin());
-  }
-
-  std::array<Script, 8> scripts{};
-  std::size_t scriptCount{0};
-  std::size_t scriptIndex{0};
-  std::size_t cookieSize{0};
-  std::size_t observedPacketCount{0};
-  std::uint32_t configuredRate{0};
-  std::uint32_t configuredChannels{0};
-  std::uint32_t configuredFormatTag{0};
-  std::uint32_t configuredFramesPerPacket{0};
-  std::uint32_t configuredLayoutTag{0};
-  int configureCalls{0};
-  int convertCalls{0};
-  int resetCalls{0};
-  int closeCalls{0};
-  bool observedEof{false};
-};
 
 struct Fixture {
   Fixture(MediaGeneration generation, MediaTrackDescriptor value,

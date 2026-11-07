@@ -3,26 +3,20 @@
 #include "media/media_container_probe.hpp"
 #include "platform/macos/libavformat_media_source.hpp"
 #include "platform/macos/routed_media_source.hpp"
+#include "support/expect.hpp"
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <unistd.h>
 
-#define REQUIRE(condition)                                                     \
-  do {                                                                         \
-    if (!(condition)) {                                                        \
-      std::cerr << "FAIL " << __LINE__ << ": " #condition "\n";                \
-      return 1;                                                                \
-    }                                                                          \
-  } while (false)
 int main(int argc, char **argv) {
   using namespace wam::media;
   using namespace wam::macos;
   if (argc < 2)
     return 2;
-  REQUIRE(!avcodecExactTime(INT64_MIN, 1, 90000));
-  REQUIRE(!avcodecExactTime(INT64_MAX, 2, 1));
-  REQUIRE(avcodecExactTime(9007199254740993LL, 1, 90000)->value ==
+  EXPECT(!avcodecExactTime(INT64_MIN, 1, 90000));
+  EXPECT(!avcodecExactTime(INT64_MAX, 2, 1));
+  EXPECT(avcodecExactTime(9007199254740993LL, 1, 90000)->value ==
           3002399751580331LL);
   const std::filesystem::path path(argv[1]);
   auto source = argc > 3 && std::string_view(argv[3]) == "routed"
@@ -37,33 +31,33 @@ int main(int argc, char **argv) {
             << '\n';
   if (argc > 2 && std::string_view(argv[2]) != "ready") {
     REQUIRE(opened.status == MediaSourceOpenStatus::Unsupported);
-    REQUIRE(opened.error == argv[2]);
-    REQUIRE(!opened.preparedContext);
-    return 0;
+    EXPECT(opened.error == argv[2]);
+    EXPECT(!opened.preparedContext);
+    return failures == 0 ? 0 : 1;
   }
   REQUIRE(opened.status == MediaSourceOpenStatus::Ready);
   if (path.filename() == "asp-full.mkv") {
     REQUIRE(opened.descriptor->tracks.front().video);
-    REQUIRE(opened.descriptor->tracks.front().video->fullRangeVideo);
+    EXPECT(opened.descriptor->tracks.front().video->fullRangeVideo);
   }
   REQUIRE(opened.preparedContext->backendKind() ==
           MediaSourceBackendKind::Libavformat);
-  REQUIRE(opened.preparedContext->descriptor() == opened.descriptor);
+  EXPECT(opened.preparedContext->descriptor() == opened.descriptor);
   std::uint64_t packets{}, bytes{};
   bool eos = false;
   for (;;) {
     auto result = source->readNext(1);
     if (auto *sample = std::get_if<MediaSample>(&result)) {
-      REQUIRE(!eos);
-      REQUIRE(validateMediaSample(*sample, *opened.descriptor, options.limits));
-      REQUIRE(sample->presentationTime.valid());
-      REQUIRE(sample->duration.valid());
-      REQUIRE(sample->payload.contiguousBytes().size() ==
+      EXPECT(!eos);
+      EXPECT(validateMediaSample(*sample, *opened.descriptor, options.limits));
+      EXPECT(sample->presentationTime.valid());
+      EXPECT(sample->duration.valid());
+      EXPECT(sample->payload.contiguousBytes().size() ==
               sample->payload.byteSize());
       ++packets;
       bytes += sample->payload.byteSize();
     } else if (std::holds_alternative<MediaEndOfStream>(result)) {
-      REQUIRE(!eos);
+      EXPECT(!eos);
       eos = true;
     } else if (std::holds_alternative<MediaSourceExhausted>(result))
       break;
@@ -73,46 +67,46 @@ int main(int argc, char **argv) {
       REQUIRE(false);
     }
   }
-  REQUIRE(eos && packets > 0);
+  EXPECT(eos && packets > 0);
   if (path.filename() == "fragmented.mp4" || path.filename() == "asp.avi")
-    REQUIRE(packets == 75);
+    EXPECT(packets == 75);
   if (path.filename() == "boundary.mp4" || path.filename() == "mid-moof.mp4" ||
       path.filename() == "mid-mdat.mp4")
-    REQUIRE(packets == 50);
+    EXPECT(packets == 50);
   std::cout << "packets=" << packets << " bytes=" << bytes
             << " duration=" << opened.descriptor->duration.value << '/'
             << opened.descriptor->duration.timescale << '\n';
   REQUIRE(source->armOperation(2));
   const auto seek = source->seek({2, {1, 2}, MediaSeekMode::Accurate});
   std::cout << "seek=" << seek.accepted << " error=" << seek.error << '\n';
-  REQUIRE(seek.accepted);
-  REQUIRE(seek.preparedContext == opened.preparedContext);
-  REQUIRE(compareMediaTime(seek.actualDecodeStart, {1, 2}) !=
+  EXPECT(seek.accepted);
+  EXPECT(seek.preparedContext == opened.preparedContext);
+  EXPECT(compareMediaTime(seek.actualDecodeStart, {1, 2}) !=
           MediaTimeOrder::Greater);
   auto first = source->readNext(2);
   REQUIRE(std::holds_alternative<MediaSample>(first));
-  REQUIRE(std::get<MediaSample>(first).keyFrame);
+  EXPECT(std::get<MediaSample>(first).keyFrame);
   auto preview = createLibavformatPreviewSource(
       {path, opened.descriptor, options.limits, opened.preparedContext});
   REQUIRE(preview);
   const auto begun = preview->begin({1, {1, 2}});
-  REQUIRE(begun.status == NativePreviewStatus::Ready);
+  EXPECT(begun.status == NativePreviewStatus::Ready);
   auto previewSample = preview->readNext(1);
   REQUIRE(std::holds_alternative<MediaSample>(previewSample));
-  REQUIRE(std::get<MediaSample>(previewSample).keyFrame);
+  EXPECT(std::get<MediaSample>(previewSample).keyFrame);
   preview->requestCancel(9);
-  REQUIRE(!preview->facts().cancelled);
+  EXPECT(!preview->facts().cancelled);
   preview->requestCancel(1);
-  REQUIRE(std::holds_alternative<NativePreviewCancelled>(preview->readNext(1)));
+  EXPECT(std::holds_alternative<NativePreviewCancelled>(preview->readNext(1)));
   preview->close();
   source->requestCancel(1);
-  REQUIRE(!source->stats().cancelled);
+  EXPECT(!source->stats().cancelled);
   source->requestCancel(2);
-  REQUIRE(std::holds_alternative<MediaSourceCancelled>(source->readNext(2)));
+  EXPECT(std::holds_alternative<MediaSourceCancelled>(source->readNext(2)));
   source->close();
   REQUIRE(source->armOperation(3));
   source->requestCancel(3);
-  REQUIRE(source->openLocalFile(path, options, 3).status ==
+  EXPECT(source->openLocalFile(path, options, 3).status ==
           MediaSourceOpenStatus::Cancelled);
   if (path.filename() == "fragmented.mp4") {
     LibavformatMediaSource retained;
@@ -128,10 +122,10 @@ int main(int argc, char **argv) {
     }
     const auto limited = retained.readNext(1);
     REQUIRE(std::holds_alternative<MediaSourceFailure>(limited));
-    REQUIRE(std::get<MediaSourceFailure>(limited).error ==
+    EXPECT(std::get<MediaSourceFailure>(limited).error ==
             "LibavformatPayloadLeaseLimit");
     retained.close();
-    REQUIRE(!leases.front().payload.contiguousBytes().empty());
+    EXPECT(!leases.front().payload.contiguousBytes().empty());
     const auto temporary =
         std::filesystem::path("/private/tmp") /
         ("wam-avformat-identity-" + std::to_string(getpid()) + ".mp4");
@@ -151,13 +145,13 @@ int main(int argc, char **argv) {
     std::string error;
     LibavformatCursor::Packet packet;
     REQUIRE(cursor.open(temporary, cancelled, error));
-    REQUIRE(cursor.read(packet, error) == LibavformatCursor::Read::Packet);
+    EXPECT(cursor.read(packet, error) == LibavformatCursor::Read::Packet);
     {
       std::ofstream changed(temporary, std::ios::binary | std::ios::app);
       changed.put('x');
     }
-    REQUIRE(cursor.read(packet, error) == LibavformatCursor::Read::Failed);
-    REQUIRE(error == "LibavformatFileChanged");
+    EXPECT(cursor.read(packet, error) == LibavformatCursor::Read::Failed);
+    EXPECT(error == "LibavformatFileChanged");
     std::filesystem::copy_file(
         path, temporary, std::filesystem::copy_options::overwrite_existing);
     LibavformatMediaSource identity;
@@ -171,10 +165,10 @@ int main(int argc, char **argv) {
     std::filesystem::rename(temporary, backup);
     std::filesystem::copy_file(path, temporary);
     const auto changed = rebound->begin({1, {1, 2}});
-    REQUIRE(changed.status == NativePreviewStatus::Failed);
-    REQUIRE(changed.error == "LibavformatFileChanged");
+    EXPECT(changed.status == NativePreviewStatus::Failed);
+    EXPECT(changed.error == "LibavformatFileChanged");
     std::cout << "retained lease limit, file growth, preview file replacement "
                  "passed\n";
   }
-  return 0;
+  return failures == 0 ? 0 : 1;
 }

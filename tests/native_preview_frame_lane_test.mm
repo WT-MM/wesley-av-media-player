@@ -8,6 +8,8 @@
 #include "vp8_test_fixture.hpp"
 #endif
 
+#include "support/expect.hpp"
+
 #include <CoreVideo/CoreVideo.h>
 
 #include <algorithm>
@@ -30,15 +32,6 @@ namespace {
 using namespace wam::macos;
 using namespace wam::media;
 namespace protocol = wam::media::native_playback;
-
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    ++failures;
-    std::cerr << "FAIL: " << message << '\n';
-  }
-}
 
 constexpr std::uint64_t kPlaybackGeneration = 7;
 constexpr std::uint8_t kAvcC[] = {

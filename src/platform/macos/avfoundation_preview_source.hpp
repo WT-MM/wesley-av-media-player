@@ -12,7 +12,7 @@
 
 namespace wam::macos {
 
-#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct AVFoundationPreviewSourceTestAccess;
 using AVFoundationPreviewCancelInterleaveHook = void (*)(
     std::uint64_t epoch, void* context) noexcept;
@@ -22,7 +22,7 @@ using AVFoundationPreviewCancelInterleaveHook = void (*)(
 // facts -- lives in `native_preview_source.hpp`; only the AVFoundation-specific
 // backend seams below are named here.
 
-#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Exact snapshots from the production shared-context branch. The probe models
 // one failed reader initialization followed by one successfully started
 // reader, while using the same accounting methods as ProductionPreviewGeneration.
@@ -115,12 +115,12 @@ class AVFoundationPreviewSource final : public NativePreviewSource {
   struct Impl;
   explicit AVFoundationPreviewSource(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;
-#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct AVFoundationPreviewSourceTestAccess;
 #endif
 };
 
-#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Deterministic proof seam absent from shipping class layout. The hook runs
 // after requestCancel() first observes its matching operation epoch but before
 // it publishes cancellation. Callers install it before starting concurrent

@@ -26,9 +26,9 @@ fallback = root / 'fallback.wmv'
 # Silent video: even the mute/unmute tests cannot produce sound.
 subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i',
                 'testsrc2=size=320x180:rate=30', '-t', '20', '-an',
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '240', str(media)], check=True)
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '240', str(media)], check=True, timeout=60)
 subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-i', str(media), '-an',
-                '-c:v', 'wmv2', str(fallback)], check=True)
+                '-c:v', 'wmv2', str(fallback)], check=True, timeout=60)
 (root / 'last.mp4').write_bytes(media.read_bytes())
 (root / 'garbage.mp4').write_bytes(b'not a media container\x00' * 100)
 (root / 'truncated.mp4').write_bytes(media.read_bytes()[:10000])
@@ -154,7 +154,7 @@ elif case == 'gapseek':
     # before the next frame's start. Both seeks must still commit and draw.
     gapped = root / 'gapped.mkv'
     subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=60000/1001',
-                    '-t', '8', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '240', str(gapped)], check=True)
+                    '-t', '8', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '240', str(gapped)], check=True, timeout=60)
     _, reports, _ = run(case, gapped, 'report@4000', WAM_TEST_SEEK_SCRIPT='4.921875@1.5,2.21875@3')
     events = [r.get('event') for r in reports]
     check(events.count('commit_seek_submitted') == 2 and events.count('commit_frame_drawn') == 2,

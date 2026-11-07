@@ -1,15 +1,11 @@
 #include "platform/macos/native_playback_owner.hpp"
-#include <cstdlib>
-#include <iostream>
+#include "support/expect.hpp"
 #include <vector>
 
 namespace native = wam::media::native_playback;
 namespace router = wam::media::playback_router;
 using namespace wam::macos;
 namespace {
-void expect(bool value, const char* message) {
-  if (!value) { std::cerr << message << '\n'; std::exit(1); }
-}
 class Host final : public NativePlaybackOwner {
 public:
   std::vector<char> events;
@@ -81,4 +77,5 @@ int main() {
   observations.lifecycle = native::Ended{command.stamp, command.generation, 30};
   host.deliver(observations);
   expect(host.events == std::vector<char>({'L'}), "terminal lifecycle invalidates coalesced generic draws before delivery");
+  return failures == 0 ? 0 : 1;
 }

@@ -11,14 +11,24 @@ original = source.read_bytes()
 start = original.index(b'  // Generation activation must reconcile')
 end = original.index(b'  if (!configured_', start)
 results = {}
+build = repo / 'build'
+
+
+def run_recovery_test(log):
+    built = subprocess.run(['cmake', '--build', str(build), '--target', 'wam_native_audio_session_test'], stdout=log, stderr=log)
+    if built.returncode != 0:
+        return built.returncode
+    return subprocess.run([str(build / 'wam_native_audio_session_test'), '--device-recovery'], stdout=log, stderr=log).returncode
+
+
 try:
     source.write_bytes(original[:start] + original[end:])
     with (proof / 'device-reverted.log').open('w') as log:
-        results['reverted_rc'] = subprocess.run(['sh', str(repo / 'tests/run_wamkit_device_recovery_test.sh')], stdout=log, stderr=log).returncode
+        results['reverted_rc'] = run_recovery_test(log)
 finally:
     source.write_bytes(original)
 results['restored_sha256'] = hashlib.sha256(source.read_bytes()).hexdigest()
 with (proof / 'device-restored.log').open('w') as log:
-    results['restored_rc'] = subprocess.run(['sh', str(repo / 'tests/run_wamkit_device_recovery_test.sh')], stdout=log, stderr=log).returncode
+    results['restored_rc'] = run_recovery_test(log)
 (proof / 'device-revert.json').write_text(json.dumps(results, indent=2) + '\n')
 assert results['reverted_rc'] != 0 and results['restored_rc'] == 0

@@ -3,7 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
-#include <iostream>
+#include "support/expect.hpp"
 #include <stdexcept>
 #include <thread>
 using namespace std::chrono_literals;
@@ -13,7 +13,6 @@ std::atomic<int> capability{3}, installs{0}, mode{0};
 struct Session { wam_caption_callback_v1 cb; void* ctx; std::thread worker; std::atomic<bool> cancelled{false}; };
 void emit(Session* s,uint64_t g,int kind,const char* text="",int flags=0) { s->cb(s->ctx,g,kind,0,1,0.5,flags,text); }
 void join(Session* s) { if(s->worker.joinable()) s->worker.join(); }
-void check(bool value,const char* reason) { if(!value) throw std::runtime_error(reason); }
 void write(const fs::path& p,const char* s) {std::ofstream(p)<<s;}
 }
 extern "C" {
@@ -63,8 +62,8 @@ int main(int argc,char**argv) {
  wam::CaptionRequest request;request.input=root/"input.wav";request.output_srt=root/"output.srt";
  request.tools={root/"fake-ffmpeg",root/"fake-whisper",root/"model.bin"};
  auto run=[&](wam::CaptionService& service,int response,bool cancel=false) {
-   check(service.start(request),"start refused");
-   check(!service.start(request),"concurrent request admitted");
+   expect(service.start(request),"start refused");
+   expect(!service.start(request),"concurrent request admitted");
    const auto deadline=std::chrono::steady_clock::now()+3s;
    while(service.running() && std::chrono::steady_clock::now()<deadline) {
      const auto status=service.status();
@@ -77,27 +76,27 @@ int main(int argc,char**argv) {
  };
  {
    wam::CaptionService service;
-   auto s=run(service,0);check(s.succeeded && s.engine==wam::CaptionEngine::Apple,"ready Apple selection failed");
-   check(installs==0,"ready asset downloaded");check(s.segments.size()==1 && s.segments[0].text=="Final Apple text","revision or generation isolation failed");
+   auto s=run(service,0);expect(s.succeeded && s.engine==wam::CaptionEngine::Apple,"ready Apple selection failed");
+   expect(installs==0,"ready asset downloaded");expect(s.segments.size()==1 && s.segments[0].text=="Final Apple text","revision or generation isolation failed");
  }
  mode=4;
  {wam::CaptionService service; auto s=run(service,0);
-  check(s.succeeded && s.segments.size()==512 && s.segments.front().start==89 &&
+  expect(s.succeeded && s.segments.size()==512 && s.segments.front().start==89 &&
         s.segments.back().start==600,"live snapshot must retain only latest 512 segments");}
  mode=0;
  capability=0;
- {wam::CaptionService service;check(run(service,0).engine==wam::CaptionEngine::Whisper,"unavailable must degrade");}
+ {wam::CaptionService service;expect(run(service,0).engine==wam::CaptionEngine::Whisper,"unavailable must degrade");}
  capability=5;
  {
-   wam::CaptionService service;check(run(service,-1).succeeded,"decline fallback failed");
-   check(installs==0,"declined download started");
-   check(run(service,1).engine==wam::CaptionEngine::Whisper,"decline must be asked once per service");
+   wam::CaptionService service;expect(run(service,-1).succeeded,"decline fallback failed");
+   expect(installs==0,"declined download started");
+   expect(run(service,1).engine==wam::CaptionEngine::Whisper,"decline must be asked once per service");
  }
- {wam::CaptionService service;check(run(service,1).engine==wam::CaptionEngine::Apple,"consented prepare failed");check(installs==1,"install not explicitly consented");}
+ {wam::CaptionService service;expect(run(service,1).engine==wam::CaptionEngine::Apple,"consented prepare failed");expect(installs==1,"install not explicitly consented");}
  mode=1;
- {wam::CaptionService service;auto s=run(service,1);check(s.succeeded && s.engine==wam::CaptionEngine::Whisper,"install failure fallback failed");}
+ {wam::CaptionService service;auto s=run(service,1);expect(s.succeeded && s.engine==wam::CaptionEngine::Whisper,"install failure fallback failed");}
  mode=2;
- {wam::CaptionService service;write(request.output_srt,"keep old output");auto s=run(service,1,true);check(s.cancelled,"download cancellation failed");std::string old;std::ifstream(request.output_srt)>>old;check(old=="keep","cancel overwrote output");}
- fs::remove_all(root);std::cout<<"caption consent, fallback, generation and cancellation checks passed\n";return 0;
+ {wam::CaptionService service;write(request.output_srt,"keep old output");auto s=run(service,1,true);expect(s.cancelled,"download cancellation failed");std::string old;std::ifstream(request.output_srt)>>old;expect(old=="keep","cancel overwrote output");}
+ fs::remove_all(root);std::cout<<"caption consent, fallback, generation and cancellation checks passed\n";return failures==0?0:1;
  } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';fs::remove_all(root);return 1;}
 }

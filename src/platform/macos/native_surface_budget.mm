@@ -47,7 +47,7 @@ struct SurfaceBudgetState final {
 
 constinit SurfaceBudgetState gSurfaceBudget;
 
-#if defined(WAM_NATIVE_SURFACE_BUDGET_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 NativeSurfaceBudgetTestInterleaveHook gInterleaveHook = nullptr;
 void *gInterleaveContext = nullptr;
 
@@ -117,7 +117,7 @@ bool tryRetainPublication(SurfaceRecord &record,
         references == std::numeric_limits<std::uint32_t>::max()) {
       return false;
     }
-#if defined(WAM_NATIVE_SURFACE_BUDGET_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
     testInterleave(
         NativeSurfaceBudgetTestInterleavePoint::BeforeRetainCompareExchange);
 #endif
@@ -139,7 +139,7 @@ bool tryRetainPublication(SurfaceRecord &record,
       const std::uint64_t retainedPublication =
           record.publication.load(std::memory_order_acquire);
       if (retainedPublication >= kFirstPublishedGeneration) {
-#if defined(WAM_NATIVE_SURFACE_BUDGET_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
         testInterleave(NativeSurfaceBudgetTestInterleavePoint::
                            BeforeMismatchedRetainRelease);
 #endif
@@ -472,7 +472,7 @@ NativeSurfaceBudgetStats NativeSurfaceBudget::stats() noexcept {
   };
 }
 
-#if defined(WAM_NATIVE_SURFACE_BUDGET_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 NativeSurfaceBudgetToken NativeSurfaceBudgetTestAccess::tryAcquire(
     std::uint32_t surfaceID, std::uint64_t bytes) noexcept {
   return NativeSurfaceBudget::tryAcquireIdentity(surfaceID, bytes);

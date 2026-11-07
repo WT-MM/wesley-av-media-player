@@ -1,4 +1,5 @@
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
+#include "platform/macos/libavformat_media_source.hpp"
 #include "platform/macos/routed_media_source.hpp"
 #endif
 #include "platform/macos/avfoundation_media_source.hpp"
@@ -31,6 +32,8 @@ submitSample(wam::macos::NativeAudioConverter &converter,
 
 // This offline harness runs the production source, converter and ring on one
 // bounded worker. Its output is interleaved stereo float32 at the media rate.
+// argv[4] "origin": open at 0 and trim to the target; "seek": open at 0, then
+// seek() the open source to the target (the warm generation a user seek runs).
 int main(int argc, char **argv) {
   if (argc < 3 || argc > 5)
     return 2;
@@ -40,11 +43,18 @@ int main(int argc, char **argv) {
       slash==std::string::npos?1:static_cast<std::int32_t>(std::strtol(targetText.c_str()+slash+1,nullptr,10))};
   if (!target.valid() || target.value < 0)
     return 2;
+  const std::string mode = argc == 5 ? argv[4] : "";
+  if (argc == 5 && mode != "origin" && mode != "seek")
+    return 2;
+  const bool origin = mode == "origin";
   using namespace wam::media;
   using namespace wam::macos;
   const std::filesystem::path path(argv[1]);
   std::unique_ptr<MediaSource> source;
-#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+#if defined(WAM_AUDIO_PROBE_LIBAVFORMAT_ONLY)
+  // wam_libavformat_mixed_audio_probe: libavformat without the router.
+  source = std::make_unique<LibavformatMediaSource>();
+#elif defined(WAM_ENABLE_AVFORMAT_STAGE)
   source=createRoutedMediaSource();
 #else
   if (path.extension() == ".webm" || path.extension() == ".mka" ||
@@ -66,20 +76,33 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "open: %s\n", opened.error.c_str());
     return 1;
   }
+  MediaGeneration generation = 1;
+  MediaAudioGenerationWindow window = opened.audioWindow;
+  if (mode == "seek") {
+    generation = 2;
+    if (!source->armOperation(generation))
+      return 1;
+    const auto seeked = source->seek({generation, target, MediaSeekMode::Accurate});
+    if (!seeked.accepted) {
+      std::fprintf(stderr, "seek: %s\n", seeked.error.c_str());
+      return 1;
+    }
+    window = seeked.audioWindow;
+  }
   const auto *track =
       findMediaTrack(*opened.descriptor, *opened.descriptor->selectedAudio);
   if (!track || !track->audio)
     return 1;
-  NativePcmRing ring(1);
+  NativePcmRing ring(generation);
   NativeAudioConverter converter(ring);
   NativeAudioGenerationTimeline timeline;
   timeline.trimBeforeFloor = true;
-  timeline.presentationFloor = argc == 5 ? *audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track->audio->sampleRate)) : opened.audioWindow.presentationStart;
-  timeline.startsAtStreamOrigin = opened.audioWindow.startsAtStreamOrigin;
+  timeline.presentationFloor = origin ? *audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track->audio->sampleRate)) : window.presentationStart;
+  timeline.startsAtStreamOrigin = window.startsAtStreamOrigin;
   timeline.presentationCeiling = track->duration;
   timeline.trimAfterCeiling = true;
   std::string error;
-  if (!converter.configure(*track, 1, timeline, &error)) {
+  if (!converter.configure(*track, generation, timeline, &error)) {
     std::fprintf(stderr, "configure: %s\n", error.c_str());
     return 1;
   }
@@ -89,9 +112,9 @@ int main(int argc, char **argv) {
   std::uint64_t frames = 0;
   const auto drainRing = [&] {
     std::array<float, NativePcmRing::kSamplesPerSlab> pcm{};
-    while (const auto available = ring.readableFrames(1).frames) {
+    while (const auto available = ring.readableFrames(generation).frames) {
       const auto n = std::min(available, NativePcmRing::kFramesPerSlab);
-      const auto consumed = ring.consume(1, std::span(pcm).first(n * 2));
+      const auto consumed = ring.consume(generation, std::span(pcm).first(n * 2));
       if (consumed.pcmFrames != n || consumed.silentFrames != 0 ||
           std::fwrite(pcm.data(), sizeof(float) * 2, n, out) != n)
         return false;
@@ -122,7 +145,7 @@ int main(int argc, char **argv) {
       error = "input requested after EOS";
       break;
     }
-    auto next = source->readNext(1);
+    auto next = source->readNext(generation);
     if (auto *sample = std::get_if<MediaSample>(&next)) {
       if (sample->track == track->id &&
           submitSample(converter, std::move(*sample), &error) !=
@@ -131,7 +154,7 @@ int main(int argc, char **argv) {
     } else if (auto *end = std::get_if<MediaEndOfStream>(&next)) {
       if (end->track == track->id) {
         eos = true;
-        const auto endResult = converter.endOfStream(1, &error);
+        const auto endResult = converter.endOfStream(generation, &error);
         failed = endResult == NativeAudioPumpResult::Failed;
         drained = endResult == NativeAudioPumpResult::Drained;
         if (!drainRing())

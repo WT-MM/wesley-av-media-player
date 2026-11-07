@@ -1,6 +1,7 @@
 #include "media/native_media_source.hpp"
 #include "platform/macos/avfoundation_media_source.hpp"
 #include "platform/macos/avfoundation_preview_source.hpp"
+#include "support/expect.hpp"
 
 #include <mach/mach.h>
 #include <sys/resource.h>
@@ -70,16 +71,6 @@ struct MemorySnapshot final {
   std::optional<std::uint64_t> residentBytes;
   std::optional<std::uint64_t> footprintBytes;
 };
-
-[[noreturn]] void fail(std::string message) {
-  throw std::runtime_error(std::move(message));
-}
-
-void require(bool condition, std::string_view message) {
-  if (!condition) {
-    fail(std::string(message));
-  }
-}
 
 template <typename Duration>
 [[nodiscard]] double milliseconds(Duration value) noexcept {
@@ -440,8 +431,9 @@ void writeTimingReport(const std::filesystem::path& fixture,
       }
     } else if (!std::holds_alternative<MediaDiscontinuity>(result)) {
       if (std::holds_alternative<NativePreviewFailure>(result)) {
-        fail(std::string("preview sample read failed: ") +
-             std::get<NativePreviewFailure>(result).error);
+        fail((std::string("preview sample read failed: ") +
+              std::get<NativePreviewFailure>(result).error)
+                 .c_str());
       }
       if (std::holds_alternative<NativePreviewEndOfStream>(result)) {
         fail("preview reached end of stream before yielding a sample");
@@ -485,8 +477,9 @@ void writeTimingReport(const std::filesystem::path& fixture,
         presented = !sample.decodeOnly;
       } else if (!std::holds_alternative<MediaDiscontinuity>(result)) {
         if (std::holds_alternative<NativePreviewFailure>(result)) {
-          fail(std::string("retargeted preview read failed: ") +
-               std::get<NativePreviewFailure>(result).error);
+          fail((std::string("retargeted preview read failed: ") +
+                std::get<NativePreviewFailure>(result).error)
+                   .c_str());
         }
         fail("retargeted preview did not reach a presentable sample");
       }
@@ -598,7 +591,7 @@ int main(int argc, char** argv) {
       } else {
         std::cout << "Native headless performance invariants passed\n";
       }
-      return 0;
+      return failures == 0 ? 0 : 1;
     } catch (const std::exception& exception) {
       std::cerr << "Native headless performance invariant failed: "
                 << exception.what() << '\n';

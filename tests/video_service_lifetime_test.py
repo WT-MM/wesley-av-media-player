@@ -39,8 +39,11 @@ def services():
 
 def own_service(client):
     target = f"pid/{client}/{SERVICE}"
-    query = subprocess.run(["/bin/launchctl", "print", target], text=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+    try:
+        query = subprocess.run(["/bin/launchctl", "print", target], text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+    except subprocess.TimeoutExpired:
+        return None  # A slow query under load; the next poll asks again.
     text = query.stdout
     if not text.startswith(target + " = {\n"):
         return None
@@ -93,7 +96,10 @@ def run_case(app, root, media, name, extra, sentinel):
                 time.sleep(0.1)
             process.wait(timeout=1)
             assert process.returncode == 0, (name, process.returncode, log.read_text()[-3000:])
-            deadline = time.monotonic() + 5
+            # Under load the SIGTERMed helper can take several seconds to go
+            # once its client has exited; an unretired one never goes.
+            exited = time.monotonic()
+            deadline = exited + 30
             stable = 0
             while time.monotonic() < deadline:
                 after = services()
@@ -103,7 +109,8 @@ def run_case(app, root, media, name, extra, sentinel):
                     break
                 time.sleep(0.1)
             receipt = dict(client_pid=process.pid, before_count=len(before), after_count=len(after),
-                           owned=owned, survivors=survivors, exit_code=process.returncode)
+                           owned=owned, survivors=survivors, exit_code=process.returncode,
+                           retired_after_s=round(time.monotonic() - exited, 1))
             (dest / "result.json").write_text(json.dumps(receipt, indent=2))
             assert not survivors, (name, "orphaned owned VT services", survivors)
             assert services().get(sentinel[0]) == sentinel[1], "unrelated decoder service was terminated"
@@ -118,7 +125,8 @@ def run_case(app, root, media, name, extra, sentinel):
                     assert "first_frame_drawn" in facts and "fallback_selected" not in facts, (name, facts)
             if name == "native-preview":
                 assert "preview_frame_drawn" in facts and "commit_frame_drawn" in facts, (name, facts)
-            print(f"{name}: passed; owned={list(owned)} survivors=0", flush=True)
+            print(f"{name}: passed; owned={list(owned)} survivors=0 retired_after_s={receipt['retired_after_s']}",
+                  flush=True)
         finally:
             stop(process)
             # A failing regression must not accumulate more orphans. Identity

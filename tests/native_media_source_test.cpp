@@ -1,5 +1,7 @@
 #include "media/native_media_source.hpp"
 
+#include "support/expect.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -25,15 +27,6 @@
 namespace {
 
 using namespace wam::media;
-
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 class TestPayloadStorage final : public MediaPayloadStorage {
  public:
