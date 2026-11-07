@@ -112,12 +112,12 @@ class PlayerControllerTestAccess final {
 
   static void renderInvalidated(PlayerController &controller,
                                 RenderTicket retired) {
-    controller.handleRenderInvalidated(retired.stamp);
+    controller.mpv_.handleRenderInvalidated(retired.stamp);
   }
 
   static void renderFailed(PlayerController &controller, const QString &error,
                            RenderTicket failed) {
-    controller.handleRenderInitializationFailure(error, failed.stamp);
+    controller.mpv_.handleRenderInitializationFailure(error, failed.stamp);
   }
 
   static bool hasPendingOpen(const PlayerController &controller) {
@@ -176,9 +176,9 @@ class PlayerControllerTestAccess final {
       std::optional<bool> eof_reached) {
     if (!controller.mpv_.lineage.startup_playback_sync)
       return false;
-    return PlayerController::livePlaybackStateMatchesStartupSync(
+    return MpvEngine::livePlaybackStateMatchesStartupSync(
         *controller.mpv_.lineage.startup_playback_sync,
-        PlayerController::LivePlaybackState{paused, idle, eof_reached,
+        MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             std::nullopt, std::nullopt});
   }
 
@@ -186,8 +186,8 @@ class PlayerControllerTestAccess final {
       PlayerController &controller, bool paused, bool idle,
       std::optional<bool> eof_reached, std::optional<double> position,
       std::optional<double> duration) {
-    controller.reconcileStartupPlaybackSync(
-        PlayerController::LivePlaybackState{paused, idle, eof_reached,
+    controller.mpv_.reconcileStartupPlaybackSync(
+        MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             position, duration});
   }
 
@@ -298,7 +298,7 @@ class PlayerControllerTestAccess final {
   static void completeRecoveryAttempt(PlayerController &controller,
                                       std::uint64_t attempt_id,
                                       int error = 0) {
-    controller.handleRenderRecoveryCommandReply(attempt_id, error);
+    controller.mpv_.handleRenderRecoveryCommandReply(attempt_id, error);
   }
 
   static bool flush(PlayerController &controller, RenderTicket ticket) {
@@ -410,7 +410,7 @@ class PlayerControllerTestAccess final {
 
   static std::int64_t authoritativePlaylistEntry(
       std::int64_t live_entry, std::int64_t captured_start_entry) {
-    return PlayerController::authoritativePlaylistEntry(
+    return MpvEngine::authoritativePlaylistEntry(
         live_entry, captured_start_entry);
   }
 
@@ -987,13 +987,13 @@ class PlayerControllerTestAccess final {
     if (!controller.mpv_.lineage.render_recovery)
       return;
     controller.mpv_.lineage.render_recovery->transport_restored = true;
-    controller.queueRenderRecoveryCompletion();
+    controller.mpv_.queueRenderRecoveryCompletion();
   }
 
   static void finishQueuedRecoveryCompletion(PlayerController &controller) {
     if (!controller.mpv_.lineage.render_recovery || !controller.mpv_.lineage.committed_open)
       return;
-    controller.finishRenderRecoveryCompletion(
+    controller.mpv_.finishRenderRecoveryCompletion(
         controller.mpv_.lineage.render_recovery->completion_token,
         controller.mpv_.lineage.render_recovery->request_serial,
         controller.mpv_.lineage.render_recovery->accepted_render_stamp,
@@ -1010,8 +1010,8 @@ class PlayerControllerTestAccess final {
       return;
     const PlayerController::RenderRecovery recovery =
         *controller.mpv_.lineage.render_recovery;
-    controller.commitRenderRecovery(
-        recovery, PlayerController::LivePlaybackState{
+    controller.mpv_.commitRenderRecovery(
+        recovery, MpvEngine::LivePlaybackState{
                       paused, idle, eof_reached, position, duration});
   }
 
@@ -1019,20 +1019,20 @@ class PlayerControllerTestAccess final {
       PlayerController &controller, bool paused, bool idle,
       std::optional<bool> eof_reached, std::optional<double> position,
       std::optional<double> duration) {
-    controller.commitStartupPlaybackSync(
-        PlayerController::LivePlaybackState{paused, idle, eof_reached,
+    controller.mpv_.commitStartupPlaybackSync(
+        MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             position, duration});
   }
 
   static bool livePlaybackPositionAvailable(
       const PlayerController &controller) {
-    const auto state = controller.readLivePlaybackState();
+    const auto state = controller.mpv_.readLivePlaybackState();
     return state && state->position.has_value();
   }
 
   static bool livePlaybackEofAvailable(
       const PlayerController &controller) {
-    const auto state = controller.readLivePlaybackState();
+    const auto state = controller.mpv_.readLivePlaybackState();
     return state && state->eof_reached.has_value();
   }
 
@@ -1041,9 +1041,9 @@ class PlayerControllerTestAccess final {
       bool eof_reached) {
     if (!controller.mpv_.lineage.render_recovery)
       return false;
-    return PlayerController::livePlaybackStateMatchesRecovery(
+    return MpvEngine::livePlaybackStateMatchesRecovery(
         *controller.mpv_.lineage.render_recovery,
-        PlayerController::LivePlaybackState{paused, idle, eof_reached,
+        MpvEngine::LivePlaybackState{paused, idle, eof_reached,
                                             std::nullopt, std::nullopt});
   }
 
@@ -1114,7 +1114,7 @@ class PlayerControllerTestAccess final {
     if (!controller.mpv_.lineage.render_recovery)
       return;
     controller.mpv_.lineage.render_recovery->restore_retry_count = 3;
-    controller.scheduleRenderRecoveryRetry(error);
+    controller.mpv_.scheduleRenderRecoveryRetry(error);
   }
 
   static std::int64_t activeEntry(const PlayerController &controller) {

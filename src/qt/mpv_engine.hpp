@@ -30,6 +30,19 @@ class PlayerController;
 class PlayerControllerTestAccess;
 class PlayerCore;
 
+struct MpvTransport {
+  bool paused = true;
+  bool idle = true;
+  bool eof_reached = false;
+  double position = 0.0;
+};
+
+struct MpvTransportChange {
+  bool paused_changed = false;
+  bool position_changed = false;
+  bool was_playing = false;
+};
+
 // What MpvEngine may do to its PlayerController: read the controller's
 // request lineage and publish what the compatibility engine observed. This is
 // the engine's whole surface toward the controller.
@@ -40,8 +53,30 @@ public:
   [[nodiscard]] virtual std::uint64_t requestSerial() const = 0;
   [[nodiscard]] virtual QUrl requestedSource() const = 0;
 
+  [[nodiscard]] virtual bool paused() const = 0;
+  [[nodiscard]] virtual double position() const = 0;
+  [[nodiscard]] virtual bool eofReached() const = 0;
+
   virtual void updatePause(bool paused) = 0;
+  virtual void updateIdle(bool idle) = 0;
+  virtual void updateEof(bool eof_reached) = 0;
+  virtual void updateDuration(double duration) = 0;
   virtual void updatePosition(double position) = 0;
+  virtual void setLastError(const QString &error) = 0;
+  // A transport snapshot assigned in one step while the engine still gates
+  // observations, then announced: no signal handler sees half of it.
+  [[nodiscard]] virtual MpvTransportChange
+  assignTransport(const MpvTransport &transport) = 0;
+  virtual void publishTransport(const MpvTransportChange &change) = 0;
+  // Tells the native router the fallback render state moved.
+  virtual void fallbackRenderStateChanged() = 0;
+
+  // Open lineage and event handling still on the controller.
+  virtual void abandonPendingOpen() = 0;
+  virtual void continuePendingOpen() = 0;
+  virtual void cacheCurrentTrackSelection() = 0;
+  virtual void drainMpvEvents() = 0;
+  virtual void notifyRoutedFallbackOpenFailed() = 0;
 
 protected:
   ~MpvEngineHost() = default;
@@ -51,6 +86,12 @@ protected:
                                       double epsilon = 0.0005) {
   return std::abs(left - right) <= epsilon;
 }
+
+// How a source is handed to mpv's loadfile, and the URL it is shown as.
+[[nodiscard]] QString sourceArgument(const QUrl &source);
+[[nodiscard]] QUrl displayUrlForSource(const QUrl &source);
+[[nodiscard]] QString sourceIdentity(const QUrl &source);
+[[nodiscard]] QString displayPath(const std::filesystem::path &path);
 
 // mpv's `path` (and playlist filename) as a URL: local paths become file URLs.
 [[nodiscard]] QUrl urlFromMpvPath(const QString &path);
@@ -346,6 +387,49 @@ public:
   void finishScrubGesture(bool restore_transport);
   void invalidateScrubGesture();
 
+  // --- Render recovery and startup sync --------------------------------
+  // A lost render context reloads (or reselects) the committed file and
+  // restores its per-file state and transport before observations resume.
+  struct LivePlaybackState {
+    bool paused = true;
+    bool idle = true;
+    std::optional<bool> eof_reached;
+    std::optional<double> position;
+    std::optional<double> duration;
+  };
+  bool flushRenderRecovery(std::uint64_t render_stamp);
+  void handleRenderRecoveryCommandReply(std::uint64_t attempt_id, int error);
+  void restoreRenderRecovery();
+  void queueRenderRecoveryCompletion();
+  void finishRenderRecoveryCompletion(std::uint64_t completion_token,
+                                      std::uint64_t request_serial,
+                                      std::uint64_t render_stamp,
+                                      std::int64_t playlist_entry_id);
+  [[nodiscard]] std::optional<LivePlaybackState> readLivePlaybackState() const;
+  [[nodiscard]] static bool
+  livePlaybackStateMatchesRecovery(const RenderRecovery &recovery,
+                                   const LivePlaybackState &live_state);
+  [[nodiscard]] static bool
+  livePlaybackStateMatchesStartupSync(const StartupPlaybackSync &startup_sync,
+                                      const LivePlaybackState &live_state);
+  void commitRenderRecovery(const RenderRecovery &recovery,
+                            const LivePlaybackState &live_state);
+  void queueStartupPlaybackSync();
+  void finishStartupPlaybackSync(std::uint64_t completion_token,
+                                 std::uint64_t request_serial,
+                                 std::uint64_t render_stamp,
+                                 std::int64_t playlist_entry_id);
+  void reconcileStartupPlaybackSync(const LivePlaybackState &live_state);
+  void commitStartupPlaybackSync(const LivePlaybackState &live_state);
+  void scheduleRenderRecoveryRetry(const QString &error);
+  void degradeRenderRecovery(const QString &error);
+  void handleRenderInvalidated(std::uint64_t retired_render_stamp);
+  void handleRenderInitializationFailure(const QString &error,
+                                         std::uint64_t render_stamp);
+  [[nodiscard]] static std::int64_t
+  authoritativePlaylistEntry(std::int64_t live_entry,
+                             std::int64_t captured_start_entry);
+
   std::shared_ptr<PlayerCore> core;
   Lineage lineage;
 
@@ -388,6 +472,9 @@ private:
   std::optional<ScrubSeek> scrub_seek_;
   std::uint64_t next_scrub_gesture_id_ = 0;
   std::uint64_t next_scrub_command_id_ = 0;
+  std::uint64_t next_render_recovery_attempt_id_ = 0;
+  std::uint64_t next_render_recovery_completion_token_ = 0;
+  std::uint64_t next_startup_playback_sync_token_ = 0;
   QTimer *scrub_timeout_timer_ = nullptr;
   std::uint64_t scrub_timeout_gesture_ = 0;
   std::uint64_t scrub_timeout_request_serial_ = 0;

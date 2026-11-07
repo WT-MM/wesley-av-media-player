@@ -216,8 +216,8 @@ public:
   [[nodiscard]] bool playing() const {
     return !paused_ && !idle_ && !eof_reached_;
   }
-  [[nodiscard]] bool paused() const { return paused_; }
-  [[nodiscard]] double position() const { return position_; }
+  [[nodiscard]] bool paused() const override { return paused_; }
+  [[nodiscard]] double position() const override { return position_; }
   [[nodiscard]] double duration() const { return duration_; }
   [[nodiscard]] QSizeF videoDisplaySize() const { return video_display_size_; }
   [[nodiscard]] bool videoHdr() const { return video_hdr_; }
@@ -439,14 +439,6 @@ private:
   using StartupPlaybackSync = MpvEngine::StartupPlaybackSync;
   using PlaylistEntryRange = MpvEngine::PlaylistEntryRange;
 
-  struct LivePlaybackState {
-    bool paused = true;
-    bool idle = true;
-    std::optional<bool> eof_reached;
-    std::optional<double> position;
-    std::optional<double> duration;
-  };
-
   // Controller-side ownership for a native pointer gesture. The handle tracks
   // every movement immediately, while native media work is demand-driven: one
   // exact request may be in flight and all later movement coalesces into the
@@ -557,15 +549,10 @@ private:
     VideoGamma,
   };
 
-  void drainMpvEvents();
   void requestVideoUpdate() override;
-  void handleRenderInitializationFailure(const QString &error,
-                                         std::uint64_t render_stamp);
-  void handleRenderInvalidated(std::uint64_t retired_render_stamp);
   // Each takes the command id parseMpvReply extracted for its protocol.
   void observeOpenCommandReply(std::uint64_t attempt_id, int error);
   void handleOpenCommandReply(std::uint64_t attempt_id, int error);
-  void handleRenderRecoveryCommandReply(std::uint64_t attempt_id, int error);
   [[nodiscard]] static std::optional<std::uint64_t>
   reserveNativeSeekIdentity(std::uint64_t &high_water) noexcept;
   [[nodiscard]] double boundedSeekTarget(double seconds) const noexcept;
@@ -662,30 +649,6 @@ private:
   void handleStartFile(std::int64_t playlist_entry_id);
   void handleEndFile(const mpv_event_end_file &end);
   void handlePlaybackReady(bool file_loaded);
-  void restoreRenderRecovery();
-  void queueRenderRecoveryCompletion();
-  void finishRenderRecoveryCompletion(std::uint64_t completion_token,
-                                      std::uint64_t request_serial,
-                                      std::uint64_t render_stamp,
-                                      std::int64_t playlist_entry_id);
-  [[nodiscard]] std::optional<LivePlaybackState> readLivePlaybackState() const;
-  [[nodiscard]] static bool
-  livePlaybackStateMatchesRecovery(const RenderRecovery &recovery,
-                                   const LivePlaybackState &live_state);
-  [[nodiscard]] static bool
-  livePlaybackStateMatchesStartupSync(const StartupPlaybackSync &startup_sync,
-                                      const LivePlaybackState &live_state);
-  void commitRenderRecovery(const RenderRecovery &recovery,
-                            const LivePlaybackState &live_state);
-  void queueStartupPlaybackSync();
-  void finishStartupPlaybackSync(std::uint64_t completion_token,
-                                 std::uint64_t request_serial,
-                                 std::uint64_t render_stamp,
-                                 std::int64_t playlist_entry_id);
-  void reconcileStartupPlaybackSync(const LivePlaybackState &live_state);
-  void commitStartupPlaybackSync(const LivePlaybackState &live_state);
-  void scheduleRenderRecoveryRetry(const QString &error);
-  void degradeRenderRecovery(const QString &error);
   void applyObservedPause(bool paused);
   void applyObservedPosition(double position);
   // --- subtitles -------------------------------------------------------
@@ -719,11 +682,7 @@ private:
   void applyObservedVideoTrack(std::int64_t video_track_id);
   void applyObservedAudioTrack(std::int64_t audio_track_id);
   void applyObservedSubtitleTrack(std::int64_t subtitle_track_id);
-  void cacheCurrentTrackSelection();
   void cacheCurrentEntrySource();
-  [[nodiscard]] static std::int64_t
-  authoritativePlaylistEntry(std::int64_t live_entry,
-                             std::int64_t captured_start_entry);
   [[nodiscard]] bool
   playlistEntryBelongsToCurrentLineage(std::int64_t playlist_entry_id) const;
   [[nodiscard]] bool engineReady() const override;
@@ -733,6 +692,16 @@ private:
   [[nodiscard]] QUrl requestedSource() const override {
     return requested_source_;
   }
+  [[nodiscard]] bool eofReached() const override { return eof_reached_; }
+  [[nodiscard]] MpvTransportChange
+  assignTransport(const MpvTransport &transport) override;
+  void publishTransport(const MpvTransportChange &change) override;
+  void fallbackRenderStateChanged() override;
+  void abandonPendingOpen() override;
+  void continuePendingOpen() override;
+  void cacheCurrentTrackSelection() override;
+  void drainMpvEvents() override;
+  void notifyRoutedFallbackOpenFailed() override;
   [[nodiscard]] MpvEngine &mpvEngine() noexcept override { return mpv_; }
   [[nodiscard]] bool needsRenderContext() const;
   bool initializePlaybackEngine() override;
@@ -742,14 +711,10 @@ private:
   beginRoutedFallbackOpen(const QUrl &source, std::uint64_t attempt,
                           std::uint64_t serial, std::uint64_t source_key,
                           bool paused, PlaybackSourceClass source_class) override;
-  void notifyRoutedFallbackOpenFailed();
   [[nodiscard]] bool resetRoutedFallbackCoreAfterRelease(
       const std::shared_ptr<PlayerCore> &expected_core) override;
   void finishStopUi(bool stop_compatibility_engine) override;
   bool flushPendingOpen(std::uint64_t render_stamp);
-  bool flushRenderRecovery(std::uint64_t render_stamp);
-  void continuePendingOpen();
-  void abandonPendingOpen();
   void attachVideoItem(MpvVideoItem *item);
   void detachVideoItem(MpvVideoItem *item);
   [[nodiscard]] std::shared_ptr<PlayerCore> coreForRendering() const;
@@ -878,11 +843,8 @@ private:
   bool tearing_down_ = false;
   std::uint64_t request_serial_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
-  std::uint64_t next_render_recovery_attempt_id_ = 0;
   std::uint64_t next_native_seek_gesture_id_ = 0;
   std::uint64_t next_native_seek_request_id_ = 0;
-  std::uint64_t next_render_recovery_completion_token_ = 0;
-  std::uint64_t next_startup_playback_sync_token_ = 0;
   // The subset of mpv_.lineage.attached_subtitle_files this player GENERATED,
   // so the Subtitles menu can name them honestly. A file the user loaded is
   // not a generated caption.

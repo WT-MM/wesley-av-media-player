@@ -1232,7 +1232,7 @@ void PlayerCore::drainRenderNotifications(
           render_invalidation_work_for_testing_(stamp);
         else
 #endif
-          expected_owner->handleRenderInvalidated(stamp);
+          expected_owner->mpv_.handleRenderInvalidated(stamp);
       } else {
 #if defined(WAM_QT_TEST_SEAMS)
         if (render_ready_work_for_testing_)
@@ -1343,7 +1343,7 @@ void PlayerCore::postInitializationError(const QString &error,
               return;
             }
           }
-          owner->handleRenderInitializationFailure(error, ticket.stamp);
+          owner->mpv_.handleRenderInitializationFailure(error, ticket.stamp);
         },
         Qt::QueuedConnection);
   } catch (...) {
