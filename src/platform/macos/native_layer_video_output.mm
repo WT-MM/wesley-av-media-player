@@ -848,7 +848,7 @@ NativeTrackedVideoOutputFacts NativeLayerVideoOutput::facts() const noexcept {
   return result;
 }
 
-#if defined(WAM_NATIVE_LAYER_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 NativeLayerVideoOutputHealth NativeLayerVideoOutput::health() const noexcept {
   const std::shared_ptr<State> state = state_;
   std::lock_guard lock(state->mutex);

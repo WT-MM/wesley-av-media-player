@@ -167,7 +167,7 @@ struct NativeSurfaceBudgetStats {
 
 class NativeSurfaceBudget;
 
-#if defined(WAM_NATIVE_SURFACE_BUDGET_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct NativeSurfaceBudgetTestAccess;
 
 enum class NativeSurfaceBudgetTestInterleavePoint : std::uint8_t {
@@ -213,7 +213,7 @@ public:
 
 private:
   friend class NativeSurfaceBudget;
-#if defined(WAM_NATIVE_SURFACE_BUDGET_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeSurfaceBudgetTestAccess;
 #endif
 
@@ -242,14 +242,14 @@ public:
   [[nodiscard]] static NativeSurfaceBudgetStats stats() noexcept;
 
 private:
-#if defined(WAM_NATIVE_SURFACE_BUDGET_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeSurfaceBudgetTestAccess;
 #endif
   [[nodiscard]] static NativeSurfaceBudgetToken
   tryAcquireIdentity(std::uint32_t surfaceID, std::uint64_t bytes) noexcept;
 };
 
-#if defined(WAM_NATIVE_SURFACE_BUDGET_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Deterministic accounting-only seams. reset(), forceNextPublication(), and
 // forceReferenceCount() require process quiescence: tests must not call them
 // while any unrelated token or accounting operation is live.

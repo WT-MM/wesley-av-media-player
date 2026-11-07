@@ -122,7 +122,7 @@ class NativeLayerVideoOutput final : public NativeTrackedVideoOutput {
       media::MediaDisplaySize displaySize,
       int quarterTurnDegrees) noexcept override;
 
-#if defined(WAM_NATIVE_LAYER_VIDEO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   // The audit counters, read only by the contract tests.
   [[nodiscard]] NativeLayerVideoOutputHealth health() const noexcept;
 #endif

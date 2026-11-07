@@ -776,17 +776,9 @@ if(APPLE)
       COMMAND wam_native_audio_output_test)
     set_tests_properties(macos_native_audio_output PROPERTIES TIMEOUT 30)
 
-    add_executable(wam_native_surface_budget_test
-      native_surface_budget_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_surface_budget.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_surface_budget.mm)
-    target_include_directories(wam_native_surface_budget_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(wam_native_surface_budget_test PRIVATE
-      WAM_NATIVE_SURFACE_BUDGET_TESTING=1)
+    add_executable(wam_native_surface_budget_test native_surface_budget_test.mm)
     target_link_libraries(wam_native_surface_budget_test PRIVATE
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_IOSURFACE_FRAMEWORK}")
+      wam_macos_native_video_core_test_seams)
     add_test(NAME macos_native_surface_budget
       COMMAND wam_native_surface_budget_test)
     set_tests_properties(macos_native_surface_budget PROPERTIES TIMEOUT 20)
@@ -813,32 +805,9 @@ if(APPLE)
     # stage lifecycle, and the once-per-open lane selection. Fixture-free --
     # the decode arm encodes its own VP8 stream with libvpx.
     if(WAM_ENABLE_SOFTWARE_VP8)
-      add_executable(wam_software_vp8_test
-        software_vp8_test.mm
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/software_vp8_decoder.hpp
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/software_vp8_decoder.mm
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/software_presentation_pool.mm
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/video_decode_lane.hpp
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/native_surface_budget.hpp
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/native_surface_budget.mm
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_presenter.hpp
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_presenter.mm
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.hpp
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.mm
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/video_toolbox_decoder.hpp
-        ${PROJECT_SOURCE_DIR}/src/platform/macos/video_toolbox_decoder.mm)
-      target_include_directories(wam_software_vp8_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-      target_compile_definitions(wam_software_vp8_test PRIVATE
-        WAM_ENABLE_SOFTWARE_VP8)
+      add_executable(wam_software_vp8_test software_vp8_test.mm)
       target_link_libraries(wam_software_vp8_test PRIVATE
-        wam_native_core
-        PkgConfig::WAM_LIBVPX
-        "${WAM_COREFOUNDATION_FRAMEWORK}"
-        "${WAM_COREMEDIA_FRAMEWORK}"
-        "${WAM_COREVIDEO_FRAMEWORK}"
-        "${WAM_FOUNDATION_FRAMEWORK}"
-        "${WAM_IOSURFACE_FRAMEWORK}"
-        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+        wam_macos_native_video_core)
       target_compile_options(wam_software_vp8_test PRIVATE
         "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
         -Wall -Wextra -Wpedantic)
@@ -857,36 +826,12 @@ if(APPLE)
     # Layer-presentation contract gate. The presenter is headless by
     # construction -- createTracked(nullptr, ...) builds its own detached
     # AVSampleBufferDisplayLayer, which accepts and acknowledges enqueues
-    # without ever joining a view hierarchy -- so it compiles here beside the
-    # other fixture-free native gates rather than in the Qt window block.
-    # Only the presenter itself is compiled in; FrameLease and the surface
-    # budget come from the one production video core.
-    # native_layer_host_view.mm comes along because the output's
-    # setPresentationRotation defers the actual CoreAnimation work to it --
-    # the rotation lives with the layer's geometry, not with the enqueue
-    # path. AppKit and CoreImage are its dependencies, not the output's.
+    # without ever joining a view hierarchy -- so it runs beside the other
+    # fixture-free native gates rather than in the Qt window block.
     add_executable(wam_native_layer_video_output_test
-      native_layer_video_output_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_layer_video_output.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_layer_video_output.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_layer_host_view.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_layer_host_view.mm)
-    target_include_directories(
-      wam_native_layer_video_output_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(wam_native_layer_video_output_test PRIVATE
-      WAM_NATIVE_LAYER_VIDEO_TESTING=1)
+      native_layer_video_output_test.mm)
     target_link_libraries(wam_native_layer_video_output_test PRIVATE
-      wam_native_core
-      wam_macos_native_video_core
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_IOSURFACE_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}"
-      "${WAM_APPKIT_FRAMEWORK}"
-      "${WAM_COREIMAGE_FRAMEWORK}"
-      "${WAM_QUARTZCORE_FRAMEWORK}")
+      wam_macos_native_layer_test_seams)
     add_test(NAME macos_native_layer_video_output
       COMMAND wam_native_layer_video_output_test)
     set_tests_properties(macos_native_layer_video_output PROPERTIES
@@ -1043,19 +988,9 @@ if(APPLE)
 
     add_executable(wam_native_video_test
       native_video_presenter_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_presenter.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_presenter.mm
       ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
-    target_include_directories(wam_native_video_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(wam_native_video_test PRIVATE
-      WAM_NATIVE_FRAME_LEASE_TESTING=1
-      WAM_NATIVE_SURFACE_BUDGET_TESTING=1)
     target_link_libraries(wam_native_video_test PRIVATE
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_IOSURFACE_FRAMEWORK}"
+      wam_macos_native_video_core_test_seams
       "${WAM_APPKIT_FRAMEWORK}"
       "${WAM_METAL_FRAMEWORK}"
       "${WAM_QUARTZCORE_FRAMEWORK}")
@@ -1454,12 +1389,9 @@ if(WAM_ENABLE_AVCODEC_STAGE)
   add_test(NAME avcodec_worker_budget COMMAND wam_avcodec_worker_budget_test)
 
   add_executable(wam_software_avcodec_surface_contention_test
-    software_avcodec_surface_contention_test.mm
-    ${PROJECT_SOURCE_DIR}/src/platform/macos/native_surface_budget.mm)
-  target_compile_definitions(wam_software_avcodec_surface_contention_test PRIVATE
-    WAM_NATIVE_SURFACE_BUDGET_TESTING=1)
+    software_avcodec_surface_contention_test.mm)
   target_link_libraries(wam_software_avcodec_surface_contention_test PRIVATE
-    wam_macos_native_video_core)
+    wam_macos_native_video_core_test_seams)
   add_test(NAME software_avcodec_surface_contention
     COMMAND wam_software_avcodec_surface_contention_test
       "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/asp.packets")
