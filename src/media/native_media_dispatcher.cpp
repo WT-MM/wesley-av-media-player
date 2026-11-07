@@ -454,7 +454,6 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
     return result;
   }
 
-  auto* retrySource = dynamic_cast<AudioTrackRetrySource*>(source_.get());
   std::string audioRefusals;
   for (std::size_t attempt = 0; attempt < MediaSourceLimits::kHardMaximumTracks; ++attempt) {
     if (opened.generation != generation) {
@@ -570,7 +569,7 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
         descriptor_->selectedAudio
             ? findMediaTrack(*descriptor_, *descriptor_->selectedAudio)
             : nullptr;
-    const bool mayRetryAudio = retrySource && !options.selection.preferredAudio &&
+    const bool mayRetryAudio = source_->supportsAudioTrackRetry() && !options.selection.preferredAudio &&
                               descriptor_->inventory.audio > 1;
     if (descriptor_->selectedVideo && !mayRetryAudio) {
       stats_.videoConfigured = true;
@@ -714,7 +713,7 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
         stats_.audioConfigured = false;
         audio_exposed_generation_ = 0;
         try {
-          opened = retrySource->retryAudioTrack(path, options, generation, rejectedTrack);
+          opened = source_->retryAudioTrack(path, options, generation, rejectedTrack);
         } catch (...) {
           stats_.refusal = MediaRefusalClass::AudioTrackRetryFailed;
           failure_message_ =

@@ -248,7 +248,7 @@ struct NativeMediaSessionCancellation final {
 // can configure either port. Native v1's exact selected A/V and duration
 // relation are therefore a pure admission decision: a rejected source never
 // reaches a consumer configure() call.
-class NativeV1AdmissionSource final : public media::MediaSource, public media::AudioTrackRetrySource {
+class NativeV1AdmissionSource final : public media::MediaSource {
  public:
   explicit NativeV1AdmissionSource(
       std::unique_ptr<media::MediaSource> source,
@@ -284,6 +284,10 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
     return admit(std::move(result));
   }
 
+  [[nodiscard]] bool supportsAudioTrackRetry() const noexcept override {
+    return source_ && source_->supportsAudioTrackRetry();
+  }
+
   media::MediaSourceOpenOutcome retryAudioTrack(
       const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
       MediaGeneration generation, media::MediaTrackId rejected) override {
@@ -293,14 +297,7 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
       result.status = media::MediaSourceOpenStatus::Cancelled;
       return result;
     }
-    auto* retry = dynamic_cast<media::AudioTrackRetrySource*>(source_.get());
-    if (!retry) {
-      result.status = media::MediaSourceOpenStatus::Unsupported;
-      result.refusal = media::MediaRefusalClass::AudioTrackRetryUnavailable;
-      result.error = media::mediaRefusalClassName(result.refusal);
-      return result;
-    }
-    return admit(retry->retryAudioTrack(path, options, generation, rejected));
+    return admit(source_->retryAudioTrack(path, options, generation, rejected));
   }
 
   media::MediaSourceOpenOutcome admit(media::MediaSourceOpenOutcome result) {
