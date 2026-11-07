@@ -89,7 +89,7 @@ if(BUILD_TESTING AND WAMKIT_BUILD_HOST AND WAMKIT_ENABLE_TEST_SUPPORT)
     add_test(NAME wamkit_host_${kind} COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wamkit_embedding_test.py"
       --host "$<TARGET_FILE:WAMKitHost>" --asset "${asset}"
       --output "/private/tmp/wam-wamkit-scratch/ctest-host-${kind}" --unique ${arguments})
-    set_tests_properties(wamkit_host_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30)
+    set_tests_properties(wamkit_host_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30 LABELS gui)
   endforeach()
 endif()
 
@@ -124,7 +124,7 @@ if(WAMKIT_SWIFT AND WAMKIT_XCODEBUILD AND WAMKIT_XCODE_STATUS EQUAL 0 AND WAMKIT
           "${PROJECT_SOURCE_DIR}/tests/wamkit_embedding_test.py"
           --host "${PROJECT_BINARY_DIR}/examples/WAMKitSwiftHost/WAMKitSwiftHost.app/Contents/MacOS/WAMKitSwiftHost"
           --asset "${asset}" --output "/private/tmp/wam-wamkit-scratch/swift-${kind}" --unique ${arguments})
-        set_tests_properties(wamkit_swift_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30 FIXTURES_REQUIRED wamkit_swift)
+        set_tests_properties(wamkit_swift_${kind} PROPERTIES RUN_SERIAL TRUE TIMEOUT 30 FIXTURES_REQUIRED wamkit_swift LABELS gui)
       endforeach()
     endif()
   endif()

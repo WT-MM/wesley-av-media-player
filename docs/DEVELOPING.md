@@ -71,6 +71,12 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
+Tests carry labels for what they need from the machine: `gui` (launches the
+app's windows), `gpu` (accelerated OpenGL display), `hardware` (hardware video
+decode), `fixtures-local` (media supplied at configure time) and `avcodec` (the
+default-off libavcodec stage). Exclude what a machine cannot provide, for
+example `ctest --test-dir build -LE 'gui|gpu'` on a headless runner.
+
 The development app is `build/WAM.app`. Build the local caption runtime, install
 Qt into a staging app, then add WAM's media dependencies:
 

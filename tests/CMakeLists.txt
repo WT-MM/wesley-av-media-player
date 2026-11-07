@@ -274,19 +274,15 @@ if(TARGET wam_native_core)
 
   # This optional benchmark uses POSIX-only fixture I/O.
   if(APPLE)
-    # Not built by default (EXCLUDE_FROM_ALL); run with `ctest -L benchmark`
-    # after building wam_matroska_demuxer_bench, exclude with `-LE benchmark`.
+    # Not built by default and not a ctest test; run it by hand with
+    # `cmake --build build --target wam_matroska_demuxer_bench` and
+    # `build/wam_matroska_demuxer_bench --quick`.
     add_executable(wam_matroska_demuxer_bench EXCLUDE_FROM_ALL
       ${PROJECT_SOURCE_DIR}/benchmarks/matroska_demuxer_bench.cpp)
     target_link_libraries(wam_matroska_demuxer_bench PRIVATE wam_native_core)
     target_compile_features(wam_matroska_demuxer_bench PRIVATE cxx_std_20)
     target_compile_options(wam_matroska_demuxer_bench PRIVATE
       -Wall -Wextra -Wpedantic)
-    add_test(NAME matroska_demuxer_bench
-      COMMAND wam_matroska_demuxer_bench --quick)
-    set_tests_properties(matroska_demuxer_bench PROPERTIES
-      LABELS benchmark TIMEOUT 600)
-
   endif()
 
   add_executable(wam_video_codec_configuration_test
@@ -1682,7 +1678,7 @@ if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/ui_regression_test.py"
         --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_TEST_FFMPEG}" --case "${ui_case}"
         --output "${PROJECT_BINARY_DIR}/ui-evidence/${ui_case}")
-    set_tests_properties(ui_${ui_case} PROPERTIES TIMEOUT 70 RUN_SERIAL TRUE LABELS ui)
+    set_tests_properties(ui_${ui_case} PROPERTIES TIMEOUT 70 RUN_SERIAL TRUE LABELS gui)
   endforeach()
 endif()
 
@@ -1705,6 +1701,7 @@ if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
 endif()
 
 if(WAM_ENABLE_AVCODEC_STAGE)
+  get_property(wam_tests_before_avcodec DIRECTORY PROPERTY TESTS)
   add_executable(wam_avcodec_admission_queue_test avcodec_admission_queue_test.cpp)
   target_link_libraries(wam_avcodec_admission_queue_test PRIVATE wam_avcodec_worker)
   add_test(NAME avcodec_admission_queue COMMAND wam_avcodec_admission_queue_test)
@@ -1835,6 +1832,9 @@ if(WAM_ENABLE_AVCODEC_STAGE)
     "${PROJECT_SOURCE_DIR}/tests/ffmpeg_reservation_proof.py")
   add_test(NAME ffmpeg_reservation_unload COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tests/ffmpeg_reservation_loader_proof.py")
+  get_property(wam_avcodec_tests DIRECTORY PROPERTY TESTS)
+  list(REMOVE_ITEM wam_avcodec_tests ${wam_tests_before_avcodec})
+  set_property(TEST ${wam_avcodec_tests} APPEND PROPERTY LABELS avcodec)
 endif()
 
 if(WAM_ENABLE_AVFORMAT_STAGE)
@@ -1980,3 +1980,23 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
     --output "${PROJECT_BINARY_DIR}/libavformat-aac-timing.json")
   set_tests_properties(libavformat_aac_timing PROPERTIES TIMEOUT 180)
 endif()
+
+# Labels name what a test needs from its environment, so each runner can
+# exclude what it cannot provide (for example `ctest -LE 'gui|gpu'`):
+#   gui            launches WAM.app with windows (also the ui_* cases)
+#   gpu            needs an accelerated OpenGL display (skips on hosted VMs)
+#   hardware       needs hardware video decoding
+#   fixtures-local needs media supplied at configure time
+#   avcodec        exercises the default-off libavcodec stage (labelled above)
+foreach(label_and_tests IN ITEMS
+    "gui;native_coverage_wiring;macos_video_service_lifetime"
+    "gpu;macos_native_qt_gl_compositor;macos_native_qt_gl_output;player_core_render_context_permission"
+    "hardware;macos_video_toolbox_decoder;macos_native_headless_performance;macos_native_phase0b_integration"
+    "fixtures-local;macos_video_toolbox_decoder;macos_native_headless_performance")
+  list(POP_FRONT label_and_tests label)
+  foreach(test IN LISTS label_and_tests)
+    if(TEST ${test})
+      set_property(TEST ${test} APPEND PROPERTY LABELS ${label})
+    endif()
+  endforeach()
+endforeach()

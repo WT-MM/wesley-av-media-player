@@ -99,8 +99,9 @@ jobs:
           -DWAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE=${{ github.workspace }}/build-fixtures/native-main10-hevc.mp4
           -DWAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE=ON
       - run: cmake --build build --parallel
-      # Benchmarks are EXCLUDE_FROM_ALL targets registered under the benchmark label.
-      - run: ctest --test-dir build --output-on-failure -LE benchmark
+      # Hosted runners have no accelerated GL display and cannot drive the
+      # app's windows reliably; those tests run locally (see tests/CMakeLists.txt).
+      - run: ctest --test-dir build --output-on-failure -LE 'gui|gpu'
       - name: Install Qt app bundle
         run: |
           set -o pipefail
