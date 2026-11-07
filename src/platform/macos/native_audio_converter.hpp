@@ -1,7 +1,6 @@
 #pragma once
 
 #include "media/audio_downmix.hpp"
-#include "media/native_decode_plan.hpp"
 #include "media/native_media_source.hpp"
 #include "native_pcm_ring.hpp"
 
@@ -28,15 +27,26 @@ struct NativeAudioBackendWake {
 struct NativeAudioBackendConfiguration {
   media::MediaCodec codec{media::MediaCodec::Unknown};
   media::MediaAudioFormat input;
-  // Borrowed only for the duration of configure().
-  std::span<const std::byte> magicCookie;
+  // The track's codec configuration in the representation admission proved
+  // for its codec: an AudioToolbox magic cookie, or the raw CodecPrivate bytes
+  // a software decoder takes. Borrowed only for the duration of configure().
+  std::span<const std::byte> codecConfiguration;
   std::uint32_t outputChannels{0};
   std::uint32_t outputSampleRate{0};
-  media::DecodePlan decodePlan{.implementation = media::DecodeImplementation::AudioToolbox,
-                              .configurationRepresentation = media::DecodeConfigurationRepresentation::AppleMagicCookie};
-  // Raw decoder bytes are distinct from AudioToolbox cookies and ESDS wrappers.
-  std::span<const std::byte> rawExtradata{};
-  NativeAudioBackendWake wake{};
+};
+
+// What the converter may rely on from a backend beyond the convert() contract.
+// The defaults describe a synchronous decoder, which every test double is.
+struct NativeAudioBackendCapabilities {
+  // outputChannelRoles() answers once configure() returns. Otherwise it answers
+  // only after the first decoded block, and the converter builds a
+  // multichannel fold then.
+  bool channelRolesAtConfigure{true};
+  // A convert() that makes no progress means the decoder is still working and
+  // will signal its wake, not that it stalled.
+  bool idleConvertRetries{false};
+  // cancel() closes the backend instead of resetting it.
+  bool cancelCloses{false};
 };
 
 struct NativeAudioBackendInput {
@@ -64,6 +74,10 @@ class NativeAudioConverterBackend {
 public:
   virtual ~NativeAudioConverterBackend() = default;
   [[nodiscard]] virtual const char* failureReason() const noexcept { return nullptr; }
+  [[nodiscard]] virtual NativeAudioBackendCapabilities
+  capabilities() const noexcept {
+    return {};
+  }
 
   [[nodiscard]] virtual bool
   configure(const NativeAudioBackendConfiguration &configuration,
@@ -284,11 +298,13 @@ public:
       media::MediaSourceLimits::kHardMaximumAudioSampleCount;
   static constexpr std::size_t kFramesPerPump = NativePcmRing::kFramesPerSlab;
 
+  // Without an injected backend, configure() builds the production backend
+  // for the track's codec and hands it the wake.
   explicit NativeAudioConverter(
       NativePcmRing &ring,
-      std::unique_ptr<NativeAudioConverterBackend> backend = {});
+      std::unique_ptr<NativeAudioConverterBackend> backend = {},
+      NativeAudioBackendWake wake = {});
   ~NativeAudioConverter();
-  void setBackendWake(NativeAudioBackendWake wake) noexcept;
 
   NativeAudioConverter(const NativeAudioConverter &) = delete;
   NativeAudioConverter &operator=(const NativeAudioConverter &) = delete;
@@ -313,10 +329,6 @@ public:
   [[nodiscard]] bool commitPrepared(NativeAudioPreparedSample &&prepared,
                                     media::MediaSample &&sample) noexcept;
 
-  // Convenience boundary for non-transactional owners. Non-Accepted results
-  // do not move from sample.
-  [[nodiscard]] NativeAudioSubmitResult submit(media::MediaSample &&sample,
-                                               std::string *error = nullptr);
   [[nodiscard]] NativeAudioPumpResult pump(std::string *error = nullptr);
   [[nodiscard]] NativeAudioPumpResult
   endOfStream(media::MediaGeneration generation, std::string *error = nullptr);
@@ -330,7 +342,6 @@ public:
         NativeAudioGenerationTimeline timeline = {}) noexcept;
   void close() noexcept;
 
-  [[nodiscard]] std::uint32_t outputSampleRate() const noexcept;
   [[nodiscard]] NativeAudioConverterStats stats() const noexcept;
   // Serialized owner phase boundary. The converter/ring/output graph must be
   // stopped and the expected generation must still be current. Success seeds

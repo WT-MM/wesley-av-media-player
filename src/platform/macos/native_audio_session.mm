@@ -6,8 +6,8 @@
 #include "media/audio_downmix.hpp"
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
+#include "native_audio_admission.hpp"
 #include "native_audio_channel_map.hpp"
-#include "native_audio_sample_rates.hpp"
 #include "native_concurrency_limits.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
@@ -62,7 +62,14 @@ enum class OutputSuspension : std::uint8_t {
   Suspended,
 };
 
+// Everything the session knows about one generation's audio timeline. The
+// active generation's plan is session state; a flush computes the next one and
+// installs it whole once the flush is Done.
 struct TimelinePlan {
+  media::NativeMediaGenerationTimeline timeline{};
+  // Codec fact fixed at configure() and carried into every later flush, which
+  // does not see the track descriptor again (as are converter's ceiling facts).
+  bool audioMayPrecedeStreamOrigin{false};
   NativeAudioGenerationTimeline converter{};
   media::MediaTime decodeStart{};       // first source-proved audio AU D
   media::MediaTime mediaOrigin{};       // first retained source PCM frame A
@@ -89,7 +96,7 @@ struct TimelinePlan {
 
 // Guards the session-envelope registry below: gRetainedSessions and every
 // quarantine slot. Taken only on create(), on the Done-close release, on a
-// destructor's quarantine transfer, on recoverQuarantined() and on
+// destructor's quarantine transfer, on the quarantine drain and on
 // quarantineFacts(). No render callback, no trySample(), no clock publication
 // and no owner-thread steady-state path touches it, so it can never appear on
 // the audio hot path.
@@ -114,18 +121,6 @@ std::atomic<std::uint64_t> gRejectedCreates{0};
 std::atomic<std::uint64_t> gQuarantineTransfers{0};
 std::atomic<std::uint64_t> gQuarantineRecoveries{0};
 
-void saturatingIncrement(std::atomic<std::uint64_t>& counter) noexcept {
-  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
-  std::uint64_t current = counter.load(std::memory_order_relaxed);
-  for (unsigned attempt = 0; attempt != 2 && current != maximum; ++attempt) {
-    if (counter.compare_exchange_weak(current, current + 1U,
-                                      std::memory_order_relaxed,
-                                      std::memory_order_relaxed)) {
-      return;
-    }
-  }
-}
-
 void assignError(std::string* error, const char* message) noexcept {
   if (error == nullptr) {
     return;
@@ -147,71 +142,17 @@ void assignError(std::string* error, const char* message) noexcept {
   return true;
 }
 
-// The same whitelist NativeAudioConverter admits by, asked one layer earlier so
-// an inadmissible track produces a clean fallback rather than a converter
-// failure part-way through graph construction.
-[[nodiscard]] bool supportedCodec(const media::MediaTrackDescriptor& track)
-    noexcept {
-  if (track.audio && media::softwareAudioCodec(track.codec)) {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    return track.audio->formatTag == 0 &&
-        track.codecConfigurationKind == media::MediaCodecConfigurationKind::CodecPrivate;
-#else
-    return false;
-#endif
-  }
-  return track.audio && audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag);
-}
-
-// Whether this track's first access unit legitimately presents before media
-// time zero: Matroska stores a Block's timestamp on the codec grid and states
-// CodecDelay separately, so access unit 0 of an Opus, Vorbis, AC-3, E-AC-3,
-// MP3 or CodecDelay-bearing AAC track starts early. The generation therefore
-// decodes a bounded preroll it must not publish -- exactly what
-// trimBeforeFloor already means.
-[[nodiscard]] bool codecStartsBeforeStreamOrigin(
-    const media::MediaTrackDescriptor& track) noexcept {
-  return media::audioCodecPrecedesStreamOrigin(track.codec);
-}
-
-// Whether this track's stated duration is the exact decoded sample count, and
-// therefore usable as the frame the generation must stop publishing at.
-//
-// This is a different question from codecStartsBeforeStreamOrigin, and the
-// sets differ at both ends: FLAC states an exact duration but starts at the
-// origin, and AAC precedes the origin but reaches this pipeline from
-// AVFoundation as well as from Matroska.
-//
-// AAC (and the software codecs) are the reason for the second clause. Only
-// the Matroska descriptor states a decoded sample count; an AVFoundation
-// track's duration is the container's own number, which is not required to be
-// a whole number of frames at all. The ceiling is therefore taken only when the
-// stated duration IS an exact whole frame count -- which the Matroska path
-// always produces by construction, and which an approximate container duration
-// cannot fake into being wrong: if it is not exact the track simply takes no
-// ceiling instead of failing the whole session, and if it is exact then it is
-// the true end of the track and stopping there is right.
-[[nodiscard]] bool codecStatesExactDecodedDuration(
+// Whether this track's stated duration is an exact whole number of frames,
+// and therefore usable as the frame the generation must stop publishing at.
+// A Matroska descriptor states the exact decoded sample count by construction;
+// another container's duration is its own number, which need not be a whole
+// frame count. Such a track simply takes no ceiling instead of failing the
+// whole session, and a duration that IS exact is the true end of the track.
+[[nodiscard]] bool durationIsExactFrameCount(
     const media::MediaTrackDescriptor& track, std::uint32_t sampleRate) noexcept {
-  if (!media::audioCodecStatesExactDecodedDuration(track.codec)) {
-    if (track.codec != media::MediaCodec::Aac && !media::softwareAudioCodec(track.codec)) {
-      return false;
-    }
-  }
   std::int64_t ceilingFrame = 0;
   return exactFrame(track.duration, sampleRate, &ceilingFrame) &&
          ceilingFrame > 0;
-}
-
-[[nodiscard]] bool validCallTable(
-    const NativeAudioUnitCallTable& calls) noexcept {
-  return calls.findNext != nullptr && calls.instanceNew != nullptr &&
-         calls.instanceDispose != nullptr && calls.setProperty != nullptr &&
-         calls.getProperty != nullptr && calls.initialize != nullptr &&
-         calls.uninitialize != nullptr && calls.start != nullptr &&
-         calls.stop != nullptr && calls.addPropertyListener != nullptr &&
-         calls.removePropertyListener != nullptr &&
-         calls.hostClockFrequency != nullptr;
 }
 
 [[nodiscard]] bool validDependencies(
@@ -219,7 +160,7 @@ void assignError(std::string* error, const char* message) noexcept {
   return dependencies.externalLifetime != nullptr &&
          dependencies.hostClock.readTicks != nullptr &&
          dependencies.hostClock.ticksPerSecond != 0 &&
-         validCallTable(dependencies.outputCalls) &&
+         validNativeAudioUnitCallTable(dependencies.outputCalls) &&
          dependencies.outputWake.pending != nullptr &&
          dependencies.outputWake.signal != nullptr &&
          dependencies.outputWake.pending->is_lock_free();
@@ -384,6 +325,8 @@ void assignError(std::string* error, const char* message) noexcept {
   if (!plan) {
     return std::nullopt;
   }
+  plan->timeline = timeline;
+  plan->audioMayPrecedeStreamOrigin = audioMayPrecedeStreamOrigin;
   if (trimAfterCeiling) {
     // The source states the track's duration as the exact decoded sample
     // count (for Opus, after both trims), so it is the frame the generation
@@ -435,29 +378,14 @@ void assignError(std::string* error, const char* message) noexcept {
     const media::MediaTrackDescriptor& track,
     media::MediaGeneration generation,
     const media::NativeMediaGenerationTimeline& timeline) noexcept {
-  std::uint32_t sampleRate = 0;
-  if (generation == 0 || timeline.generation != generation ||
-      track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
-      !track.audio || !supportedCodec(track) ||
-      track.audio->channels == 0 ||
-      track.audio->channels > media::kMaximumDownmixSourceChannels ||
-      !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
-      !audioChannelLayoutAdmitted(*track.audio) ||
-      !nativeAudioSampleRateSupported(track.audio->sampleRate, &sampleRate) ||
-      track.codecConfiguration.size() >
-          media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes ||
-      (media::softwareAudioCodec(track.codec)
-           ? track.codecConfigurationKind != media::MediaCodecConfigurationKind::CodecPrivate
-           : ((!track.codecConfiguration.empty() &&
-               track.codecConfigurationKind != media::MediaCodecConfigurationKind::AudioMagicCookie) ||
-              (track.codecConfiguration.empty() &&
-               track.codecConfigurationKind != media::MediaCodecConfigurationKind::None)))) {
+  const std::optional<AdmittedAudio> admitted = admitAudioTrack(track);
+  if (generation == 0 || timeline.generation != generation || !admitted) {
     return std::nullopt;
   }
-  return timelinePlanFor(generation, timeline, sampleRate,
-                         codecStartsBeforeStreamOrigin(track),
-                         codecStatesExactDecodedDuration(track, sampleRate),
-                         track.duration);
+  return timelinePlanFor(
+      generation, timeline, admitted->sampleRate,
+      media::audioCodecPrecedesStreamOrigin(track.codec),
+      durationIsExactFrameCount(track, admitted->sampleRate), track.duration);
 }
 
 
@@ -495,10 +423,20 @@ void assignError(std::string* error, const char* message) noexcept {
   return false;
 }
 
-void advanceControlRevision(std::uint64_t& revision) noexcept {
-  if (revision != std::numeric_limits<std::uint64_t>::max()) {
-    ++revision;
+void saturatingIncrement(std::uint64_t& counter) noexcept {
+  if (counter != std::numeric_limits<std::uint64_t>::max()) {
+    ++counter;
   }
+}
+
+// Every operation that feeds the converter or drains it refuses once the
+// session has failed or begun tearing down.
+[[nodiscard]] bool acceptsWork(NativeAudioSessionState state) noexcept {
+  return state != NativeAudioSessionState::Failed &&
+         state != NativeAudioSessionState::Retiring &&
+         state != NativeAudioSessionState::Closing &&
+         state != NativeAudioSessionState::Closed &&
+         state != NativeAudioSessionState::Cancelled;
 }
 
 } // namespace
@@ -518,16 +456,14 @@ struct NativeAudioSessionControl final {
         ring(initialGeneration),
         clock(this->hostClock),
         renderCore(ring, clock, this->hostClock.ticksPerSecond),
-        converter(ring, std::move(backend)),
-        generation(initialGeneration) {
-    converter.setBackendWake({[](void* context) noexcept {
-      auto& control = *static_cast<NativeAudioSessionControl*>(context);
-      bool expected = false;
-      if (control.outputWake.pending->compare_exchange_strong(expected, true,
-          std::memory_order_acq_rel, std::memory_order_acquire))
-        control.outputWake.signal(control.outputWake.context);
-    }, this});
-  }
+        converter(ring, std::move(backend),
+                  {[](void* context) noexcept {
+                     static_cast<void>(signalNativeAudioOutputWake(
+                         static_cast<NativeAudioSessionControl*>(context)
+                             ->outputWake));
+                   },
+                   this}),
+        generation(initialGeneration) {}
 
   void latch(NativeAudioSessionFailure value) noexcept {
     if (failure == NativeAudioSessionFailure::None) {
@@ -566,24 +502,7 @@ struct NativeAudioSessionControl final {
   media::MediaGeneration completedFlushRetired{0};
   media::MediaGeneration completedFlushTarget{0};
   media::MediaTrackId track{0};
-  std::uint32_t sampleRate{0};
-  // Codec facts fixed at configure() and reused by every later flush, which
-  // does not see the track descriptor again.
-  bool audioMayPrecedeStreamOrigin{false};
-  bool trimAfterCeiling{false};
-  media::MediaTime presentationCeiling{};
-  std::int64_t presentationFloorFrame{0};
-  // Container-declared silence facts for the active generation. Both are zero
-  // for every source that declares none, and every expression that reads them
-  // then reduces to the no-silence arithmetic.
-  std::int64_t mediaOriginFrame{0};
-  std::uint64_t leadInSilenceFrames{0};
-  std::int64_t presentationEndFrame{0};
-  media::MediaTime mediaOrigin{};
-  media::MediaTime audioDecodeStart{};
-  media::NativeMediaGenerationTimeline timeline{};
-  media::NativeMediaGenerationTimeline lifecycleTimeline{};
-  NativeAudioGenerationTimeline converterTimeline{};
+  TimelinePlan active{};
   TimelinePlan lifecyclePlan{};
   // Set when a StreamFormat notification froze a graph that was running, so
   // the reconciliation knows to start the output again once the device proves
@@ -600,13 +519,10 @@ struct NativeAudioSessionControl final {
   bool firstAudioSampleAccepted{false};
   bool requestedPaused{true};
   float requestedGain{1.0F};
-  float appliedGain{1.0F};
   bool requestedMuted{false};
-  bool appliedMuted{false};
   NativePlaybackRate requestedRate{};
   bool requestedPreservePitch{true};
   std::uint64_t controlRevision{0};
-  std::uint64_t appliedControlRevision{0};
   bool endOfStreamRequested{false};
   bool terminalPublished{false};
   bool clockActivated{false};
@@ -617,7 +533,7 @@ struct NativeAudioSessionControl final {
   bool closeDone{false};
   TerminalOverride terminalOverride{TerminalOverride::None};
   media::MediaGeneration terminalOverrideGeneration{0};
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   bool forceCloseQuiescing{false};
 #endif
 };
@@ -625,7 +541,7 @@ struct NativeAudioSessionControl final {
 
 
 
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct NativeAudioRenderCoreTestAccess {
   static void setAfterPreflightHook(
       NativeAudioRenderCore& core,
@@ -636,10 +552,38 @@ struct NativeAudioRenderCoreTestAccess {
   }
 };
 
+std::unique_ptr<NativeAudioSession>
+NativeAudioSessionTestAccess::recoverQuarantined() noexcept {
+  std::lock_guard<std::mutex> lock(gSessionMutex);
+  for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
+    if (slot == nullptr) {
+      continue;
+    }
+    try {
+      auto recovered =
+          std::unique_ptr<NativeAudioSession>(new NativeAudioSession(slot));
+      slot.reset();
+      saturatingAdd(gQuarantineRecoveries, 1);
+      return recovered;
+    } catch (...) {
+      return {};
+    }
+  }
+  return {};
+}
+
 NativeAudioSubmitResult NativeAudioSessionTestAccess::occupyConverter(
     NativeAudioSession& session, media::MediaSample&& sample) noexcept {
   try {
-    return session.control_->converter.submit(std::move(sample), nullptr);
+    NativeAudioConverter& converter = session.control_->converter;
+    NativeAudioPrepareOutcome outcome = converter.prepare(sample, nullptr);
+    if (outcome.result != NativeAudioSubmitResult::Accepted) {
+      return outcome.result;
+    }
+    return converter.commitPrepared(std::move(outcome.prepared),
+                                    std::move(sample))
+               ? NativeAudioSubmitResult::Accepted
+               : NativeAudioSubmitResult::Failed;
   } catch (...) {
     return NativeAudioSubmitResult::Failed;
   }
@@ -652,28 +596,30 @@ void NativeAudioSessionTestAccess::setAfterRenderPreflightHook(
       session.control_->renderCore, hook, context);
 }
 
-void NativeAudioSessionTestAccess::stageFlushAfterStop(
+bool NativeAudioSessionTestAccess::stageFlushAfterStop(
     NativeAudioSession& session,
     media::MediaGeneration retiredGeneration,
     media::MediaGeneration nextGeneration,
-    media::NativeMediaGenerationTimeline timeline,
-    NativeAudioGenerationTimeline converterTimeline,
-    media::MediaTime mediaOrigin,
-    std::int64_t floorFrame) noexcept {
+    const media::NativeMediaGenerationTimeline& timeline) noexcept {
   NativeAudioSessionControl& control = *session.control_;
+  const std::optional<TimelinePlan> plan = timelinePlanFor(
+      nextGeneration, timeline, control.active.sampleRate,
+      control.active.audioMayPrecedeStreamOrigin,
+      control.active.converter.trimAfterCeiling,
+      control.active.converter.presentationCeiling);
+  if (!plan) {
+    return false;
+  }
   control.lifecycle = SessionLifecycle::Flush;
   control.flushStage = FlushStage::Reset;
   control.lifecycleRetired = retiredGeneration;
   control.lifecycleTarget = nextGeneration;
   control.highestExposedGeneration = nextGeneration;
-  control.lifecycleTimeline = timeline;
-  control.lifecyclePlan = {converterTimeline, timeline.audioWindow.decodeStart,
-                           mediaOrigin,
-                           timeline.presentationFloor, floorFrame,
-                           control.sampleRate};
+  control.lifecyclePlan = *plan;
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
   control.state = NativeAudioSessionState::Flushing;
+  return true;
 }
 
 void NativeAudioSessionTestAccess::forceCloseQuiescing(
@@ -708,8 +654,8 @@ void releaseClaim(NativeAudioSessionControl& control) noexcept {
 // Moves a graph whose owner could not prove a Done close into the registry, so
 // a device callback still inside the bridge keeps a live graph under it. The
 // envelope count is deliberately unchanged: the graph is still charged, it has
-// only swapped a NativeAudioSession owner for the registry until
-// recoverQuarantined() drives it to Done.
+// only swapped a NativeAudioSession owner for the registry until the drain in
+// create() drives it to Done.
 void quarantine(
     const std::shared_ptr<NativeAudioSessionControl>& control) noexcept {
   if (control == nullptr || !control->claimHeld || control->closeDone) {
@@ -723,62 +669,10 @@ void quarantine(
   for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
     if (slot == nullptr) {
       slot = control;
-      saturatingIncrement(gQuarantineTransfers);
+      saturatingAdd(gQuarantineTransfers, 1);
       return;
     }
   }
-}
-
-[[nodiscard]] const char* outputFailureName(
-    NativeAudioOutputFailure failure) noexcept {
-  switch (failure) {
-  case NativeAudioOutputFailure::None: return "None";
-  case NativeAudioOutputFailure::InvalidConfiguration:
-    return "InvalidConfiguration";
-  case NativeAudioOutputFailure::ComponentUnavailable:
-    return "ComponentUnavailable";
-  case NativeAudioOutputFailure::InstanceCreationFailed:
-    return "InstanceCreationFailed";
-  case NativeAudioOutputFailure::DeviceFormatQueryFailed:
-    return "DeviceFormatQueryFailed";
-  case NativeAudioOutputFailure::DeviceRateMismatch:
-    return "DeviceRateMismatch";
-  case NativeAudioOutputFailure::DeviceListenerInstallationFailed:
-    return "DeviceListenerInstallationFailed";
-  case NativeAudioOutputFailure::DeviceListenerRemovalFailed:
-    return "DeviceListenerRemovalFailed";
-  case NativeAudioOutputFailure::MaximumFramesConfigurationFailed:
-    return "MaximumFramesConfigurationFailed";
-  case NativeAudioOutputFailure::ClientFormatConfigurationFailed:
-    return "ClientFormatConfigurationFailed";
-  case NativeAudioOutputFailure::RenderCoreActivationFailed:
-    return "RenderCoreActivationFailed";
-  case NativeAudioOutputFailure::CallbackInstallationFailed:
-    return "CallbackInstallationFailed";
-  case NativeAudioOutputFailure::InitializationFailed:
-    return "InitializationFailed";
-  case NativeAudioOutputFailure::StartFailed: return "StartFailed";
-  case NativeAudioOutputFailure::StopFailed: return "StopFailed";
-  case NativeAudioOutputFailure::UninitializationFailed:
-    return "UninitializationFailed";
-  case NativeAudioOutputFailure::CallbackDetachmentFailed:
-    return "CallbackDetachmentFailed";
-  case NativeAudioOutputFailure::InstanceDisposalFailed:
-    return "InstanceDisposalFailed";
-  case NativeAudioOutputFailure::InvalidCallbackBuffer:
-    return "InvalidCallbackBuffer";
-  case NativeAudioOutputFailure::InvalidCallbackTimestamp:
-    return "InvalidCallbackTimestamp";
-  case NativeAudioOutputFailure::ReentrantCallback:
-    return "ReentrantCallback";
-  case NativeAudioOutputFailure::FrameCursorOverflow:
-    return "FrameCursorOverflow";
-  case NativeAudioOutputFailure::RenderCoreFailed: return "RenderCoreFailed";
-  case NativeAudioOutputFailure::NativeException: return "NativeException";
-  case NativeAudioOutputFailure::DeviceBufferFramesUnsupported:
-    return "DeviceBufferFramesUnsupported";
-  }
-  return "Unknown";
 }
 
 [[nodiscard]] const char* renderFailureName(
@@ -841,7 +735,7 @@ void publishFailureText(NativeAudioSessionControl& control,
     const NativeAudioRenderFailure renderFailure = control.renderCore.failure();
     if (outputFailure != NativeAudioOutputFailure::None) {
       control.failureText =
-          std::string("audio output: ") + outputFailureName(outputFailure) +
+          std::string("audio output: ") + nativeAudioOutputFailureName(outputFailure) +
           " (osStatus " +
           std::to_string(
               static_cast<long long>(control.output->facts().osStatus)) +
@@ -890,6 +784,26 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
   return true;
 }
 
+// The start-admission rule: a running output that cannot be fed would
+// underrun on its very first callback, so it opens only over prebuffered PCM
+// or a generation whose terminal is already published.
+[[nodiscard]] bool canStartOutput(NativeAudioSessionControl& control) noexcept {
+  return control.ring.readableFrames(control.generation).frames != 0 ||
+         control.terminalPublished;
+}
+
+// The tail of every output suspension (pause and device recovery alike), once
+// the output has proved a Done stop: settle the callback-local running fact
+// and leave the session Ready over the idle device.
+[[nodiscard]] bool finishSuspend(NativeAudioSessionControl& control) noexcept {
+  if (!settleStopped(control, control.generation)) {
+    return false;
+  }
+  control.outputSuspension = OutputSuspension::Suspended;
+  control.state = NativeAudioSessionState::Ready;
+  return true;
+}
+
 [[nodiscard]] bool verifyPublishedOrigin(
     NativeAudioSessionControl& control) noexcept {
   const NativeAudioConverterStats stats = control.converter.stats();
@@ -897,7 +811,7 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
     return true;
   }
   if (!stats.firstPublishedFrameKnown ||
-      stats.firstPublishedFrame != control.presentationFloorFrame) {
+      stats.firstPublishedFrame != control.active.floorFrame) {
     control.latch(NativeAudioSessionFailure::Converter);
     return false;
   }
@@ -921,11 +835,12 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
     // end. Both spans are cursor frames the clock passes, so both belong in
     // the terminal. With no declared silence this is publishedPcmFrames
     // verbatim.
+    const TimelinePlan& plan = control.active;
     std::uint64_t terminalFrame =
-        control.leadInSilenceFrames + stats.publishedPcmFrames;
-    if (control.presentationEndFrame > control.mediaOriginFrame) {
+        plan.leadInSilenceFrames + stats.publishedPcmFrames;
+    if (plan.presentationEndFrame > plan.originFrame) {
       const auto declaredEnd = static_cast<std::uint64_t>(
-          control.presentationEndFrame - control.mediaOriginFrame);
+          plan.presentationEndFrame - plan.originFrame);
       if (declaredEnd > terminalFrame) {
         terminalFrame = declaredEnd;
       }
@@ -947,9 +862,13 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
              control.generation;
 }
 
-[[nodiscard]] media::NativeMediaConsumeResult mapPumpForCapacity(
-    NativeAudioSessionControl& control,
-    NativeAudioPumpResult result) noexcept {
+// One converter pump outcome as a consumer result. capacity() and
+// endOfStream() differ only where end of stream changes the meaning: once
+// requested, a converter asking for input is a converter fault and a drained
+// one publishes the generation's terminal; before it, both are protocol facts.
+[[nodiscard]] media::NativeMediaConsumeResult mapPumpForConsume(
+    NativeAudioSessionControl& control, NativeAudioPumpResult result,
+    bool endOfStream) noexcept {
   switch (result) {
   case NativeAudioPumpResult::Published:
     return verifyPublishedOrigin(control)
@@ -960,12 +879,24 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
   case NativeAudioPumpResult::Backpressure:
     return media::NativeMediaConsumeResult::Backpressure;
   case NativeAudioPumpResult::NeedsInput:
-    return media::NativeMediaConsumeResult::Accepted;
+    if (!endOfStream) {
+      return media::NativeMediaConsumeResult::Accepted;
+    }
+    control.latch(NativeAudioSessionFailure::Converter);
+    return media::NativeMediaConsumeResult::Failed;
   case NativeAudioPumpResult::StaleGeneration:
     return media::NativeMediaConsumeResult::StaleGeneration;
   case NativeAudioPumpResult::Drained:
-    control.latch(NativeAudioSessionFailure::ConsumerProtocol);
-    return media::NativeMediaConsumeResult::Failed;
+    if (!endOfStream) {
+      control.latch(NativeAudioSessionFailure::ConsumerProtocol);
+      return media::NativeMediaConsumeResult::Failed;
+    }
+    if (!publishTerminal(control)) {
+      return media::NativeMediaConsumeResult::Failed;
+    }
+    return terminalObserved(control)
+               ? media::NativeMediaConsumeResult::Drained
+               : media::NativeMediaConsumeResult::Draining;
   case NativeAudioPumpResult::NotConfigured:
   case NativeAudioPumpResult::Failed:
     control.latch(NativeAudioSessionFailure::Converter);
@@ -1040,12 +971,8 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
   if (stopped != NativeAudioSessionProgress::Done) {
     return stopped;
   }
-  if (!settleStopped(control, control.generation)) {
-    return NativeAudioSessionProgress::Failed;
-  }
-  control.outputSuspension = OutputSuspension::Suspended;
-  control.state = NativeAudioSessionState::Ready;
-  return NativeAudioSessionProgress::Done;
+  return finishSuspend(control) ? NativeAudioSessionProgress::Done
+                                : NativeAudioSessionProgress::Failed;
 }
 
 // Outcome of one reconciliation pass over an outstanding StreamFormat
@@ -1118,12 +1045,9 @@ enum class DeviceReconcile : std::uint8_t {
     }
     // reconcileDeviceChange() proved a Done stop; finish the suspend
     // bookkeeping so the session and the output agree the device is idle.
-    if (control.outputSuspension == OutputSuspension::Stopping) {
-      if (!settleStopped(control, control.generation)) {
-        return DeviceReconcile::Failed;
-      }
-      control.outputSuspension = OutputSuspension::Suspended;
-      control.state = NativeAudioSessionState::Ready;
+    if (control.outputSuspension == OutputSuspension::Stopping &&
+        !finishSuspend(control)) {
+      return DeviceReconcile::Failed;
     }
     return DeviceReconcile::Progressed;
   }
@@ -1138,11 +1062,7 @@ enum class DeviceReconcile : std::uint8_t {
     control.deviceChangeResumePending = false;
     return DeviceReconcile::Idle;
   }
-  // Same admission rule start() applies: a running output that cannot be fed
-  // would underrun on its very first callback.
-  const NativePcmRing::ReadableFramesResult readable =
-      control.ring.readableFrames(control.generation);
-  if (readable.frames == 0 && !control.terminalPublished) {
+  if (!canStartOutput(control)) {
     return DeviceReconcile::Progressed;
   }
   control.renderCore.setPaused(false);
@@ -1158,10 +1078,7 @@ enum class DeviceReconcile : std::uint8_t {
   control.outputSuspension = OutputSuspension::None;
   control.state = NativeAudioSessionState::Started;
   control.deviceChangeResumePending = false;
-  if (control.deviceChangeRecoveries !=
-      std::numeric_limits<std::uint64_t>::max()) {
-    ++control.deviceChangeRecoveries;
-  }
+  saturatingIncrement(control.deviceChangeRecoveries);
   // Always on, and one grep-able line: a recovery that leaves no trace would
   // make device-change problems invisible. Bounded: one line per notification, and notifications are rare.
   std::fprintf(stderr,
@@ -1172,6 +1089,23 @@ enum class DeviceReconcile : std::uint8_t {
                static_cast<unsigned long long>(control.deviceChangeRecoveries));
   std::fflush(stderr);
   return DeviceReconcile::Progressed;
+}
+
+// close() progress in the session's own vocabulary, for stop().
+[[nodiscard]] NativeAudioSessionProgress
+sessionProgress(media::NativeMediaConsumerProgress progress) noexcept {
+  switch (progress) {
+  case media::NativeMediaConsumerProgress::Done:
+    return NativeAudioSessionProgress::Done;
+  case media::NativeMediaConsumerProgress::Quiescing:
+  case media::NativeMediaConsumerProgress::Progress:
+    return NativeAudioSessionProgress::Quiescing;
+  case media::NativeMediaConsumerProgress::StaleGeneration:
+  case media::NativeMediaConsumerProgress::Unsupported:
+  case media::NativeMediaConsumerProgress::Failed:
+    return NativeAudioSessionProgress::Failed;
+  }
+  return NativeAudioSessionProgress::Failed;
 }
 
 [[nodiscard]] media::NativeMediaConsumerProgress mapLifecycleProgress(
@@ -1427,9 +1361,10 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
     media::MediaGeneration initialGeneration,
     NativeAudioSessionDependencies dependencies) noexcept {
   if (initialGeneration == 0 || !validDependencies(dependencies)) {
-    saturatingIncrement(gRejectedCreates);
+    saturatingAdd(gRejectedCreates, 1);
     return {};
   }
+  drainQuarantine();
   {
     std::lock_guard<std::mutex> lock(gSessionMutex);
     // The envelope is full when N sessions are already charged against it,
@@ -1438,7 +1373,7 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
     // kMaximumConcurrentPlayerWindows exists to bound, and the owner is meant
     // to report "no more windows" rather than retry.
     if (gRetainedSessions >= kMaximumConcurrentPlayerWindows) {
-      saturatingIncrement(gRejectedCreates);
+      saturatingAdd(gRejectedCreates, 1);
       return {};
     }
     ++gRetainedSessions;
@@ -1456,7 +1391,7 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
     // straight back instead of leaving a permanent hole in the envelope.
     std::lock_guard<std::mutex> lock(gSessionMutex);
     --gRetainedSessions;
-    saturatingIncrement(gRejectedCreates);
+    saturatingAdd(gRejectedCreates, 1);
     return {};
   }
 }
@@ -1471,29 +1406,26 @@ NativeAudioSession::~NativeAudioSession() {
   control_.reset();
 }
 
-std::unique_ptr<NativeAudioSession>
-NativeAudioSession::recoverQuarantined() noexcept {
-  std::lock_guard<std::mutex> lock(gSessionMutex);
-  // First occupied slot wins. The registry is a bag of graphs that still owe a
-  // Done close, not a queue: recovery order carries no meaning, and a caller
-  // draining quarantine simply repeats this until it returns nullptr. The
-  // envelope count is unchanged -- ownership moves back to a
-  // NativeAudioSession, the charge stays until that owner reaches Done.
-  for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
-    if (slot == nullptr) {
-      continue;
-    }
-    try {
-      auto recovered =
-          std::unique_ptr<NativeAudioSession>(new NativeAudioSession(slot));
-      slot.reset();
-      saturatingIncrement(gQuarantineRecoveries);
-      return recovered;
-    } catch (...) {
-      return {};
+// A graph is quarantined because a device callback was still inside it when
+// its owner let go. Once that callback has exited, nothing else would ever
+// finish its close, and it would hold its envelope slot for the life of the
+// process. So each create() takes every quarantined graph out of the registry
+// and gives it one close attempt as a fresh owner; one still quiescing goes
+// straight back (the registry is empty while this runs, so it always fits).
+// The envelope count is unchanged throughout: the charge stays until a graph
+// proves a Done close.
+void NativeAudioSession::drainQuarantine() noexcept {
+  SessionQuarantine held;
+  {
+    std::lock_guard<std::mutex> lock(gSessionMutex);
+    held.swap(gSessionQuarantine);
+  }
+  for (std::shared_ptr<NativeAudioSessionControl>& control : held) {
+    if (control != nullptr) {
+      saturatingAdd(gQuarantineRecoveries, 1);
+      NativeAudioSession owner(std::move(control));
     }
   }
-  return {};
 }
 
 NativeAudioSessionQuarantineFacts
@@ -1591,9 +1523,7 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
     control.latch(NativeAudioSessionFailure::ConverterConfiguration);
     return media::NativeMediaConsumeResult::Failed;
   }
-  const auto clockSeconds = media::mediaTimeSeconds(plan->clockPosition);
-  if (!clockSeconds ||
-      !control.clock.anchor(generation, *clockSeconds, 1.0, false)) {
+  if (!control.clock.anchor(generation, plan->clockPosition, {}, false)) {
     control.latch(NativeAudioSessionFailure::ClockActivation);
     assignError(error, "native audio clock activation failed");
     return media::NativeMediaConsumeResult::Failed;
@@ -1607,9 +1537,6 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
   // therefore does not mint a control revision.
   control.renderCore.setGain(control.requestedGain);
   control.renderCore.setMuted(control.requestedMuted);
-  control.appliedGain = control.requestedGain;
-  control.appliedMuted = control.requestedMuted;
-  control.appliedControlRevision = control.controlRevision;
   const NativeAudioOutputProgress outputConfigured =
       control.output->configure({generation, 0, plan->mediaOrigin,
                                  control.hostClock.ticksPerSecond,
@@ -1636,19 +1563,8 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
   }
 
   control.track = track.id;
-  control.sampleRate = plan->sampleRate;
-  control.audioMayPrecedeStreamOrigin = codecStartsBeforeStreamOrigin(track);
-  control.trimAfterCeiling = plan->converter.trimAfterCeiling;
-  control.presentationCeiling = plan->converter.presentationCeiling;
-  control.presentationFloorFrame = plan->floorFrame;
-  control.mediaOriginFrame = plan->originFrame;
-  control.leadInSilenceFrames = plan->leadInSilenceFrames;
-  control.presentationEndFrame = plan->presentationEndFrame;
-  control.mediaOrigin = plan->mediaOrigin;
-  control.audioDecodeStart = plan->decodeStart;
+  control.active = *plan;
   control.firstAudioSampleAccepted = false;
-  control.timeline = timeline;
-  control.converterTimeline = plan->converter;
   control.configured = true;
   control.requestedPaused = true;
   control.state = NativeAudioSessionState::Ready;
@@ -1665,12 +1581,7 @@ media::NativeMediaConsumeResult NativeAudioSession::capacity(
   if (generation != control.generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
-  if (!control.configured ||
-      control.state == NativeAudioSessionState::Failed ||
-      control.state == NativeAudioSessionState::Retiring ||
-      control.state == NativeAudioSessionState::Closing ||
-      control.state == NativeAudioSessionState::Closed ||
-      control.state == NativeAudioSessionState::Cancelled ||
+  if (!control.configured || !acceptsWork(control.state) ||
       outputFailed(control)) {
     return media::NativeMediaConsumeResult::Failed;
   }
@@ -1679,7 +1590,7 @@ media::NativeMediaConsumeResult NativeAudioSession::capacity(
                ? media::NativeMediaConsumeResult::Drained
                : media::NativeMediaConsumeResult::Backpressure;
   }
-  return mapPumpForCapacity(control, control.converter.pump(nullptr));
+  return mapPumpForConsume(control, control.converter.pump(nullptr), false);
 }
 
 media::NativeMediaConsumeResult NativeAudioSession::trySample(
@@ -1694,14 +1605,8 @@ media::NativeMediaConsumeResult NativeAudioSession::trySample(
   if (sample.generation != control.generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
-  if (!control.configured ||
-      control.endOfStreamRequested ||
-      control.state == NativeAudioSessionState::Failed ||
-      control.state == NativeAudioSessionState::Retiring ||
-      control.state == NativeAudioSessionState::Closing ||
-      control.state == NativeAudioSessionState::Closed ||
-      control.state == NativeAudioSessionState::Cancelled ||
-      outputFailed(control)) {
+  if (!control.configured || control.endOfStreamRequested ||
+      !acceptsWork(control.state) || outputFailed(control)) {
     assignError(error, "native audio session is not accepting samples");
     return media::NativeMediaConsumeResult::Failed;
   }
@@ -1714,7 +1619,7 @@ media::NativeMediaConsumeResult NativeAudioSession::trySample(
   }
   if (!control.firstAudioSampleAccepted &&
       media::compareMediaTime(sample.presentationTime,
-                              control.audioDecodeStart) !=
+                              control.active.decodeStart) !=
           media::MediaTimeOrder::Equal) {
     control.latch(NativeAudioSessionFailure::ConsumerProtocol);
     assignError(error,
@@ -1793,34 +1698,8 @@ media::NativeMediaConsumeResult NativeAudioSession::endOfStream(
     return media::NativeMediaConsumeResult::Failed;
   }
   control.endOfStreamRequested = true;
-  const NativeAudioPumpResult result =
-      control.converter.endOfStream(end.generation, error);
-  switch (result) {
-  case NativeAudioPumpResult::Published:
-    return verifyPublishedOrigin(control)
-               ? media::NativeMediaConsumeResult::Draining
-               : media::NativeMediaConsumeResult::Failed;
-  case NativeAudioPumpResult::Progress:
-    return media::NativeMediaConsumeResult::Draining;
-  case NativeAudioPumpResult::Backpressure:
-    return media::NativeMediaConsumeResult::Backpressure;
-  case NativeAudioPumpResult::Drained:
-    if (!publishTerminal(control)) {
-      return media::NativeMediaConsumeResult::Failed;
-    }
-    return terminalObserved(control)
-               ? media::NativeMediaConsumeResult::Drained
-               : media::NativeMediaConsumeResult::Draining;
-  case NativeAudioPumpResult::StaleGeneration:
-    return media::NativeMediaConsumeResult::StaleGeneration;
-  case NativeAudioPumpResult::NeedsInput:
-  case NativeAudioPumpResult::NotConfigured:
-  case NativeAudioPumpResult::Failed:
-    control.latch(NativeAudioSessionFailure::Converter);
-    return media::NativeMediaConsumeResult::Failed;
-  }
-  control.latch(NativeAudioSessionFailure::ConsumerProtocol);
-  return media::NativeMediaConsumeResult::Failed;
+  return mapPumpForConsume(
+      control, control.converter.endOfStream(end.generation, error), true);
 }
 
 media::NativeMediaConsumerProgress NativeAudioSession::drain(
@@ -1834,12 +1713,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::drain(
   if (generation != control.generation) {
     return media::NativeMediaConsumerProgress::StaleGeneration;
   }
-  if (!control.configured ||
-      control.state == NativeAudioSessionState::Failed ||
-      control.state == NativeAudioSessionState::Retiring ||
-      control.state == NativeAudioSessionState::Closing ||
-      control.state == NativeAudioSessionState::Closed ||
-      control.state == NativeAudioSessionState::Cancelled) {
+  if (!control.configured || !acceptsWork(control.state)) {
     publishFailureText(control, error);
     return media::NativeMediaConsumerProgress::Failed;
   }
@@ -1894,10 +1768,7 @@ NativeAudioSessionProgress NativeAudioSession::start() noexcept {
   if (outputFailed(control)) {
     return NativeAudioSessionProgress::Failed;
   }
-  const NativePcmRing::ReadableFramesResult readable =
-      control.ring.readableFrames(control.generation);
-  if (!control.requestedPaused && readable.frames == 0 &&
-      !control.terminalPublished) {
+  if (!control.requestedPaused && !canStartOutput(control)) {
     return NativeAudioSessionProgress::WaitingForData;
   }
   control.renderCore.setPaused(control.requestedPaused);
@@ -1952,13 +1823,9 @@ NativeAudioSession::setPaused(bool paused) noexcept {
       control.latch(NativeAudioSessionFailure::Output);
       return NativeAudioSessionProgress::Failed;
     }
-    // Same admission rule start() applies: a running output that cannot be
-    // fed would underrun on its very first callback. The ring was never
-    // flushed by the suspend, so this is satisfied immediately for any pause
-    // that did not empty it.
-    const NativePcmRing::ReadableFramesResult readable =
-        control.ring.readableFrames(control.generation);
-    if (readable.frames == 0 && !control.terminalPublished) {
+    // The suspend never flushed the ring, so this holds immediately for any
+    // pause that did not empty it.
+    if (!canStartOutput(control)) {
       return NativeAudioSessionProgress::WaitingForData;
     }
     const NativeAudioSessionProgress started = mapOutputProgress(
@@ -1999,8 +1866,7 @@ NativeAudioSession::suspendOutputForPause() noexcept {
   // before the boundary would be equally exact but would freeze the clock up
   // to one device period earlier than an in-place pause does.
   const NativeMediaClockSnapshot clock = control.clock.sample();
-  if (!clock.publicationCurrent || !clock.valid || clock.running ||
-      clock.generation != control.generation) {
+  if (!clockPaused(clock) || clock.generation != control.generation) {
     return NativeAudioSessionProgress::Invalid;
   }
   control.outputSuspension = OutputSuspension::Stopping;
@@ -2017,11 +1883,8 @@ NativeAudioSessionProgress NativeAudioSession::setGain(float gain) noexcept {
   }
 
   control.requestedGain = normalizedGain(gain);
-  advanceControlRevision(control.controlRevision);
+  saturatingIncrement(control.controlRevision);
   control.renderCore.setGain(control.requestedGain);
-  control.appliedGain = control.requestedGain;
-  control.appliedMuted = control.requestedMuted;
-  control.appliedControlRevision = control.controlRevision;
   return NativeAudioSessionProgress::Done;
 }
 
@@ -2050,8 +1913,7 @@ NativeAudioSessionProgress NativeAudioSession::setRate(
     }
   }
   control.requestedRate = rate;
-  advanceControlRevision(control.controlRevision);
-  control.appliedControlRevision = control.controlRevision;
+  saturatingIncrement(control.controlRevision);
   return NativeAudioSessionProgress::Done;
 }
 
@@ -2065,11 +1927,8 @@ NativeAudioSessionProgress NativeAudioSession::setMuted(bool muted) noexcept {
   }
 
   control.requestedMuted = muted;
-  advanceControlRevision(control.controlRevision);
+  saturatingIncrement(control.controlRevision);
   control.renderCore.setMuted(control.requestedMuted);
-  control.appliedGain = control.requestedGain;
-  control.appliedMuted = control.requestedMuted;
-  control.appliedControlRevision = control.controlRevision;
   return NativeAudioSessionProgress::Done;
 }
 
@@ -2089,34 +1948,13 @@ NativeAudioSessionProgress NativeAudioSession::stop() noexcept {
     if (control.closeDone || control.state == NativeAudioSessionState::Closed) {
       return NativeAudioSessionProgress::Done;
     }
-    switch (close()) {
-    case media::NativeMediaConsumerProgress::Done:
-      return NativeAudioSessionProgress::Done;
-    case media::NativeMediaConsumerProgress::Quiescing:
-    case media::NativeMediaConsumerProgress::Progress:
-      return NativeAudioSessionProgress::Quiescing;
-    case media::NativeMediaConsumerProgress::StaleGeneration:
-    case media::NativeMediaConsumerProgress::Unsupported:
-    case media::NativeMediaConsumerProgress::Failed:
-      return NativeAudioSessionProgress::Failed;
-    }
+    return sessionProgress(close());
   }
   if (control.lifecycle == SessionLifecycle::Flush ||
       control.state == NativeAudioSessionState::Flushing) {
     control.terminalOverride = TerminalOverride::Stop;
     control.terminalOverrideGeneration = control.generation;
-    switch (close()) {
-    case media::NativeMediaConsumerProgress::Done:
-      return NativeAudioSessionProgress::Done;
-    case media::NativeMediaConsumerProgress::Quiescing:
-    case media::NativeMediaConsumerProgress::Progress:
-      return NativeAudioSessionProgress::Quiescing;
-    case media::NativeMediaConsumerProgress::StaleGeneration:
-    case media::NativeMediaConsumerProgress::Unsupported:
-    case media::NativeMediaConsumerProgress::Failed:
-      return NativeAudioSessionProgress::Failed;
-    }
-    return NativeAudioSessionProgress::Failed;
+    return sessionProgress(close());
   }
   if (control.state == NativeAudioSessionState::Cancelled) {
     return NativeAudioSessionProgress::Done;
@@ -2170,14 +2008,14 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
   }
   if (control.completedFlushRetired == retiredGeneration &&
       control.completedFlushTarget == nextGeneration &&
-      control.timeline == timeline &&
+      control.active.timeline == timeline &&
       control.generation == nextGeneration) {
     return media::NativeMediaConsumerProgress::Done;
   }
   if (control.lifecycle == SessionLifecycle::Flush) {
     if (control.lifecycleRetired != retiredGeneration ||
         control.lifecycleTarget != nextGeneration ||
-        control.lifecycleTimeline != timeline) {
+        control.lifecyclePlan.timeline != timeline) {
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
   } else {
@@ -2191,9 +2029,10 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
                  : media::NativeMediaConsumerProgress::Failed;
     }
     const std::optional<TimelinePlan> plan = timelinePlanFor(
-        nextGeneration, timeline, control.sampleRate,
-        control.audioMayPrecedeStreamOrigin, control.trimAfterCeiling,
-        control.presentationCeiling);
+        nextGeneration, timeline, control.active.sampleRate,
+        control.active.audioMayPrecedeStreamOrigin,
+        control.active.converter.trimAfterCeiling,
+        control.active.converter.presentationCeiling);
     if (!plan) {
       control.latch(NativeAudioSessionFailure::ClockTransition);
       return media::NativeMediaConsumerProgress::Failed;
@@ -2203,7 +2042,6 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
     control.flushStage = FlushStage::Stop;
     control.lifecycleRetired = retiredGeneration;
     control.lifecycleTarget = nextGeneration;
-    control.lifecycleTimeline = timeline;
     control.firstAudioSampleAccepted = false;
     control.requestedPaused = true;
     control.renderCore.setPaused(true);
@@ -2227,14 +2065,13 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
   }
 
   if (control.flushStage == FlushStage::Reset) {
-    const auto clockSeconds =
-        media::mediaTimeSeconds(control.lifecyclePlan.clockPosition);
-    if (!clockSeconds || !control.ring.flush(control.lifecycleTarget)) {
+    if (!control.ring.flush(control.lifecycleTarget)) {
       control.latch(NativeAudioSessionFailure::RingTransition);
       return media::NativeMediaConsumerProgress::Failed;
     }
     if (!control.clock.seek(control.lifecycleRetired,
-                            control.lifecycleTarget, *clockSeconds)) {
+                            control.lifecycleTarget,
+                            control.lifecyclePlan.clockPosition)) {
       control.latch(NativeAudioSessionFailure::ClockTransition);
       return media::NativeMediaConsumerProgress::Failed;
     }
@@ -2261,15 +2098,8 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
   control.completedFlushRetired = control.lifecycleRetired;
   control.completedFlushTarget = control.lifecycleTarget;
   control.generation = control.lifecycleTarget;
-  control.timeline = control.lifecycleTimeline;
-  control.converterTimeline = control.lifecyclePlan.converter;
-  control.mediaOrigin = control.lifecyclePlan.mediaOrigin;
-  control.audioDecodeStart = control.lifecyclePlan.decodeStart;
+  control.active = control.lifecyclePlan;
   control.firstAudioSampleAccepted = false;
-  control.presentationFloorFrame = control.lifecyclePlan.floorFrame;
-  control.mediaOriginFrame = control.lifecyclePlan.originFrame;
-  control.leadInSilenceFrames = control.lifecyclePlan.leadInSilenceFrames;
-  control.presentationEndFrame = control.lifecyclePlan.presentationEndFrame;
   control.endOfStreamRequested = false;
   control.terminalPublished = false;
   control.lifecycle = SessionLifecycle::None;
@@ -2340,7 +2170,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::cancel(
     control.endOfStreamRequested = false;
     control.terminalPublished = false;
     control.firstAudioSampleAccepted = false;
-    control.audioDecodeStart = {};
+    control.active.decodeStart = {};
     control.cancelledGeneration = generation;
     control.lifecycle = SessionLifecycle::None;
     control.state = NativeAudioSessionState::Cancelled;
@@ -2392,7 +2222,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::retire(
   control.generation = invalidation;
   control.configured = false;
   control.firstAudioSampleAccepted = false;
-  control.audioDecodeStart = {};
+  control.active.decodeStart = {};
   control.retireDone = true;
   control.state = NativeAudioSessionState::Closed;
   releaseClaim(control);
@@ -2428,7 +2258,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
   control.outputSuspension = OutputSuspension::None;
-#if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (control.forceCloseQuiescing) {
     return media::NativeMediaConsumerProgress::Quiescing;
   }
@@ -2448,7 +2278,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
   control.output.reset();
   control.configured = false;
   control.firstAudioSampleAccepted = false;
-  control.audioDecodeStart = {};
+  control.active.decodeStart = {};
   control.closeDone = true;
   control.lifecycle = SessionLifecycle::None;
   control.state = NativeAudioSessionState::Closed;
@@ -2488,8 +2318,8 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.failure = control.failure;
   result.generation = control.generation;
   result.track = control.track;
-  result.sampleRate = control.sampleRate;
-  result.presentationFloorFrame = control.presentationFloorFrame;
+  result.sampleRate = control.active.sampleRate;
+  result.presentationFloorFrame = control.active.floorFrame;
   const NativePcmRing::Stats ring = control.ring.stats();
   result.ringGeneration = ring.generation;
   result.queuedSlabs = ring.queuedSlabs;
@@ -2497,11 +2327,8 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.configured = control.configured;
   result.requestedPaused = control.requestedPaused;
   result.requestedGain = control.requestedGain;
-  result.appliedGain = control.appliedGain;
   result.requestedMuted = control.requestedMuted;
-  result.appliedMuted = control.appliedMuted;
   result.controlRevision = control.controlRevision;
-  result.appliedControlRevision = control.appliedControlRevision;
   result.endOfStreamRequested = control.endOfStreamRequested;
   result.terminalPublished = control.terminalPublished;
   result.terminalObserved = terminalObserved(control);

@@ -3,8 +3,8 @@
 #include "media/live_caption_feed.hpp"
 #include "media/native_playback_contract.hpp"
 #include "media/native_exact_playback.hpp"
-#include "avfoundation_asset_context.hpp"
 #include "native_audio_session.hpp"
+#include "native_session_ports.hpp"
 #include "native_preview_frame_lane.hpp"
 #include "native_tracked_video_arbiter.hpp"
 #include "native_tracked_video_output.hpp"
@@ -143,7 +143,36 @@ struct NativeMediaSessionSourceBinding {
   bool bufferedStorage{false};
 };
 
+// The children of one session. Production builds them on the worker after
+// pure path/time preflight; each port views the consumer beside it.
+struct NativeMediaSessionGraph {
+  std::unique_ptr<media::MediaSource> source;
+  std::unique_ptr<media::NativeVideoConsumer> video;
+  std::unique_ptr<media::NativeAudioConsumer> audio;
+  std::unique_ptr<SessionVideoPort> videoPort;
+  std::unique_ptr<SessionClockAuthority> audioPort;
+};
+
+struct NativeMediaSessionDependencies;
+
+// Everything a graph factory needs from the session to build its children.
+struct NativeMediaSessionGraphRequest {
+  const std::filesystem::path& localPath;
+  media::MediaGeneration reservedGeneration{0};
+  // Retained by every child; it carries the session's cached clock control.
+  std::shared_ptr<void> childLifetime;
+  NativeVideoClockSeam videoClock{};
+  NativeMediaSessionDependencies& dependencies;
+};
+
+// Builds the session's children on the worker; an empty graph fails Prepare.
+using NativeMediaSessionGraphFactory =
+    NativeMediaSessionGraph (*)(void* context,
+                                NativeMediaSessionGraphRequest request) noexcept;
+
 struct NativeMediaSessionDependencies {
+  NativeMediaSessionGraphFactory graphFactory{nullptr};
+  void* graphFactoryContext{nullptr};
   // Retains the GUI output and every opaque dependency supplied in the audio
   // call table. The session additionally retains its shared Wake object.
   std::shared_ptr<void> externalLifetime;
@@ -180,7 +209,7 @@ struct NativeMediaSessionObservationEdge {
 
 // Unforgeable result of the pure exact-position preflight. The controller
 // retains this cheap token alongside the Router Prepare action and gives it
-// back to prepare(); the session never reconverts the original binary64.
+// back to prepare(); seconds() is only the display projection of exact().
 class NativeMediaSessionInitialPosition final {
  public:
   [[nodiscard]] double seconds() const noexcept { return seconds_; }
@@ -188,10 +217,9 @@ class NativeMediaSessionInitialPosition final {
 
  private:
   constexpr NativeMediaSessionInitialPosition(
-      double seconds, media::MediaTime exact, bool rational = false) noexcept
-      : rational_(rational), seconds_(seconds), exact_(exact) {}
+      double seconds, media::MediaTime exact) noexcept
+      : seconds_(seconds), exact_(exact) {}
 
-  bool rational_{false};
   double seconds_{0.0};
   media::MediaTime exact_{};
 
@@ -214,11 +242,10 @@ class NativeMediaSessionCommitTarget final {
                                             media::MediaTime exact,
                                             std::uint64_t drawBaseline,
                                             media::MediaGeneration
-                                                sourceGeneration, bool rational = false) noexcept
-      : rational_(rational), seconds_(seconds), exact_(exact), drawBaseline_(drawBaseline),
+                                                sourceGeneration) noexcept
+      : seconds_(seconds), exact_(exact), drawBaseline_(drawBaseline),
         sourceGeneration_(sourceGeneration) {}
 
-  bool rational_{false};
   double seconds_{0.0};
   media::MediaTime exact_{};
   std::uint64_t drawBaseline_{0};
@@ -284,13 +311,12 @@ struct NativeMediaSessionObservations {
   std::optional<native_playback::PreviewPresented> previewPresented;
   std::optional<native_playback::PreviewFailed> previewFailed;
   std::optional<native_playback::CommitReady> commitReady;
-  std::optional<native_playback::ExactCommitReady> exactCommitReady;
 
   [[nodiscard]] bool empty() const noexcept {
     return !exactDraw.has_value() && !diagnostic.has_value() && !lifecycle.has_value() && !runStateApplied.has_value() &&
            !audioClock.has_value() && !videoDraw.has_value() &&
            !previewPresented.has_value() && !previewFailed.has_value() &&
-           !commitReady.has_value() && !exactCommitReady.has_value();
+           !commitReady.has_value();
   }
 };
 
@@ -302,39 +328,6 @@ enum class NativeMediaSessionOwnershipPhase : std::uint8_t {
   DirectRetiring,
   DispatcherRetiring,
   Closed,
-};
-
-struct NativeMediaSessionFacts {
-  NativeMediaSessionOwnershipPhase ownership{
-      NativeMediaSessionOwnershipPhase::Empty};
-  media::MediaGeneration generation{0};
-  media::MediaGeneration generationHighWater{0};
-  media::MediaGeneration invalidationGeneration{0};
-  bool workerRunning{false};
-  bool prepareAccepted{false};
-  bool prepared{false};
-  bool started{false};
-  bool dispatcherObservedVideo{false};
-  bool directVideoRetired{false};
-  bool directAudioRetired{false};
-  bool factPending{false};
-  bool stopLatched{false};
-  bool stoppedProofPublished{false};
-  bool ending{false};
-  bool endedProofPublished{false};
-  bool liveFailed{false};
-  bool previewHandoffPending{false};
-  bool previewHandoffReady{false};
-  bool previewPending{false};
-  bool previewPresentedPending{false};
-  bool previewFailedPending{false};
-  bool commitPending{false};
-  bool commitReadyPending{false};
-  native_playback::Stamp requestedRunStateStamp{};
-  native_playback::Stamp issuedRunStateStamp{};
-  native_playback::Stamp appliedRunStateStamp{};
-  bool appliedPaused{true};
-  bool observationPending{false};
 };
 
 // Diagnostic-only cumulative playback counters for an out-of-band metrics
@@ -400,14 +393,10 @@ class NativeMediaSession final {
   // native route. The exact returned rational is the value prepare() passes to
   // the source; no second conversion or rounded timescale is permitted.
   [[nodiscard]] static std::optional<NativeMediaSessionInitialPosition>
-  preflightInitialPosition(double seconds) noexcept;
-  [[nodiscard]] static std::optional<NativeMediaSessionInitialPosition>
   preflightInitialPosition(media::MediaTime target) noexcept;
   // Reserves a session-owned physical draw baseline before the Router creates
   // CommitSeek. The returned token is bound to the then-active generation;
   // commitSeek() rejects it after any intervening generation change.
-  [[nodiscard]] std::optional<NativeMediaSessionCommitTarget>
-  preflightCommitTarget(double seconds) noexcept;
   [[nodiscard]] std::optional<NativeMediaSessionCommitTarget>
   preflightCommitTarget(media::MediaTime target) noexcept;
   [[nodiscard]] std::optional<NativePreviewFrameTarget>
@@ -451,7 +440,6 @@ class NativeMediaSession final {
   stop(native_playback::Stop command) noexcept;
 
   [[nodiscard]] NativeMediaSessionObservations takeObservations() noexcept;
-  [[nodiscard]] NativeMediaSessionFacts facts() const noexcept;
   // Diagnostic sampler for an out-of-band metrics stream. Safe to call from
   // any thread. The first call arms worker-side publication; until the worker
   // has completed one pass afterwards the returned validity flags are false.
@@ -467,66 +455,16 @@ class NativeMediaSession final {
 };
 
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
-// Deterministic fixture seam. Production create() always constructs the four
-// concrete owners above lazily on the worker after pure path/time preflight.
-// Tests may replace the graph while exercising the identical worker,
-// cancellation latch, ownership phases, retirement barrier, and fact mailbox.
-struct NativeMediaSessionTestVideoControl {
-  void* context{nullptr};
-  NativeVideoConsumerArmProgress (*arm)(
-      void* context, media::MediaGeneration generation) noexcept{nullptr};
-  media::MediaGeneration (*highestExposed)(void* context) noexcept{nullptr};
-  std::uint64_t (*lastOutputEventSequence)(void* context) noexcept{nullptr};
-  std::uint64_t (*nextDueHostTicks)(void* context) noexcept{nullptr};
-  std::optional<NativeTrackedVideoEvent> (*takeOutputEvent)(
-      void* context) noexcept{nullptr};
-  NativeVideoConsumerPreviewProgress (*quiesceForPreview)(
-      void* context, media::MediaGeneration generation) noexcept{nullptr};
-};
-
-struct NativeMediaSessionTestAudioControl {
-  void* context{nullptr};
-  NativeAudioSessionProgress (*start)(void* context) noexcept{nullptr};
-  NativeAudioSessionProgress (*setPaused)(void* context,
-                                          bool paused) noexcept{nullptr};
-  NativeAudioSessionProgress (*setGain)(void* context,
-                                        float gain) noexcept{nullptr};
-  NativeAudioSessionProgress (*setMuted)(void* context,
-                                         bool muted) noexcept{nullptr};
-  NativeAudioSessionProgress (*stop)(void* context) noexcept{nullptr};
-  NativeMediaClockSnapshot (*clock)(void* context) noexcept{nullptr};
-  media::MediaGeneration (*highestExposed)(void* context) noexcept{nullptr};
-  NativeAudioSessionProgress (*suspendForPause)(void* context) noexcept{nullptr};
-};
-
-struct NativeMediaSessionTestPreviewControl {
-  void* context{nullptr};
-  NativePreviewFrameRequestStatus (*request)(
-      void* context, native_playback::PreviewFrame command,
-      NativePreviewFrameTarget target) noexcept{nullptr};
-  NativePreviewFramePumpProgress (*pump)(void* context) noexcept{nullptr};
-  std::optional<native_playback::PreviewPresented> (*takePresented)(
-      void* context) noexcept{nullptr};
-  NativePreviewFrameCancelProgress (*stop)(
-      void* context,
-      native_playback::Generation activeGeneration) noexcept{nullptr};
-};
-
-struct NativeMediaSessionTestGraph {
-  std::unique_ptr<media::MediaSource> source;
-  std::unique_ptr<media::NativeVideoConsumer> video;
-  std::unique_ptr<media::NativeAudioConsumer> audio;
-  NativeMediaSessionTestVideoControl videoControl;
-  NativeMediaSessionTestAudioControl audioControl;
-  NativeMediaSessionTestPreviewControl previewControl;
-  // Optional production-wiring seam. When supplied, the session validates
-  // this exact main-source context after Ready and exposes the immutable
-  // preview binding to the observer before using the injected lane control.
-  std::shared_ptr<const AVFoundationAssetContext> assetContext;
-  bool (*observePreviewBinding)(
-      void* context,
-      const NativePreviewBinding& binding) noexcept{nullptr};
-  void* previewBindingObserverContext{nullptr};
+// Deterministic fixture seam: tests replace the graph while exercising the
+// identical worker, cancellation latch, ownership phases, retirement barrier,
+// and fact mailbox.
+// A preview port injected in place of the production preview lane. The
+// observer, when present, first sees the exact preview binding.
+struct NativeMediaSessionTestPreview {
+  std::unique_ptr<SessionPreviewPort> port;
+  bool (*observeBinding)(void* context,
+                         const NativePreviewBinding& binding) noexcept{nullptr};
+  void* observerContext{nullptr};
 };
 
 enum class NativeMediaSessionTestPreviewCompletionPoint : std::uint8_t {
@@ -554,14 +492,44 @@ struct NativeMediaSessionTestCommitPhaseTrace {
   std::size_t length{0};
 };
 
-using NativeMediaSessionTestGraphFactory =
-    NativeMediaSessionTestGraph (*)(void* context);
+struct NativeMediaSessionFacts {
+  NativeMediaSessionOwnershipPhase ownership{
+      NativeMediaSessionOwnershipPhase::Empty};
+  media::MediaGeneration generation{0};
+  media::MediaGeneration generationHighWater{0};
+  media::MediaGeneration invalidationGeneration{0};
+  bool workerRunning{false};
+  bool prepareAccepted{false};
+  bool prepared{false};
+  bool started{false};
+  bool dispatcherObservedVideo{false};
+  bool directVideoRetired{false};
+  bool directAudioRetired{false};
+  bool factPending{false};
+  bool stopLatched{false};
+  bool stoppedProofPublished{false};
+  bool ending{false};
+  bool endedProofPublished{false};
+  bool liveFailed{false};
+  bool previewHandoffPending{false};
+  bool previewHandoffReady{false};
+  bool previewPending{false};
+  bool previewPresentedPending{false};
+  bool previewFailedPending{false};
+  bool commitPending{false};
+  bool commitReadyPending{false};
+  native_playback::Stamp requestedRunStateStamp{};
+  native_playback::Stamp issuedRunStateStamp{};
+  native_playback::Stamp appliedRunStateStamp{};
+  bool appliedPaused{true};
+  bool observationPending{false};
+};
 
 struct NativeMediaSessionTestAccess {
-  static void installGraphFactory(
-      NativeMediaSession& session,
-      NativeMediaSessionTestGraphFactory factory,
-      void* context) noexcept;
+  [[nodiscard]] static NativeMediaSessionFacts facts(
+      const NativeMediaSession& session) noexcept;
+  static void installPreview(NativeMediaSession& session,
+                             NativeMediaSessionTestPreview preview) noexcept;
   static void installFailureLatchBarrier(
       NativeMediaSession& session,
       std::atomic<bool>* entered,

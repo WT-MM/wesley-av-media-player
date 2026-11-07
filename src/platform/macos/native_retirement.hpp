@@ -1,5 +1,7 @@
 #pragma once
 
+#include "native_test_seams.hpp"
+
 #include <atomic>
 #include <memory>
 
@@ -14,7 +16,11 @@ public:
   // Process-exit barrier: call only after all owners have retired their graphs.
   // Normal window close remains asynchronous. No main-queue callback is needed.
   static void drainForProcessExit() noexcept;
+#if defined(WAM_NATIVE_TEST_SEAMS)
+  // Holds every retirement worker before it destroys its graph, so a test can
+  // observe a window whose teardown has not finished.
   static void setTestPaused(bool) noexcept;
+#endif
   ~NativeRetirement();
   NativeRetirement(const NativeRetirement&) = delete;
   NativeRetirement& operator=(const NativeRetirement&) = delete;

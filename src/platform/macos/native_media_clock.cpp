@@ -246,11 +246,10 @@ double NativeMediaClock::mediaAt(const State &state,
     return 0.0;
   }
   if (state.exactAnchor.valid() && !state.currentSegment.valid) {
-    const auto units = static_cast<std::uint32_t>(state.rate * 64.0);
     const auto elapsed = state.running && hostTicks > state.anchorHostTicks
         ? hostTicks - state.anchorHostTicks : 0;
     return media::mediaTimeSecondsAtHostTicks(state.exactAnchor, elapsed,
-        host_clock_.ticksPerSecond, units).value_or(std::numeric_limits<double>::quiet_NaN());
+        host_clock_.ticksPerSecond, state.rate).value_or(std::numeric_limits<double>::quiet_NaN());
   }
   if (!state.running) {
     return state.anchorMediaSeconds;
@@ -272,7 +271,7 @@ double NativeMediaClock::mediaAt(const State &state,
   if (selected == nullptr) {
     return evaluateLinear(
         state.anchorMediaSeconds, state.anchorHostTicks, hostTicks,
-        host_clock_.ticksPerSecond, state.rate, false, 0, 0.0);
+        host_clock_.ticksPerSecond, state.rate.toDouble(), false, 0, 0.0);
   }
 
   double rate = 0.0;
@@ -307,8 +306,8 @@ NativeMediaClockSnapshot NativeMediaClock::sample() const noexcept {
         state.running ? hostTicks : state.anchorHostTicks;
     snapshot.anchorMediaSeconds = state.anchorMediaSeconds;
     snapshot.mediaSeconds = state.anchorMediaSeconds;
-    snapshot.rate = state.rate;
-    snapshot.requestedRate = state.rate;
+    snapshot.rate = state.rate.toDouble();
+    snapshot.requestedRate = snapshot.rate;
     snapshot.exactAnchor = state.exactAnchor;
     if (!state.running) {
       snapshot.exactPausedTarget = state.exactAnchor;
@@ -421,98 +420,28 @@ NativeMediaClockSnapshot NativeMediaClock::sample() const noexcept {
 }
 
 bool NativeMediaClock::anchor(std::uint64_t generation,
-                              double mediaSeconds, double rate,
+                              media::MediaTime position, PlaybackRate rate,
                               bool running) noexcept {
-  if (!configured() || !validActiveGeneration(generation) ||
-      !validMediaSeconds(mediaSeconds) || !validRate(rate) ||
+  const auto canonical = media::canonicalNonnegativeTime(position);
+  const auto seconds = canonical ? media::mediaTimeSeconds(*canonical)
+                                 : std::nullopt;
+  if (!seconds || !configured() || !validActiveGeneration(generation) ||
+      !rate.valid() ||
+      !media::mediaTimeSecondsAtHostTicks(*canonical, 1,
+                                          host_clock_.ticksPerSecond, rate) ||
       !beginDirectWrite()) {
     return false;
   }
-
   const State current = currentState();
   if (generation <= current.generation) {
     endWrite();
     return false;
   }
-
-  State next;
-  next.generation = generation;
-  next.anchorHostTicks = host_clock_.readTicks(host_clock_.context);
-  next.anchorMediaSeconds = mediaSeconds;
-  next.rate = rate;
-  next.valid = true;
-  next.running = running;
-  const bool published = publishState(next);
-  endWrite();
-  return published;
-}
-
-bool NativeMediaClock::anchorExact(std::uint64_t generation, media::MediaTime target,
-                                     double rate, bool running) noexcept {
-  const auto canonical = media::canonicalNonnegativeTime(target);
-  if (!canonical || !configured() || !validActiveGeneration(generation) ||
-      !std::isfinite(rate) || rate < 0.25 || rate > 4 || std::trunc(rate * 64) != rate * 64 ||
-      !media::mediaTimeSecondsAtHostTicks(*canonical, 1, host_clock_.ticksPerSecond,
-                                         static_cast<std::uint32_t>(rate * 64)) ||
-      !beginDirectWrite()) return false;
-  const auto current = currentState();
-  if (generation <= current.generation) { endWrite(); return false; }
   State next;
   next.generation = generation;
   next.anchorHostTicks = host_clock_.readTicks(host_clock_.context);
   next.exactAnchor = *canonical;
-  next.anchorMediaSeconds = *media::mediaTimeSeconds(*canonical);
-  next.rate = rate;
-  next.valid = true;
-  next.running = running;
-  const bool result = publishState(next);
-  endWrite();
-  return result;
-}
-
-bool NativeMediaClock::seekExact(std::uint64_t expected, std::uint64_t generation,
-                                   media::MediaTime target) noexcept {
-  const auto canonical = media::canonicalNonnegativeTime(target);
-  if (!canonical || !configured() || !validActiveGeneration(generation) ||
-      generation <= expected || !beginDirectWrite()) return false;
-  const auto current = currentState();
-  if (!current.valid || current.generation != expected ||
-      !media::mediaTimeSecondsAtHostTicks(*canonical, 1, host_clock_.ticksPerSecond,
-                                         static_cast<std::uint32_t>(current.rate * 64))) {
-    endWrite(); return false;
-  }
-  State next;
-  next.generation = generation;
-  next.anchorHostTicks = host_clock_.readTicks(host_clock_.context);
-  next.exactAnchor = *canonical;
-  next.anchorMediaSeconds = *media::mediaTimeSeconds(*canonical);
-  next.rate = current.rate;
-  next.valid = true;
-  next.running = current.running;
-  const bool result = publishState(next);
-  endWrite();
-  return result;
-}
-
-bool NativeMediaClock::anchorAtHostTicks(
-    std::uint64_t generation, std::uint64_t hostTicks,
-    double mediaSeconds, double rate, bool running) noexcept {
-  if (!configured() || !validActiveGeneration(generation) ||
-      !validMediaSeconds(mediaSeconds) || !validRate(rate) ||
-      !beginDirectWrite()) {
-    return false;
-  }
-
-  const State current = currentState();
-  if (generation <= current.generation) {
-    endWrite();
-    return false;
-  }
-
-  State next;
-  next.generation = generation;
-  next.anchorHostTicks = hostTicks;
-  next.anchorMediaSeconds = mediaSeconds;
+  next.anchorMediaSeconds = *seconds;
   next.rate = rate;
   next.valid = true;
   next.running = running;
@@ -850,17 +779,22 @@ NativeMediaSegmentAdmission NativeMediaClock::observeSegment(
 
 bool NativeMediaClock::seek(std::uint64_t expectedGeneration,
                             std::uint64_t nextGeneration,
-                            double mediaSeconds) noexcept {
-  if (!configured() || expectedGeneration == 0 ||
+                            media::MediaTime position) noexcept {
+  const auto canonical = media::canonicalNonnegativeTime(position);
+  const auto seconds = canonical ? media::mediaTimeSeconds(*canonical)
+                                 : std::nullopt;
+  if (!seconds || !configured() || expectedGeneration == 0 ||
       !validActiveGeneration(nextGeneration) ||
-      nextGeneration <= expectedGeneration ||
-      !validMediaSeconds(mediaSeconds) || !beginDirectWrite()) {
+      nextGeneration <= expectedGeneration || !beginDirectWrite()) {
     return false;
   }
 
   const State current = currentState();
   if (!current.valid || current.generation != expectedGeneration ||
-      nextGeneration <= current.generation) {
+      nextGeneration <= current.generation ||
+      !media::mediaTimeSecondsAtHostTicks(*canonical, 1,
+                                          host_clock_.ticksPerSecond,
+                                          current.rate)) {
     endWrite();
     return false;
   }
@@ -868,7 +802,8 @@ bool NativeMediaClock::seek(std::uint64_t expectedGeneration,
   State next;
   next.generation = nextGeneration;
   next.anchorHostTicks = host_clock_.readTicks(host_clock_.context);
-  next.anchorMediaSeconds = mediaSeconds;
+  next.exactAnchor = *canonical;
+  next.anchorMediaSeconds = *seconds;
   next.rate = current.rate;
   next.valid = true;
   next.running = current.running;
@@ -905,8 +840,9 @@ bool NativeMediaClock::pause(std::uint64_t generation) noexcept {
   return published;
 }
 
-bool NativeMediaClock::run(std::uint64_t generation, double rate) noexcept {
-  if (!configured() || generation == 0 || !validRate(rate) ||
+bool NativeMediaClock::run(std::uint64_t generation,
+                           PlaybackRate rate) noexcept {
+  if (!configured() || generation == 0 || !rate.valid() ||
       !beginDirectWrite()) {
     return false;
   }
@@ -933,8 +869,8 @@ bool NativeMediaClock::run(std::uint64_t generation, double rate) noexcept {
 
 bool NativeMediaClock::runAtHostTicks(
     std::uint64_t expectedGeneration, std::uint64_t hostTicks,
-    double rate) noexcept {
-  if (!configured() || expectedGeneration == 0 || !validRate(rate) ||
+    PlaybackRate rate) noexcept {
+  if (!configured() || expectedGeneration == 0 || !rate.valid() ||
       !beginDirectWrite()) {
     return false;
   }

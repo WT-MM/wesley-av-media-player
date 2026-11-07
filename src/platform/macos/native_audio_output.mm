@@ -52,7 +52,7 @@ struct CallbackBridge {
 // One player window's worth of callback plumbing. claimed is the admission
 // token create() competes for; callbackOwner is the bounded retention that
 // keeps a prematurely released output alive while either callback context is
-// still attached, and is what recoverQuarantined() scans for.
+// still attached.
 struct OutputSlot {
   std::atomic<bool> claimed{false};
   std::atomic<NativeAudioOutput *> callbackOwner{nullptr};
@@ -363,6 +363,58 @@ class RenderGateGuard final {
 
 }  // namespace
 
+const char* nativeAudioOutputFailureName(
+    NativeAudioOutputFailure failure) noexcept {
+  switch (failure) {
+  case NativeAudioOutputFailure::None: return "None";
+  case NativeAudioOutputFailure::InvalidConfiguration:
+    return "InvalidConfiguration";
+  case NativeAudioOutputFailure::ComponentUnavailable:
+    return "ComponentUnavailable";
+  case NativeAudioOutputFailure::InstanceCreationFailed:
+    return "InstanceCreationFailed";
+  case NativeAudioOutputFailure::DeviceFormatQueryFailed:
+    return "DeviceFormatQueryFailed";
+  case NativeAudioOutputFailure::DeviceRateMismatch:
+    return "DeviceRateMismatch";
+  case NativeAudioOutputFailure::DeviceListenerInstallationFailed:
+    return "DeviceListenerInstallationFailed";
+  case NativeAudioOutputFailure::DeviceListenerRemovalFailed:
+    return "DeviceListenerRemovalFailed";
+  case NativeAudioOutputFailure::MaximumFramesConfigurationFailed:
+    return "MaximumFramesConfigurationFailed";
+  case NativeAudioOutputFailure::ClientFormatConfigurationFailed:
+    return "ClientFormatConfigurationFailed";
+  case NativeAudioOutputFailure::RenderCoreActivationFailed:
+    return "RenderCoreActivationFailed";
+  case NativeAudioOutputFailure::CallbackInstallationFailed:
+    return "CallbackInstallationFailed";
+  case NativeAudioOutputFailure::InitializationFailed:
+    return "InitializationFailed";
+  case NativeAudioOutputFailure::StartFailed: return "StartFailed";
+  case NativeAudioOutputFailure::StopFailed: return "StopFailed";
+  case NativeAudioOutputFailure::UninitializationFailed:
+    return "UninitializationFailed";
+  case NativeAudioOutputFailure::CallbackDetachmentFailed:
+    return "CallbackDetachmentFailed";
+  case NativeAudioOutputFailure::InstanceDisposalFailed:
+    return "InstanceDisposalFailed";
+  case NativeAudioOutputFailure::InvalidCallbackBuffer:
+    return "InvalidCallbackBuffer";
+  case NativeAudioOutputFailure::InvalidCallbackTimestamp:
+    return "InvalidCallbackTimestamp";
+  case NativeAudioOutputFailure::ReentrantCallback:
+    return "ReentrantCallback";
+  case NativeAudioOutputFailure::FrameCursorOverflow:
+    return "FrameCursorOverflow";
+  case NativeAudioOutputFailure::RenderCoreFailed: return "RenderCoreFailed";
+  case NativeAudioOutputFailure::NativeException: return "NativeException";
+  case NativeAudioOutputFailure::DeviceBufferFramesUnsupported:
+    return "DeviceBufferFramesUnsupported";
+  }
+  return "Unknown";
+}
+
 NativeAudioUnitCallTable nativeAudioUnitSystemCallTable() noexcept {
   return {nullptr,
           &systemFindNext,
@@ -441,12 +493,20 @@ NativeAudioOutput::~NativeAudioOutput() {
     static_cast<void>(disposeInstance(unit_));
     unit_ = nullptr;
   }
+  releaseClaim();
+}
+
+// Single-shot: create() takes the claim once and the first of the paths that
+// can end it (the already-detached close() short circuit, a completed close(),
+// or the destructor of an output that never closed) gives it back.
+void NativeAudioOutput::releaseClaim() noexcept {
   if (claim_held_) {
     claim_held_ = false;
     gSlots[slot_index_].claimed.store(false, std::memory_order_release);
   }
 }
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
 std::shared_ptr<NativeAudioOutput>
 NativeAudioOutput::recoverQuarantined() noexcept {
   // At most one recovery per call; the caller repeats until this returns null.
@@ -485,16 +545,7 @@ NativeAudioOutput::recoverQuarantined() noexcept {
   }
   return {};
 }
-
-bool NativeAudioOutput::validCallTable() const noexcept {
-  return calls_.findNext != nullptr && calls_.instanceNew != nullptr &&
-         calls_.instanceDispose != nullptr && calls_.setProperty != nullptr &&
-         calls_.getProperty != nullptr && calls_.initialize != nullptr &&
-         calls_.uninitialize != nullptr && calls_.start != nullptr &&
-         calls_.stop != nullptr && calls_.addPropertyListener != nullptr &&
-         calls_.removePropertyListener != nullptr &&
-         calls_.hostClockFrequency != nullptr;
-}
+#endif
 
 bool NativeAudioOutput::usableDeviceRate(
     const AudioStreamBasicDescription &format) const noexcept {
@@ -551,21 +602,6 @@ void NativeAudioOutput::latchFailure(
           expected, static_cast<std::uint8_t>(failure),
           std::memory_order_acq_rel, std::memory_order_acquire)) {
     os_status_.store(status, std::memory_order_release);
-  }
-}
-
-void NativeAudioOutput::boundedCounterAdd(
-    std::atomic<std::uint64_t> &counter, std::uint64_t amount) noexcept {
-  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
-  std::uint64_t current = counter.load(std::memory_order_relaxed);
-  for (unsigned attempt = 0; attempt != 2; ++attempt) {
-    const std::uint64_t next =
-        amount > maximum - current ? maximum : current + amount;
-    if (counter.compare_exchange_weak(current, next,
-                                      std::memory_order_relaxed,
-                                      std::memory_order_relaxed)) {
-      return;
-    }
   }
 }
 
@@ -751,6 +787,57 @@ double NativeAudioOutput::hostClockFrequency() noexcept {
   return 0.0;
 }
 
+// Re-reads the device's output-scope stream format and proves it is still the
+// device configure() latched. Every revalidation fails closed on the same two
+// facts (a failed query, a moved rate); checks names what else refuses at that
+// site. Returns the failure to latch with *status, or None.
+NativeAudioOutputFailure NativeAudioOutput::revalidateDevice(
+    unsigned checks, std::uint64_t serial, OSStatus *status) noexcept {
+  AudioStreamBasicDescription format{};
+  UInt32 propertySize = sizeof(format);
+  *status = getProperty(kAudioUnitProperty_StreamFormat,
+                        kAudioUnitScope_Output, 0, &format, &propertySize);
+  if (*status != noErr || propertySize != sizeof(format)) {
+    return NativeAudioOutputFailure::DeviceFormatQueryFailed;
+  }
+  *status = kAudioUnitErr_FormatNotSupported;
+  const bool latch = (checks & kDeviceLatchRate) != 0;
+  if ((latch ? !usableDeviceRate(format) : !validDeviceRate(format)) ||
+      ((checks & kDeviceInvalidation) != 0 &&
+       (admission_gate_.load(std::memory_order_acquire) &
+        kAdmissionDeviceInvalid) != 0) ||
+      ((checks & kDeviceSerialMoved) != 0 &&
+       device_change_serial_.load(std::memory_order_acquire) != serial) ||
+      ((checks & kDeviceFailureLatched) != 0 &&
+       failure_.load(std::memory_order_acquire) !=
+           static_cast<std::uint8_t>(NativeAudioOutputFailure::None))) {
+    return NativeAudioOutputFailure::DeviceRateMismatch;
+  }
+  if (latch) {
+    device_rate_ = format.mSampleRate;
+  }
+  return NativeAudioOutputFailure::None;
+}
+
+bool NativeAudioOutput::renderBridgeDrained(
+    std::uint64_t bridge) const noexcept {
+  const CallbackBridge &render = gSlots[slot_index_].render;
+  return (bridge & kBridgeCountMask) == 0 &&
+         render.exitPins.load(std::memory_order_acquire) == 0 &&
+         callback_entries_.load(std::memory_order_acquire) == 0 &&
+         (admission_gate_.load(std::memory_order_acquire) &
+          kAdmissionCountMask) == 0;
+}
+
+// The carry exactly-adjacent callbacks share; a new activation or start has
+// no predecessor callback to be adjacent to.
+void NativeAudioOutput::resetTimingCarry() noexcept {
+  timing_remainder_ = 0;
+  prior_timing_denominator_ = 0;
+  prior_rate_scalar_bits_ = 0;
+  prior_end_host_ticks_ = 0;
+}
+
 // The configure() refusal epilogue, stated once. Everything past the first
 // irreversible AudioUnit call must give that instance back; the refusals
 // below each follow one such call, so the close is not optional and
@@ -774,7 +861,7 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   device_rate_ = 0.0;
 
   const bool validConfiguration =
-      validCallTable() && configuration.generation != 0 &&
+      validNativeAudioUnitCallTable(calls_) && configuration.generation != 0 &&
       configuration.streamFrameCursor <= kMaximumExactDoubleInteger &&
       configuration.mediaOrigin.valid() &&
       configuration.mediaOrigin.value >= 0 &&
@@ -829,29 +916,16 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                          NativeAudioOutputProgress::Failed);
   }
 
-  AudioStreamBasicDescription deviceFormat{};
-  UInt32 propertySize = sizeof(deviceFormat);
-  status = getProperty(kAudioUnitProperty_StreamFormat,
-                       kAudioUnitScope_Output, 0, &deviceFormat,
-                       &propertySize);
-  if (status != noErr || propertySize != sizeof(deviceFormat)) {
-    return failConfigure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
-                         status,
-                         NativeAudioOutputProgress::Failed);
-  }
   // The device need not run at the stream rate; it only has to report a usable
   // rate. Latch it so every later query can prove the device did not change.
-  if (!usableDeviceRate(deviceFormat) ||
-      (admission_gate_.load(std::memory_order_acquire) &
-       kAdmissionDeviceInvalid) != 0 ||
-      failure_.load(std::memory_order_acquire) !=
-          static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
-    return failConfigure(NativeAudioOutputFailure::DeviceRateMismatch,
-                         kAudioUnitErr_FormatNotSupported,
-                         NativeAudioOutputProgress::Failed);
+  if (const NativeAudioOutputFailure device = revalidateDevice(
+          kDeviceLatchRate | kDeviceInvalidation | kDeviceFailureLatched, 0,
+          &status);
+      device != NativeAudioOutputFailure::None) {
+    return failConfigure(device, status, NativeAudioOutputProgress::Failed);
   }
-  device_rate_ = deviceFormat.mSampleRate;
 
+  UInt32 propertySize = 0;
   UInt32 maximumFrames = kMaximumFramesPerSlice;
   status = setProperty(kAudioUnitProperty_MaximumFramesPerSlice,
                        kAudioUnitScope_Global, 0, &maximumFrames,
@@ -982,24 +1056,10 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   }
   listener_attached_ = true;
 
-  deviceFormat = {};
-  propertySize = sizeof(deviceFormat);
-  status = getProperty(kAudioUnitProperty_StreamFormat,
-                       kAudioUnitScope_Output, 0, &deviceFormat,
-                       &propertySize);
-  if (status != noErr || propertySize != sizeof(deviceFormat)) {
-    return failConfigure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
-                         status,
-                         NativeAudioOutputProgress::Failed);
-  }
-  if (!validDeviceRate(deviceFormat) ||
-      (admission_gate_.load(std::memory_order_acquire) &
-       kAdmissionDeviceInvalid) != 0 ||
-      failure_.load(std::memory_order_acquire) !=
-          static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
-    return failConfigure(NativeAudioOutputFailure::DeviceRateMismatch,
-                         kAudioUnitErr_FormatNotSupported,
-                         NativeAudioOutputProgress::Failed);
+  if (const NativeAudioOutputFailure device = revalidateDevice(
+          kDeviceInvalidation | kDeviceFailureLatched, 0, &status);
+      device != NativeAudioOutputFailure::None) {
+    return failConfigure(device, status, NativeAudioOutputProgress::Failed);
   }
 
   initialize_attempted_ = true;
@@ -1011,24 +1071,10 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   }
   initialized_ = true;
 
-  deviceFormat = {};
-  propertySize = sizeof(deviceFormat);
-  status = getProperty(kAudioUnitProperty_StreamFormat,
-                       kAudioUnitScope_Output, 0, &deviceFormat,
-                       &propertySize);
-  if (status != noErr || propertySize != sizeof(deviceFormat)) {
-    return failConfigure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
-                         status,
-                         NativeAudioOutputProgress::Failed);
-  }
-  if (!validDeviceRate(deviceFormat) ||
-      (admission_gate_.load(std::memory_order_acquire) &
-       kAdmissionDeviceInvalid) != 0 ||
-      failure_.load(std::memory_order_acquire) !=
-          static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
-    return failConfigure(NativeAudioOutputFailure::DeviceRateMismatch,
-                         kAudioUnitErr_FormatNotSupported,
-                         NativeAudioOutputProgress::Failed);
+  if (const NativeAudioOutputFailure device = revalidateDevice(
+          kDeviceInvalidation | kDeviceFailureLatched, 0, &status);
+      device != NativeAudioOutputFailure::None) {
+    return failConfigure(device, status, NativeAudioOutputProgress::Failed);
   }
 
   // The unit's own group delay: its sample-rate converter's, when the stream
@@ -1097,10 +1143,12 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
     media::MediaTime mediaOrigin,
     media::MediaTime pausedClockPosition,
     NativeAudioDeclaredSilence declaredSilence) noexcept {
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (nativeAudioDeviceRecoverySeekTestGate().exchange(false, std::memory_order_acq_rel)) {
     devicePropertyChanged(&gSlots[slot_index_].deviceListener, unit_,
                           kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0);
   }
+#endif
   // Generation activation must reconcile pending format invalidation on its owner.
   if ((admission_gate_.load(std::memory_order_acquire) & kAdmissionDeviceInvalid) != 0) {
     const auto reconciled = reconcileDeviceChange();
@@ -1119,14 +1167,8 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
     return NativeAudioOutputProgress::Invalid;
   }
   if ((admission_gate_.load(std::memory_order_acquire) & kAdmissionDeviceInvalid) != 0) return quiescing();
-  CallbackBridge &renderBridge = gSlots[slot_index_].render;
-  const std::uint64_t bridge = renderBridge.gate.fetch_or(
-      kBridgePaused, std::memory_order_acq_rel);
-  if ((bridge & kBridgeCountMask) != 0 ||
-      renderBridge.exitPins.load(std::memory_order_acquire) != 0 ||
-      callback_entries_.load(std::memory_order_acquire) != 0 ||
-      (admission_gate_.load(std::memory_order_acquire) &
-       kAdmissionCountMask) != 0) {
+  if (!renderBridgeDrained(gSlots[slot_index_].render.gate.fetch_or(
+          kBridgePaused, std::memory_order_acq_rel))) {
     return quiescing();
   }
   if (!render_core_.activate(generation, streamFrameCursor,
@@ -1138,10 +1180,7 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
   }
   generation_.store(generation, std::memory_order_release);
   frame_cursor_.store(streamFrameCursor, std::memory_order_release);
-  timing_remainder_ = 0;
-  prior_timing_denominator_ = 0;
-  prior_rate_scalar_bits_ = 0;
-  prior_end_host_ticks_ = 0;
+  resetTimingCarry();
   observed_queued_slabs_.store(kUnobservedQueuedSlabs,
                                std::memory_order_release);
   underrun_active_.store(false, std::memory_order_release);
@@ -1163,13 +1202,8 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
     return NativeAudioOutputProgress::Invalid;
   }
   CallbackBridge &renderBridge = gSlots[slot_index_].render;
-  const std::uint64_t bridge = renderBridge.gate.fetch_or(
-      kBridgePaused, std::memory_order_acq_rel);
-  if ((bridge & kBridgeCountMask) != 0 ||
-      renderBridge.exitPins.load(std::memory_order_acquire) != 0 ||
-      callback_entries_.load(std::memory_order_acquire) != 0 ||
-      (admission_gate_.load(std::memory_order_acquire) &
-       kAdmissionCountMask) != 0) {
+  if (!renderBridgeDrained(
+          renderBridge.gate.fetch_or(kBridgePaused, std::memory_order_acq_rel))) {
     return quiescing();
   }
   if (!listener_attached_) {
@@ -1181,21 +1215,13 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
   const std::uint64_t deviceSerial =
       device_change_serial_.load(std::memory_order_acquire);
 
-  AudioStreamBasicDescription deviceFormat{};
-  UInt32 propertySize = sizeof(deviceFormat);
-  OSStatus status = getProperty(kAudioUnitProperty_StreamFormat,
-                                kAudioUnitScope_Output, 0,
-                                &deviceFormat, &propertySize);
-  if (status != noErr || propertySize != sizeof(deviceFormat)) {
-    latchFailure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
-                 status);
-    return NativeAudioOutputProgress::Failed;
-  }
-  if (!validDeviceRate(deviceFormat) ||
-      failure_.load(std::memory_order_acquire) !=
-          static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
-    latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
-                 kAudioUnitErr_FormatNotSupported);
+  // The entry gate above already refused a pending device invalidation, and
+  // the admission commit below refuses one that lands after it.
+  OSStatus status = noErr;
+  if (const NativeAudioOutputFailure device =
+          revalidateDevice(kDeviceFailureLatched, 0, &status);
+      device != NativeAudioOutputFailure::None) {
+    latchFailure(device, status);
     return NativeAudioOutputProgress::Failed;
   }
 
@@ -1209,10 +1235,7 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
 
   setState(NativeAudioOutputState::Starting);
   stopped_.store(false, std::memory_order_release);
-  timing_remainder_ = 0;
-  prior_timing_denominator_ = 0;
-  prior_rate_scalar_bits_ = 0;
-  prior_end_host_ticks_ = 0;
+  resetTimingCarry();
   const bool unitAlreadyRunning = stop_required_ && !stop_succeeded_;
   stop_required_ = true;
   stop_succeeded_ = false;
@@ -1234,33 +1257,16 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
     return NativeAudioOutputProgress::Failed;
   }
 
-  deviceFormat = {};
-  propertySize = sizeof(deviceFormat);
-  status = getProperty(kAudioUnitProperty_StreamFormat,
-                       kAudioUnitScope_Output, 0, &deviceFormat,
-                       &propertySize);
-  if (status != noErr || propertySize != sizeof(deviceFormat)) {
+  if (const NativeAudioOutputFailure device = revalidateDevice(
+          kDeviceSerialMoved | kDeviceFailureLatched, deviceSerial, &status);
+      device != NativeAudioOutputFailure::None) {
     started_.store(false, std::memory_order_release);
-    latchFailure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
-                 status);
-    setState(NativeAudioOutputState::Stopping);
-    return NativeAudioOutputProgress::Failed;
-  }
-  if (!validDeviceRate(deviceFormat) ||
-      device_change_serial_.load(std::memory_order_acquire) !=
-          deviceSerial ||
-      failure_.load(std::memory_order_acquire) !=
-          static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
-    started_.store(false, std::memory_order_release);
-    latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
-                 kAudioUnitErr_FormatNotSupported);
+    latchFailure(device, status);
     setState(NativeAudioOutputState::Stopping);
     return NativeAudioOutputProgress::Failed;
   }
 
-  if (before_start_commit_hook_ != nullptr) {
-    before_start_commit_hook_(before_start_commit_context_);
-  }
+  WAM_NATIVE_TEST_HOOK(before_start_commit_hook_);
 
   render_core_.setAccepting(true);
   admission_epoch_.store(epoch + 1U, std::memory_order_release);
@@ -1330,15 +1336,8 @@ NativeAudioOutputProgress NativeAudioOutput::stopImpl(bool keepUnitRunning) noex
     stop_required_ = false;
   }
 
-  CallbackBridge &renderBridge = gSlots[slot_index_].render;
-  const std::uint64_t bridge = renderBridge.gate.fetch_or(
-      kBridgePaused, std::memory_order_acq_rel);
-
-  if ((admission_gate_.load(std::memory_order_acquire) &
-      kAdmissionCountMask) != 0 ||
-      (bridge & kBridgeCountMask) != 0 ||
-      renderBridge.exitPins.load(std::memory_order_acquire) != 0 ||
-      callback_entries_.load(std::memory_order_acquire) != 0) {
+  if (!renderBridgeDrained(gSlots[slot_index_].render.gate.fetch_or(
+          kBridgePaused, std::memory_order_acq_rel))) {
     return quiescing();
   }
   stopped_.store(true, std::memory_order_release);
@@ -1371,21 +1370,15 @@ NativeAudioOutput::reconcileDeviceChange() noexcept {
   const std::uint64_t serial =
       device_change_serial_.load(std::memory_order_acquire);
 
-  AudioStreamBasicDescription deviceFormat{};
-  UInt32 propertySize = sizeof(deviceFormat);
-  const OSStatus status = getProperty(kAudioUnitProperty_StreamFormat,
-                                      kAudioUnitScope_Output, 0,
-                                      &deviceFormat, &propertySize);
-  if (status != noErr || propertySize != sizeof(deviceFormat)) {
-    latchFailure(NativeAudioOutputFailure::DeviceFormatQueryFailed, status);
-    return NativeAudioOutputProgress::Failed;
-  }
   // The one genuinely fatal case: the device is no longer running at the rate
   // configure() latched, so every host-tick prediction already made against
-  // it is void. Fail closed, as start()'s own revalidation does.
-  if (!validDeviceRate(deviceFormat)) {
-    latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
-                 kAudioUnitErr_FormatNotSupported);
+  // it is void. The invalidation bit is this call's own input, so only the
+  // rate itself decides.
+  OSStatus status = noErr;
+  if (const NativeAudioOutputFailure device =
+          revalidateDevice(kDeviceRateOnly, 0, &status);
+      device != NativeAudioOutputFailure::None) {
+    latchFailure(device, status);
     return NativeAudioOutputProgress::Failed;
   }
 
@@ -1409,25 +1402,18 @@ NativeAudioOutput::reconcileDeviceChange() noexcept {
                              std::memory_order_acq_rel);
     return quiescing();
   }
-  boundedCounterAdd(device_change_reconciliations_, 1);
+  saturatingAdd(device_change_reconciliations_, 1);
   return NativeAudioOutputProgress::Done;
 }
 
 NativeAudioOutputProgress NativeAudioOutput::close() noexcept {
-  return closeStep();
-}
-
-NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
   if (unit_ == nullptr && !callback_attached_ && !listener_attached_) {
     configured_.store(false, std::memory_order_release);
     published_activated_.store(false, std::memory_order_release);
     activated_ = false;
     device_rate_ = 0.0;
     setState(NativeAudioOutputState::Closed);
-    if (claim_held_) {
-      claim_held_ = false;
-      gSlots[slot_index_].claimed.store(false, std::memory_order_release);
-    }
+    releaseClaim();
     return NativeAudioOutputProgress::Done;
   }
 
@@ -1539,10 +1525,7 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
         std::memory_order_acquire));
     callback_self_owner_.reset();
   }
-  if (claim_held_) {
-    claim_held_ = false;
-    slot.claimed.store(false, std::memory_order_release);
-  }
+  releaseClaim();
   return NativeAudioOutputProgress::Done;
 }
 
@@ -1749,9 +1732,7 @@ OSStatus NativeAudioOutput::renderCallback(
     return noErr;
   }
   const NativeAudioOutputWakeSeam wake = output->wake_;
-  if (output->before_admission_hook_ != nullptr) {
-    output->before_admission_hook_(output->before_admission_context_);
-  }
+  WAM_NATIVE_TEST_HOOK(output->before_admission_hook_);
   const std::uint64_t admissionEpoch =
       output->admission_epoch_.load(std::memory_order_acquire);
   OSStatus status = kAudio_ParamError;
@@ -1789,33 +1770,30 @@ OSStatus NativeAudioOutput::renderCallback(
   const bool lifecycleWake =
       (bridgeBeforeRelease & (kBridgePaused | kBridgeDetached)) != 0;
   if (wakeReasons != 0 || lifecycleWake) {
-    boundedCounterAdd(output->callback_wake_requests_, 1);
+    saturatingAdd(output->callback_wake_requests_, 1);
     if ((wakeReasons & kWakeRefill) != 0) {
-      boundedCounterAdd(output->refill_wake_requests_, 1);
+      saturatingAdd(output->refill_wake_requests_, 1);
     }
     if ((wakeReasons & kWakeUnderrun) != 0) {
-      boundedCounterAdd(output->underrun_wake_requests_, 1);
+      saturatingAdd(output->underrun_wake_requests_, 1);
     }
     if ((wakeReasons & kWakeVideoDue) != 0) {
-      boundedCounterAdd(output->video_due_wake_requests_, 1);
+      saturatingAdd(output->video_due_wake_requests_, 1);
     }
     if ((wakeReasons & kWakeStateMask) != 0) {
-      boundedCounterAdd(output->state_wake_requests_, 1);
+      saturatingAdd(output->state_wake_requests_, 1);
     }
-    if (signalWake(wake)) {
-      boundedCounterAdd(output->callback_wake_signals_, 1);
+    if (signalNativeAudioOutputWake(wake)) {
+      saturatingAdd(output->callback_wake_signals_, 1);
     }
-    if (output->after_callback_wake_hook_ != nullptr) {
-      output->after_callback_wake_hook_(
-          output->after_callback_wake_context_);
-    }
+    WAM_NATIVE_TEST_HOOK(output->after_callback_wake_hook_);
   } else {
-    boundedCounterAdd(output->suppressed_callback_wakes_, 1);
+    saturatingAdd(output->suppressed_callback_wakes_, 1);
   }
   const std::uint64_t released = bridgeEntry.release();
   if (finalDrainingBridgeEntry(released)) {
-    if (signalWake(wake)) {
-      boundedCounterAdd(output->callback_wake_signals_, 1);
+    if (signalNativeAudioOutputWake(wake)) {
+      saturatingAdd(output->callback_wake_signals_, 1);
     }
   }
   return status;
@@ -1844,7 +1822,7 @@ void NativeAudioOutput::devicePropertyChanged(
   output->admission_gate_.fetch_or(
       kAdmissionClosed | kAdmissionDeviceInvalid,
       std::memory_order_acq_rel);
-  boundedCounterAdd(output->device_change_serial_, 1);
+  saturatingAdd(output->device_change_serial_, 1);
   const NativeAudioOutputWakeSeam wake = output->wake_;
   output->render_core_.setAccepting(false);
   output->started_.store(false, std::memory_order_release);
@@ -1860,33 +1838,16 @@ void NativeAudioOutput::devicePropertyChanged(
   // nothing renders into a device that may have moved; reconcileDeviceChange()
   // on the serialized owner re-reads StreamFormat and decides.
   BridgeExitPinGuard exitPin(bridge);
-  static_cast<void>(signalWake(wake));
-  if (output->after_listener_wake_hook_ != nullptr) {
-    output->after_listener_wake_hook_(
-        output->after_listener_wake_context_);
-  }
+  static_cast<void>(signalNativeAudioOutputWake(wake));
+  WAM_NATIVE_TEST_HOOK(output->after_listener_wake_hook_);
   const std::uint64_t released = bridgeEntry.release();
   if (finalDrainingBridgeEntry(released)) {
-    static_cast<void>(signalWake(wake));
+    static_cast<void>(signalNativeAudioOutputWake(wake));
   }
-}
-
-bool NativeAudioOutput::signalWake(NativeAudioOutputWakeSeam wake) noexcept {
-  if (wake.pending == nullptr || wake.signal == nullptr) {
-    return false;
-  }
-  bool expected = false;
-  if (wake.pending->compare_exchange_strong(
-          expected, true, std::memory_order_acq_rel,
-          std::memory_order_acquire)) {
-    wake.signal(wake.context);
-    return true;
-  }
-  return false;
 }
 
 NativeAudioOutputProgress NativeAudioOutput::quiescing() noexcept {
-  static_cast<void>(signalWake(wake_));
+  static_cast<void>(signalNativeAudioOutputWake(wake_));
   return NativeAudioOutputProgress::Quiescing;
 }
 
@@ -1906,8 +1867,8 @@ OSStatus NativeAudioOutput::render(
       benchmark_first_render_.exchange(false, std::memory_order_relaxed))
     media::audioBenchmarkStamp(media::AudioBenchmarkEvent::Render, generation_.load());
 #endif
-  boundedCounterAdd(callbacks_, 1);
-  boundedCounterAdd(requested_frames_, frameCount);
+  saturatingAdd(callbacks_, 1);
+  saturatingAdd(requested_frames_, frameCount);
 
   const std::uint64_t requestedBytes =
       static_cast<std::uint64_t>(frameCount) * kChannels * sizeof(float);
@@ -1921,13 +1882,13 @@ OSStatus NativeAudioOutput::render(
     zeroValidBuffer(actionFlags, frameCount, data);
     latchFailure(NativeAudioOutputFailure::InvalidCallbackBuffer,
                  kAudio_ParamError);
-    boundedCounterAdd(rejected_callbacks_, 1);
+    saturatingAdd(rejected_callbacks_, 1);
     return kAudio_ParamError;
   }
 
   if (!bridgeAdmissionOpen) {
     zeroValidBuffer(actionFlags, frameCount, data);
-    boundedCounterAdd(rejected_callbacks_, 1);
+    saturatingAdd(rejected_callbacks_, 1);
     return noErr;
   }
 
@@ -1936,7 +1897,7 @@ OSStatus NativeAudioOutput::render(
                        kAdmissionCountMask) ||
       admission_epoch_.load(std::memory_order_acquire) != admissionEpoch) {
     zeroValidBuffer(actionFlags, frameCount, data);
-    boundedCounterAdd(rejected_callbacks_, 1);
+    saturatingAdd(rejected_callbacks_, 1);
     return noErr;
   }
   first_callback_observed_.store(true, std::memory_order_release);
@@ -1945,7 +1906,7 @@ OSStatus NativeAudioOutput::render(
     zeroValidBuffer(actionFlags, frameCount, data);
     latchFailure(NativeAudioOutputFailure::ReentrantCallback,
                  kAudio_ParamError);
-    boundedCounterAdd(rejected_callbacks_, 1);
+    saturatingAdd(rejected_callbacks_, 1);
     return kAudio_ParamError;
   }
   RenderGateGuard renderGate(render_gate_);
@@ -1953,7 +1914,7 @@ OSStatus NativeAudioOutput::render(
   if (failure_.load(std::memory_order_acquire) !=
       static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
     zeroValidBuffer(actionFlags, frameCount, data);
-    boundedCounterAdd(rejected_callbacks_, 1);
+    saturatingAdd(rejected_callbacks_, 1);
     return noErr;
   }
 
@@ -1961,7 +1922,7 @@ OSStatus NativeAudioOutput::render(
     zeroValidBuffer(actionFlags, frameCount, data);
     latchFailure(NativeAudioOutputFailure::InvalidCallbackTimestamp,
                  kAudio_ParamError);
-    boundedCounterAdd(rejected_callbacks_, 1);
+    saturatingAdd(rejected_callbacks_, 1);
     return kAudio_ParamError;
   }
 
@@ -1974,7 +1935,7 @@ OSStatus NativeAudioOutput::render(
     zeroValidBuffer(actionFlags, frameCount, data);
     latchFailure(NativeAudioOutputFailure::InvalidCallbackTimestamp,
                  kAudio_ParamError);
-    boundedCounterAdd(rejected_callbacks_, 1);
+    saturatingAdd(rejected_callbacks_, 1);
     return kAudio_ParamError;
   }
 
@@ -2019,7 +1980,7 @@ OSStatus NativeAudioOutput::render(
       zeroValidBuffer(actionFlags, frameCount, data);
       latchFailure(NativeAudioOutputFailure::FrameCursorOverflow,
                    kAudio_ParamError);
-      boundedCounterAdd(rejected_callbacks_, 1);
+      saturatingAdd(rejected_callbacks_, 1);
       return kAudio_ParamError;
     }
     frame_cursor_.store(cursor + advancedFrames, std::memory_order_release);
@@ -2092,7 +2053,7 @@ OSStatus NativeAudioOutput::render(
   if (result.silentFrames == frameCount && actionFlags != nullptr) {
     *actionFlags |= kAudioUnitRenderAction_OutputIsSilence;
   }
-  boundedCounterAdd(rendered_callbacks_, 1);
+  saturatingAdd(rendered_callbacks_, 1);
   return noErr;
 }
 
@@ -2159,10 +2120,7 @@ NativeAudioOutputFacts NativeAudioOutput::facts() const noexcept {
   const CallbackBridge &renderBridge = gSlots[slot_index_].render;
   NativeAudioOutput *const bridgeOwnerBefore =
       renderBridge.owner.load(std::memory_order_acquire);
-  if (after_facts_bridge_owner_hook_ != nullptr) {
-    after_facts_bridge_owner_hook_(
-        after_facts_bridge_owner_context_);
-  }
+  WAM_NATIVE_TEST_HOOK(after_facts_bridge_owner_hook_);
   const std::uint64_t callbackBridgeGate =
       renderBridge.gate.load(std::memory_order_acquire);
   const std::uint32_t callbackBridgeExitPins =

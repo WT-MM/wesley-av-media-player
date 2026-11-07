@@ -71,7 +71,7 @@ namespace wam::qt {
 // Exercise the actual owner/router notification and recovery boundaries.
 struct NativePlaybackOwnerTestAccess {
   static void fail(NativePlaybackOwner &owner) {
-    const auto snapshot = owner.router_.snapshot();
+    const auto snapshot = owner.routeSnapshot();
     owner.consumeLifecycle(native_protocol::Failed{
         {snapshot.attempt, snapshot.serial}, native_protocol::FailureReason::Protocol}, false);
   }

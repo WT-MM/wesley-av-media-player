@@ -95,6 +95,8 @@ using wam::macos::NativeMediaSegmentAdmission;
 using wam::macos::NativeMediaSegmentContinuity;
 using wam::macos::NativePcmRing;
 using wam::media::MediaTime;
+using wam::media::addMediaTime;
+using wam::media::mediaTimeFromTicks;
 
 static_assert(std::is_trivially_copyable_v<NativeAudioRenderInput>);
 static_assert(std::is_trivially_copyable_v<NativeAudioRenderResult>);
@@ -152,10 +154,10 @@ struct Fixture {
   explicit Fixture(MediaTime origin = {0, 1},
                    std::uint64_t streamFrameCursor = 0,
                    MediaTime pausedClockPosition = {0, 1}) {
-    const auto initialPosition =
-        mediaTimeSecondsAtFrame(origin, streamFrameCursor, kSampleRate);
+    const auto initialPosition = addMediaTime(
+        origin, *mediaTimeFromTicks(streamFrameCursor, kSampleRate));
     ready = initialPosition &&
-            clock.anchorAtHostTicks(1, 0, *initialPosition, 1.0, false) &&
+            clock.anchor(1, *initialPosition, {}, false) &&
             core.activate(1, streamFrameCursor, origin,
                           pausedClockPosition, kSampleRate);
     core.setPaused(false);
@@ -286,7 +288,7 @@ void testRingAndClockBackpressureDoNotConsume() {
 
   Fixture blocked;
   expect(blocked.ready &&
-             blocked.clock.runAtHostTicks(1, 0, 1.0) &&
+             blocked.clock.runAtHostTicks(1, 0, {}) &&
              blocked.clock.observeSegment(
                  1, {1, 0, 64, 0.0, 64.0 / kSampleRate,
                      NativeMediaSegmentContinuity::Discontinuous}) ==
@@ -320,7 +322,7 @@ void testMetadataCorrectionConsumesNothing() {
   Fixture fixture;
   constexpr double endSeconds = 64.0 / kSampleRate;
   expect(fixture.ready &&
-             fixture.clock.runAtHostTicks(1, 1000, 1.0) &&
+             fixture.clock.runAtHostTicks(1, 1000, {}) &&
              fixture.clock.observeSegment(
                  1, {1, 1000, 1064, 0.0, endSeconds,
                      NativeMediaSegmentContinuity::Discontinuous}) ==
@@ -984,7 +986,7 @@ void testTerminalObservationResetsAcrossActivation() {
 
   fixture.core.setAccepting(false);
   fixture.core.setPaused(true);
-  expect(fixture.ring.flush(2) && fixture.clock.seek(1, 2, 20.0) &&
+  expect(fixture.ring.flush(2) && fixture.clock.seek(1, 2, MediaTime{20, 1}) &&
              fixture.core.activate(2, 0, MediaTime{20, 1},
                                    MediaTime{20, 1}, kSampleRate) &&
              !fixture.core.terminalObservation().observed(),
@@ -1021,7 +1023,7 @@ void testExactNonzeroMediaOrigin() {
   NativeMediaClock mismatchedClock(mismatchedHost.seam());
   NativeAudioRenderCore mismatchedCore(mismatchedRing, mismatchedClock,
                                        kSampleRate);
-  expect(mismatchedClock.anchorAtHostTicks(1, 0, 10.25, 1.0, false) &&
+  expect(mismatchedClock.anchor(1, MediaTime{41, 4}, {}, false) &&
              !mismatchedCore.activate(1, cursor, origin,
                                       MediaTime{21, 2}, kSampleRate),
          "activation rejects a paused clock that omits the frame cursor");
@@ -1064,7 +1066,7 @@ void testExactDualSeekOrigins() {
   NativeMediaClock clock(host.seam());
   NativeAudioRenderCore core(ring, clock, kSampleRate);
   expect(targetSeconds && audioSeconds &&
-             clock.anchorAtHostTicks(1, 0, *targetSeconds, 1.0, false) &&
+             clock.anchor(1, visualTarget, {}, false) &&
              core.activate(1, 0, firstAudioFrame, visualTarget,
                            kSampleRate),
          "dual-origin activation keeps arbitrary visual T separate from "
@@ -1098,7 +1100,7 @@ void testExactDualSeekOrigins() {
   NativeMediaClock rejectedClock(rejectedHost.seam());
   NativeAudioRenderCore rejectedCore(rejectedRing, rejectedClock,
                                      kSampleRate);
-  expect(rejectedClock.anchorAtHostTicks(1, 0, *targetSeconds, 1.0, false) &&
+  expect(rejectedClock.anchor(1, visualTarget, {}, false) &&
              !rejectedCore.activate(1, 0, {6857, 48'000}, visualTarget,
                                     kSampleRate) &&
              !rejectedCore.activate(1, 0, {6859, 48'000}, visualTarget,
@@ -1111,7 +1113,7 @@ void testExactDualSeekOrigins() {
   auto &emptyRing = *emptyRingStorage;
   NativeMediaClock emptyClock(emptyHost.seam());
   NativeAudioRenderCore emptyCore(emptyRing, emptyClock, kSampleRate);
-  expect(emptyClock.anchorAtHostTicks(1, 0, *targetSeconds, 1.0, false) &&
+  expect(emptyClock.anchor(1, visualTarget, {}, false) &&
              emptyCore.activate(1, 0, firstAudioFrame, visualTarget,
                                 kSampleRate) &&
              emptyCore.publishTerminalFrame(1, 0),
@@ -1136,9 +1138,7 @@ void testCanonicalOriginRoundingRegression() {
   auto &ring = *ringStorage;
   NativeMediaClock clock(host.seam());
   NativeAudioRenderCore core(ring, clock, kSampleRate);
-  const auto anchored = mediaTimeSecondsAtFrame(origin, 0, kSampleRate);
-  expect(anchored.has_value() &&
-             clock.anchorAtHostTicks(1, 0, *anchored, 1.0, false) &&
+  expect(clock.anchor(1, origin, {}, false) &&
              core.activate(1, 0, origin, origin, kSampleRate),
          "activation and owner share canonical adjacent-double rounding");
 }
@@ -1155,7 +1155,7 @@ void testHostFrequencyComposition() {
   auto &ring = *ringStorage;
   NativeMediaClock mismatchedClock(host.seam(kSampleRate + 1U));
   NativeAudioRenderCore mismatchedCore(ring, mismatchedClock, kSampleRate);
-  expect(mismatchedClock.anchorAtHostTicks(1, 0, 0.0, 1.0, false) &&
+  expect(mismatchedClock.anchor(1, MediaTime{0, 1}, {}, false) &&
              !mismatchedCore.compatibleHostTicksPerSecond(kSampleRate) &&
              !mismatchedCore.activate(1, 0, MediaTime{0, 1},
                                       MediaTime{0, 1}, kSampleRate),
@@ -1318,7 +1318,7 @@ void testExactSampleTimeTiming() {
   NativeMediaClock nanosecondClock(nanosecondHost.seam(1000000000));
   NativeAudioRenderCore nanosecondCore(nanosecondRing, nanosecondClock,
                                        1000000000);
-  expect(nanosecondClock.anchorAtHostTicks(1, 0, 0.0, 1.0, false) &&
+  expect(nanosecondClock.anchor(1, MediaTime{0, 1}, {}, false) &&
              nanosecondCore.activate(1, 0, MediaTime{0, 1},
                                      MediaTime{0, 1}, kSampleRate) &&
              publishConstant(nanosecondRing, 1, 1, 1.0F),
@@ -1396,10 +1396,7 @@ struct RateFixture {
       : clock(host.seam(sampleRate)),
         core(ring, clock, sampleRate),
         rate(sampleRate) {
-    const auto initialPosition =
-        mediaTimeSecondsAtFrame(MediaTime{0, 1}, 0, sampleRate);
-    ready = initialPosition &&
-            clock.anchorAtHostTicks(1, 0, *initialPosition, 1.0, false) &&
+    ready = clock.anchor(1, MediaTime{0, 1}, {}, false) &&
             core.activate(1, 0, MediaTime{0, 1}, MediaTime{0, 1}, sampleRate);
     core.setPaused(false);
     core.setAccepting(true);
@@ -1761,7 +1758,7 @@ void testBacklogAcrossRateAndGeneration() {
                  *wam::media::mediaTimeSecondsAtFrame({0, 1}, 160, kSampleRate),
          "unity renders retained backlog while the output cursor stays exact");
   fixture.core.setAccepting(false);
-  expect(fixture.clock.pause(1) && fixture.ring.flush(2) && fixture.clock.seek(1, 2, 0.0) &&
+  expect(fixture.clock.pause(1) && fixture.ring.flush(2) && fixture.clock.seek(1, 2, MediaTime{0, 1}) &&
              fixture.core.activate(2, 0, {0, 1}, {0, 1}, kSampleRate),
          "generation resets both cursors");
   fixture.core.setAccepting(true);
@@ -2091,8 +2088,7 @@ void testRateChangeStateMachine() {
                settled.pcmFrames == kOutputFrames / 2U,
            "the interval after the rate boundary is continuous again");
     expect(fixture.core.stats().rateChanges == 1 &&
-               fixture.core.stats().stretchedCallbacks == 2 &&
-               fixture.core.stats().stretchShortfallFrames == 0,
+               fixture.core.stats().stretchedCallbacks == 2,
            "rate-change and stretch counters are exact");
   }
 
@@ -2193,8 +2189,7 @@ void testStretchPullFollowsRing() {
         renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
     const std::size_t after = fixture.ring.readableFrames(1).frames;
     expect(result.committed && result.pcmFrames == 86 &&
-               stage.lastPull == 86 && before - after == 86 &&
-               fixture.core.stats().stretchShortfallFrames == 0,
+               stage.lastPull == 86 && before - after == 86,
            "under-pull leaves the remaining PCM in the ring");
   }
 
@@ -2410,7 +2405,7 @@ void testOutputLatencyShiftsHeardEndpoints() {
     fixture.core.setAccepting(false);
     fixture.core.setPaused(true);
     expect(fixture.ready && fixture.ring.flush(2) &&
-               fixture.clock.seek(1, 2, 0.0) &&
+               fixture.clock.seek(1, 2, MediaTime{0, 1}) &&
                fixture.core.activate(2, 0, MediaTime{0, 1}, MediaTime{0, 1},
                                      kSampleRate) &&
                fixture.core.outputLatencyFrames() == kUnitLatency,

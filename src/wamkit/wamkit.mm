@@ -3,7 +3,7 @@
 #include "platform/macos/native_open_preflight.hpp"
 #include "platform/macos/native_layer_host_view.hpp"
 #include "platform/macos/native_layer_video_output.hpp"
-#include "platform/macos/native_audio_test_mute.hpp"
+#include "platform/macos/native_test_seams.hpp"
 #include "platform/macos/native_embedding_support.hpp"
 #include "platform/macos/native_surface_budget.hpp"
 #include <array>
@@ -11,6 +11,10 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+
+#if defined(WAMKIT_ENABLE_TEST_SUPPORT) && !defined(WAM_NATIVE_TEST_SEAMS)
+#error "WAMKit test support needs the native test seams compiled in"
+#endif
 
 using namespace wam::macos;
 namespace media = wam::media;
@@ -124,7 +128,7 @@ public:
     dispatch_resume(timer);
   }
   void sample() {
-    snapshot.retiring=retirementPending(); snapshot.generation=router_.snapshot().generation.value;
+    snapshot.retiring=retirementPending(); snapshot.generation=routeSnapshot().generation.value;
     if(hasNativeSession() && metricsEnabled){
       const auto metrics=nativeMetrics(); snapshot.session_epoch=metrics.sessionEpoch;
       snapshot.drawn_frames=metrics.drawnFrames; snapshot.audio_rendered_frames=metrics.audioRenderedFrames;
@@ -142,12 +146,12 @@ private:
   dispatch_source_t timer{nullptr};
   std::array<wam_event_t,128> events{}; unsigned eventCount{0}; bool deliveryQueued{false};
   void event(wam_event_kind_t kind, std::uint64_t request=0, wam_result_t result=WAM_COMPLETED,
-             const protocol::ExactCommitReady* ready=nullptr) {
+             const protocol::CommitReady* ready=nullptr) {
     wam_event_t event{}; event.struct_size=sizeof(event);event.kind=kind;event.request_id=request;
     event.result=result;event.snapshot=snapshot;event.error=refusal;
-    if(ready){event.requested_target=timeValue(ready->requestedTarget);event.audio_presentation_start=timeValue(ready->audioPresentationStart);
+    if(ready){event.requested_target=timeValue(ready->target);event.audio_presentation_start=timeValue(ready->audioPresentationStart);
       event.decode_start=timeValue(ready->actualDecodeStart);event.video_start=timeValue(ready->videoStart);
-      event.video_duration=timeValue(ready->videoDuration);event.audio_absent=ready->audioLaneAbsent;event.video_absent=ready->videoLaneAbsent;}
+      event.video_duration=timeValue(ready->videoDuration);event.audio_absent=ready->audioLaneAbsent;event.video_absent=ready->videoDraw.videoLaneAbsent;}
     if(kind==WAM_EVENT_METRICS || kind==WAM_EVENT_STATE){
       for(unsigned i=0;i<eventCount;++i)if(events[i].kind==kind){events[i]=event;return;}
     }
@@ -166,7 +170,7 @@ private:
     }
   }
   void state(wam_state_t value){snapshot.state=value;event(WAM_EVENT_STATE);}
-  void finish(std::optional<Command>& pending,wam_result_t result,const protocol::ExactCommitReady* ready=nullptr){
+  void finish(std::optional<Command>& pending,wam_result_t result,const protocol::CommitReady* ready=nullptr){
     if(!pending)return;const auto id=pending->id;pending.reset();event(WAM_EVENT_RESULT,id,result,ready);
   }
   void reject(const char* name,const char* detail="") {refusal=errorValue(name,detail);state(WAM_FAILED);event(WAM_EVENT_REFUSAL);}
@@ -186,7 +190,7 @@ private:
     case Operation::Pause:
       finish(pausing,WAM_SUPERSEDED);pausing=command;snapshot.requested_paused=command.value;
       if(!nativeOwnsTransport()){finish(pausing,WAM_RESULT_FAILED);return;}
-      execute(router_.setPaused(bool(command.value),nextTick()));return;
+      execute(routeSetPaused(bool(command.value)));return;
     case Operation::Seek:
       finish(seeking,WAM_SUPERSEDED);seeking=command;
       if(commitSeek(timeValue(command.time),command.id,command.id,bool(snapshot.requested_paused))!=SeekDisposition::NativeHandled){
@@ -196,16 +200,16 @@ private:
     case Operation::Volume: gain=command.gain; if(nativeOwnsTransport())static_cast<void>(setGain(gain));break;
     case Operation::Mute: muted=command.value; if(nativeOwnsTransport())static_cast<void>(setMuted(muted));break;
     case Operation::Rate:
-      execute(router_.setPreservePitch(command.flag,nextTick()));execute(router_.setRate(command.value/64.0,nextTick()));break;
+      execute(routeSetPreservePitch(command.flag));execute(routeSetRate(protocol::PlaybackRateRatio{command.value,protocol::kNativeRateGrid}.toDouble()));break;
     case Operation::Stop: case Operation::Close:
       preflight->cancel();finish(opening,WAM_CANCELLED);finish(seeking,WAM_CANCELLED);finish(pausing,WAM_CANCELLED);
       finish(stopping,WAM_SUPERSEDED);stopping=command;state(WAM_STOPPING);
-      if(!deferOwnerCommand([this]{execute(router_.stop(nextTick()));pruneSourceRecords();})){
-        execute(router_.stop(nextTick()));pruneSourceRecords();
+      if(!deferOwnerCommand([this]{execute(routeStop());pruneSourceRecords();})){
+        execute(routeStop());pruneSourceRecords();
       }
       if(command.operation==Operation::Close){
         std::weak_ptr<Engine> weak=shared_from_this();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,int64_t(media::kNativeStallDeadlineMilliseconds)*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
           if(auto self=weak.lock();self && self->stopping && self->stopping->id==command.id){
             self->snapshot.retiring=1;self->state(WAM_PLAYER_CLOSED);self->finish(self->stopping,WAM_QUARANTINED);
 #if defined(WAMKIT_ENABLE_TEST_SUPPORT)
@@ -227,7 +231,7 @@ private:
     }
     const auto command=[this]{
       if(!opening || !source)return;
-      execute(router_.open({source->sourceKey,router::Route::NativeEligibleLocal,initial->seconds(),bool(snapshot.requested_paused)},nextTick()));
+      execute(routeOpen({source->sourceKey,router::Route::NativeEligibleLocal,initial->seconds(),bool(snapshot.requested_paused)}));
     };
     if(!deferOwnerCommand(command))command();
   }
@@ -244,13 +248,13 @@ private:
   std::optional<router::Transition> beginFallbackCreate(const router::Action& action) override{
     if(!refusal.name[0])refusal=errorValue("UnsupportedContainer");
     state(WAM_FAILED);event(WAM_EVENT_REFUSAL);finish(opening,WAM_RESULT_FAILED);finish(seeking,WAM_RESULT_FAILED);finish(pausing,WAM_RESULT_FAILED);
-    return router_.onFallbackFailed({action.fallback.stamp},nextTick());
+    return routeFallbackFailed({action.fallback.stamp});
   }
   bool beginFallbackOpen(const router::Action&) override{return false;}
   bool beginFallbackStop(const router::Action&) override{return false;}
   std::optional<router::Transition> applyFallbackRunState(const router::Action&) override{return {};}
   void pruneSourceRecords() override{
-    if(router_.snapshot().state==router::State::Idle && !retirementPending() && stopping){
+    if(routeSnapshot().state==router::State::Idle && !retirementPending() && stopping){
       snapshot.retiring=0;state(stopping->operation==Operation::Close?WAM_PLAYER_CLOSED:WAM_EMPTY);
       finish(stopping,WAM_COMPLETED);if(closed)enableMetrics(false);
     }else if(closed && !retirementPending() && snapshot.state==WAM_PLAYER_CLOSED && snapshot.retiring){
@@ -262,12 +266,10 @@ private:
   void publishDiagnostic(const NativeMediaSessionDiagnostic& diagnostic) override{
     refusal=errorValue(diagnostic.name.data(),diagnostic.detail.data());
   }
-  void surfaceNativeError(const char* message) override{
-    if(refusal.name[0])return;
-    for(const auto* name:names){const auto length=std::strlen(name);if(!std::strncmp(message,name,length) && (message[length]==0 || message[length]==':')){refusal=errorValue(name,message);return;}}
-    refusal=errorValue("InternalProtocolViolation",message);
+  void surfaceNativeError(NativeOwnerError code,const char* detail) override{
+    if(!refusal.name[0])refusal=errorValue(nativeOwnerErrorName(code),detail);
   }
-  void ownerError(const char* message) override{surfaceNativeError(message);}
+  void ownerError(const char* message) override{surfaceNativeError(NativeOwnerError::InternalProtocolViolation,message);}
   void ownerNotice(const char*) override{}
   void seekProgress(std::uint64_t) override{}
   void commitFailed(std::uint64_t,std::uint64_t request) override{if(seeking && seeking->id==request)finish(seeking,WAM_RESULT_FAILED);}
@@ -276,7 +278,7 @@ private:
       if constexpr(std::is_same_v<T,protocol::Prepared>){
         snapshot.first_pts={};snapshot.drawn_frames=0;snapshot.audio_rendered_frames=0;
         snapshot.session_epoch=0;snapshot.clock_valid=0;
-        snapshot.generation=router_.snapshot().generation.value;
+        snapshot.generation=routeSnapshot().generation.value;
         if(hasNativeSession()){auto descriptor=nativeDescriptor();if(descriptor)snapshot.duration=timeValue(descriptor->duration);}
         state(WAM_READY);finish(opening,WAM_COMPLETED);
       }else if constexpr(std::is_same_v<T,protocol::Ended>)state(WAM_ENDED);
@@ -296,8 +298,7 @@ private:
   }
   void publishPreviewPresented(const protocol::PreviewPresented&) override{}
   void publishPreviewFailed(const protocol::PreviewFailed&) override{}
-  void publishCommitReady(const protocol::CommitReady&) override{}
-  void publishExactCommitReady(const protocol::ExactCommitReady& ready) override{
+  void publishCommitReady(const protocol::CommitReady& ready) override{
     if(seeking && seeking->id==ready.request.value)finish(seeking,WAM_COMPLETED,&ready);
   }
 };
@@ -353,7 +354,9 @@ wam_status_t wam_player_set_paused(wam_player_t player,uint32_t paused,wam_reque
 wam_status_t wam_player_seek(wam_player_t player,wam_time_t time,wam_request_id_t* request,wam_error_t* error){if(time.reserved || !media::canonicalNonnegativeTime(timeValue(time)))return failure(error,"InvalidTime");Command command;command.operation=Operation::Seek;command.time=time;return submit(player,command,request,error);}
 wam_status_t wam_player_set_volume(wam_player_t player,float gain,wam_request_id_t* request,wam_error_t* error){if(!std::isfinite(gain)||gain<0||gain>4)return failure(error,"InvalidVolume");Command command;command.operation=Operation::Volume;command.gain=gain;return submit(player,command,request,error);}
 wam_status_t wam_player_set_muted(wam_player_t player,uint32_t muted,wam_request_id_t* request,wam_error_t* error){if(muted>1)return failure(error,"InternalProtocolViolation");Command command;command.operation=Operation::Mute;command.value=muted;return submit(player,command,request,error);}
-wam_status_t wam_player_set_rate(wam_player_t player,uint32_t units,uint32_t pitch,wam_request_id_t* request,wam_error_t* error){if(units<16||units>256||pitch>1)return failure(error,"RateUnsupported");Command command;command.operation=Operation::Rate;command.value=units;command.flag=pitch;return submit(player,command,request,error);}
+// The C ABI states rates in 64ths; the native grid must stay that fine.
+static_assert(protocol::kNativeRateGrid==64);
+wam_status_t wam_player_set_rate(wam_player_t player,uint32_t units,uint32_t pitch,wam_request_id_t* request,wam_error_t* error){if(!protocol::PlaybackRateRatio{units,protocol::kNativeRateGrid}.valid()||pitch>1)return failure(error,"RateUnsupported");Command command;command.operation=Operation::Rate;command.value=units;command.flag=pitch;return submit(player,command,request,error);}
 wam_status_t wam_player_stop(wam_player_t player,wam_request_id_t* request,wam_error_t* error){Command command;command.operation=Operation::Stop;return submit(player,command,request,error);}
 wam_status_t wam_player_close(wam_player_t player,wam_request_id_t* request,wam_error_t* error){Command command;command.operation=Operation::Close;return submit(player,command,request,error);}
 wam_status_t wam_player_copy_snapshot(wam_player_t player,wam_snapshot_t* snapshot){if(auto status=valid(player))return status;if(!snapshot || snapshot->struct_size<sizeof(*snapshot))return WAM_INVALID_ARGUMENT;*snapshot=player->engine->snapshot;return WAM_OK;}

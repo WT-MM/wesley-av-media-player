@@ -39,6 +39,11 @@ namespace wam::macos {
 // rather than silently truncated.
 inline constexpr std::size_t kMaximumChannelLayoutDescriptions{64};
 
+// Bytes of an AudioChannelLayout up to its description array: the whole
+// layout when it is stated by tag alone.
+inline constexpr std::size_t kChannelLayoutPrefixBytes =
+    offsetof(AudioChannelLayout, mChannelDescriptions);
+
 [[nodiscard]] inline media::AudioChannelRole
 roleForChannelLabel(AudioChannelLabel label) noexcept {
   switch (label) {
@@ -84,7 +89,7 @@ channelRolesForLayout(const AudioChannelLayout *layout, std::size_t layoutBytes,
                       std::size_t *roleCount) noexcept {
   if (layout == nullptr || roleCount == nullptr || expectedChannels == 0 ||
       expectedChannels > roles.size() ||
-      layoutBytes < offsetof(AudioChannelLayout, mChannelDescriptions)) {
+      layoutBytes < kChannelLayoutPrefixBytes) {
     return false;
   }
   *roleCount = 0;
@@ -159,9 +164,8 @@ multichannelLayoutTagAdmitted(std::uint32_t tag,
   std::array<media::AudioChannelRole, media::kMaximumDownmixSourceChannels>
       roles{};
   std::size_t count = 0;
-  if (!channelRolesForLayout(&layout,
-                             offsetof(AudioChannelLayout, mChannelDescriptions),
-                             channels, roles, &count)) {
+  if (!channelRolesForLayout(&layout, kChannelLayoutPrefixBytes, channels,
+                             roles, &count)) {
     return false;
   }
   return media::buildStereoDownmixMatrix({roles.data(), count}).admitted();

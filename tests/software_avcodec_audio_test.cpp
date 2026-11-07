@@ -34,12 +34,6 @@ int main(int argc,char** argv) {
   SoftwareAvcodecAudioBackend backend(codec);
   NativeAudioBackendConfiguration config;config.input.sampleRate=48000;config.input.channels=channels;config.input.framesPerPacket=dts?512:40;config.outputSampleRate=48000;config.outputChannels=channels;
   std::string error;
-  CHECK(!backend.configure(config,&error));
-  config.decodePlan.implementation=wam::media::DecodeImplementation::Libavcodec;
-  CHECK(!backend.configure(config,&error));
-  config.decodePlan.configurationRepresentation=wam::media::DecodeConfigurationRepresentation::Esds;
-  CHECK(!backend.configure(config,&error));
-  config.decodePlan.configurationRepresentation=wam::media::DecodeConfigurationRepresentation::RawExtradata;
   CHECK(backend.configure(config,&error));
   for(unsigned pass=0;pass<2;++pass) {
     if(pass)CHECK(backend.reset(&error));

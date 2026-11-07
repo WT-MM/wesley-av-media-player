@@ -124,6 +124,55 @@ NativePcmRing::readableFrames(std::uint64_t expectedGeneration) const noexcept {
   return result;
 }
 
+std::size_t NativePcmRing::takeFrames(std::uint64_t activeGeneration,
+                                      std::size_t frames, float *output,
+                                      std::size_t *staleSlabs) noexcept {
+  std::size_t taken = 0;
+  std::uint64_t read = readCursor_.load(std::memory_order_relaxed);
+  const std::uint64_t write = writeCursor_.load(std::memory_order_acquire);
+  std::size_t visitedSlabs = 0;
+  while (taken < frames && read != write && visitedSlabs < kSlabCount) {
+    const std::size_t slot = static_cast<std::size_t>(read % kSlabCount);
+    const std::size_t slabFrames = slabFrames_[slot];
+    if (!readableSlab(slabGenerations_[slot], slabFrames, consumerOffsetFrames_,
+                      activeGeneration)) {
+      removeUnreadPcmBytes(slabUnreadPcmBytes_[slot]);
+      slabUnreadPcmBytes_[slot] = 0;
+      if (slabGenerations_[slot] != activeGeneration) {
+        if (staleSlabs != nullptr) {
+          ++*staleSlabs;
+        }
+        saturatingAdd(consumerCounters_.staleSlabs, 1);
+      }
+      consumerOffsetFrames_ = 0;
+      ++read;
+      ++visitedSlabs;
+      readCursor_.store(read, std::memory_order_release);
+      continue;
+    }
+
+    const std::size_t available = slabFrames - consumerOffsetFrames_;
+    const std::size_t count = std::min(available, frames - taken);
+    if (output != nullptr) {
+      std::copy_n(pcm_[slot].data() + consumerOffsetFrames_ * kChannels,
+                  count * kChannels, output + taken * kChannels);
+    }
+    const std::size_t takenBytes = count * kChannels * sizeof(float);
+    removeUnreadPcmBytes(takenBytes);
+    slabUnreadPcmBytes_[slot] -= takenBytes;
+    taken += count;
+    consumerOffsetFrames_ += count;
+    if (consumerOffsetFrames_ == slabFrames) {
+      consumerOffsetFrames_ = 0;
+      slabUnreadPcmBytes_[slot] = 0;
+      ++read;
+      ++visitedSlabs;
+      readCursor_.store(read, std::memory_order_release);
+    }
+  }
+  return taken;
+}
+
 NativePcmRing::ConsumeResult
 NativePcmRing::consume(std::uint64_t expectedGeneration,
                        std::span<float> output) noexcept {
@@ -149,48 +198,8 @@ NativePcmRing::consume(std::uint64_t expectedGeneration,
     return result;
   }
 
-  std::uint64_t read = readCursor_.load(std::memory_order_relaxed);
-  const std::uint64_t write = writeCursor_.load(std::memory_order_acquire);
-  std::size_t visitedSlabs = 0;
-  while (result.pcmFrames < requestedFrames && read != write &&
-         visitedSlabs < kSlabCount) {
-    const std::size_t slot = static_cast<std::size_t>(read % kSlabCount);
-    const std::size_t slabFrames = slabFrames_[slot];
-    if (!readableSlab(slabGenerations_[slot], slabFrames, consumerOffsetFrames_,
-                      activeGeneration)) {
-      removeUnreadPcmBytes(slabUnreadPcmBytes_[slot]);
-      slabUnreadPcmBytes_[slot] = 0;
-      if (slabGenerations_[slot] != activeGeneration) {
-        ++result.staleSlabs;
-        saturatingAdd(consumerCounters_.staleSlabs, 1);
-      }
-      consumerOffsetFrames_ = 0;
-      ++read;
-      ++visitedSlabs;
-      readCursor_.store(read, std::memory_order_release);
-      continue;
-    }
-
-    const std::size_t available = slabFrames - consumerOffsetFrames_;
-    const std::size_t count =
-        std::min(available, requestedFrames - result.pcmFrames);
-    std::copy_n(pcm_[slot].data() + consumerOffsetFrames_ * kChannels,
-                count * kChannels,
-                output.data() + result.pcmFrames * kChannels);
-    const std::size_t consumedBytes = count * kChannels * sizeof(float);
-    removeUnreadPcmBytes(consumedBytes);
-    slabUnreadPcmBytes_[slot] -= consumedBytes;
-    result.pcmFrames += count;
-    consumerOffsetFrames_ += count;
-    if (consumerOffsetFrames_ == slabFrames) {
-      consumerOffsetFrames_ = 0;
-      slabUnreadPcmBytes_[slot] = 0;
-      ++read;
-      ++visitedSlabs;
-      readCursor_.store(read, std::memory_order_release);
-    }
-  }
-
+  result.pcmFrames = takeFrames(activeGeneration, requestedFrames,
+                                output.data(), &result.staleSlabs);
   saturatingAdd(consumerCounters_.consumedFrames, result.pcmFrames);
   result.silentFrames = requestedFrames - result.pcmFrames;
   if (result.silentFrames != 0) {
@@ -212,43 +221,8 @@ std::size_t NativePcmRing::discard(std::uint64_t expectedGeneration,
     return 0;
   }
 
-  std::size_t retired = 0;
-  std::uint64_t read = readCursor_.load(std::memory_order_relaxed);
-  const std::uint64_t write = writeCursor_.load(std::memory_order_acquire);
-  std::size_t visitedSlabs = 0;
-  while (retired < frames && read != write && visitedSlabs < kSlabCount) {
-    const std::size_t slot = static_cast<std::size_t>(read % kSlabCount);
-    const std::size_t slabFrames = slabFrames_[slot];
-    if (!readableSlab(slabGenerations_[slot], slabFrames,
-                      consumerOffsetFrames_, activeGeneration)) {
-      removeUnreadPcmBytes(slabUnreadPcmBytes_[slot]);
-      slabUnreadPcmBytes_[slot] = 0;
-      if (slabGenerations_[slot] != activeGeneration) {
-        saturatingAdd(consumerCounters_.staleSlabs, 1);
-      }
-      consumerOffsetFrames_ = 0;
-      ++read;
-      ++visitedSlabs;
-      readCursor_.store(read, std::memory_order_release);
-      continue;
-    }
-
-    const std::size_t available = slabFrames - consumerOffsetFrames_;
-    const std::size_t count = std::min(available, frames - retired);
-    const std::size_t retiredBytes = count * kChannels * sizeof(float);
-    removeUnreadPcmBytes(retiredBytes);
-    slabUnreadPcmBytes_[slot] -= retiredBytes;
-    retired += count;
-    consumerOffsetFrames_ += count;
-    if (consumerOffsetFrames_ == slabFrames) {
-      consumerOffsetFrames_ = 0;
-      slabUnreadPcmBytes_[slot] = 0;
-      ++read;
-      ++visitedSlabs;
-      readCursor_.store(read, std::memory_order_release);
-    }
-  }
-
+  const std::size_t retired =
+      takeFrames(activeGeneration, frames, nullptr, nullptr);
   saturatingAdd(consumerCounters_.consumedFrames, retired);
   return retired;
 }

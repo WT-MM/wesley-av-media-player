@@ -109,51 +109,6 @@ audioCodecPrecedesStreamOrigin(MediaCodec codec) noexcept {
   return mediaCodecFacts(codec).precedesStreamOrigin;
 }
 
-// True for codecs whose Matroska descriptor states the audio track's duration
-// as the EXACT decoded sample count after every trim, rather than as the
-// container's declared Duration. Only such a track may be used as the
-// publication ceiling: an approximate ceiling either truncates audible samples
-// or lets the clock free-run past the end of the stream.
-//
-// This is deliberately a SEPARATE predicate from
-// audioCodecPrecedesStreamOrigin. They are genuinely different questions and the codec sets differ at both
-// ends: FLAC states an exact duration (STREAMINFO carries the total sample
-// count) but starts at origin, while AAC precedes the origin but reaches this
-// pipeline from AVFoundation as well as from Matroska -- and an AVFoundation
-// track's duration is the container's estimate, not a decoded sample count.
-[[nodiscard]] constexpr bool
-audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
-  switch (codec) {
-  case MediaCodec::Opus:
-  case MediaCodec::Vorbis:
-  case MediaCodec::Ac3:
-  case MediaCodec::Eac3:
-  case MediaCodec::Mp3:
-  case MediaCodec::Flac:
-  // ALAC for FLAC's reason: an MP4's track duration IS the decoded sample
-  // count (the sample table states the final packet's true length), so the
-  // ceiling can be taken exactly. This pairs with ALAC's tail-shortfall bound
-  // in native_audio_converter.mm the way FLAC's does -- the bound tolerates a
-  // budget overstated by the packet-duration restatement, and the ceiling
-  // keeps that tolerance from becoming a licence to publish past the stream.
-  case MediaCodec::Alac:
-  // Uncompressed audio states its length as a frame count in its own header --
-  // a WAVE data chunk's byte count over its block align, an AIFF SSND frame
-  // count -- so the container's duration IS the decoded sample count, exactly.
-  // Nothing decodes it, so there is no shortfall for it to be approximate by.
-  // The caller still requires the stated duration to land on a whole frame
-  // before it takes the ceiling, so a container that states something else
-  // gets no exact ceiling.
-  case MediaCodec::Pcm:
-  // ADPCM retains the container's exact frame ceiling, including final-block trim.
-  case MediaCodec::AdpcmIma:
-  case MediaCodec::AdpcmMs:
-    return true;
-  default:
-    return false;
-  }
-}
-
 // Recovers an exact frame count from a Matroska duration stated in
 // nanoseconds (CodecDelay, DiscardPadding).
 //

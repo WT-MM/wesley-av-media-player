@@ -64,9 +64,4 @@ inline void setNativeAudioOutputTestMuted(bool muted) noexcept {
   return nativeAudioOutputTestMuteGate().load(std::memory_order_acquire);
 }
 
-inline std::atomic<bool>& nativeAudioDeviceRecoverySeekTestGate() noexcept {
-  static std::atomic<bool> pending{false};
-  return pending;
-}
-
 }  // namespace wam::macos

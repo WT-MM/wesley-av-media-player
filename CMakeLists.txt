@@ -905,8 +905,15 @@ if(BUILD_TESTING)
     target_link_libraries(wam_native_pcm_ring_test PRIVATE wam_native_core)
     add_test(NAME native_pcm_ring COMMAND wam_native_pcm_ring_test)
 
+    # The render core's test hooks are compiled in only with
+    # WAM_NATIVE_TEST_SEAMS; compile a private render core with them, as the
+    # clock test does for its token domain.
     add_executable(wam_native_audio_render_core_test
-      tests/native_audio_render_core_test.cpp)
+      tests/native_audio_render_core_test.cpp
+      src/platform/macos/native_audio_render_core.cpp)
+    target_include_directories(wam_native_audio_render_core_test PRIVATE src)
+    target_compile_definitions(wam_native_audio_render_core_test PRIVATE
+      WAM_NATIVE_TEST_SEAMS=1)
     target_link_libraries(
       wam_native_audio_render_core_test PRIVATE wam_native_core)
     add_test(NAME native_audio_render_core
@@ -1305,7 +1312,9 @@ if(BUILD_TESTING)
       add_executable(wam_native_audio_converter_test
         tests/native_audio_converter_test.mm
         src/platform/macos/native_audio_converter.hpp
-        src/platform/macos/native_audio_converter.mm)
+        src/platform/macos/native_audio_converter.mm
+        src/platform/macos/native_audio_converter_backends.hpp
+        src/platform/macos/native_audio_converter_backends.mm)
       target_include_directories(wam_native_audio_converter_test PRIVATE src)
       target_link_libraries(wam_native_audio_converter_test PRIVATE
         wam_native_core
@@ -1333,7 +1342,9 @@ if(BUILD_TESTING)
       add_executable(wam_native_audio_converter_opus_test
         tests/native_audio_converter_opus_test.mm
         src/platform/macos/native_audio_converter.hpp
-        src/platform/macos/native_audio_converter.mm)
+        src/platform/macos/native_audio_converter.mm
+        src/platform/macos/native_audio_converter_backends.hpp
+        src/platform/macos/native_audio_converter_backends.mm)
       target_include_directories(wam_native_audio_converter_opus_test
         PRIVATE src)
       target_link_libraries(wam_native_audio_converter_opus_test PRIVATE
@@ -1399,9 +1410,12 @@ if(BUILD_TESTING)
         tests/native_audio_output_test.mm
         src/platform/macos/native_audio_output.hpp
         src/platform/macos/native_audio_output.mm
+        src/platform/macos/native_audio_render_core.cpp
         src/platform/macos/native_audio_stretch_stage.hpp
         src/platform/macos/native_audio_stretch_stage.mm)
       target_include_directories(wam_native_audio_output_test PRIVATE src)
+      target_compile_definitions(wam_native_audio_output_test PRIVATE
+        WAM_NATIVE_TEST_SEAMS=1)
       target_link_libraries(wam_native_audio_output_test PRIVATE
         wam_native_core
         "${WAM_COREMEDIA_FRAMEWORK}"

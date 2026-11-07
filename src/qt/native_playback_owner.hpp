@@ -68,8 +68,6 @@ public:
   void fallbackIdleChanged(bool idle);
   void fallbackRenderStateChanged();
   void fallbackPlaybackFailed();
-  void beginFallbackEventDrain() noexcept;
-  void endFallbackEventDrain();
 
   void attachSurface(MpvVideoItem *item) noexcept;
   void detachSurface(MpvVideoItem *item) noexcept;
@@ -127,7 +125,7 @@ private:
   void maybeCompleteFallbackStop() override;
 
   void sessionCleared() noexcept override;
-  void surfaceNativeError(const char* detail) override;
+  void surfaceNativeError(macos::NativeOwnerError, const char* detail) override;
   void ownerError(const char* detail) override;
   void ownerNotice(const char* detail) override;
   void seekProgress(std::uint64_t frames) override;

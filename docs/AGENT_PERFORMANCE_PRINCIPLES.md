@@ -435,6 +435,6 @@ preserves or improves performance, has a narrow contract, ships with
 tests, and makes the next implementation easier. A bad one hides
 allocation or copies, generalizes across different performance needs,
 mixes hot and cold data, adds per-element dispatch, slows debug builds, or
-exists only to look idiomatic. WAM's `SessionAudioControl` function-table
-swap (silent timebase) and `MediaSourcePreparedContext` (backend-neutral
+exists only to look idiomatic. WAM's `SessionClockAuthority` interface
+(audio session or silent timebase) and `MediaSourcePreparedContext` (backend-neutral
 admission) are house examples of the good kind: narrow, visible, measured.
