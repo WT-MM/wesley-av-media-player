@@ -185,7 +185,7 @@ struct LibavformatCursor::Impl {
     unsigned demuxers{};
     while (api.av_demuxer_iterate(&demuxIterator))
       ++demuxers;
-    if (demuxers != 9) {
+    if (demuxers != kRequiredDemuxers.size()) {
       error = "LibavformatUnexpectedDemuxer";
       return false;
     }
@@ -413,6 +413,10 @@ LibavformatCursor::Read LibavformatCursor::read(Packet &out,
     error = "LibavformatTimestampUnrepresentable";
     return Read::Failed;
   }
+  // Matroska stores presentation times only, and libavformat's Matroska
+  // demuxer copies each block's presentation time into dts, which is not a
+  // decode order once frames reorder. Native Matroska carriage never invents
+  // a decode timestamp either; VideoToolbox decodes in storage order.
   if (std::strstr(s.format->iformat->name, "matroska"))
     out.dts = {};
   out.stream = p.stream_index;

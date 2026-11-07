@@ -30,16 +30,34 @@ namespace router = media::playback_router;
 @end
 
 namespace {
-constexpr const char* names[] = {"None", "UnsupportedSourceScheme", "SourceAccessDenied",
- "UnsupportedContainer", "DecoderStageNotBuilt", "DecoderUnavailable", "PresentationRequiresMacOS14",
- "PresentationUnavailable", "InvalidTime", "TimeOverflow", "SeekOutOfRange", "SeekStalled",
- "RateUnsupported", "InvalidVolume", "SessionBudgetExceeded", "RetirementCapacityUnavailable",
- "AudioOutputUnavailable", "InternalProtocolViolation", "HeAacSbrDecoderDelayUnproven"};
+// Public ABI codes keyed by the producer's refusal name; anything else is
+// WAM_REASON_NATIVE_DETAIL.
+struct ReasonName { wam_refusal_t code; const char* name; };
+constexpr ReasonName names[] = {
+ {WAM_REASON_NONE, "None"},
+ {WAM_REASON_UNSUPPORTED_SOURCE_SCHEME, "UnsupportedSourceScheme"},
+ {WAM_REASON_SOURCE_ACCESS_DENIED, "SourceAccessDenied"},
+ {WAM_REASON_UNSUPPORTED_CONTAINER, "UnsupportedContainer"},
+ {WAM_REASON_DECODER_STAGE_NOT_BUILT, "DecoderStageNotBuilt"},
+ {WAM_REASON_DECODER_UNAVAILABLE, "DecoderUnavailable"},
+ {WAM_REASON_PRESENTATION_REQUIRES_MACOS14, "PresentationRequiresMacOS14"},
+ {WAM_REASON_PRESENTATION_UNAVAILABLE, "PresentationUnavailable"},
+ {WAM_REASON_INVALID_TIME, "InvalidTime"},
+ {WAM_REASON_TIME_OVERFLOW, "TimeOverflow"},
+ {WAM_REASON_SEEK_OUT_OF_RANGE, "SeekOutOfRange"},
+ {WAM_REASON_SEEK_STALLED, "SeekStalled"},
+ {WAM_REASON_RATE_UNSUPPORTED, "RateUnsupported"},
+ {WAM_REASON_INVALID_VOLUME, "InvalidVolume"},
+ {WAM_REASON_SESSION_BUDGET_EXCEEDED, "SessionBudgetExceeded"},
+ {WAM_REASON_RETIREMENT_CAPACITY_UNAVAILABLE, "RetirementCapacityUnavailable"},
+ {WAM_REASON_AUDIO_OUTPUT_UNAVAILABLE, "AudioOutputUnavailable"},
+ {WAM_REASON_INTERNAL_PROTOCOL_VIOLATION, "InternalProtocolViolation"},
+ {WAM_REASON_HE_AAC_SBR_DECODER_DELAY_UNPROVEN, "HeAacSbrDecoderDelayUnproven"}};
 wam_time_t timeValue(media::MediaTime value) { return {value.value,value.timescale,0}; }
 media::MediaTime timeValue(wam_time_t value) { return {value.value,value.timescale}; }
 wam_error_t errorValue(const char* name, const char* detail = "") {
   wam_error_t result{}; result.struct_size = sizeof(result); result.code = WAM_REASON_NATIVE_DETAIL;
-  for (unsigned i=0;i<std::size(names);++i) if (!std::strcmp(names[i],name)) result.code=i;
+  for (const auto& reason : names) if (!std::strcmp(reason.name,name)) result.code=reason.code;
   std::snprintf(result.name,sizeof(result.name),"%s",name);
   std::snprintf(result.detail,sizeof(result.detail),"%s",detail);
   const auto symbolic=[](const char* start,std::size_t length){
@@ -332,7 +350,7 @@ wam_status_t wam_copy_capabilities(wam_capabilities_t* capabilities){
   capabilities->maximum_process_surface_bytes=kNativeSurfaceBudgetProcessMaximumBytes;
   return WAM_OK;
 }
-const char* wam_refusal_name(wam_refusal_t code){return code<std::size(names)?names[code]:"NativeDetail";}
+const char* wam_refusal_name(wam_refusal_t code){for(const auto& reason:names)if(reason.code==code)return reason.name;return "NativeDetail";}
 wam_status_t wam_player_create(wam_player_t* result,wam_error_t* error){
   if(![NSThread isMainThread])return WAM_WRONG_THREAD;if(!result)return WAM_INVALID_ARGUMENT;*result=nullptr;
   if(@available(macOS 14.0,*)){}else{if(error)*error=errorValue("PresentationRequiresMacOS14");return WAM_REFUSED;}
