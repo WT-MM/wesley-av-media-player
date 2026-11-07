@@ -2632,7 +2632,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
     const CMVideoDimensions coded =
         CMVideoFormatDescriptionGetDimensions(format);
     if (coded.width > 0 && coded.height > 0 &&
-        !media::codedDimensionsWithinV1Ceiling(
+        !media::MediaSourceLimits::codedDimensionsWithinHardCeiling(
             static_cast<std::uint64_t>(coded.width),
             static_cast<std::uint64_t>(coded.height))) {
       const std::string refusal = media::refusalMessage(

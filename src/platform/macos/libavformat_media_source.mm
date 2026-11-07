@@ -266,11 +266,7 @@ bool videoDescriptor(const LibavformatCursor::Stream &stream,
     error = "LibavformatConfigurationLimit";
     return false;
   }
-  VideoCodecConfigurationLimits config;
-  config.maximumConfigurationBytes = limits.maximumCodecConfigurationBytes;
-  config.maximumWidth = limits.maximumCodedWidth;
-  config.maximumHeight = limits.maximumCodedHeight;
-  config.maximumPixels = limits.maximumCodedPixels;
+  auto config = VideoCodecConfigurationLimits::from(limits);
   config.admitHighDynamicRangeColor = true;
   config.admitSoftwareProfiles = true;
   const auto inspected =

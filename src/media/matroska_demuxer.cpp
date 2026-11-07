@@ -903,11 +903,7 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
       !readRange(reader, *entry.codecPrivate, &configuration, cancellation)) {
     return false;
   }
-  VideoCodecConfigurationLimits codecLimits;
-  codecLimits.maximumConfigurationBytes = limits.maximumCodecConfigurationBytes;
-  codecLimits.maximumWidth = limits.maximumCodedWidth;
-  codecLimits.maximumHeight = limits.maximumCodedHeight;
-  codecLimits.maximumPixels = limits.maximumCodedPixels;
+  auto codecLimits = VideoCodecConfigurationLimits::from(limits);
   // Matroska may carry BT.2020/PQ/HLG. This route earns the flag because
   // matroska_sample_builder.mm puts the matching colour extensions on the
   // CMVideoFormatDescription it synthesizes; see the field's comment in
@@ -3678,7 +3674,7 @@ namespace {
           !track.video->pixelWidth || !track.video->pixelHeight) {
         continue;
       }
-      if (!codedDimensionsWithinV1Ceiling(*track.video->pixelWidth,
+      if (!MediaSourceLimits::codedDimensionsWithinHardCeiling(*track.video->pixelWidth,
                                           *track.video->pixelHeight)) {
         overCeiling = &track;
         break;
@@ -4248,7 +4244,7 @@ MatroskaPrepareOutcome prepareMatroska(
         // when that is the reason, say so with both numbers.
         if (video->video && video->video->pixelWidth &&
             video->video->pixelHeight &&
-            !codedDimensionsWithinV1Ceiling(*video->video->pixelWidth,
+            !MediaSourceLimits::codedDimensionsWithinHardCeiling(*video->video->pixelWidth,
                                             *video->video->pixelHeight)) {
           result.error = MediaRefusalClass::CodedDimensionLimit;
           result.message = codedDimensionRefusalMessage(

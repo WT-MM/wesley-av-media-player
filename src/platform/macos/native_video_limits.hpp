@@ -17,7 +17,7 @@ inline constexpr std::size_t kMaximumCompressedVideoAccessUnitBytes =
 // both the per-codec limit and the aggregate codec-configuration limit for one
 // active native video attempt.
 inline constexpr std::size_t kMaximumVideoCodecConfigurationBytes =
-    256ULL * 1024ULL;
+    media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes;
 
 [[nodiscard]] constexpr bool
 acceptsCompressedVideoAccessUnitSize(std::size_t bytes) noexcept {

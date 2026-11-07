@@ -2354,10 +2354,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
                  : "could not synthesize an avcC from in-band SPS/PPS";
         return result;
       }
-      VideoCodecConfigurationLimits codecLimits{};
-      codecLimits.maximumWidth = state->limits.maximumCodedWidth;
-      codecLimits.maximumHeight = state->limits.maximumCodedHeight;
-      codecLimits.maximumPixels = state->limits.maximumCodedPixels;
+      auto codecLimits = VideoCodecConfigurationLimits::from(state->limits);
       // The transport stream has no colour box at all -- no `colr`, no
       // Matroska Colour element -- so the SPS VUI is the ONLY colour
       // statement, and this flag is what lets the shared SPS parser carry a
