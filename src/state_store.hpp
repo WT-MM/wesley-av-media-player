@@ -9,6 +9,17 @@
 
 namespace wam {
 
+// The ranges of the persisted preferences, stated once: the loader,
+// AppSettings, the controllers and the Preferences panel all clamp to these.
+inline constexpr int kMinimumSeekStepSeconds = 1;
+inline constexpr int kMaximumSeekStepSeconds = 60;
+// 100% is unity: the lowest the maximum-volume setting may go, and the level
+// a new window is capped at.
+inline constexpr int kUnityVolumePercent = 100;
+// The engines' own gain ceiling (the native gain stage's kMaximumGain, mpv's
+// volume-max=400).
+inline constexpr int kMaximumVolumePercent = 400;
+
 enum class AppearanceTheme {
   Light = 0,
   Dark = 1,

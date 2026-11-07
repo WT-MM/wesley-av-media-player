@@ -26,6 +26,7 @@ struct mpv_event_end_file;
 
 namespace wam::qt {
 
+class AppSettings;
 class MpvVideoItem;
 class NativePlaybackOwner;
 class PlayerCore;
@@ -99,17 +100,6 @@ class PlayerController final : public QObject {
   // design (the native gain stage saturates each sample to [-1, 1]; mpv is
   // given volume-max 400).
   Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
-  // The ceiling `volume` may be raised to, normalized the same way: 1.0 is
-  // 100% (no amplification at all) and 4.0 is the engine's own gain ceiling
-  // (src/platform/macos/native_audio_render_core.hpp's kMaximumGain). A
-  // persisted, app-level Preferences setting mirrored onto every window, like
-  // preservePitch; the Preferences panel offers 100/125/150/200/300/400% and
-  // the default is 200%.
-  //
-  // Lowering it below a window's current level clamps that level down at once
-  // and emits volumeClamped() so the window can say so on screen.
-  Q_PROPERTY(double maximumVolume READ maximumVolume WRITE setMaximumVolume
-                 NOTIFY maximumVolumeChanged)
   Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
   Q_PROPERTY(double rate READ rate WRITE setRate NOTIFY rateChanged)
   Q_PROPERTY(bool captionsVisible READ captionsVisible WRITE setCaptionsVisible
@@ -150,30 +140,6 @@ class PlayerController final : public QObject {
   // The selected source's id, or -1 for Off.
   Q_PROPERTY(int activeSubtitleTrack READ activeSubtitleTrack NOTIFY
                  activeSubtitleTrackChanged)
-  // LIVE PLAYBACK ONLY: at speeds other than 1x, true keeps the original
-  // pitch (time stretching) and false is classic varispeed, where pitch
-  // rises and falls with the speed. Both routes serve both modes and apply
-  // the change mid-playback -- native through the stretch stage's pitch
-  // offset in cents, the compatibility engine through mpv's
-  // audio-pitch-correction. This is the persisted Preferences setting;
-  // Quick Edit's Preserve pitch is a separate, export-scoped choice.
-  Q_PROPERTY(bool preservePitch READ preservePitch WRITE setPreservePitch NOTIFY
-                 preservePitchChanged)
-  Q_PROPERTY(int appearance READ appearance WRITE setAppearance NOTIFY
-                 appearanceChanged)
-  Q_PROPERTY(double seekStepSeconds READ seekStepSeconds WRITE
-                 setSeekStepSeconds NOTIFY seekStepSecondsChanged)
-  // QuickTime-style floating window: when true, the windowed frame is kept
-  // hugging the current video's aspect ratio (no letterbox bars). Purely a
-  // QML/window-chrome behavior toggle; the controller only stores and
-  // persists it. Default on. See qml/Main.qml's re-snap machinery.
-  Q_PROPERTY(bool windowHugsVideo READ windowHugsVideo WRITE
-                 setWindowHugsVideo NOTIFY windowHugsVideoChanged)
-  // Pointer-scroll gestures over the video surface (vertical = volume,
-  // horizontal = timeline sweep). A persisted, app-level Preferences setting
-  // mirrored onto every window, like preservePitch. Default on.
-  Q_PROPERTY(bool scrollGesturesEnabled READ scrollGesturesEnabled WRITE
-                 setScrollGesturesEnabled NOTIFY scrollGesturesEnabledChanged)
   // True from the first admitted wheel delta until the gesture settles. The
   // transport's own wheel block stands down while it is true, so a sweep that
   // started over the picture is not killed by the chrome revealing itself
@@ -256,10 +222,8 @@ public:
   [[nodiscard]] media::MediaDisplaySize exactVideoDisplaySize() const { return exact_video_display_size_; }
   // Normalized UI volume. mpv's 0..400 range maps to 0..4 here; 1.0 is 100%.
   [[nodiscard]] double volume() const { return volume_; }
+  // The ceiling setVolume clamps to, applied from AppSettings::maximumVolume.
   [[nodiscard]] double maximumVolume() const { return maximum_volume_; }
-  [[nodiscard]] bool scrollGesturesEnabled() const {
-    return scroll_gestures_enabled_;
-  }
   [[nodiscard]] bool scrollGestureActive() const {
     return scroll_gesture_active_;
   }
@@ -283,15 +247,11 @@ public:
   }
   [[nodiscard]] QVariantList subtitleTracks() const;
   [[nodiscard]] int activeSubtitleTrack() const;
+  // The pitch mode the engines apply (AppSettings::preservePitch). Both
+  // routes serve both modes mid-playback: native through the stretch stage's
+  // pitch offset in cents, the compatibility engine through mpv's
+  // audio-pitch-correction.
   [[nodiscard]] bool preservePitch() const { return preserve_pitch_; }
-  // 0 = light (default), 1 = dark, 2 = follow the operating system.
-  [[nodiscard]] int appearance() const { return appearance_; }
-  // Seconds skipped by the Left/Right arrow shortcuts and the transport's
-  // skip buttons. Whole-second values in [1, 60]; default 5.
-  [[nodiscard]] double seekStepSeconds() const { return seek_step_seconds_; }
-  // See the Q_PROPERTY doc above: purely a persisted preference the QML
-  // window chrome reads and reacts to.
-  [[nodiscard]] bool windowHugsVideo() const { return window_hugs_video_; }
   [[nodiscard]] double trimIn() const { return trim_in_; }
   [[nodiscard]] double trimOut() const { return trim_out_; }
   [[nodiscard]] double exportSpeed() const { return export_speed_; }
@@ -316,6 +276,11 @@ public:
 
   void setSource(const QUrl &source);
 
+  // Follows the app-level preferences from here on: the pitch mode and the
+  // volume ceiling are applied to this window's engines, the seek step and
+  // scroll gestures are read from them. Without it those features are off.
+  void bindSettings(const AppSettings &settings);
+
   Q_INVOKABLE void openFileDialog();
   Q_INVOKABLE bool open(const QUrl &source);
   Q_INVOKABLE void play();
@@ -336,8 +301,9 @@ public:
   Q_INVOKABLE void toggleMute();
   Q_INVOKABLE void setMuted(bool muted);
   Q_INVOKABLE void setVolume(double volume);
-  Q_INVOKABLE void setMaximumVolume(double maximum);
-  Q_INVOKABLE void setScrollGesturesEnabled(bool enabled);
+  // Lowering the ceiling below the current level clamps that level down at
+  // once and emits volumeClamped() so the window can say so on screen.
+  void setMaximumVolume(double maximum);
 
   // One wheel event over the video surface. The arguments are the QML
   // WheelEvent's own fields, passed through untouched so the normalization
@@ -366,10 +332,7 @@ public:
   Q_INVOKABLE bool loadSubtitleFile(const QUrl &file);
   Q_INVOKABLE void openSubtitleFileDialog();
   Q_INVOKABLE void toggleFullscreen();
-  Q_INVOKABLE void setPreservePitch(bool preserve);
-  Q_INVOKABLE void setAppearance(int appearance);
-  Q_INVOKABLE void setSeekStepSeconds(double seconds);
-  Q_INVOKABLE void setWindowHugsVideo(bool hugsVideo);
+  void setPreservePitch(bool preserve);
   Q_INVOKABLE void setTrimIn(double seconds);
   Q_INVOKABLE void setTrimOut(double seconds);
   Q_INVOKABLE void setExportSpeed(double speed);
@@ -427,13 +390,11 @@ signals:
   void durationChanged();
   void videoDisplaySizeChanged();
   void volumeChanged();
-  void maximumVolumeChanged();
   // The level was pulled down because the maximum-volume setting was lowered
   // under it -- not because anything asked for a new level. qml/Main.qml puts
   // the resulting value on screen in the volume OSD, so a boost silently
   // disappearing always has a visible cause.
   void volumeClamped();
-  void scrollGesturesEnabledChanged();
   void scrollGestureActiveChanged();
   void mutedChanged();
   void rateChanged();
@@ -442,10 +403,6 @@ signals:
   void subtitleBitmapChanged();
   void subtitleTracksChanged();
   void activeSubtitleTrackChanged();
-  void preservePitchChanged();
-  void appearanceChanged();
-  void seekStepSecondsChanged();
-  void windowHugsVideoChanged();
   void trimInChanged();
   void trimOutChanged();
   void exportSpeedChanged();
@@ -938,6 +895,7 @@ private:
   std::optional<RoutedFallbackOpen> routed_fallback_open_;
 #endif
   QPointer<MpvVideoItem> video_item_;
+  const AppSettings *settings_ = nullptr;
   QTimer *work_timer_ = nullptr;
   QTimer *scrub_timeout_timer_ = nullptr;
   // Pointer-scroll gestures. The model owns the axis lock and the detent; the
@@ -985,9 +943,6 @@ private:
   QUrl committed_entry_source_;
   std::int64_t committed_playlist_position_ = -1;
   QString media_title_;
-  int appearance_ = 0;
-  double seek_step_seconds_ = 5.0;
-  bool window_hugs_video_ = true;
   QString last_error_;
   QString last_notice_;
   QString export_status_;
@@ -1000,7 +955,6 @@ private:
   bool idle_ = true;
   bool eof_reached_ = false;
   bool muted_ = false;
-  bool scroll_gestures_enabled_ = true;
   bool scroll_gesture_active_ = false;
   bool captions_visible_ = true;
   bool preserve_pitch_ = true;

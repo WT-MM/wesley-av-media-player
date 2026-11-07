@@ -3,6 +3,7 @@
 #include "caption_download_prompt.hpp"
 #endif
 
+#include "app_settings.hpp"
 #include "mpv_video_item.hpp"
 #include "playback_policy.hpp"
 #include "player_core_p.hpp"
@@ -63,7 +64,7 @@ constexpr int kScrubSeekTimeoutMs = 750;
 // ceiling on every route: the native gain stage clamps there (and saturates
 // each sample to [-1, 1]), and mpv is started with volume-max=400. How much
 // of that ceiling any window may actually reach is the per-installation
-// "Maximum volume" preference (maximum_volume_, default 200%), which is
+// "Maximum volume" preference (AppSettings::maximumVolume), which is
 // always inside this range and is what setVolume clamps to.
 constexpr double kMinimumVolume = 0.0;
 constexpr double kMaximumVolume = ScrollGestureModel::kAbsoluteMaximumVolume;
@@ -2246,8 +2247,15 @@ void PlayerController::seekRelative(double seconds) {
                QByteArrayLiteral("relative+exact")});
 }
 
-void PlayerController::skipBackward() { seekRelative(-seek_step_seconds_); }
-void PlayerController::skipForward() { seekRelative(seek_step_seconds_); }
+void PlayerController::skipBackward() {
+  if (settings_)
+    seekRelative(-settings_->seekStepSeconds());
+}
+
+void PlayerController::skipForward() {
+  if (settings_)
+    seekRelative(settings_->seekStepSeconds());
+}
 
 void PlayerController::stepFrame(int direction) {
   if (direction == 0 || !hasMedia())
@@ -2405,7 +2413,6 @@ void PlayerController::setMaximumVolume(double maximum) {
   if (nearlyEqual(maximum_volume_, normalized))
     return;
   maximum_volume_ = normalized;
-  emit maximumVolumeChanged();
   // A window sitting above the new ceiling comes down at once rather than
   // staying loud until the next time something touches the level. setVolume
   // re-clamps against the maximum just installed, so the value it lands on is
@@ -2416,17 +2423,21 @@ void PlayerController::setMaximumVolume(double maximum) {
   }
 }
 
-void PlayerController::setScrollGesturesEnabled(bool enabled) {
-  if (scroll_gestures_enabled_ == enabled)
-    return;
-  scroll_gestures_enabled_ = enabled;
-  if (!enabled) {
+void PlayerController::bindSettings(const AppSettings &settings) {
+  settings_ = &settings;
+  setPreservePitch(settings.preservePitch());
+  setMaximumVolume(settings.maximumVolume());
+  connect(&settings, &AppSettings::preservePitchChanged, this,
+          [this] { setPreservePitch(settings_->preservePitch()); });
+  connect(&settings, &AppSettings::maximumVolumeChanged, this,
+          [this] { setMaximumVolume(settings_->maximumVolume()); });
+  connect(&settings, &AppSettings::scrollGesturesEnabledChanged, this, [this] {
     // Switching the preference off mid-sweep must not leave a scrub gesture
     // open on the native route -- that would hold the window paused with the
     // surface-budget handoff still armed.
-    settleScrollGesture();
-  }
-  emit scrollGesturesEnabledChanged();
+    if (!settings_->scrollGesturesEnabled())
+      settleScrollGesture();
+  });
 }
 
 double PlayerController::snapVolumeToDetent(double volume) const {
@@ -2436,7 +2447,7 @@ double PlayerController::snapVolumeToDetent(double volume) const {
 int PlayerController::scrollGesture(double pixelDeltaX, double pixelDeltaY,
                                     double angleDeltaX, double angleDeltaY,
                                     bool inverted, int phase) {
-  if (!scroll_gestures_enabled_ || !hasMedia())
+  if (!settings_ || !settings_->scrollGesturesEnabled() || !hasMedia())
     return ScrollGestureIgnored;
 
   ScrollSample sample;
@@ -2983,10 +2994,7 @@ void PlayerController::setPreservePitch(bool preserve) {
     // 1200 * log2(rate) cents on the same unit. Nothing to refuse, and it
     // applies live -- the render callback latches it at its next boundary.
     static_cast<void>(native_playback_->setPreservePitch(preserve));
-    if (preserve_pitch_ != preserve) {
-      preserve_pitch_ = preserve;
-      emit preservePitchChanged();
-    }
+    preserve_pitch_ = preserve;
     return;
   }
 #endif
@@ -2995,35 +3003,7 @@ void PlayerController::setPreservePitch(bool preserve) {
     core_->api().mpv_set_property_async(
         core_->handle(), 0, "audio-pitch-correction", MPV_FORMAT_FLAG, &value);
   }
-  if (preserve_pitch_ == preserve)
-    return;
   preserve_pitch_ = preserve;
-  emit preservePitchChanged();
-}
-
-void PlayerController::setAppearance(int appearance) {
-  const int bounded = std::clamp(appearance, 0, 2);
-  if (appearance_ == bounded)
-    return;
-  appearance_ = bounded;
-  emit appearanceChanged();
-}
-
-void PlayerController::setSeekStepSeconds(double seconds) {
-  if (!std::isfinite(seconds))
-    return;
-  const double bounded = std::clamp(seconds, 1.0, 60.0);
-  if (nearlyEqual(seek_step_seconds_, bounded))
-    return;
-  seek_step_seconds_ = bounded;
-  emit seekStepSecondsChanged();
-}
-
-void PlayerController::setWindowHugsVideo(bool hugsVideo) {
-  if (window_hugs_video_ == hugsVideo)
-    return;
-  window_hugs_video_ = hugsVideo;
-  emit windowHugsVideoChanged();
 }
 
 void PlayerController::setTrimIn(double seconds) {
@@ -3772,11 +3752,7 @@ void PlayerController::drainMpvEvents() {
         break;
       }
       case ObservedProperty::PreservePitch: {
-        const bool value = readFlag(property, true);
-        if (preserve_pitch_ != value) {
-          preserve_pitch_ = value;
-          emit preservePitchChanged();
-        }
+        preserve_pitch_ = readFlag(property, true);
         break;
       }
       case ObservedProperty::EofReached:

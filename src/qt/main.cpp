@@ -178,7 +178,7 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //   close:<index>       QQuickWindow::close() on that window, i.e. the real
 //                       user close path, including its playback teardown
 //   pause:<index>       play:<index>       rate:<index>:<value>
-//   seekstep:<value>    set it on window 0, to observe the settings mirror
+//   seekstep:<value>    set the app-level seek step every window follows
 //   skip:<index>:<seconds>
 //                       seekRelative(seconds) on that window: the keyboard
 //                       skip path, not a scrubber gesture
@@ -410,8 +410,8 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                .arg(player->paused() ? 1 : 0)
                .arg(player->playing() ? 1 : 0)
                .arg(player->rate())
-               .arg(player->seekStepSeconds())
-               .arg(player->windowHugsVideo() ? 1 : 0)
+               .arg(windows.settings().seekStepSeconds())
+               .arg(windows.settings().windowHugsVideo() ? 1 : 0)
                .arg(player->preservePitch() ? 1 : 0)
                .arg(QFileInfo(player->source().toLocalFile()).fileName())
                .arg(frame.width())
@@ -420,7 +420,7 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                .arg(frame.y())
                .arg(player->volume(), 0, 'f', 4)
                .arg(player->muted() ? 1 : 0)
-               .arg(player->scrollGesturesEnabled() ? 1 : 0)
+               .arg(windows.settings().scrollGesturesEnabled() ? 1 : 0)
                .arg(player->position(), 0, 'f', 4)
                .arg(player->duration(), 0, 'f', 4)
                .arg(chromeRevealed(open.at(index)))
@@ -613,8 +613,8 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
     if (wam::qt::PlayerWindow *window = windowAt(index))
       window->controller()->setRate(fields.value(2).toDouble());
   } else if (head == QStringLiteral("seekstep")) {
-    if (wam::qt::PlayerWindow *window = windowAt(0))
-      window->controller()->setSeekStepSeconds(fields.value(1).toDouble());
+    windows.settings().setSeekStepSeconds(
+        static_cast<int>(std::lround(fields.value(1).toDouble())));
   } else if (head == QStringLiteral("skip")) {
     // The keyboard skip path (skipForward/skipBackward -> seekRelative), as
     // opposed to WAM_TEST_SEEK_SCRIPT's scrubber gestures.
@@ -1230,10 +1230,9 @@ static int runApplication(int argc, char *argv[]) {
 
     // The window factory. Everything app-level -- the state store and its
     // persistence checkpoint, the single desktop menu bar, the single
-    // Preferences window, focus routing, and the settings mirror that makes
-    // one Preferences change apply live to every window -- lives here; the
-    // controller, chrome bridge, resume tracker and native playback session
-    // are per window.
+    // Preferences window, focus routing, and the app-level settings every
+    // window follows live -- lives here; the controller, chrome bridge, resume
+    // tracker and native playback session are per window.
     wam::qt::WindowManager windows(engine, state_store);
     engine.rootContext()->setContextProperty(QStringLiteral("appHost"),
                                              &windows);

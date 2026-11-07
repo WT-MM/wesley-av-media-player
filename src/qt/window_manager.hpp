@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app_settings.hpp"
 #include "state_store.hpp"
 
 #include <QList>
@@ -14,6 +15,7 @@ class QQmlComponent;
 class QQmlContext;
 class QQmlEngine;
 class QQuickWindow;
+class QWindow;
 class QTimer;
 
 namespace wam::qt {
@@ -116,7 +118,6 @@ public:
 
 private:
   void wireResumeTracking();
-  void wireSettingsMirror();
   void applyPendingResume();
   void rememberPosition(const ResumeSnapshot &snapshot);
 
@@ -134,9 +135,8 @@ private:
 
 // ---------------------------------------------------------------------------
 // The window factory and everything that is app-level rather than per-window:
-// the state store, the single desktop menu bar, the single Preferences window,
-// focus routing, and the settings mirror that makes one Preferences change
-// apply live to every open window.
+// the state store and the app-level settings backed by it, the single desktop
+// menu bar, the single Preferences window, and focus routing.
 // ---------------------------------------------------------------------------
 class WindowManager final : public QObject {
   Q_OBJECT
@@ -205,19 +205,8 @@ public:
   void noteClosed(PlayerWindow *window);
   void requestCheckpoint();
 
-  // Mirrors one app-level setting from `origin` onto every other window and
-  // into the state store. Re-entrant calls are dropped, so a mirror never
-  // ping-pongs.
-  void mirrorAppearance(PlayerController *origin);
-  void mirrorSeekStep(PlayerController *origin);
-  void mirrorWindowHugsVideo(PlayerController *origin);
-  void mirrorPreservePitch(PlayerController *origin);
-  void mirrorScrollGestures(PlayerController *origin);
-  void mirrorMaximumVolume(PlayerController *origin);
-  void noteVolumeChanged(PlayerController *origin);
-
-  // Seeds a freshly created controller from the persisted state.
-  void seedController(PlayerController *controller) const;
+  [[nodiscard]] AppSettings &settings() { return settings_; }
+  [[nodiscard]] const AppSettings &settings() const { return settings_; }
 
   // Writes every window's tracked position into the store, then saves it if
   // anything is dirty. This is the persistence checkpoint body.
@@ -248,6 +237,7 @@ signals:
 private:
   QQmlEngine &engine_;
   ::wam::StateStore &store_;
+  AppSettings settings_;
   QQmlComponent *component_ = nullptr;
   QTimer *checkpoint_timer_ = nullptr;
   ::wam::StateCheckpointGate checkpoint_;
@@ -261,12 +251,10 @@ public:
   [[nodiscard]] QObject *menuBarObject() const noexcept { return menu_bar_; }
 
 private:
-  QObject *preferences_ = nullptr;
-  QQmlComponent *preferences_component_ = nullptr;
+  QWindow *preferences_ = nullptr;
   QList<PlayerWindow *> windows_;
   QPointer<PlayerWindow> focused_;
   PlayerWindow *last_created_ = nullptr;
-  bool mirroring_ = false;
   bool tearing_down_ = false;
 };
 
