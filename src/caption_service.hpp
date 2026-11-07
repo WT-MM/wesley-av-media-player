@@ -74,21 +74,46 @@ struct CaptionRequest {
   std::function<void(const std::filesystem::path&)> committed;
 };
 
+constexpr bool captionStageIsTerminal(CaptionStage stage) noexcept {
+  switch (stage) {
+    case CaptionStage::Idle:
+    case CaptionStage::Validating:
+    case CaptionStage::ExtractingAudio:
+    case CaptionStage::Transcribing:
+    case CaptionStage::AwaitingDownloadConsent:
+    case CaptionStage::PreparingEngine:
+    case CaptionStage::VerifyingOutput:
+      return false;
+    case CaptionStage::Completed:
+    case CaptionStage::Failed:
+    case CaptionStage::Cancelled:
+      return true;
+  }
+  return false;
+}
+
+// A request runs Idle -> working stages -> one terminal stage. The terminal
+// stage is published before the worker's cleanup ends; `retired` then marks
+// the request finished (always with a terminal stage).
 struct CaptionStatus {
   CaptionStage stage = CaptionStage::Idle;
   float progress = 0.0f;
-  bool running = false;
-  bool finished = false;
-  bool succeeded = false;
-  bool cancelled = false;
+  bool retired = false;
   std::string message;
   std::string error;
   CaptionEngine engine = CaptionEngine::Whisper;
   unsigned engine_preparations = 0;
-  bool needs_download_consent = false;
   std::string download_locale;
   std::vector<CaptionSegment> segments;
   std::filesystem::path output_srt;
+
+  bool running() const noexcept { return stage != CaptionStage::Idle && !retired; }
+  bool finished() const noexcept { return retired; }
+  bool succeeded() const noexcept { return stage == CaptionStage::Completed; }
+  bool cancelled() const noexcept { return stage == CaptionStage::Cancelled; }
+  bool needsDownloadConsent() const noexcept {
+    return stage == CaptionStage::AwaitingDownloadConsent;
+  }
 };
 
 // The argument vectors CaptionService executes directly, without a command
@@ -121,7 +146,6 @@ public:
   // UI polling skips a turn if the worker is publishing a snapshot.
   std::optional<CaptionStatus> tryStatus() const;
   bool running() const;
-  bool transcribing() const noexcept { return transcribing_.load(); }
   bool finished() const;
   bool succeeded() const;
 
@@ -132,6 +156,7 @@ private:
   void complete(const std::filesystem::path &output);
   void fail(std::string error);
   void cancelled();
+  void retire();
 
   mutable std::mutex status_mutex_;
   CaptionStatus status_;
@@ -139,12 +164,12 @@ private:
   std::thread worker_;
   detail::CancellationFlag cancellation_;
   std::unique_ptr<AppleCaptionBackend> apple_;
-  // 0 until respondToDownload(); 1 consent, -1 refusal. cancel() also wakes
-  // the waiting worker.
+  enum class DownloadReply { Pending, Consent, Refuse };
+  // Pending until respondToDownload(); cancel() also wakes the waiting worker.
   std::mutex download_mutex_;
   std::condition_variable download_changed_;
-  int download_response_ = 0;
-  std::atomic<bool> transcribing_{false};
+  DownloadReply download_reply_ = DownloadReply::Pending;
+  // The download prompt is shown at most once per service.
   bool download_asked_ = false;
 };
 

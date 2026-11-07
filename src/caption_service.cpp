@@ -487,7 +487,7 @@ public:
       : tools_(std::move(tools)), options_(std::move(options)) {}
   ~WhisperCaptionBackend() override { cancel(); finish(); }
   CaptionCapabilities capabilities(const std::string&) override { return {true,true,false,-1}; }
-  std::future<CaptionBackendResult> prepare(bool) override {
+  std::future<CaptionBackendResult> prepare(bool, CaptionBackendEvents) override {
     cancellation_.reset();
     return std::async(std::launch::deferred, [] { return CaptionBackendResult{true,{}}; });
   }
@@ -777,7 +777,7 @@ bool CaptionService::start(CaptionRequest request) {
   std::lock_guard worker_lock(worker_mutex_);
   {
     std::lock_guard status_lock(status_mutex_);
-    if (status_.running)
+    if (status_.running())
       return false;
   }
   if (worker_.joinable())
@@ -785,36 +785,30 @@ bool CaptionService::start(CaptionRequest request) {
   cancellation_.reset();
   {
     std::lock_guard download_lock(download_mutex_);
-    download_response_ = 0;
+    download_reply_ = DownloadReply::Pending;
   }
   {
     std::lock_guard status_lock(status_mutex_);
     status_ = {};
     status_.stage = CaptionStage::Validating;
     status_.progress = 0.02f;
-    status_.running = true;
     status_.message = "Checking media, model, and local caption tools…";
     status_.output_srt = request.output_srt;
   }
   try {
     worker_ = std::thread([this, request = std::move(request)]() mutable {
       run(std::move(request), cancellation_);
-      transcribing_.store(false);
       // A failed extraction/commit may never have reached Apple's idle arm.
       // Retire that prepared session here, still off the UI thread.
-      if (!status().succeeded) apple_.reset();
-      // Publish terminal status only after run's staging/audio guards and
-      // backend workers have finished. UI polling can then join without
-      // accidentally waiting for disk or Speech cleanup.
-      std::lock_guard lock(status_mutex_);
-      status_.running = false;
-      status_.finished = true;
+      if (!status().succeeded()) apple_.reset();
+      // Publish the end only after run's staging/audio guards and backend
+      // workers have finished. UI polling can then join without accidentally
+      // waiting for disk or Speech cleanup.
+      retire();
     });
   } catch (const std::exception &exception) {
     fail(std::string("Could not start caption worker: ") + exception.what());
-    std::lock_guard lock(status_mutex_);
-    status_.running = false;
-    status_.finished = true;
+    retire();
     return false;
   }
   return true;
@@ -829,7 +823,7 @@ void CaptionService::cancel() noexcept {
     { std::lock_guard download_lock(download_mutex_); }
     download_changed_.notify_all();
     std::lock_guard status_lock(status_mutex_);
-    if (!status_.running)
+    if (!status_.running())
       return;
     status_.message = "Cancelling caption generation…";
   } catch (...) {
@@ -841,7 +835,7 @@ void CaptionService::cancel() noexcept {
 void CaptionService::respondToDownload(bool consent) noexcept {
   try {
     std::lock_guard download_lock(download_mutex_);
-    download_response_ = consent ? 1 : -1;
+    download_reply_ = consent ? DownloadReply::Consent : DownloadReply::Refuse;
   } catch (...) {
     return;
   }
@@ -865,9 +859,9 @@ std::optional<CaptionStatus> CaptionService::tryStatus() const {
   return status_;
 }
 
-bool CaptionService::running() const { return status().running; }
-bool CaptionService::finished() const { return status().finished; }
-bool CaptionService::succeeded() const { return status().succeeded; }
+bool CaptionService::running() const { return status().running(); }
+bool CaptionService::finished() const { return status().finished(); }
+bool CaptionService::succeeded() const { return status().succeeded(); }
 
 void CaptionService::update(CaptionStage stage, float progress,
                             std::string message) {
@@ -881,9 +875,6 @@ void CaptionService::complete(const fs::path &output) {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Completed;
   status_.progress = 1.0f;
-  // The worker publishes finished after all request-local cleanup.
-  status_.succeeded = true;
-  status_.cancelled = false;
   status_.message = status_.engine == CaptionEngine::Apple ? "Apple Speech captions are ready." : "Whisper captions are ready.";
   status_.error.clear();
   status_.output_srt = output;
@@ -892,8 +883,6 @@ void CaptionService::complete(const fs::path &output) {
 void CaptionService::fail(std::string error) {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Failed;
-  status_.succeeded = false;
-  status_.cancelled = false;
   status_.message = "Caption generation failed.";
   status_.error = std::move(error);
 }
@@ -901,10 +890,18 @@ void CaptionService::fail(std::string error) {
 void CaptionService::cancelled() {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Cancelled;
-  status_.succeeded = false;
-  status_.cancelled = true;
   status_.message = "Caption generation was cancelled.";
   status_.error.clear();
+}
+
+void CaptionService::retire() {
+  std::lock_guard lock(status_mutex_);
+  // Every run path ends in a terminal stage; anything else is a failure.
+  if (!captionStageIsTerminal(status_.stage)) {
+    status_.stage = CaptionStage::Failed;
+    status_.message = "Caption generation failed.";
+  }
+  status_.retired = true;
 }
 
 void CaptionService::run(
@@ -1011,22 +1008,30 @@ void CaptionService::run(
       bool consent = false;
       if (caps.available && caps.needs_download && !download_asked_ && !cancellation.requested()) {
         download_asked_ = true;
+        {
+          std::lock_guard lock(status_mutex_);
+          status_.download_locale = caps.locale;
+        }
         update(CaptionStage::AwaitingDownloadConsent,0.05f,
           "Apple Speech needs a one-time on-device language download (size unknown).");
-        { std::lock_guard lock(status_mutex_); status_.needs_download_consent = true; status_.download_locale = caps.locale; }
         {
           std::unique_lock download_lock(download_mutex_);
           download_changed_.wait(download_lock, [&] {
-            return download_response_ != 0 || cancellation.requested();
+            return download_reply_ != DownloadReply::Pending ||
+                   cancellation.requested();
           });
-          consent = download_response_ == 1;
+          consent = download_reply_ == DownloadReply::Consent;
         }
-        { std::lock_guard lock(status_mutex_); status_.needs_download_consent = false; }
+        {
+          // The answer ends the consent stage; the run is back to resolving
+          // its engine and tools.
+          std::lock_guard lock(status_mutex_);
+          status_.stage = CaptionStage::Validating;
+        }
       }
       if (!cancellation.requested() && (selectCaptionEngine(caps) == CaptionEngine::Apple || consent)) {
-        apple_->setEvents(events);
         update(CaptionStage::PreparingEngine,0.08f,consent ? "Apple Speech: downloading language asset…" : "Preparing Apple Speech on device…");
-        auto preparation = apple_->prepare(consent);
+        auto preparation = apple_->prepare(consent, events);
         useApple = awaitBackend(preparation,*apple_).succeeded;
       }
       if (!useApple) { apple_->finish(); apple_.reset(); }
@@ -1113,11 +1118,9 @@ void CaptionService::run(
            useApple ? "Apple Speech: generating captions on device…" : (request.options.use_gpu ? "Whisper Metal: generating captions locally…" : "Whisper CPU: generating captions locally…"));
     WhisperCaptionBackend whisperBackend(request.tools,request.options);
     CaptionBackend& backend = useApple ? *apple_ : static_cast<CaptionBackend&>(whisperBackend);
-    if (!useApple) { auto ready = backend.prepare(false); ready.get(); }
-    transcribing_.store(true);
+    if (!useApple) { auto ready = backend.prepare(false, {}); ready.get(); }
     auto operation = backend.start(*wav,*staged_srt,events);
     const auto transcription = awaitBackend(operation,backend);
-    transcribing_.store(false);
     if (cancellation.requested()) {
       backend.cancel(); backend.finish();
       if (useApple) apple_.reset();

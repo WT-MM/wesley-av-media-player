@@ -36,18 +36,18 @@ int main(int argc,char** argv) {
     std::string last;
     while (service.running()) {
       auto status=service.status();
-      if(status.needs_download_consent) service.respondToDownload(false);
+      if(status.needsDownloadConsent()) service.respondToDownload(false);
       if(status.message!=last) { std::cout << status.message << std::endl; last=status.message; }
       if(std::chrono::steady_clock::now()-start>std::chrono::seconds(90)) service.cancel();
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     service.wait(); const auto status=service.status();
     std::cout << "trial=" << trial << " apple=" << (status.engine==wam::CaptionEngine::Apple)
-      << " success=" << status.succeeded << " segments=" << status.segments.size()
+      << " success=" << status.succeeded() << " segments=" << status.segments.size()
       << " seconds=" << std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()
       << " rss_bytes=" << rss() << " preparations=" << status.engine_preparations
       << " error=" << status.error << std::endl;
-    if(!status.succeeded || status.engine!=(whisper ? wam::CaptionEngine::Whisper : wam::CaptionEngine::Apple)) return 1;
+    if(!status.succeeded() || status.engine!=(whisper ? wam::CaptionEngine::Whisper : wam::CaptionEngine::Apple)) return 1;
     std::ifstream file(status.output_srt);
     const std::string text{std::istreambuf_iterator<char>(file),{}};
     if(trial==0) first=text;
@@ -65,7 +65,7 @@ int main(int argc,char** argv) {
   service.wait();
   const auto idleStatus=service.status();
   std::cout << "idle_reprepare=" << idleStatus.engine_preparations << std::endl;
-  if (!idleStatus.succeeded || idleStatus.engine_preparations!=1) return 1;
+  if (!idleStatus.succeeded() || idleStatus.engine_preparations!=1) return 1;
   // Cancel during a live result stream, then reuse the service. The existing
   // destination must survive; cancellation itself must not join Swift work.
   wam::CaptionRequest cancelRequest;
@@ -88,7 +88,7 @@ int main(int argc,char** argv) {
   const double callMs=std::chrono::duration<double,std::milli>(returned-cancelStart).count();
   const double finishMs=std::chrono::duration<double,std::milli>(joined-cancelStart).count();
   std::cout<<"cancel_call_ms="<<callMs<<" cancel_finish_ms="<<finishMs<<std::endl;
-  if(!service.status().cancelled || old!="preserve old captions" || callMs>50 || finishMs>5000) return 1;
+  if(!service.status().cancelled() || old!="preserve old captions" || callMs>50 || finishMs>5000) return 1;
   if(!service.start(cancelRequest)) return 1;
   service.wait();
   if(!service.succeeded()) return 1;

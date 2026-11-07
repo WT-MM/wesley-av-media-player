@@ -209,7 +209,8 @@ PlayerController::~PlayerController() {
     work_timer_->stop();
   export_job_.cancel();
   export_job_.wait();
-  cleanupExportStaging();
+  if (export_)
+    ::wam::removeExportStagingFile(export_->staging);
   caption_service_->cancel();
   // Swift teardown and subprocess joins must not block window destruction.
   std::thread([service = std::move(caption_service_)] { service->wait(); }).detach();
@@ -306,13 +307,7 @@ bool PlayerController::open(const QUrl &source) {
   if (argument.isEmpty() || !initializePlaybackEngine())
     return false;
 
-  if (captioning_) {
-    const auto incoming = localPath(displayUrlForSource(source));
-    if (!incoming || caption_input_.empty() ||
-        !pathsReferToSameFile(caption_input_, *incoming)) {
-      cancelCaptionsForMediaChange();
-    }
-  }
+  cancelCaptionsForMediaChange(displayUrlForSource(source));
 
   mpv_.finishScrubGesture(true);
 
@@ -331,13 +326,7 @@ bool PlayerController::open(const QUrl &source) {
 
 void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
   invalidateNativeSeekIntents();
-  if (captioning_) {
-    const auto incoming = localPath(displayUrlForSource(source));
-    if (!incoming || caption_input_.empty() ||
-        !pathsReferToSameFile(caption_input_, *incoming)) {
-      cancelCaptionsForMediaChange();
-    }
-  }
+  cancelCaptionsForMediaChange(displayUrlForSource(source));
 
   mpv_.finishScrubGesture(true);
   updateEof(false);
@@ -486,7 +475,7 @@ void PlayerController::finishStopUi(bool stop_compatibility_engine) {
     ++request_serial_;
   requested_source_.clear();
   mpv_.startNewLineage();
-  cancelCaptionsForMediaChange();
+  cancelCaptionsForMediaChange({});
   if (stop_compatibility_engine && engineReady())
     mpv_.sendCommand({QByteArrayLiteral("stop")});
   updatePause(true);
@@ -2016,12 +2005,12 @@ void PlayerController::exportSelection() {
     setLastError(QStringLiteral("Open media before exporting a selection."));
     return;
   }
-  if (captioning_) {
+  if (captioning()) {
     setLastError(QStringLiteral(
         "Wait for caption generation to finish before exporting."));
     return;
   }
-  if (exporting_)
+  if (exporting())
     return;
   emit exportSelectionRequested(trim_in_, trim_out_);
 }
@@ -2033,12 +2022,12 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
     setLastError(QStringLiteral("Open media before exporting a selection."));
     return;
   }
-  if (captioning_) {
+  if (captioning()) {
     setLastError(QStringLiteral(
         "Wait for caption generation to finish before exporting."));
     return;
   }
-  if (exporting_)
+  if (exporting())
     return;
 
   const auto input = localPath(source_);
@@ -2106,8 +2095,8 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   }
 
   std::string staging_error;
-  export_staging_ = ::wam::reserveExportStagingFile(*output, &staging_error);
-  if (export_staging_.empty()) {
+  auto staging = ::wam::reserveExportStagingFile(*output, &staging_error);
+  if (staging.empty()) {
     setLastError(
         staging_error.empty()
             ? QStringLiteral("Could not reserve a safe temporary export file.")
@@ -2115,39 +2104,34 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
                   .arg(fromUtf8(staging_error)));
     return;
   }
-  export_output_ = *output;
-  options.output = export_staging_;
+  options.output = staging;
 
   try {
     export_job_.reset();
     const bool started = export_job_.start(
         "Video export", ::wam::buildExportProcess(ffmpeg, options));
     if (!started) {
-      cleanupExportStaging();
-      export_output_.clear();
+      ::wam::removeExportStagingFile(staging);
       setLastError(QStringLiteral("Another video export is already running."));
       return;
     }
   } catch (const std::exception &exception) {
-    cleanupExportStaging();
-    export_output_.clear();
+    ::wam::removeExportStagingFile(staging);
     setLastError(QStringLiteral("Could not start the video export: %1")
                      .arg(QString::fromUtf8(exception.what())));
     return;
   }
 
   setLastError({});
-  export_cancel_requested_ = false;
   setExportStatus(QStringLiteral("Exporting in the background…"));
-  export_completion_pending_ = true;
-  setExporting(true);
+  beginExportJob(*output, std::move(staging));
   startWorkPolling();
 }
 
 void PlayerController::cancelExport() {
-  if (!exporting_)
+  if (!export_)
     return;
-  export_cancel_requested_ = true;
+  export_->cancel_requested = true;
   export_job_.cancel();
   setExportStatus(QStringLiteral("Cancelling export…"));
 }
@@ -2158,12 +2142,12 @@ void PlayerController::generateCaptions() {
         QStringLiteral("Open local media before generating captions."));
     return;
   }
-  if (exporting_) {
+  if (exporting()) {
     setLastError(QStringLiteral(
         "Wait for the video export to finish before captioning."));
     return;
   }
-  if (captioning_) {
+  if (captioning()) {
     setLastError(QStringLiteral("Another caption task is already running."));
     return;
   }
@@ -2178,12 +2162,12 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
         QStringLiteral("Open local media before generating captions."));
     return;
   }
-  if (exporting_) {
+  if (exporting()) {
     setLastError(QStringLiteral(
         "Wait for the video export to finish before captioning."));
     return;
   }
-  if (captioning_) {
+  if (captioning()) {
     setLastError(QStringLiteral("Another caption task is already running."));
     return;
   }
@@ -2211,8 +2195,6 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   auto bridge = std::shared_ptr<CaptionLiveBridge>(new CaptionLiveBridge,
       [](CaptionLiveBridge* p) { p->deleteLater(); });
   caption_live_bridge_ = bridge;
-  caption_live_selected_ = false;
-  caption_track_committed_ = false;
   const QUrl media = source_;
   connect(bridge.get(), &CaptionLiveBridge::available, this,
       [this, weak=std::weak_ptr<CaptionLiveBridge>(bridge), media, path=*output] {
@@ -2228,11 +2210,11 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
     lock.unlock();
     if (!snapshot || !subtitles_) return;
     const int id = subtitles_->updateGenerated(path, snapshot->cues, snapshot->committed);
-    if (!caption_live_selected_) {
-      caption_live_selected_ = true;
+    if (!bridge->selected) {
+      bridge->selected = true;
       selectSubtitleTrack(id);
     }
-    caption_track_committed_ = snapshot->committed;
+    bridge->committed = snapshot->committed;
     emit subtitleTracksChanged();
     updateSubtitleForPosition();
     if (snapshot->committed && testSeams() != nullptr && testSeams()->captionMetrics)
@@ -2268,34 +2250,40 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   }
 
   setLastError({});
-  caption_download_prompted_ = false;
-  caption_input_ = *input;
-  caption_cancel_reason_.clear();
-  caption_completion_pending_ = true;
   setCaptionStatus(QStringLiteral("Preparing on-device captions…"));
-  setCaptioning(true);
+  beginCaptionJob(*input);
   startWorkPolling();
 }
 
 void PlayerController::cancelCaptioning() {
-  if (!captioning_)
+  if (!caption_job_)
     return;
-  caption_cancel_reason_ = QStringLiteral("Caption generation cancelled.");
+  caption_job_->cancel_reason = QStringLiteral("Caption generation cancelled.");
   caption_service_->cancel();
   setCaptionStatus(QStringLiteral("Cancelling caption generation…"));
 }
 
-void PlayerController::setExporting(bool exporting) {
-  if (exporting_ == exporting)
-    return;
-  exporting_ = exporting;
+void PlayerController::beginExportJob(std::filesystem::path output,
+                                      std::filesystem::path staging) {
+  export_ = ExportJob{std::move(output), std::move(staging)};
   emit exportingChanged();
 }
 
-void PlayerController::setCaptioning(bool captioning) {
-  if (captioning_ == captioning)
+void PlayerController::endExportJob() noexcept {
+  if (!export_)
     return;
-  captioning_ = captioning;
+  ::wam::removeExportStagingFile(export_->staging);
+  export_.reset();
+  emit exportingChanged();
+}
+
+void PlayerController::beginCaptionJob(std::filesystem::path input) {
+  caption_job_ = CaptionJob{std::move(input)};
+  emit captioningChanged();
+}
+
+void PlayerController::endCaptionJob() {
+  caption_job_.reset();
   emit captioningChanged();
 }
 
@@ -2313,40 +2301,36 @@ void PlayerController::setExportStatus(const QString &status) {
   emit exportStatusChanged();
 }
 
-void PlayerController::cleanupExportStaging() noexcept {
-  ::wam::removeExportStagingFile(export_staging_);
-  export_staging_.clear();
-}
-
 void PlayerController::startWorkPolling() {
   if (work_timer_ && !work_timer_->isActive())
     work_timer_->start();
 }
 
 void PlayerController::pollBackgroundWork() {
-  if (export_completion_pending_ && export_job_.finished()) {
+  if (export_ && export_job_.finished()) {
     const bool succeeded = export_job_.succeeded();
     const int exit_code = export_job_.exitCode();
     export_job_.wait();
-    export_completion_pending_ = false;
-    setExporting(false);
     export_job_.reset();
-    if (export_cancel_requested_) {
-      cleanupExportStaging();
+    ExportJob job = *export_;
+    if (job.cancel_requested) {
+      endExportJob();
       setExportStatus(QStringLiteral("Export cancelled."));
     } else if (succeeded) {
       std::string commit_error;
-      if (::wam::commitExportStagingFile(export_staging_, export_output_,
+      if (::wam::commitExportStagingFile(job.staging, job.output,
                                          &commit_error)) {
+        // Committed: the staging name no longer exists to remove.
+        export_->staging.clear();
+        endExportJob();
         const QString filename =
-            QFileInfo(displayPath(export_output_)).fileName();
+            QFileInfo(displayPath(job.output)).fileName();
         setExportStatus(filename.isEmpty()
                             ? QStringLiteral("Export complete.")
                             : QStringLiteral("Saved %1").arg(filename));
         setLastError({});
-        export_staging_.clear();
       } else {
-        cleanupExportStaging();
+        endExportJob();
         setExportStatus(QStringLiteral("Export failed."));
         setLastError(
             commit_error.empty()
@@ -2359,7 +2343,7 @@ void PlayerController::pollBackgroundWork() {
                       .arg(fromUtf8(commit_error)));
       }
     } else {
-      cleanupExportStaging();
+      endExportJob();
       setExportStatus(QStringLiteral("Export failed."));
       setLastError(
           QStringLiteral(
@@ -2367,16 +2351,14 @@ void PlayerController::pollBackgroundWork() {
               "destination is writable and the source contains playable media.")
               .arg(exit_code));
     }
-    export_cancel_requested_ = false;
-    export_output_.clear();
   }
 
-  if (caption_completion_pending_) {
+  if (caption_job_) {
     const auto snapshot = caption_service_->tryStatus();
     if (!snapshot) return;
     const ::wam::CaptionStatus& status = *snapshot;
-    if (status.needs_download_consent && !caption_download_prompted_) {
-      caption_download_prompted_ = true;
+    if (status.needsDownloadConsent() && !caption_job_->download_prompted) {
+      caption_job_->download_prompted = true;
 #ifdef Q_OS_MACOS
       QPointer<PlayerController> controller(this);
       ::wam::showCaptionDownloadPrompt(status.download_locale, [controller](bool consent) {
@@ -2390,23 +2372,23 @@ void PlayerController::pollBackgroundWork() {
     if (!message.isEmpty())
       setCaptionStatus(message);
 
-    if (status.finished) {
-      caption_completion_pending_ = false;
-      setCaptioning(false);
-      if (status.succeeded) {
+    if (status.finished()) {
+      const CaptionJob job = *caption_job_;
+      endCaptionJob();
+      if (status.succeeded()) {
         const auto current_input = localPath(source_);
-        if (!current_input || caption_input_.empty() ||
-            !pathsReferToSameFile(caption_input_, *current_input)) {
+        if (!current_input || job.input.empty() ||
+            !pathsReferToSameFile(job.input, *current_input)) {
           setCaptionStatus(QStringLiteral(
               "Captions saved, but not attached because the media changed."));
         } else {
           setCaptionStatus(QStringLiteral("Captions generated and enabled."));
           setLastError({});
         }
-      } else if (status.cancelled) {
-        setCaptionStatus(caption_cancel_reason_.isEmpty()
+      } else if (status.cancelled()) {
+        setCaptionStatus(job.cancel_reason.isEmpty()
                              ? QStringLiteral("Caption generation cancelled.")
-                             : caption_cancel_reason_);
+                             : job.cancel_reason);
       } else {
         const QString error = fromUtf8(status.error);
         setCaptionStatus(QStringLiteral("Caption generation failed."));
@@ -2414,17 +2396,14 @@ void PlayerController::pollBackgroundWork() {
                          ? QStringLiteral("Caption generation failed.")
                          : error);
       }
-      if (!status.succeeded) {
+      if (!status.succeeded()) {
         caption_live_bridge_.reset();
         if (subtitles_ && subtitles_->activeIsGenerated()) selectSubtitleTrack(SubtitleSources::kOffId);
       }
-      caption_input_.clear();
-      caption_cancel_reason_.clear();
     }
   }
 
-  if (!export_completion_pending_ && !caption_completion_pending_ &&
-      work_timer_) {
+  if (!export_ && !caption_job_ && work_timer_) {
     work_timer_->stop();
   }
 }
@@ -2599,13 +2578,7 @@ void PlayerController::updateLoading(bool loading) {
 }
 
 void PlayerController::updateSource(const QUrl &source) {
-  if (captioning_) {
-    const auto current = localPath(source);
-    if (!current || caption_input_.empty() ||
-        !pathsReferToSameFile(caption_input_, *current)) {
-      cancelCaptionsForMediaChange();
-    }
-  }
+  cancelCaptionsForMediaChange(source);
 
   const bool had_media = hasMedia();
   if (source_ == source)
@@ -2674,10 +2647,14 @@ void PlayerController::resetTimeline() {
   }
 }
 
-void PlayerController::cancelCaptionsForMediaChange() {
-  if (!captioning_)
+void PlayerController::cancelCaptionsForMediaChange(const QUrl &incoming) {
+  if (!caption_job_)
     return;
-  caption_cancel_reason_ =
+  const auto path = localPath(incoming);
+  if (path && !caption_job_->input.empty() &&
+      pathsReferToSameFile(caption_job_->input, *path))
+    return;
+  caption_job_->cancel_reason =
       QStringLiteral("Caption generation stopped because the media changed.");
   caption_service_->cancel();
   setCaptionStatus(QStringLiteral("Stopping caption generation…"));
