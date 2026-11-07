@@ -236,6 +236,17 @@ public:
     FullReload,
   };
 
+  // The open this engine has been asked for and has not yet committed: its
+  // source and request, the loadfile in flight for it (absent until a Ready
+  // render generation takes it, or after that generation was lost), and the
+  // router's identity when the router handed it over.
+  struct PendingOpen {
+    QUrl source;
+    std::uint64_t request_serial = 0;
+    std::optional<OpenAttempt> attempt;
+    std::optional<RoutedFallbackOpen> routed;
+  };
+
   struct RenderRecoveryAttempt {
     std::uint64_t id = 0;
     std::uint64_t request_serial = 0;
@@ -384,6 +395,9 @@ public:
   };
   using EntryEvents = std::variant<EntryBetween, EntryActive, EntryEnded>;
 
+  // Neither startup synchronization nor a recovery is in flight.
+  struct Settled {};
+
   struct PlaylistEntryRange {
     std::int64_t first = -1;
     std::uint64_t count = 0;
@@ -393,15 +407,13 @@ public:
   // play. A new routed open, a stop, a failed initialization and a core
   // replacement all start a new lineage with `lineage = {}`.
   struct Lineage {
-    QUrl pending_source;
-    std::uint64_t pending_request_serial = 0;
-    std::optional<OpenAttempt> open_attempt;
+    std::optional<PendingOpen> pending_open;
     std::optional<OpenAttempt> committed_open;
     QUrl committed_entry_source;
     std::int64_t committed_playlist_position = -1;
-    std::optional<RenderRecovery> render_recovery;
-    std::optional<StartupPlaybackSync> startup_playback_sync;
-    std::optional<RoutedFallbackOpen> routed_fallback_open;
+    // After a commit the file settles: startup synchronization or a render
+    // recovery gates observations until it completes; never both at once.
+    std::variant<Settled, StartupPlaybackSync, RenderRecovery> settle;
     std::vector<PlaylistEntryRange> redirect_ranges;
     EntryEvents entry_events;
     // The entry whose END_FILE error is on screen; a later entry's
@@ -421,11 +433,41 @@ public:
       return active ? active->entry : -1;
     }
 
+    [[nodiscard]] RenderRecovery *recovery() noexcept {
+      return std::get_if<RenderRecovery>(&settle);
+    }
+    [[nodiscard]] const RenderRecovery *recovery() const noexcept {
+      return std::get_if<RenderRecovery>(&settle);
+    }
+    [[nodiscard]] StartupPlaybackSync *startup() noexcept {
+      return std::get_if<StartupPlaybackSync>(&settle);
+    }
+    [[nodiscard]] const StartupPlaybackSync *startup() const noexcept {
+      return std::get_if<StartupPlaybackSync>(&settle);
+    }
+    void endRecovery() noexcept {
+      if (recovery())
+        settle = Settled{};
+    }
+    void endStartupSync() noexcept {
+      if (startup())
+        settle = Settled{};
+    }
+
+    [[nodiscard]] OpenAttempt *openAttempt() noexcept {
+      return pending_open && pending_open->attempt ? &*pending_open->attempt
+                                                   : nullptr;
+    }
+    [[nodiscard]] const OpenAttempt *openAttempt() const noexcept {
+      return pending_open && pending_open->attempt ? &*pending_open->attempt
+                                                   : nullptr;
+    }
+
     [[nodiscard]] RenderRecoveryAttempt *recoveryAttempt() noexcept {
-      return render_recovery ? render_recovery->attempt() : nullptr;
+      return recovery() ? recovery()->attempt() : nullptr;
     }
     [[nodiscard]] const RenderRecoveryAttempt *recoveryAttempt() const noexcept {
-      return render_recovery ? render_recovery->attempt() : nullptr;
+      return recovery() ? recovery()->attempt() : nullptr;
     }
   };
 
@@ -511,8 +553,8 @@ public:
   bool beginOpen(const QUrl &source);
   // An open the native router handed to this engine.
   void beginRoutedOpen(const QUrl &source, const RoutedFallbackOpen &routed);
-  [[nodiscard]] bool opening() const noexcept { return lineage.open_attempt.has_value(); }
-  [[nodiscard]] bool recovering() const noexcept { return lineage.render_recovery.has_value(); }
+  [[nodiscard]] bool opening() const noexcept { return lineage.openAttempt() != nullptr; }
+  [[nodiscard]] bool recovering() const noexcept { return lineage.recovery() != nullptr; }
   // Each records the intent in an in-flight recovery or startup sync of the
   // current request, which restores it once mpv is back.
   void play();
@@ -576,13 +618,16 @@ public:
   void handleStartFile(std::int64_t playlist_entry_id);
   void handleEndFile(const mpv_event_end_file &end);
   void handlePlaybackReady(bool file_loaded);
-  void abandonPendingOpen();
+  // Drops the pending open, keeping the committed media visible; returns the
+  // router's identity for it, if the router handed it over.
+  std::optional<RoutedFallbackOpen> abandonPendingOpen();
   // The active entry is the current request's (its open's or its committed
   // file's).
   [[nodiscard]] bool activeEntryIsCurrent() const;
   void cacheCurrentTrackSelection();
   void cacheCurrentEntrySource();
-  void notifyRoutedFallbackOpenFailed();
+  void notifyRoutedFallbackOpenFailed(
+      const std::optional<RoutedFallbackOpen> &routed);
 
   // --- Render recovery and startup sync --------------------------------
   // A lost render context reloads (or reselects) the committed file and
