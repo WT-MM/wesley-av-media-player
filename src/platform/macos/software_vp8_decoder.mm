@@ -71,13 +71,8 @@ struct SoftwareVp8Decoder::Impl {
   bool awaitingKeyFrame{true};
   enum class EndOfStream : std::uint8_t { Streaming, Begun, SinkNotified };
   EndOfStream endOfStream{EndOfStream::Streaming};
-  // The terminal retirement's exact retired/invalidation pair. A retired
-  // decoder is never configured again.
-  struct Retirement {
-    std::uint64_t retired;
-    std::uint64_t invalidation;
-  };
-  std::optional<Retirement> retirement;
+  // A retired decoder is never configured again.
+  std::optional<VideoDecoderRetirement> retirement;
 
   std::uint64_t submittedFrames{0};
   std::uint64_t deliveredFrames{0};
@@ -495,10 +490,7 @@ SoftwareVp8Decoder::retire(std::uint64_t retiredGeneration,
                            std::uint64_t invalidationGeneration) noexcept {
   Impl &impl = *impl_;
   if (impl.retirement) {
-    return impl.retirement->retired == retiredGeneration &&
-                   impl.retirement->invalidation == invalidationGeneration
-               ? VideoDecoderRetireProgress::Done
-               : VideoDecoderRetireProgress::StaleGeneration;
+    return impl.retirement->replay(retiredGeneration, invalidationGeneration);
   }
   if (retiredGeneration != impl.generation || invalidationGeneration == 0 ||
       invalidationGeneration <= retiredGeneration) {
@@ -507,7 +499,7 @@ SoftwareVp8Decoder::retire(std::uint64_t retiredGeneration,
                : VideoDecoderRetireProgress::Failed;
   }
   impl.retirement =
-      Impl::Retirement{retiredGeneration, invalidationGeneration};
+      VideoDecoderRetirement{retiredGeneration, invalidationGeneration};
   impl.pending.reset();
   if (impl.sink != nullptr) {
     impl.sink->flush(invalidationGeneration);

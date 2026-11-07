@@ -187,6 +187,7 @@ int main(int argc,char** argv) {
     EXPECT(lane.drainPresentation(4,&error)==VideoDecodeDrainProgress::Failed);
     others.clear();
     lane.close();
+    EXPECT(lane.stats().generation==5 && restartSink.generation==5);
   }
   std::puts("video adapter packet/EOS/flush/backpressure and surface format passed");
   return failures==0?0:1;

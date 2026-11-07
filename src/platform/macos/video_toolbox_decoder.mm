@@ -1653,12 +1653,7 @@ struct VideoToolboxDecoder::Impl {
   // -layer interop, which otherwise deliberately leaves it unpinned -- see
   // createSessionLocked().
   bool hdrOutputSurfaceRequired{false};
-  // The terminal retirement's exact retired/invalidation pair.
-  struct Retirement {
-    std::uint64_t retired;
-    std::uint64_t invalidation;
-  };
-  std::optional<Retirement> retirement;
+  std::optional<VideoDecoderRetirement> retirement;
 #if defined(WAM_NATIVE_TEST_SEAMS)
   std::size_t testReservedInFlight{0};
   // VideoToolbox may invoke the output handler before DecodeFrame returns
@@ -2888,10 +2883,7 @@ VideoDecoderRetireProgress VideoToolboxDecoder::retire(
   }
   std::lock_guard operationLock(impl_->operationMutex);
   if (impl_->retirement) {
-    return impl_->retirement->retired == retiredGeneration &&
-                   impl_->retirement->invalidation == invalidationGeneration
-               ? VideoDecoderRetireProgress::Done
-               : VideoDecoderRetireProgress::StaleGeneration;
+    return impl_->retirement->replay(retiredGeneration, invalidationGeneration);
   }
   std::uint64_t exposedGeneration = 0;
   {
@@ -2906,7 +2898,7 @@ VideoDecoderRetireProgress VideoToolboxDecoder::retire(
                : VideoDecoderRetireProgress::Failed;
   }
   impl_->retirement =
-      Impl::Retirement{retiredGeneration, invalidationGeneration};
+      VideoDecoderRetirement{retiredGeneration, invalidationGeneration};
   impl_->invalidateGenerationLocked(invalidationGeneration, false);
   impl_->detachLocked();
   return VideoDecoderRetireProgress::Done;

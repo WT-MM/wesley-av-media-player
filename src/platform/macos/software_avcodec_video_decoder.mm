@@ -39,8 +39,7 @@ struct SoftwareAvcodecVideoDecoder::Impl {
   struct Suspended {};
   // A flush could not restart the worker. Absorbing until configure/close/retire.
   struct RestartFailed { const char* reason; };
-  struct Retired { std::uint64_t retired, invalidation; };
-  using State = std::variant<Unconfigured, Running, Suspended, RestartFailed, Retired>;
+  using State = std::variant<Unconfigured, Running, Suspended, RestartFailed, VideoDecoderRetirement>;
   State state;
   Running* running() noexcept { return std::get_if<Running>(&state); }
   const Running* running() const noexcept { return std::get_if<Running>(&state); }
@@ -153,7 +152,7 @@ SoftwareAvcodecVideoDecoder::SoftwareAvcodecVideoDecoder(VideoDecoderOptions opt
 SoftwareAvcodecVideoDecoder::~SoftwareAvcodecVideoDecoder() { close(); }
 bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& configuration,DecodedFrameSink& sink,std::string* error) {
   auto& s=*impl_;
-  if(std::holds_alternative<Impl::Retired>(s.state)) { s.latch("AvcodecDecoderRetired",error); return false; }
+  if(std::holds_alternative<VideoDecoderRetirement>(s.state)) { s.latch("AvcodecDecoderRetired",error); return false; }
   close();
   if (configuration.codedSize.width<=0 || configuration.codedSize.height<=0 ||
       !media::MediaSourceLimits::codedDimensionsWithinHardCeiling(
@@ -272,7 +271,7 @@ VideoDecodeDrainProgress SoftwareAvcodecVideoDecoder::drainEndOfStream(std::uint
 }
 void SoftwareAvcodecVideoDecoder::suspendForPreview(std::uint64_t next) noexcept {
   auto& s=*impl_;
-  if(std::holds_alternative<Impl::Unconfigured>(s.state) || std::holds_alternative<Impl::Retired>(s.state)) return;
+  if(std::holds_alternative<Impl::Unconfigured>(s.state) || std::holds_alternative<VideoDecoderRetirement>(s.state)) return;
   if(auto* running=s.running()) { running->worker->close(); s.state=Impl::Suspended{}; }
   s.pending.reset(); s.published.store(false);
   s.generation=next; s.error.store(nullptr);
@@ -289,22 +288,21 @@ void SoftwareAvcodecVideoDecoder::flush(std::uint64_t next) noexcept {
 }
 VideoDecoderRetireProgress SoftwareAvcodecVideoDecoder::retire(std::uint64_t retired,std::uint64_t next) noexcept {
   auto& s=*impl_;
-  if(const auto* latch=std::get_if<Impl::Retired>(&s.state))
-    return latch->retired==retired && latch->invalidation==next
-        ? VideoDecoderRetireProgress::Done : VideoDecoderRetireProgress::StaleGeneration;
+  if(const auto* latch=std::get_if<VideoDecoderRetirement>(&s.state)) return latch->replay(retired,next);
   if(retired!=s.generation)return VideoDecoderRetireProgress::StaleGeneration;
   if(next<=retired)return VideoDecoderRetireProgress::Failed;
   close(); s.generation=next;
-  s.state=Impl::Retired{retired,next};
+  s.state=VideoDecoderRetirement{retired,next};
   return VideoDecoderRetireProgress::Done;
 }
 void SoftwareAvcodecVideoDecoder::close() noexcept {
-  auto& s=*impl_; if(std::holds_alternative<Impl::Retired>(s.state)) return;
+  auto& s=*impl_; if(std::holds_alternative<VideoDecoderRetirement>(s.state)) return;
   if(auto* worker=s.worker()) worker->close();
   s.state=Impl::Unconfigured{};
   s.pending.reset(); s.published.store(false); s.pool.close();
   std::vector<std::byte>().swap(s.configurationBytes); s.configuration.codecConfiguration={};
-  if(s.sink) s.sink->flush(s.generation+1); s.sink=nullptr;
+  // Like every decoder's close, invalidate onto the next generation.
+  if(s.sink) s.sink->flush(++s.generation); s.sink=nullptr;
 }
 VideoDecoderStats SoftwareAvcodecVideoDecoder::stats() const noexcept {
   const auto& s=*impl_; VideoDecoderStats result;
