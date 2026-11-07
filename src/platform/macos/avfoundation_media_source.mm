@@ -894,7 +894,8 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
     const MediaTrackDescriptor& audio,
     const std::filesystem::path& path) noexcept {
   const std::int64_t leadIn =
-      media::mediaCodecFacts(audio.codec).decoderLeadInFrames;
+      media::decoderLeadInFrames(
+          audio.codec, audio.audio ? audio.audio->framesPerPacket : 0U);
   if (leadIn == 0 || !bareAudioElementaryStream(path)) {
     return kCMTimeZero;
   }

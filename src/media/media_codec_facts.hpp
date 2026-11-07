@@ -410,6 +410,15 @@ mediaCodecFacts(MediaCodec codec) noexcept {
   return kMediaCodecFacts[index < kMediaCodecFacts.size() ? index : 0U];
 }
 
+// The frames Apple's decoder swallows at the head of a track: the stated
+// constant, or one whole access unit where the codec says so (Vorbis).
+[[nodiscard]] constexpr std::uint32_t decoderLeadInFrames(
+    MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
+  const MediaCodecFacts &facts = mediaCodecFacts(codec);
+  return facts.decoderLeadInIsOnePacket ? framesPerPacket
+                                        : facts.decoderLeadInFrames;
+}
+
 [[nodiscard]] constexpr bool softwareAudioCodec(MediaCodec codec) noexcept {
   return mediaCodecFacts(codec).softwareDecoded;
 }

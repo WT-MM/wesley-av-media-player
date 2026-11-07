@@ -6,6 +6,7 @@
 #include "media/audio_downmix.hpp"
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
+#include "core_media_time.hpp"
 #include "native_audio_channel_map.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
@@ -52,10 +53,8 @@ namespace {
 
 [[nodiscard]] bool exactFrame(CMTime time, std::uint32_t sampleRate,
                               std::int64_t *result) noexcept {
-  return CMTIME_IS_NUMERIC(time) && time.epoch == 0 &&
-         (time.flags & kCMTimeFlags_HasBeenRounded) == 0 &&
-         exactFrame(media::MediaTime{time.value, time.timescale}, sampleRate,
-                    result);
+  const auto exact = exactMediaTime(time);
+  return exact && exactFrame(*exact, sampleRate, result);
 }
 
 [[nodiscard]] bool optionalFrame(CMTime time, std::uint32_t sampleRate,
@@ -109,12 +108,7 @@ namespace {
 // generation decodes this many fewer frames than its packets declare. It is a
 // property of the decoder, not of the container, which is why it is stated in
 // the codec facts table and not carried in the timeline.
-[[nodiscard]] std::uint32_t decoderLeadInFrames(
-    media::MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
-  const media::MediaCodecFacts &facts = media::mediaCodecFacts(codec);
-  return facts.decoderLeadInIsOnePacket ? framesPerPacket
-                                        : facts.decoderLeadInFrames;
-}
+using media::decoderLeadInFrames;
 
 // The frames a decoder never emits at all: its lead-in, unless it flushes the
 // same number at the end.
@@ -210,8 +204,8 @@ struct ChannelLayoutIdentity {
   }
   const CMTime trim =
       CMTimeMakeFromDictionary(static_cast<CFDictionaryRef>(value));
-  if (!CMTIME_IS_NUMERIC(trim) || trim.epoch != 0 || trim.timescale <= 0 ||
-      trim.value != 0 || (trim.flags & kCMTimeFlags_HasBeenRounded) != 0) {
+  const auto exactTrim = exactMediaTime(trim);
+  if (!exactTrim || exactTrim->value != 0) {
     assignError(error, "nonzero audio trim is outside native v1");
     return false;
   }
