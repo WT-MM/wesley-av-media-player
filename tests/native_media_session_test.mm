@@ -1,5 +1,3 @@
-#define WAM_NATIVE_MEDIA_SESSION_TESTING 1
-
 #include "platform/macos/avfoundation_asset_context.hpp"
 #include "platform/macos/native_media_session.hpp"
 #include "platform/macos/native_presentation_admission.hpp"

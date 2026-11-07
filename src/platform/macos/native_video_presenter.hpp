@@ -16,7 +16,7 @@
 
 namespace wam::macos {
 
-#if defined(WAM_NATIVE_FRAME_LEASE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct FrameLeaseTestAccess;
 #endif
 
@@ -83,7 +83,7 @@ public:
   }
 
 private:
-#if defined(WAM_NATIVE_FRAME_LEASE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct FrameLeaseTestAccess;
 #endif
   void swap(FrameLease &other) noexcept;
@@ -93,7 +93,7 @@ private:
   NativeSurfaceBudgetToken surface_budget_token_{};
 };
 
-#if defined(WAM_NATIVE_FRAME_LEASE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Header-only access keeps every test-only symbol out of shipping objects.
 // Tests may inspect the exact token clone used by FrameLease without adding a
 // second acquisition path to the production API.

@@ -454,7 +454,7 @@ class NativeMediaSession final {
   friend struct NativeMediaSessionTestAccess;
 };
 
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Deterministic fixture seam: tests replace the graph while exercising the
 // identical worker, cancellation latch, ownership phases, retirement barrier,
 // and fact mailbox.

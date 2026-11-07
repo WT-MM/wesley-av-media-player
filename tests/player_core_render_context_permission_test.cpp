@@ -1,5 +1,3 @@
-#define WAM_MPV_RUNTIME_TESTING 1
-
 #include "fakes/mpv_runtime/injected_mpv_runtime.hpp"
 #include "qt/mpv_render_context_policy.hpp"
 #include "qt/player_controller.hpp"
@@ -34,7 +32,7 @@ namespace wam::qt {
 
 // PlayerCore intentionally keeps its render ownership internals private. This
 // target is compiled with the test-only seam while the shipping target is not.
-class PlayerControllerTestAccess final {
+class PlayerCoreTestAccess final {
 public:
   static void setBeforeCreate(PlayerCore &core, std::function<void()> hook) {
     core.before_render_context_create_for_testing_ = std::move(hook);
@@ -235,7 +233,7 @@ public:
 namespace {
 
 using namespace std::chrono_literals;
-using Access = wam::qt::PlayerControllerTestAccess;
+using Access = wam::qt::PlayerCoreTestAccess;
 
 class TimedHookBarrier final {
 public:

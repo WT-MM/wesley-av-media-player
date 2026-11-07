@@ -1,7 +1,7 @@
 #include "media/avcodec/api.hpp"
 #include "media/avcodec/closure.hpp"
 #include "media/avcodec/runtime.hpp"
-#include "playback/mpv/mpv_runtime.hpp"
+#include "fakes/mpv_runtime/mpv_runtime_test_access.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -10,12 +10,6 @@
 #include <cstdio>
 #include <cstring>
 #include "support/expect.hpp"
-namespace wam::playback::mpv {
-class MpvRuntimeTestAccess final {
-public:
-  static MpvRuntimeLoadResult load(const QString& directory) {return MpvRuntime::load(directory);}
-};
-}
 int main(int argc,char** argv) {
   QCoreApplication app(argc,argv);
   using namespace wam::media::avcodec;

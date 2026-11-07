@@ -445,7 +445,7 @@ constexpr double kMaximumStagedAudioSeconds = 0.256;
 }
 
 
-#if defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
     std::numeric_limits<std::size_t>::max()};
 #endif
@@ -1078,7 +1078,7 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
   std::size_t layoutSize = 0;
   const AudioChannelLayout* layout =
       CMAudioFormatDescriptionGetChannelLayout(format, &layoutSize);
-#if defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   g_inspectedAudioChannelLayoutSize.store(layoutSize,
                                           std::memory_order_relaxed);
 #endif
@@ -3800,7 +3800,7 @@ AVFoundationMediaSource::assetContext() const noexcept {
   return impl_ == nullptr ? nullptr : impl_->assetContext;
 }
 
-#if defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 namespace avfoundation_media_source_testing {
 
 std::int64_t audioUnitsWithinStagedDurationForTest(

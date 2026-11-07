@@ -14,8 +14,8 @@
 #include "support/expect.hpp"
 #include "support/fake_host_clock.hpp"
 
-#if !defined(WAM_NATIVE_MEDIA_CLOCK_TESTING)
-#error "native media clock tests require bounded test-only token limits"
+#if !defined(WAM_NATIVE_TEST_SEAMS)
+#error "native media clock tests spend reservation tokens through a test seam"
 #endif
 
 namespace {
@@ -452,6 +452,7 @@ void testReservationTokenSaturation() {
   NativeMediaClock clock(host.seam(10));
   expect(anchorAt(clock, host, 1, 100, 0.0, 1.0, true),
          "token saturation test establishes a future clock");
+  clock.spendReservationTokensForTesting(64);
 
   NativeMediaSegmentReservation ancient;
   for (std::uint64_t serial = 1; serial <= 64; ++serial) {

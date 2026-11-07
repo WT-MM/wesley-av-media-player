@@ -187,6 +187,13 @@ public:
   [[nodiscard]] bool stop(std::uint64_t expectedGeneration,
                           std::uint64_t invalidationGeneration) noexcept;
 
+#if defined(WAM_NATIVE_TEST_SEAMS)
+  // Spends every reservation token but the last `remaining`, so a test can
+  // reach token saturation without 2^64 reservations. Requires no live
+  // reservation.
+  void spendReservationTokensForTesting(std::uint64_t remaining) noexcept;
+#endif
+
 private:
   static constexpr std::size_t kSlotCount = 4;
 

@@ -1724,7 +1724,7 @@ void PlayerController::seekTo(double seconds) {
 }
 
 void PlayerController::previewSeekTo(double seconds) {
-#if defined(WAM_MPV_RUNTIME_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   if (native_preview_test_submitter_ != nullptr) {
     if (auto intent = makeObservedNativePreviewIntent(
             seconds, native_preview_test_demand_context_,

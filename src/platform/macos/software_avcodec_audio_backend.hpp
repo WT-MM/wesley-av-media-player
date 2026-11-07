@@ -18,7 +18,7 @@ private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
-#if defined(WAM_AVCODEC_AUDIO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct SoftwareAvcodecAudioBackendTestAccess {
   static media::avcodec::FrameResult receive(SoftwareAvcodecAudioBackend&,const AVFrame&) noexcept;
 };

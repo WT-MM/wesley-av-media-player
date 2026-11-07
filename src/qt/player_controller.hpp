@@ -32,8 +32,9 @@ class AppSettings;
 class MpvVideoItem;
 class NativePlaybackOwner;
 class PlayerCore;
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) || defined(WAM_QT_TEST_SEAMS)
 class PlayerControllerTestAccess;
+class PlayerCoreTestAccess;
 #endif
 class SubtitleSources;
 
@@ -427,9 +428,11 @@ private:
   friend class PlayerCore;
   friend class MpvVideoItem;
   friend class NativePlaybackOwner;
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
-  // test_seams.cpp's `nativefail` verb reaches the native engine.
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) || defined(WAM_QT_TEST_SEAMS)
+  // test_seams.cpp's `nativefail` verb reaches the native engine; the
+  // controller and core tests reach the mpv core.
   friend class PlayerControllerTestAccess;
+  friend class PlayerCoreTestAccess;
 #endif
 
   using OpenAttempt = MpvEngine::OpenAttempt;
@@ -937,7 +940,7 @@ private:
   // settling commit at the current position; this remembers the direction to
   // apply once that commit's own draw proof arrives.
   int pending_frame_step_ = 0;
-#if defined(WAM_MPV_RUNTIME_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   // The controller-only test target deliberately excludes the platform owner.
   // This seam lets it exercise the public previewSeekTo boundary while keeping
   // production object layout and dispatch unchanged.

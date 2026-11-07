@@ -11,7 +11,7 @@
 
 #include <atomic>
 #include <cstdint>
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
 #include <functional>
 #endif
 #include <memory>
@@ -27,11 +27,13 @@ namespace wam::qt {
 
 class PlayerController;
 class PlayerControllerTestAccess;
+class PlayerCoreTestAccess;
 
 // Private, shared lifetime boundary between the GUI controller and scene-graph
 // render node. It ensures the mpv core cannot disappear while Qt is rendering.
 class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   friend class PlayerControllerTestAccess;
+  friend class PlayerCoreTestAccess;
 
  private:
   enum class State : unsigned char { Dormant, Initializing, Ready, Failed };
@@ -113,7 +115,7 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
     return render_lifecycle_.snapshot();
   }
 
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   // Exercises only the notification gate at ensureRenderContext() entry. The
   // shipping render path uses the same private predicate in full.
   [[nodiscard]] bool renderNotificationAllowsCreationForTesting() noexcept;
@@ -215,7 +217,7 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   std::uint64_t pending_render_invalidation_stamp_ = 0;
   bool render_notification_drain_queued_ = false;
 
-#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+#if defined(WAM_QT_TEST_SEAMS)
   std::function<void()> before_render_context_create_for_testing_;
   std::function<void()> after_render_context_api_for_testing_;
   std::function<void()> after_render_context_create_for_testing_;

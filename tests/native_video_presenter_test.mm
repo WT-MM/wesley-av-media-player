@@ -1,11 +1,6 @@
-#define WAM_NATIVE_FRAME_LEASE_TESTING 1
-#define WAM_NATIVE_SURFACE_BUDGET_TESTING 1
-// Compile the accounting implementation into this focused test translation
-// unit so its test-only seams exist nowhere in a production archive; the
-// link/symbol check in local validation guards against duplicate definitions.
 #include "metal_frame_mapper.hpp"
 #include "bounded_frame_queue.hpp"
-#include "platform/macos/native_surface_budget.mm"
+#include "platform/macos/native_surface_budget.hpp"
 #include "platform/macos/native_video_presenter.hpp"
 #include "support/expect.hpp"
 
