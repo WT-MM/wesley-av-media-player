@@ -1,4 +1,5 @@
 #include "qt/native_open_preflight.hpp"
+#include "support/expect.hpp"
 
 #include <QCoreApplication>
 #include <QEvent>
@@ -27,12 +28,6 @@ using wam::qt::NativeOpenPreflight;
 using wam::qt::NativeOpenPreflightRequest;
 using wam::qt::NativeOpenPreflightResult;
 using wam::qt::PlaybackSourceClass;
-
-void expect(bool condition, const char *detail) {
-  if (!condition) {
-    throw std::runtime_error(detail);
-  }
-}
 
 class ManualCompletionQueue final {
 public:
@@ -219,6 +214,7 @@ void capacityOneLatestRequestWins() {
   const auto c = preflight.enqueue(
       localRequest("/private/tmp/wam-preflight-c.mp4", exactInitial, false));
   expect(b == 2 && c == 3, "replacement identities remain monotonic");
+  require(c.has_value(), "replacement identity C is accepted");
 
   blocker.release();
   expect(queue.waitForTask(std::chrono::seconds(2)),
@@ -226,6 +222,7 @@ void capacityOneLatestRequestWins() {
   expect(results.empty(), "completion is never invoked inline by the worker");
   queue.drain();
 
+  require(!results.empty(), "blocked A and superseded B publish a result");
   expect(results.size() == 1 && results.front().requestId == *c,
          "blocked A and superseded B publish only exact C");
   expect(results.front().source == QUrl::fromLocalFile(QStringLiteral(
@@ -272,7 +269,7 @@ void routeMappingIsExact() {
     expect(queue.waitForTask(std::chrono::seconds(2)),
            "route fixture produces a queued result");
     queue.drain();
-    expect(!results.empty(), "route fixture completion runs");
+    require(!results.empty(), "route fixture completion runs");
     NativeOpenPreflightResult result = std::move(results.back());
     results.clear();
     return result;
@@ -337,8 +334,8 @@ void productionMountClassificationIsFailClosed() {
     expect(queue.waitForTask(std::chrono::seconds(2)),
            "production classification produces a queued result");
     queue.drain();
-    expect(results.size() == 1,
-           "production classification publishes exactly one result");
+    require(results.size() == 1,
+            "production classification publishes exactly one result");
     NativeOpenPreflightResult result = std::move(results.front());
     results.clear();
     return result;
@@ -390,6 +387,7 @@ void queuedResultSlotKeepsOnlyLatestIdentity() {
   const auto latest =
       preflight.enqueue(localRequest("/private/tmp/result-b.mp4", 2.0, false));
   expect(latest == 2, "new result-slot intent has the next identity");
+  require(latest.has_value(), "new result-slot intent is accepted");
   expect(blocker.waitUntilEntered(std::chrono::seconds(2)),
          "B blocks before replacing the stale queued result");
   queue.drain();
@@ -401,6 +399,7 @@ void queuedResultSlotKeepsOnlyLatestIdentity() {
          "B retention schedules a fresh exact delivery edge");
   queue.drain();
 
+  require(!results.empty(), "newest result-slot identity is delivered");
   expect(results.size() == 1 && results.front().requestId == *latest &&
              results.front().initialPositionSeconds == 2.0 &&
              !results.front().paused,
@@ -434,6 +433,7 @@ void cancelIsReusableAndStopIsPermanent() {
   expect(queue.waitForTask(std::chrono::seconds(2)),
          "new post-cancel result is queued");
   queue.drain();
+  require(!results.empty(), "newer post-cancel intent is delivered");
   expect(results.size() == 1 && results.front().requestId == 2 &&
              !results.front().paused,
          "cancelled result stays silent and the newer exact intent publishes");
@@ -495,10 +495,11 @@ void evaluationExceptionCompletesAsFailure() {
 
   const auto accepted = preflight.enqueue(
       localRequest("/private/tmp/throwing-classifier.mp4", 4.0, false));
-  expect(accepted.has_value(), "throwing classifier request is retained");
+  require(accepted.has_value(), "throwing classifier request is retained");
   expect(queue.waitForTask(std::chrono::seconds(2)),
          "evaluation exception still queues terminal completion");
   queue.drain();
+  require(!results.empty(), "evaluation exception completes");
   expect(results.size() == 1 && results.front().requestId == *accepted &&
              results.front().sourceKey.value == 77 &&
              results.front().source ==
@@ -551,6 +552,8 @@ int main(int argc, char **argv) {
     std::cerr << "native_open_preflight_test: " << error.what() << '\n';
     return 1;
   }
-  std::cout << "native_open_preflight_test: passed\n";
-  return 0;
+  if (failures == 0) {
+    std::cout << "native_open_preflight_test: passed\n";
+  }
+  return failures == 0 ? 0 : 1;
 }

@@ -6,6 +6,8 @@
 #include "media/playback_router.hpp"
 #include "platform/macos/mpegts_media_source.hpp"
 
+#include "support/expect.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -30,17 +32,6 @@ wam::media::MediaTime secondsTime(double seconds) {
 using namespace wam;
 using namespace wam::macos;
 namespace protocol = media::native_playback;
-
-[[noreturn]] void fail(const char* message) {
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    fail(message);
-  }
-}
 
 enum class CommitLifecycleEvent : std::uint8_t {
   SourceSeek,
@@ -867,7 +858,7 @@ media::NativeMediaClockSnapshot testClock(void* context) noexcept {
 
 bool queueObservations(std::shared_ptr<void> lifetime,
                        void* context) noexcept {
-  expect(lifetime != nullptr,
+  require(lifetime != nullptr,
          "queued observation owns a lifetime ticket");
   auto& state = *static_cast<GraphState*>(context);
   state.observationQueueAttempts.fetch_add(1, std::memory_order_release);
@@ -1052,7 +1043,7 @@ std::unique_ptr<NativeMediaSession> sessionFor(
                 ? std::filesystem::path("/tmp/native-session-test.mov")
                 : (*state)->transportPath},
       std::move(dependencies));
-  expect(result != nullptr, "test session creates");
+  require(result != nullptr, "test session creates");
   NativeMediaSessionTestPreview preview;
   preview.port = std::make_unique<FakePreviewPort>(state->get());
   if ((*state)->observePreviewBinding) {
@@ -1297,7 +1288,7 @@ void runStopAfterPreviewChildReturn(
       *session, point, &completionEntered, &completionRelease);
   if (needsRequest) {
     auto target = session->preflightPreviewTarget(2.0);
-    expect(target.has_value() &&
+    require(target.has_value() &&
                session->previewFrame(
                    {{{1}, {4}}, {7}, {81}, {1}, 2.0},
                    std::move(*target)) ==
@@ -1320,7 +1311,7 @@ void runStopAfterPreviewChildReturn(
   const NativeMediaSessionFacts facts = NativeMediaSessionTestAccess::facts(*session);
   const NativeMediaSessionObservations observations =
       session->takeObservations();
-  expect(!facts.previewHandoffPending && !facts.previewHandoffReady &&
+  require(!facts.previewHandoffPending && !facts.previewHandoffReady &&
              !facts.previewPending && !facts.previewPresentedPending &&
              !facts.previewFailedPending && !facts.liveFailed &&
              !observations.previewPresented.has_value() &&
@@ -1350,7 +1341,7 @@ void testCommitWinsAfterPresentedChildReturn() {
   auto session = sessionFor(&state);
   prepareStartedPausedForPreview(*session);
   const auto commitTarget = session->preflightCommitTarget(secondsTime(3.0));
-  expect(commitTarget.has_value() &&
+  require(commitTarget.has_value() &&
              session->preparePreviewHandoff() ==
                  NativeMediaSessionCommandStatus::Accepted,
          "preview/commit completion target and prewarm accepted");
@@ -1362,7 +1353,7 @@ void testCommitWinsAfterPresentedChildReturn() {
       *session, NativeMediaSessionTestPreviewCompletionPoint::TakePresented,
       &completionEntered, &completionRelease);
   auto previewTarget = session->preflightPreviewTarget(2.0);
-  expect(previewTarget.has_value() &&
+  require(previewTarget.has_value() &&
              session->previewFrame(
                  {{{1}, {4}}, {7}, {91}, {1}, 2.0},
                  std::move(*previewTarget)) ==
@@ -1380,7 +1371,7 @@ void testCommitWinsAfterPresentedChildReturn() {
   waitUntil([&] {
     return state->sourceSeeks.load(std::memory_order_acquire) == 1;
   }, "Commit progresses without a resurrected preview");
-  expect(!NativeMediaSessionTestAccess::facts(*session).previewPresentedPending &&
+  require(!NativeMediaSessionTestAccess::facts(*session).previewPresentedPending &&
              !session->takeObservations().previewPresented.has_value(),
          "late presented completion cannot escape accepted Commit");
   expect(session->stop({{{1}, {6}}, {9}}) ==
@@ -1446,7 +1437,7 @@ void testPreviewHandoffPrewarmsBeforeFirstMotion() {
          "duplicate begin-scrub prewarm is idempotent");
 
   auto target = session->preflightPreviewTarget(2.0);
-  expect(target.has_value(), "first post-prewarm preview target preflights");
+  require(target.has_value(), "first post-prewarm preview target preflights");
   expect(session->previewFrame(
              {{{1}, {4}}, {7}, {21}, {1}, 2.0}, std::move(*target)) ==
              NativePreviewFrameRequestStatus::Accepted,
@@ -1507,7 +1498,7 @@ void testPreviewHandoffStopWinsQuiescingPrewarm() {
   wake->video().signal(wake->video().context);
   static_cast<void>(waitFact<protocol::Stopped>(
       *session, "Stop wins quiescing preview handoff"));
-  expect(state->previewRequests.load(std::memory_order_acquire) == 0 &&
+  require(state->previewRequests.load(std::memory_order_acquire) == 0 &&
              state->previewPumps.load(std::memory_order_acquire) == 0 &&
              state->sourceCloses.load(std::memory_order_acquire) == 1 &&
              !session->takeObservations().previewPresented.has_value(),
@@ -1542,7 +1533,7 @@ void testStopWinsSuccessfulPreviewConstructionWindow() {
       [&] { return constructionEntered.load(std::memory_order_acquire); },
       "preview lane construction succeeds before terminal recheck");
   auto previewTarget = session->preflightPreviewTarget(2.0);
-  expect(previewTarget.has_value() &&
+  require(previewTarget.has_value() &&
              session->previewFrame(
                  {{{1}, {4}}, {7}, {31}, {1}, 2.0},
                  std::move(*previewTarget)) ==
@@ -1580,7 +1571,7 @@ void testCommitWinsSuccessfulPreviewConstructionWindow() {
          "construction/commit physical pause accepted");
   const auto target = session->preflightCommitTarget(secondsTime(2.0));
   auto previewTarget = session->preflightPreviewTarget(1.5);
-  expect(target.has_value() && previewTarget.has_value(),
+  require(target.has_value() && previewTarget.has_value(),
          "construction/commit targets preflight");
   std::atomic<bool> constructionEntered{false};
   std::atomic<bool> constructionRelease{false};
@@ -1642,7 +1633,7 @@ void testPreviewLatestWinsAndStopQuiescesLane() {
   NativeMediaSessionTestAccess::installPreviewPullBarrier(
       *session, &pulledFirstPreview, &releaseFirstPreview);
   auto firstTarget = session->preflightPreviewTarget(2.0);
-  expect(firstTarget.has_value(), "first preview target preflights");
+  require(firstTarget.has_value(), "first preview target preflights");
   expect(session->previewFrame(
              {{{1}, {3}}, {7}, {11}, {1}, 2.0},
              std::move(*firstTarget)) ==
@@ -1651,7 +1642,7 @@ void testPreviewLatestWinsAndStopQuiescesLane() {
   waitUntil([&] { return pulledFirstPreview.load(std::memory_order_acquire); },
             "worker pulls preview A before preview B is accepted");
   auto latestTarget = session->preflightPreviewTarget(3.0);
-  expect(latestTarget.has_value(), "latest preview target preflights");
+  require(latestTarget.has_value(), "latest preview target preflights");
   expect(session->previewFrame(
              {{{1}, {4}}, {7}, {11}, {2}, 3.0},
              std::move(*latestTarget)) ==
@@ -1738,7 +1729,7 @@ void testAcceptedPreviewFailuresPublishExactTerminal() {
     auto refusedTarget = session->preflightPreviewTarget(3.0);
     const protocol::PreviewFrame preview = {
         {{1}, {4}}, {7}, {91}, {1}, 2.0};
-    expect(target.has_value() && refusedTarget.has_value() &&
+    require(target.has_value() && refusedTarget.has_value() &&
                session->previewFrame(preview, std::move(*target)) ==
                    NativePreviewFrameRequestStatus::Accepted,
            failure.label);
@@ -1748,7 +1739,7 @@ void testAcceptedPreviewFailuresPublishExactTerminal() {
           return value.previewFailed.has_value();
         },
         "accepted preview failure publishes a terminal observation");
-    expect(observations.previewFailed.has_value() &&
+    require(observations.previewFailed.has_value() &&
                protocol::previewFailedMatches(preview,
                                               *observations.previewFailed) &&
                !observations.previewPresented.has_value() &&
@@ -1789,7 +1780,7 @@ void testPreviewFailureNamesLatestPublicReplacement() {
   auto firstTarget = session->preflightPreviewTarget(2.0);
   const protocol::PreviewFrame first = {
       {{1}, {4}}, {7}, {101}, {1}, 2.0};
-  expect(firstTarget.has_value() &&
+  require(firstTarget.has_value() &&
              session->previewFrame(first, std::move(*firstTarget)) ==
                  NativePreviewFrameRequestStatus::Accepted,
          "replacement-failure A accepted");
@@ -1799,7 +1790,7 @@ void testPreviewFailureNamesLatestPublicReplacement() {
   auto latestTarget = session->preflightPreviewTarget(3.0);
   const protocol::PreviewFrame latest = {
       {{1}, {5}}, {7}, {101}, {2}, 3.0};
-  expect(latestTarget.has_value() &&
+  require(latestTarget.has_value() &&
              session->previewFrame(latest, std::move(*latestTarget)) ==
                  NativePreviewFrameRequestStatus::Replaced,
          "replacement-failure B replaces A while A is failing");
@@ -1811,7 +1802,7 @@ void testPreviewFailureNamesLatestPublicReplacement() {
         return value.previewFailed.has_value();
       },
       "replacement-failure publishes one latest terminal");
-  expect(observations.previewFailed.has_value() &&
+  require(observations.previewFailed.has_value() &&
              protocol::previewFailedMatches(latest,
                                             *observations.previewFailed) &&
              !protocol::previewFailedMatches(first,
@@ -1842,7 +1833,7 @@ void testCommitBurnsQueuedPreviewFailure() {
   const protocol::PreviewFrame preview = {
       {{1}, {4}}, {7}, {111}, {1}, 2.0};
   state->failPreviewPump.store(true, std::memory_order_release);
-  expect(previewTarget.has_value() && commitTarget.has_value() &&
+  require(previewTarget.has_value() && commitTarget.has_value() &&
              session->previewFrame(preview, std::move(*previewTarget)) ==
                  NativePreviewFrameRequestStatus::Accepted,
          "queued-failure Commit preview accepted");
@@ -1856,7 +1847,7 @@ void testCommitBurnsQueuedPreviewFailure() {
          "Commit follows and burns the queued preview failure");
   const NativeMediaSessionObservations observations =
       session->takeObservations();
-  expect(!NativeMediaSessionTestAccess::facts(*session).previewFailedPending &&
+  require(!NativeMediaSessionTestAccess::facts(*session).previewFailedPending &&
              !observations.previewFailed.has_value() &&
              !observations.previewPresented.has_value(),
          "no preview terminal escapes after exact Commit admission");
@@ -1968,7 +1959,7 @@ void testCommitPhaseStepTable() {
   for (std::size_t phase = 0; phase < kPhaseCount; ++phase) {
     const char* name =
         nativeMediaSessionCommitPhaseName(static_cast<CommitPhase>(phase));
-    expect(name != nullptr && name[0] != '?',
+    require(name != nullptr && name[0] != '?',
            "every commit phase has a diagnostic name");
   }
 }
@@ -1999,7 +1990,7 @@ void testCommitPhaseRefusedStepIsANamedFailure() {
          "no commit phase is entered before a commit is accepted");
 
   const auto target = session->preflightCommitTarget(secondsTime(2.0));
-  expect(target.has_value(), "refused-step commit target preflights");
+  require(target.has_value(), "refused-step commit target preflights");
   const protocol::CommitSeek commit = commitCommand();
   fault.store(true, std::memory_order_release);
   expect(session->commitSeek(commit, *target) ==
@@ -2056,7 +2047,7 @@ void testStopDuringCommitResetsPhaseToIdle() {
   state->pauseEntered.store(false, std::memory_order_release);
   state->blockPause.store(true, std::memory_order_release);
   const auto target = session->preflightCommitTarget(secondsTime(2.0));
-  expect(target.has_value(), "mid-commit Stop target preflights");
+  require(target.has_value(), "mid-commit Stop target preflights");
   expect(session->commitSeek(commitCommand(), *target) ==
              NativeMediaSessionCommandStatus::Accepted,
          "mid-commit Stop CommitSeek accepted");
@@ -2107,7 +2098,7 @@ void testQuiescingCommitPauseIsRetriedNotFailed() {
       state->pauseCalls.load(std::memory_order_acquire);
   state->quiescePauseCall.store(pausesBefore + 1, std::memory_order_release);
   const auto target = session->preflightCommitTarget(secondsTime(2.0));
-  expect(target.has_value(), "quiescing-pause target preflights");
+  require(target.has_value(), "quiescing-pause target preflights");
   const protocol::CommitSeek commit = commitCommand();
   expect(session->commitSeek(commit, *target) ==
              NativeMediaSessionCommandStatus::Accepted,
@@ -2161,13 +2152,13 @@ void testPendingSeekIsSuperseded() {
          "supersession starts");
   static_cast<void>(waitFact<protocol::Started>(*session, "supersession Started"));
   const auto firstTarget = session->preflightCommitTarget(secondsTime(30.0));
-  expect(firstTarget.has_value(), "first target is valid");
+  require(firstTarget.has_value(), "first target is valid");
   expect(session->commitSeek(commitCommand(3, 8, 30.0), *firstTarget) == NativeMediaSessionCommandStatus::Accepted,
          "first seek starts");
   waitUntil([&] { return NativeMediaSessionTestAccess::commitPhase(*session) == CommitPhase::AwaitingProofs; },
             "first seek is pending video proof");
   const auto newer = session->preflightCommitTarget(secondsTime(3.0));
-  expect(newer.has_value(), "pending slow seek accepts a newer exact target");
+  require(newer.has_value(), "pending slow seek accepts a newer exact target");
   if (newer) {
     const auto command = commitCommand(4, 9, 3.0);
     expect(session->commitSeek(command, *newer) == NativeMediaSessionCommandStatus::Accepted,
@@ -2205,7 +2196,7 @@ void testCommitSeekPendingReadyAndStopHighWater() {
   static_cast<void>(waitFact<protocol::Started>(*session, "commit Started"));
 
   const auto target = session->preflightCommitTarget(secondsTime(2.0));
-  expect(target.has_value() && target->drawBaseline() == 0,
+  require(target.has_value() && target->drawBaseline() == 0,
          "session reserves exact pre-commit physical draw baseline");
   const protocol::CommitSeek commit = commitCommand();
   state->beginCommitLifecycle(commit.targetGeneration.value);
@@ -2292,7 +2283,7 @@ void testCommitSeekProceedsPastFailedPreviewLane() {
       *session, "failed-lane commit Started"));
 
   const auto target = session->preflightCommitTarget(secondsTime(2.0));
-  expect(target.has_value(), "failed-lane commit target preflights");
+  require(target.has_value(), "failed-lane commit target preflights");
   const protocol::CommitSeek commit = commitCommand();
   state->beginCommitLifecycle(commit.targetGeneration.value);
   expect(session->commitSeek(commit, *target) ==
@@ -2329,7 +2320,7 @@ void testCommitSeekAdmittedDuringStarting() {
   static_cast<void>(waitFact<protocol::Prepared>(*session,
                                                   "Starting commit Prepared"));
   const auto target = session->preflightCommitTarget(secondsTime(2.0));
-  expect(target.has_value(),
+  require(target.has_value(),
          "prepared session reserves commit target before Started");
   expect(session->commitSeek(commitCommand(3, 8, 2.0), *target) ==
              NativeMediaSessionCommandStatus::Accepted,
@@ -2356,7 +2347,7 @@ void testCommitSeekAdmittedDuringStarting() {
 void testExactTimeAndSequencing() {
   const auto halfSecond =
       NativeMediaSession::preflightInitialPosition(secondsTime(0.5));
-  expect(halfSecond.has_value() &&
+  require(halfSecond.has_value() &&
              halfSecond->exact() == media::MediaTime{1, 2} &&
              !NativeMediaSession::preflightInitialPosition(secondsTime(0.1)) &&
              !NativeMediaSession::preflightInitialPosition(secondsTime(
@@ -2436,7 +2427,7 @@ void testExactTimeAndSequencing() {
 void testMpegTsRefusalFallback() {
   namespace router = media::playback_router;
   const char* root = std::getenv("WAM_MPEGTS_FIXTURES");
-  expect(root != nullptr, "MPEG-TS session fixtures are required");
+  require(root != nullptr, "MPEG-TS session fixtures are required");
   for (const char* name : {"dts-only.ts", "rejected-aac.ts", "opus.ts",
                            "hevc-main10-pq.ts", "hevc-main10-hlg.ts"}) {
     auto state = std::make_shared<GraphState>();
@@ -2516,7 +2507,7 @@ void testPresentationAdmissionAndFallback() {
       const char* refusal =
           nativePresentationRefusal(video, output.presentationCapabilities());
       const bool refused = !direct && entry.refusal != nullptr;
-      expect(refused ? refusal && std::string(refusal) == entry.refusal
+      require(refused ? refusal && std::string(refusal) == entry.refusal
                      : refusal == nullptr,
              "actual output returns the exact named presentation verdict");
       auto session = sessionFor(&state);
@@ -2566,7 +2557,7 @@ void testUnobservedDirectRetireBarrier() {
   bool admissionRouteChoice = false;
   const protocol::Failed failed =
       waitFact<protocol::Failed>(*session, "expected post-prearm failure", &admissionRouteChoice);
-  expect(admissionRouteChoice, "source refusal is an admission route choice after exact retirement");
+  require(admissionRouteChoice, "source refusal is an admission route choice after exact retirement");
   expect(failed.reason == protocol::FailureReason::Startup,
          "post-prearm Unsupported is Startup, never UnsupportedSource");
   expect(state->videoConfigures.load() == 0 &&
@@ -3109,7 +3100,7 @@ void testGainMuteAndExactProofObservations() {
     }
     std::this_thread::yield();
   }
-  expect(pausedAck.has_value() &&
+  require(pausedAck.has_value() &&
              pausedAck->command.stamp == protocol::Stamp{{1}, {3}} &&
              pausedClock.has_value() && protocol::valid(*pausedClock) &&
              pausedClock->stamp == protocol::Stamp{{1}, {3}} &&
@@ -3127,7 +3118,7 @@ void testGainMuteAndExactProofObservations() {
   expect(runningAck.command.stamp == protocol::Stamp{{1}, {4}} &&
              !runningAck.command.paused,
          "running acknowledgement echoes the physical command");
-  expect(!session->takeObservations().audioClock.has_value(),
+  require(!session->takeObservations().audioClock.has_value(),
          "a running clock can never manufacture paused AudioClockProof");
 
   {
@@ -3179,7 +3170,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
   static_cast<void>(
       waitFact<protocol::Started>(*session, "EOS fixture Started"));
   auto endingPreviewTarget = session->preflightPreviewTarget(2.0);
-  expect(endingPreviewTarget.has_value(),
+  require(endingPreviewTarget.has_value(),
          "active EOS fixture admits a preview token before exhaustion");
 
   // Exhaust the dispatcher before the first run issue. The later physical
@@ -3207,7 +3198,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
          "ending accepts the stamp without issuing another child mutation");
   const protocol::PreviewFrame endedPreview = {
       {{1}, {5}}, {7}, {9}, {1}, 2.0};
-  expect(!session->preflightPreviewTarget(2.0).has_value() &&
+  require(!session->preflightPreviewTarget(2.0).has_value() &&
              session->preparePreviewHandoff() ==
                  NativeMediaSessionCommandStatus::Ignored &&
              session->previewFrame(endedPreview,
@@ -3217,7 +3208,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
          "transitional ending remains closed until Ended is fully published");
   const NativeMediaSessionObservations endingObservations =
       session->takeObservations();
-  expect(!endingObservations.lifecycle.has_value() &&
+  require(!endingObservations.lifecycle.has_value() &&
              !endingObservations.runStateApplied.has_value() &&
              !endingObservations.audioClock.has_value() &&
              !endingObservations.videoDraw.has_value(),
@@ -3254,7 +3245,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
   expect(state->previewQuiesces.load(std::memory_order_acquire) == 0,
          "Ended preview skips the already-drained main consumer quiesce");
   auto endedPreviewTarget = session->preflightPreviewTarget(2.0);
-  expect(endedPreviewTarget.has_value() &&
+  require(endedPreviewTarget.has_value() &&
              session->previewFrame(endedPreview,
                                    std::move(*endedPreviewTarget)) ==
                  NativePreviewFrameRequestStatus::Accepted,
@@ -3266,7 +3257,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
             return observations.previewPresented.has_value();
           },
           "Ended preview reaches real presentation");
-  expect(endedPreviewObservations.previewPresented.has_value() &&
+  require(endedPreviewObservations.previewPresented.has_value() &&
              protocol::previewPresentedMatches(
                  endedPreview,
                  *endedPreviewObservations.previewPresented) &&
@@ -3276,7 +3267,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
          "Ended preview preserves EOS ownership while presenting the target");
   state->blockCapacity.store(true, std::memory_order_release);
   const auto replayTarget = session->preflightCommitTarget(secondsTime(2.0));
-  expect(replayTarget.has_value(),
+  require(replayTarget.has_value(),
          "Ended session retains a fresh exact seek target");
   const protocol::CommitSeek replay = {
       {{1}, {6}}, {7}, {8}, {9}, {2}, 2.0};
@@ -3356,7 +3347,7 @@ void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
   // that race. The end-to-end matrix covers the exact 39.984375 case.
   constexpr double kNearTimelineEnd = 9.75;
   const auto target = session->preflightCommitTarget(secondsTime(kNearTimelineEnd));
-  expect(target.has_value(),
+  require(target.has_value(),
          "a near-end commit target is exactly representable");
   if (!target.has_value()) {
     return;
@@ -3396,7 +3387,7 @@ void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  expect(heldThroughout,
+  require(heldThroughout,
          "exhaustion inside the commit handshake does not latch ending");
   expect(state->audioStopCalls.load(std::memory_order_acquire) ==
              stopsBeforeExhaustion,
@@ -3460,7 +3451,7 @@ void testStopWinsEndedPreviewPresentationCompletion() {
   auto target = session->preflightPreviewTarget(2.5);
   const protocol::PreviewFrame preview = {
       {{1}, {4}}, {7}, {71}, {1}, 2.5};
-  expect(target.has_value() &&
+  require(target.has_value() &&
              session->previewFrame(preview, std::move(*target)) ==
                  NativePreviewFrameRequestStatus::Accepted,
          "ended-preview Stop fixture admits one exact frame");
@@ -3477,7 +3468,7 @@ void testStopWinsEndedPreviewPresentationCompletion() {
   const NativeMediaSessionFacts stoppedFacts = NativeMediaSessionTestAccess::facts(*session);
   const NativeMediaSessionObservations stoppedObservations =
       session->takeObservations();
-  expect(!stoppedFacts.previewHandoffPending &&
+  require(!stoppedFacts.previewHandoffPending &&
              !stoppedFacts.previewHandoffReady &&
              !stoppedFacts.previewPending &&
              !stoppedFacts.previewPresentedPending &&
@@ -3588,7 +3579,7 @@ void testPendingAtStartSetsBaselineAndPreRunDrawRetains() {
          "pending output event is included in the Start baseline");
   wake->video().signal(wake->video().context);
   std::this_thread::yield();
-  expect(!session->takeObservations().videoDraw.has_value(),
+  require(!session->takeObservations().videoDraw.has_value(),
          "pre-Start pending draw can never masquerade as post-Start proof");
 
   {
@@ -3607,7 +3598,7 @@ void testPendingAtStartSetsBaselineAndPreRunDrawRetains() {
                    std::memory_order_acquire) >= 41;
       },
       "post-Start draw enters the retained session slot before run");
-  expect(!session->takeObservations().videoDraw.has_value(),
+  require(!session->takeObservations().videoDraw.has_value(),
          "post-Start draw waits while no run command is physically applied");
   expect(session->setRunState({{{1}, {3}}, {7}, false, 1.0}) ==
              NativeMediaSessionCommandStatus::Accepted,
@@ -3631,7 +3622,7 @@ void testPendingAtStartSetsBaselineAndPreRunDrawRetains() {
     }
     std::this_thread::yield();
   }
-  expect(runApplied.has_value() &&
+  require(runApplied.has_value() &&
              runApplied->command.stamp == protocol::Stamp{{1}, {3}} &&
              drawProof.has_value() && drawProof->drawSequence == 41 &&
              drawProof->stamp == protocol::Stamp{{1}, {3}},
@@ -3814,13 +3805,13 @@ void testSeekAdmissionStopsAtThePresentableCeiling() {
   prepareStartedPausedForPreview(*session);
   expect(session->seekCeilingSeconds() == 10.0,
          "the ceiling is the selected video track's end, not the duration");
-  expect(!session->preflightCommitTarget(secondsTime(10.015625)).has_value(),
+  require(!session->preflightCommitTarget(secondsTime(10.015625)).has_value(),
          "a commit target inside the video-less audio tail is refused");
-  expect(!session->preflightPreviewTarget(10.015625).has_value(),
+  require(!session->preflightPreviewTarget(10.015625).has_value(),
          "a preview target inside the video-less audio tail is refused");
-  expect(session->preflightCommitTarget(secondsTime(9.984375)).has_value(),
+  require(session->preflightCommitTarget(secondsTime(9.984375)).has_value(),
          "the last grid point below the video's end is admitted");
-  expect(session->preflightPreviewTarget(9.984375).has_value(),
+  require(session->preflightPreviewTarget(9.984375).has_value(),
          "the last grid point below the video's end previews");
 }
 
@@ -3868,7 +3859,7 @@ void testRationalEmbeddingCommit() {
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--mpegts-integration") {
     testMpegTsRefusalFallback();
-    return EXIT_SUCCESS;
+    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }
   testRationalEmbeddingCommit();
   testEveryWorkerWakeOwnsOneDrainedAutoreleasePool();
@@ -3917,6 +3908,9 @@ int main(int argc, char** argv) {
   testStopInterruptsReadWithoutConsumerCancel();
   testStopWinsDispatcherFailurePublication();
   testSeekAdmissionStopsAtThePresentableCeiling();
+  if (failures != 0) {
+    return EXIT_FAILURE;
+  }
   std::cout << "native media session tests passed\n";
   return EXIT_SUCCESS;
 }

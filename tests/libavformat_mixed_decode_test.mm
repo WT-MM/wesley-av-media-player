@@ -4,18 +4,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include "support/expect.hpp"
 #include <thread>
 #include <vector>
 using namespace wam::macos;
 using namespace wam::media;
-#define REQUIRE(x)                                                             \
-  do {                                                                         \
-    if (!(x)) {                                                                \
-      std::fprintf(stderr, "FAIL %d: %s error=%s\n", __LINE__, #x,             \
-                   error.c_str());                                             \
-      return 1;                                                                \
-    }                                                                          \
-  } while (false)
 struct Sink final : DecodedFrameSink {
   struct Time {
     MediaTime pts, duration;
@@ -57,7 +50,7 @@ int main(int argc, char **argv) {
   REQUIRE(source.armOperation(1));
   auto opened = source.openLocalFile(argv[1], options, 1);
   error = opened.error;
-  REQUIRE(opened.status == MediaSourceOpenStatus::Ready);
+  require(opened.status == MediaSourceOpenStatus::Ready, "open: " + error);
   Sink sink;
   if(argc==3)sink.timestamps=std::fopen(argv[2],"w");
   for (;;) {
@@ -88,10 +81,11 @@ int main(int argc, char **argv) {
   configuration.requireHardwareDecode =
       track.codec == MediaCodec::Hevc || track.codec == MediaCodec::H264;
   VideoDecodeLane decoder;
-  REQUIRE(decoder.configure(configuration, sink, &error));
+  const bool configured = decoder.configure(configuration, sink, &error);
+  require(configured, "configure: " + error);
   const bool hardware = decoder.stats().usingHardwareAcceleratedDecoder;
   if (track.codec == MediaCodec::Hevc || track.codec == MediaCodec::H264)
-    REQUIRE(hardware);
+    EXPECT(hardware);
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::minutes(5);
   std::uint64_t submitted{};
@@ -113,32 +107,37 @@ int main(int argc, char **argv) {
           ++submitted;
           break;
         }
-        REQUIRE(submittedResult == VideoDecodeSubmitResult::Backpressure);
-        REQUIRE(decoder.drainPresentation(2, &error) !=
-                VideoDecodeDrainProgress::Failed);
+        require(submittedResult == VideoDecodeSubmitResult::Backpressure,
+                "submit: " + error);
+        {
+          const auto progress = decoder.drainPresentation(2, &error);
+          require(progress != VideoDecodeDrainProgress::Failed, "drain: " + error);
+        }
         std::this_thread::sleep_for(std::chrono::microseconds(100));
       }
-      REQUIRE(decoder.drainPresentation(2, &error) !=
-              VideoDecodeDrainProgress::Failed);
+      {
+        const auto progress = decoder.drainPresentation(2, &error);
+        require(progress != VideoDecodeDrainProgress::Failed, "drain: " + error);
+      }
     } else if (auto* eos=std::get_if<MediaEndOfStream>(&result)) {
       if(eos->track==track.id)break;
     }
     else {
       if (auto *failure = std::get_if<MediaSourceFailure>(&result))
         error = failure->error;
-      REQUIRE(false);
+      fail(("source failure: " + error).c_str());
     }
   }
   auto drain = decoder.beginEndOfStream(2, &error);
   while (drain != VideoDecodeDrainProgress::Done) {
-    REQUIRE(drain != VideoDecodeDrainProgress::Failed);
+    require(drain != VideoDecodeDrainProgress::Failed, "drain: " + error);
     REQUIRE(std::chrono::steady_clock::now() < deadline);
     drain = decoder.drainEndOfStream(2, &error);
     std::this_thread::sleep_for(std::chrono::microseconds(100));
   }
-  REQUIRE(!sink.failed);
-  REQUIRE(sink.ended);
-  REQUIRE(submitted == sink.frames && submitted == sink.expected.size());
+  EXPECT(!sink.failed);
+  EXPECT(sink.ended);
+  EXPECT(submitted == sink.frames && submitted == sink.expected.size());
   std::printf("hardware=%d packets=%llu frames=%u exact_pts=%u "
               "exact_duration=%u eos=%d\n",
               hardware, submitted, sink.frames, sink.frames, sink.frames,
@@ -146,5 +145,5 @@ int main(int argc, char **argv) {
   if(sink.timestamps)std::fclose(sink.timestamps);
   decoder.close();
   source.close();
-  return 0;
+  return failures == 0 ? 0 : 1;
 }

@@ -8,6 +8,7 @@
 #include "platform/macos/software_presentation_pool.hpp"
 #include "platform/macos/software_vp8_decoder.hpp"
 #include "platform/macos/video_decode_lane.hpp"
+#include "support/expect.hpp"
 #include "vp8_test_fixture.hpp"
 
 #include <CoreMedia/CoreMedia.h>
@@ -43,15 +44,6 @@ using wam::test::makeVp8FormatDescription;
 using wam::test::makeVp8Sample;
 
 constexpr std::size_t kPoolDepth = SoftwarePresentationPool::kDepth;
-
-int failures = 0;
-
-void expect(bool condition, const char *what) {
-  if (!condition) {
-    ++failures;
-    std::cerr << "FAIL: " << what << "\n";
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Bounds that must hold at compile time.

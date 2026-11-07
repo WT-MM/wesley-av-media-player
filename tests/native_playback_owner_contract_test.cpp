@@ -1,5 +1,6 @@
 #include "media/playback_router.hpp"
 #include "platform/macos/native_media_session.hpp"
+#include "support/expect.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -16,20 +17,14 @@ wam::media::MediaTime secondsTime(double seconds) {
       wam::media::MediaTime{});
 }
 
-void expect(bool condition, const char* message) {
-  if (condition)
-    return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
-
 const router::Action& action(const router::Transition& transition,
                              router::ActionKind kind,
                              const char* message) {
-  expect(transition.status == router::Status::Applied &&
-             transition.action.has_value() &&
-             transition.action->kind == kind,
-         message);
+  // Fatal: the action is dereferenced below.
+  require(transition.status == router::Status::Applied &&
+              transition.action.has_value() &&
+              transition.action->kind == kind,
+          message);
   return *transition.action;
 }
 
@@ -39,7 +34,9 @@ native::Prepared prepared(const native::Prepare& prepare) {
 }
 
 wam::media::MediaTime at(double seconds) {
-  return *wam::media::exactNonnegativeMediaTime(seconds);
+  const auto time = wam::media::exactNonnegativeMediaTime(seconds);
+  REQUIRE(time.has_value());
+  return *time;
 }
 
 native::CommitReady commitReady(const native::CommitSeek& commit,
@@ -375,6 +372,8 @@ int main() {
   previewBridgeIsCapacityOneAndCommitFollowsLatest();
   commitFailureRetiresBeforeCompatibility();
   surfaceTeardownDropsPendingWithoutForgingProof();
-  std::cout << "native playback owner contract tests passed\n";
-  return 0;
+  if (failures == 0) {
+    std::cout << "native playback owner contract tests passed\n";
+  }
+  return failures == 0 ? 0 : 1;
 }

@@ -1,4 +1,5 @@
 #include "platform/macos/native_surface_budget.hpp"
+#include "support/expect.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -22,41 +23,30 @@ using wam::macos::kNativeSurfaceBudgetMaximumSurfaces;
 using wam::macos::kNativeSurfaceBudgetProcessMaximumBytes;
 using wam::macos::kNativeSurfaceBudgetProcessMaximumSurfaces;
 
-void check(bool condition, const char *expression, int line) {
-  if (!condition) {
-    std::cerr << "CHECK failed at line " << line << ": " << expression
-              << '\n';
-    std::exit(EXIT_FAILURE);
-  }
-}
-
-#define WAM_CHECK(expression)                                                  \
-  check(static_cast<bool>(expression), #expression, __LINE__)
-
 void checkStats(std::uint64_t currentSurfaces, std::uint64_t currentBytes,
                 std::uint64_t peakSurfaces, std::uint64_t peakBytes,
                 std::uint64_t rejections) {
   const NativeSurfaceBudgetStats stats = NativeSurfaceBudget::stats();
-  WAM_CHECK(stats.currentSurfaces == currentSurfaces);
-  WAM_CHECK(stats.currentBytes == currentBytes);
-  WAM_CHECK(stats.peakSurfaces == peakSurfaces);
-  WAM_CHECK(stats.peakBytes == peakBytes);
-  WAM_CHECK(stats.rejections == rejections);
+  EXPECT(stats.currentSurfaces == currentSurfaces);
+  EXPECT(stats.currentBytes == currentBytes);
+  EXPECT(stats.peakSurfaces == peakSurfaces);
+  EXPECT(stats.peakBytes == peakBytes);
+  EXPECT(stats.rejections == rejections);
 }
 
-void resetBudget() { WAM_CHECK(NativeSurfaceBudgetTestAccess::reset()); }
+void resetBudget() { EXPECT(NativeSurfaceBudgetTestAccess::reset()); }
 
 void testInvalidIdentitiesFailClosed() {
-  WAM_CHECK(kNativeSurfaceBudgetMaximumBytes == 384ULL * 1024 * 1024);
-  WAM_CHECK(wam::macos::kNativeSurfaceBudgetWorstCaseSurfaceBytes == 40'132'608);
-  WAM_CHECK(wam::macos::kNativeSurfaceBudget420SurfaceBytes == 30'107'648);
+  EXPECT(kNativeSurfaceBudgetMaximumBytes == 384ULL * 1024 * 1024);
+  EXPECT(wam::macos::kNativeSurfaceBudgetWorstCaseSurfaceBytes == 40'132'608);
+  EXPECT(wam::macos::kNativeSurfaceBudget420SurfaceBytes == 30'107'648);
 
   resetBudget();
-  WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(0, 1));
-  WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(1, 0));
-  WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(
+  EXPECT(!NativeSurfaceBudgetTestAccess::tryAcquire(0, 1));
+  EXPECT(!NativeSurfaceBudgetTestAccess::tryAcquire(1, 0));
+  EXPECT(!NativeSurfaceBudgetTestAccess::tryAcquire(
       1, std::numeric_limits<std::uint64_t>::max()));
-  WAM_CHECK(!NativeSurfaceBudget::tryAcquire(nullptr));
+  EXPECT(!NativeSurfaceBudget::tryAcquire(nullptr));
   checkStats(0, 0, 0, 0, 4);
 }
 
@@ -64,14 +54,14 @@ void testAliasesChargeExactlyOnce() {
   resetBudget();
   auto first = NativeSurfaceBudgetTestAccess::tryAcquire(11, 4096);
   auto alias = NativeSurfaceBudgetTestAccess::tryAcquire(11, 4096);
-  WAM_CHECK(first);
-  WAM_CHECK(alias);
-  WAM_CHECK(first.surfaceID() == 11);
-  WAM_CHECK(first.bytes() == 4096);
+  EXPECT(first);
+  EXPECT(alias);
+  EXPECT(first.surfaceID() == 11);
+  EXPECT(first.bytes() == 4096);
   checkStats(1, 4096, 1, 4096, 0);
 
   auto inconsistent = NativeSurfaceBudgetTestAccess::tryAcquire(11, 8192);
-  WAM_CHECK(!inconsistent);
+  EXPECT(!inconsistent);
   checkStats(1, 4096, 1, 4096, 1);
   first.reset();
   checkStats(1, 4096, 1, 4096, 1);
@@ -82,7 +72,7 @@ void testAliasesChargeExactlyOnce() {
   // every prior token is gone, a new publication with a new size is legal and
   // must be charged as a fresh unique surface.
   auto recycled = NativeSurfaceBudgetTestAccess::tryAcquire(11, 8192);
-  WAM_CHECK(recycled);
+  EXPECT(recycled);
   checkStats(1, 8192, 1, 8192, 1);
   recycled.reset();
 }
@@ -101,15 +91,15 @@ void testUniqueSurfaceLimitAndReuse() {
   for (std::uint64_t index = 0; index < kPool; ++index) {
     tokens[index] = NativeSurfaceBudgetTestAccess::tryAcquire(
         static_cast<std::uint32_t>(100 + index), 1024);
-    WAM_CHECK(tokens[index]);
+    EXPECT(tokens[index]);
   }
   checkStats(kPool, kPool * 1024, kPool, kPool * 1024, 0);
-  WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(999, 1024));
+  EXPECT(!NativeSurfaceBudgetTestAccess::tryAcquire(999, 1024));
   checkStats(kPool, kPool * 1024, kPool, kPool * 1024, 1);
 
   tokens[4].reset();
   auto replacement = NativeSurfaceBudgetTestAccess::tryAcquire(1000, 2048);
-  WAM_CHECK(replacement);
+  EXPECT(replacement);
   checkStats(kPool, (kPool + 1) * 1024, kPool, (kPool + 1) * 1024, 1);
   replacement.reset();
   for (auto &token : tokens) {
@@ -123,11 +113,11 @@ void testExactByteBoundary() {
   auto first = NativeSurfaceBudgetTestAccess::tryAcquire(
       201, kNativeSurfaceBudgetProcessMaximumBytes - 1024);
   auto last = NativeSurfaceBudgetTestAccess::tryAcquire(202, 1024);
-  WAM_CHECK(first);
-  WAM_CHECK(last);
+  EXPECT(first);
+  EXPECT(last);
   checkStats(2, kNativeSurfaceBudgetProcessMaximumBytes, 2,
              kNativeSurfaceBudgetProcessMaximumBytes, 0);
-  WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(203, 1));
+  EXPECT(!NativeSurfaceBudgetTestAccess::tryAcquire(203, 1));
   checkStats(2, kNativeSurfaceBudgetProcessMaximumBytes, 2,
              kNativeSurfaceBudgetProcessMaximumBytes, 1);
   first.reset();
@@ -137,7 +127,7 @@ void testExactByteBoundary() {
   resetBudget();
   auto whole = NativeSurfaceBudgetTestAccess::tryAcquire(
       204, kNativeSurfaceBudgetProcessMaximumBytes);
-  WAM_CHECK(whole);
+  EXPECT(whole);
   checkStats(1, kNativeSurfaceBudgetProcessMaximumBytes, 1,
              kNativeSurfaceBudgetProcessMaximumBytes, 0);
   whole.reset();
@@ -147,41 +137,41 @@ void testExactByteBoundary() {
 void testCopyMoveAndReferenceOverflow() {
   resetBudget();
   auto original = NativeSurfaceBudgetTestAccess::tryAcquire(301, 16384);
-  WAM_CHECK(original);
+  EXPECT(original);
   NativeSurfaceBudgetToken copy(original);
-  WAM_CHECK(copy);
+  EXPECT(copy);
   NativeSurfaceBudgetToken assigned;
   assigned = copy;
-  WAM_CHECK(assigned);
+  EXPECT(assigned);
   NativeSurfaceBudgetToken moved(std::move(copy));
-  WAM_CHECK(moved);
-  WAM_CHECK(!copy);
+  EXPECT(moved);
+  EXPECT(!copy);
   NativeSurfaceBudgetToken moveAssigned;
   moveAssigned = std::move(assigned);
-  WAM_CHECK(moveAssigned);
-  WAM_CHECK(!assigned);
+  EXPECT(moveAssigned);
+  EXPECT(!assigned);
   checkStats(1, 16384, 1, 16384, 0);
 
   original.reset();
   moved.reset();
   checkStats(1, 16384, 1, 16384, 0);
-  WAM_CHECK(NativeSurfaceBudgetTestAccess::forceReferenceCount(
+  EXPECT(NativeSurfaceBudgetTestAccess::forceReferenceCount(
       moveAssigned, std::numeric_limits<std::uint32_t>::max()));
   NativeSurfaceBudgetToken overflowCopy(moveAssigned);
-  WAM_CHECK(!overflowCopy);
-  WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(301, 16384));
+  EXPECT(!overflowCopy);
+  EXPECT(!NativeSurfaceBudgetTestAccess::tryAcquire(301, 16384));
   checkStats(1, 16384, 1, 16384, 2);
 
   auto destination =
       NativeSurfaceBudgetTestAccess::tryAcquire(302, 8192);
-  WAM_CHECK(destination);
+  EXPECT(destination);
   destination = moveAssigned;
-  WAM_CHECK(destination);
-  WAM_CHECK(destination.surfaceID() == 302);
-  WAM_CHECK(destination.bytes() == 8192);
+  EXPECT(destination);
+  EXPECT(destination.surfaceID() == 302);
+  EXPECT(destination.bytes() == 8192);
   checkStats(2, 24576, 2, 24576, 3);
 
-  WAM_CHECK(
+  EXPECT(
       NativeSurfaceBudgetTestAccess::forceReferenceCount(moveAssigned, 1));
   moveAssigned.reset();
   destination.reset();
@@ -223,7 +213,7 @@ void testReusedPublicationAbaRefundsExactlyOnce() {
   resetBudget();
   auto firstPublication =
       NativeSurfaceBudgetTestAccess::tryAcquire(601, 4096);
-  WAM_CHECK(firstPublication);
+  EXPECT(firstPublication);
 
   AbaInterleave interleave;
   NativeSurfaceBudgetTestAccess::setInterleaveHook(abaInterleaveHook,
@@ -238,7 +228,7 @@ void testReusedPublicationAbaRefundsExactlyOnce() {
   firstPublication.reset();
   auto reusedPublication =
       NativeSurfaceBudgetTestAccess::tryAcquire(602, 8192);
-  WAM_CHECK(reusedPublication);
+  EXPECT(reusedPublication);
   permitPhase(interleave, 1);
 
   waitForPhase(interleave, 2);
@@ -249,37 +239,37 @@ void testReusedPublicationAbaRefundsExactlyOnce() {
   scanner.join();
   NativeSurfaceBudgetTestAccess::setInterleaveHook(nullptr, nullptr);
 
-  WAM_CHECK(!staleAcquisition);
+  EXPECT(!staleAcquisition);
   checkStats(0, 0, 1, 8192, 1);
   auto afterRefund =
       NativeSurfaceBudgetTestAccess::tryAcquire(603, 16384);
-  WAM_CHECK(afterRefund);
+  EXPECT(afterRefund);
   checkStats(1, 16384, 1, 16384, 1);
   afterRefund.reset();
 }
 
 void testPublicationExhaustionFailsClosed() {
   resetBudget();
-  WAM_CHECK(NativeSurfaceBudgetTestAccess::forceNextPublication(
+  EXPECT(NativeSurfaceBudgetTestAccess::forceNextPublication(
       std::numeric_limits<std::uint64_t>::max()));
-  WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(701, 1024));
+  EXPECT(!NativeSurfaceBudgetTestAccess::tryAcquire(701, 1024));
   checkStats(0, 0, 0, 0, 1);
 
   resetBudget();
   auto recovered = NativeSurfaceBudgetTestAccess::tryAcquire(702, 1024);
-  WAM_CHECK(recovered);
+  EXPECT(recovered);
   recovered.reset();
 }
 
 void testInsertionContentionFailsClosedButAliasesRemainAvailable() {
   resetBudget();
   auto anchor = NativeSurfaceBudgetTestAccess::tryAcquire(401, 32768);
-  WAM_CHECK(anchor);
-  WAM_CHECK(NativeSurfaceBudgetTestAccess::holdInsertionReservation());
+  EXPECT(anchor);
+  EXPECT(NativeSurfaceBudgetTestAccess::holdInsertionReservation());
   auto alias = NativeSurfaceBudgetTestAccess::tryAcquire(401, 32768);
   auto blocked = NativeSurfaceBudgetTestAccess::tryAcquire(402, 32768);
-  WAM_CHECK(alias);
-  WAM_CHECK(!blocked);
+  EXPECT(alias);
+  EXPECT(!blocked);
   NativeSurfaceBudgetTestAccess::releaseInsertionReservation();
   checkStats(1, 32768, 1, 32768, 1);
   alias.reset();
@@ -289,7 +279,7 @@ void testInsertionContentionFailsClosedButAliasesRemainAvailable() {
 void testConcurrentAliasesNeverDoubleCharge() {
   resetBudget();
   auto anchor = NativeSurfaceBudgetTestAccess::tryAcquire(501, 65536);
-  WAM_CHECK(anchor);
+  EXPECT(anchor);
 
   constexpr std::size_t kThreads = 8;
   constexpr std::size_t kIterations = 2000;
@@ -318,15 +308,15 @@ void testConcurrentAliasesNeverDoubleCharge() {
   for (std::thread &thread : threads) {
     thread.join();
   }
-  WAM_CHECK(successes.load(std::memory_order_relaxed) > 0);
+  EXPECT(successes.load(std::memory_order_relaxed) > 0);
   const NativeSurfaceBudgetStats stats = NativeSurfaceBudget::stats();
-  WAM_CHECK(stats.currentSurfaces == 1);
-  WAM_CHECK(stats.currentBytes == 65536);
-  WAM_CHECK(stats.peakSurfaces == 1);
-  WAM_CHECK(stats.peakBytes == 65536);
+  EXPECT(stats.currentSurfaces == 1);
+  EXPECT(stats.currentBytes == 65536);
+  EXPECT(stats.peakSurfaces == 1);
+  EXPECT(stats.peakBytes == 65536);
   anchor.reset();
-  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
-  WAM_CHECK(NativeSurfaceBudget::stats().currentBytes == 0);
+  EXPECT(NativeSurfaceBudget::stats().currentSurfaces == 0);
+  EXPECT(NativeSurfaceBudget::stats().currentBytes == 0);
 }
 
 } // namespace
@@ -351,6 +341,8 @@ int main() {
   testPublicationExhaustionFailsClosed();
   testInsertionContentionFailsClosedButAliasesRemainAvailable();
   testConcurrentAliasesNeverDoubleCharge();
-  std::cout << "native surface budget tests passed\n";
-  return EXIT_SUCCESS;
+  if (failures == 0) {
+    std::cout << "native surface budget tests passed\n";
+  }
+  return failures == 0 ? 0 : 1;
 }

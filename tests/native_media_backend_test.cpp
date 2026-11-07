@@ -1,4 +1,5 @@
 #include "media/native_media_backend.hpp"
+#include "support/expect.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,17 +15,6 @@
 namespace {
 
 using namespace wam::media;
-
-[[noreturn]] void fail(const char* message) {
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    fail(message);
-  }
-}
 
 class TestPayload final : public MediaPayloadStorage {
  public:
@@ -469,6 +459,8 @@ void checkColdFactoryAndBoundedLifecycle() {
       binding(MediaSourceBackendKind::Matroska);
   const auto exactContext = admitted.preparedContext;
   auto preview = factory.createPreviewSource(admitted);
+  require(main != nullptr && preview != nullptr,
+          "factory creates both main and preview sources");
   expect(main != nullptr && preview != nullptr &&
              resources.liveResources == 0 && resources.mainObjects == 1 &&
              resources.previewObjects == 1 &&
@@ -538,6 +530,7 @@ void checkContextLifetime() {
   lifetime.reset();
   auto preview = factory.createPreviewSource(admitted);
   admitted.preparedContext.reset();
+  require(preview != nullptr, "factory creates the preview source");
   expect(preview != nullptr && !weak.expired(),
          "preview source retains its exact context lifetime");
   preview->close();
@@ -553,6 +546,7 @@ void checkCancellationSlotPrecedesReplacementWork() {
   TestBackendFactory factory(&resources);
   auto preview = factory.createPreviewSource(
       binding(MediaSourceBackendKind::Matroska));
+  require(preview != nullptr, "factory creates the preview source");
   expect(preview != nullptr &&
              preview->begin({{10}, {1, 1}}).status ==
                  MediaPreviewBeginStatus::Ready &&
@@ -589,6 +583,8 @@ int main() {
   checkColdFactoryAndBoundedLifecycle();
   checkContextLifetime();
   checkCancellationSlotPrecedesReplacementWork();
-  std::cout << "native media backend contract checks passed\n";
-  return 0;
+  if (failures == 0) {
+    std::cout << "native media backend contract checks passed\n";
+  }
+  return failures == 0 ? 0 : 1;
 }

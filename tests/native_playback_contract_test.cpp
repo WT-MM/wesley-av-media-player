@@ -1,5 +1,6 @@
 #include "media/native_exact_playback.hpp"
 #include "media/native_playback_contract.hpp"
+#include "support/expect.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -12,15 +13,6 @@ namespace {
 using namespace wam::media::native_playback;
 using wam::media::MediaTime;
 using wam::media::exactNonnegativeMediaTime;
-
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 constexpr AttemptId kAttempt{7};
 constexpr SourceKey kSource{91};

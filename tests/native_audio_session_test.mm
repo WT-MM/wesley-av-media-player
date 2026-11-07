@@ -24,6 +24,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "support/expect.hpp"
 
 namespace {
 
@@ -63,19 +64,11 @@ using namespace wam::media;
 
 constexpr std::uint32_t kRate = 48'000;
 constexpr MediaTrackId kTrack = 2;
-int failures = 0;
 
 static_assert(noexcept(
     std::declval<NativeAudioSession&>().setGain(0.5F)));
 static_assert(noexcept(
     std::declval<NativeAudioSession&>().setMuted(true)));
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 struct BackendScript {
   std::size_t consume{0};

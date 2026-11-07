@@ -1,20 +1,6 @@
 #include "qt/render_lifecycle.hpp"
 
-#include <cstdlib>
-#include <iostream>
-
-namespace {
-
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (condition)
-    return;
-  std::cerr << "FAIL: " << message << '\n';
-  ++failures;
-}
-
-}  // namespace
+#include "support/expect.hpp"
 
 int main() {
   using wam::qt::RenderLifecycle;

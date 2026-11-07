@@ -7,6 +7,7 @@
 // here and proved here.
 
 #include "qt/scroll_gesture.hpp"
+#include "support/expect.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -14,22 +15,14 @@
 
 namespace {
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (condition)
-    return;
-  ++failures;
-  std::fprintf(stderr, "FAIL: %s\n", message);
-}
-
 void expectNear(double actual, double expected, double tolerance,
                 const char *message) {
   if (std::abs(actual - expected) <= tolerance)
     return;
-  ++failures;
-  std::fprintf(stderr, "FAIL: %s (actual %.9f, expected %.9f)\n", message,
-               actual, expected);
+  char detail[64];
+  std::snprintf(detail, sizeof detail, " (actual %.9f, expected %.9f)", actual,
+                expected);
+  expect(false, std::string(message) + detail);
 }
 
 using wam::qt::ScrollAxis;
@@ -333,8 +326,8 @@ int main() {
 
   if (failures != 0) {
     std::fprintf(stderr, "scroll_gesture_test: %d failure(s)\n", failures);
-    return 1;
+  } else {
+    std::printf("scroll_gesture_test: all checks passed\n");
   }
-  std::printf("scroll_gesture_test: all checks passed\n");
-  return 0;
+  return failures == 0 ? 0 : 1;
 }

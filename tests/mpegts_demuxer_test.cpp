@@ -6,6 +6,8 @@
 #include "media/mpegts_packet.hpp"
 #include "media/native_media_source.hpp"
 
+#include "support/expect.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -72,17 +74,6 @@ static_assert(std::is_trivially_copyable_v<MpegTsCompressedSample>);
 static_assert(sizeof(MpegTsCompressedSample) == 88);
 static_assert(sizeof(MpegTsIndexEntry) == 24);
 static_assert(std::is_trivially_copyable_v<TsPacketHeader>);
-
-int failures = 0;
-int assertions = 0;
-
-void expect(bool condition, const char* message) {
-  ++assertions;
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 void missingFixture(const char* message) {
   std::cerr << "FAIL: required fixture unavailable: " << message << '\n';
@@ -2556,7 +2547,6 @@ int main(int argc, char** argv) {
     std::cerr << failures << " MPEG-TS demuxer test(s) failed\n";
     return EXIT_FAILURE;
   }
-  std::cout << "MPEG-TS demuxer tests passed (" << assertions
-            << " assertions)\n";
+  std::cout << "MPEG-TS demuxer tests passed\n";
   return EXIT_SUCCESS;
 }

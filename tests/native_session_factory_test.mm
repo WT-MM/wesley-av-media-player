@@ -1,13 +1,9 @@
 #include "platform/macos/native_media_session_system.hpp"
 
-#include <cstdlib>
-#include <iostream>
+#include "support/expect.hpp"
 
 using namespace wam::macos;
 namespace {
-void expect(bool value, const char* reason) {
-  if (!value) { std::cerr << reason << '\n'; std::exit(1); }
-}
 class Output final : public NativeTrackedVideoOutput {
  public:
   explicit Output(std::weak_ptr<void> lifetime) : lifetime_(std::move(lifetime)) {}
@@ -81,4 +77,5 @@ int main() {
   session = createNativeMediaSessionSystem({{1}, "relative.mkv"}, caller,
       {&context, &present}, &error);
   expect(!session && context.calls == 1, "invalid source never constructs presentation");
+  return failures == 0 ? 0 : 1;
 }

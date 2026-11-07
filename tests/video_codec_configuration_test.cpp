@@ -1,5 +1,7 @@
 #include "media/video_codec_configuration.hpp"
 
+#include "support/expect.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -41,8 +43,6 @@ namespace {
 
 using namespace wam::media;
 
-int failures = 0;
-
 // High-profile avcC extracted from the repository's deterministic 1280x720
 // H.264 sample. Unlike the generated edge fixtures below, it exercises an
 // encoder-produced SPS, a complete extended PPS, and the optional high-profile
@@ -52,13 +52,6 @@ constexpr std::array<std::uint8_t, 45> kRepositorySampleAvcC{
     0xac, 0xd9, 0x40, 0x50, 0x05, 0xbb, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00,
     0x10, 0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x83, 0x19, 0x60, 0x01, 0x00,
     0x04, 0x68, 0xef, 0x8f, 0xcb, 0xfd, 0xf8, 0xf8, 0x00};
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // Every inspection below reaches the parser through these witnesses, which
 // shadow the wam::media entry points for unqualified calls. Each witness
