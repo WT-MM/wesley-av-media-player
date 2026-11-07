@@ -1,9 +1,16 @@
 cmake_minimum_required(VERSION 3.24)
 
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/pins.env" wam_pin_lines
+  REGEX "^WAM_[A-Z0-9_]+=")
+foreach(wam_pin_line IN LISTS wam_pin_lines)
+  string(REGEX MATCH "^([^=]+)=(.*)$" wam_pin_match "${wam_pin_line}")
+  set(${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+endforeach()
+
 # Qt 6.11 supports macOS 13 and newer. Pin the executable's load-command floor
 # instead of inheriting the build machine's current SDK version.
 if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET "13.3" CACHE STRING
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "${WAM_MACOS_DEPLOYMENT_TARGET}" CACHE STRING
       "Minimum supported macOS version")
 endif()
 
@@ -104,6 +111,11 @@ option(WAM_BUILD_WAMKIT "Build the native embedding framework" ${APPLE})
 if(BUILD_TESTING OR (APPLE AND WAM_BUILD_WAMKIT))
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
 endif()
+
+configure_file(cmake/wam_pins.hpp.in
+  "${PROJECT_BINARY_DIR}/generated/wam_pins.hpp" @ONLY)
+add_library(wam_pins INTERFACE)
+target_include_directories(wam_pins INTERFACE "${PROJECT_BINARY_DIR}/generated")
 
 include(cmake/CaptionBackend.cmake)
 include(cmake/NativeTargets.cmake)

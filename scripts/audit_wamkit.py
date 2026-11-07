@@ -2,6 +2,7 @@
 """Read-only installed-framework closure, ABI, signing and SDK audit."""
 import argparse,json,pathlib,subprocess
 p=argparse.ArgumentParser();p.add_argument('--framework',type=pathlib.Path,required=True);p.add_argument('--exports',type=pathlib.Path,required=True);p.add_argument('--output',type=pathlib.Path,required=True);p.add_argument('--shipping',action='store_true');a=p.parse_args()
+pins=dict(line.split('=',1) for line in (pathlib.Path(__file__).resolve().parents[1]/'packaging/pins.env').read_text().splitlines() if line.startswith('WAM_'))
 root=a.framework.resolve();binary=(root/'WAMKit').resolve();version=binary.parent
 def run(*argv):return subprocess.check_output(argv,text=True,stderr=subprocess.STDOUT).strip()
 expected=set(a.exports.read_text().splitlines());actual=set(run('nm','-gUj',str(binary)).splitlines());assert expected==actual,(expected-actual,actual-expected)
@@ -19,7 +20,7 @@ for path in [binary,*sorted((version/'Frameworks').glob('*.dylib'))]:
  images.append(dict(image=str(path.relative_to(root)),dependencies=dependencies,rpaths=rpaths,architecture=run('lipo','-archs',str(path)),build_version=run('vtool','-show-build',str(path))))
 strings=run('strings','-a',str(binary));assert 'loadVideoPerformanceMetricsWithCompletionHandler:' not in strings
 if a.shipping:assert 'WAM_TEST_' not in strings,'shipping framework contains a test environment reader'
-for path in ['Modules/module.modulemap','Resources/ThirdPartyNotices/COPYING.LGPLv2.1','Resources/ThirdPartyNotices/libvpx-LICENSE','Resources/CorrespondingSource/third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz','Resources/CorrespondingSource/third_party/ffmpeg-patches/wam_memory_reservation.inc','Resources/CorrespondingSource/scripts/apply_ffmpeg_memory_reservation.py','Resources/CorrespondingSource/scripts/build_ffmpeg_lgpl.sh']:
+for path in ['Modules/module.modulemap','Resources/ThirdPartyNotices/COPYING.LGPLv2.1','Resources/ThirdPartyNotices/libvpx-LICENSE','Resources/CorrespondingSource/third_party/ffmpeg-source/ffmpeg-'+pins['WAM_FFMPEG_VERSION']+'.tar.xz','Resources/CorrespondingSource/third_party/ffmpeg-patches/wam_memory_reservation.inc','Resources/CorrespondingSource/scripts/apply_ffmpeg_memory_reservation.py','Resources/CorrespondingSource/scripts/build_ffmpeg_lgpl.sh']:
  assert (version/path).is_file(),path
 for link in root.rglob('*'):
  if link.is_symlink():assert link.resolve().is_relative_to(root),link

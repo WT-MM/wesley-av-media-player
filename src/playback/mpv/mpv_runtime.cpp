@@ -26,7 +26,7 @@
 namespace wam::playback::mpv {
 namespace {
 
-constexpr auto kFallbackLibraryName = "WAMMpvFallback.dylib";
+constexpr auto kFallbackLibraryName = pins::kMpvFallbackLibrary;
 
 class UniqueFd final {
  public:

@@ -15,7 +15,7 @@ if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
   endif()
   target_include_directories(wam_avcodec_worker PUBLIC src)
   target_compile_features(wam_avcodec_worker PUBLIC cxx_std_20)
-  target_link_libraries(wam_avcodec_worker PUBLIC wam_ffmpeg_lgpl)
+  target_link_libraries(wam_avcodec_worker PUBLIC wam_ffmpeg_lgpl wam_pins)
 endif()
 
 # The parser, timing and state core contains no Apple SDK dependencies.

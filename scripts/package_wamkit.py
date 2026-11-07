@@ -2,6 +2,7 @@
 """Stage and audit a framework's local native decoder closure without network access."""
 import argparse,json,pathlib,shutil,subprocess
 p=argparse.ArgumentParser();p.add_argument('--framework',type=pathlib.Path,required=True);p.add_argument('--source',type=pathlib.Path,required=True);p.add_argument('--ffmpeg',type=pathlib.Path,required=True);a=p.parse_args()
+pins=dict(line.split('=',1) for line in (a.source/'packaging/pins.env').read_text().splitlines() if line.startswith('WAM_'))
 root=a.framework.resolve();version=root/'Versions/A';binary=version/'WAMKit';closure=version/'Frameworks';closure.mkdir(exist_ok=True)
 def run(*args):return subprocess.check_output(args,text=True,stderr=subprocess.STDOUT)
 def deps(path):return [s.strip().split(' (')[0] for s in run('otool','-L',str(path)).splitlines()[1:]]
@@ -23,7 +24,7 @@ while queue:
   target.chmod(0o755)
   run('install_name_tool','-change',dep,'@loader_path/'+('Frameworks/' if path==binary else '')+target.name,str(path))
   run('install_name_tool','-id','@loader_path/'+target.name,str(target));queue.append(target)
-for name in ('libavutil-wamnative.61.dylib','libavcodec-wamnative.63.dylib','libavformat-wamnative.63.dylib'):
+for name in (pins['WAM_NATIVE_AVUTIL_DYLIB'],pins['WAM_NATIVE_AVCODEC_DYLIB'],pins['WAM_NATIVE_AVFORMAT_DYLIB']):
  origin=a.ffmpeg/'lib'/name
  if origin.is_file():
   target=closure/name;shutil.copy2(origin.resolve(),target);target.chmod(0o755)
@@ -36,7 +37,7 @@ for rel in ('docs/native-coverage/phase2/COPYING.LGPLv2.1','docs/native-coverage
 for origin in (a.ffmpeg/'share/wam-ffmpeg').rglob('*'):
  if origin.is_file() and origin.stat().st_size<2_000_000:shutil.copy2(origin,notices/origin.name)
 corresponding=version/'Resources/CorrespondingSource';corresponding.mkdir(parents=True,exist_ok=True)
-for rel in ('third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz','third_party/ffmpeg-patches/wam_memory_reservation.inc','scripts/apply_ffmpeg_memory_reservation.py','scripts/build_ffmpeg_lgpl.sh'):
+for rel in ('third_party/ffmpeg-source/ffmpeg-'+pins['WAM_FFMPEG_VERSION']+'.tar.xz','third_party/ffmpeg-patches/wam_memory_reservation.inc','scripts/apply_ffmpeg_memory_reservation.py','scripts/build_ffmpeg_lgpl.sh'):
  origin=a.source/rel
  if not origin.is_file():raise RuntimeError('Missing corresponding source: '+rel)
  target=corresponding/rel;target.parent.mkdir(parents=True,exist_ok=True)

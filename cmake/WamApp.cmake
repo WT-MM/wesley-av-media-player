@@ -1,7 +1,7 @@
 
 # 6.10 is the floor: nothing here needs a newer API, and the Windows lane
 # takes the newest Qt its installer can resolve (6.10.3); macOS and Linux
-# still build against 6.11.1.
+# still build against the pinned Qt (packaging/pins.env).
 find_package(Qt6 6.10 REQUIRED COMPONENTS
   Core
   Gui
@@ -139,7 +139,9 @@ endif()
 target_link_libraries(wam_mpv_runtime
   PUBLIC
     Qt6::Core
-    wam_mpv_headers)
+    wam_mpv_headers
+  PRIVATE
+    wam_pins)
 if(CMAKE_DL_LIBS)
   target_link_libraries(wam_mpv_runtime PRIVATE ${CMAKE_DL_LIBS})
 endif()
@@ -487,9 +489,9 @@ if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
   set_property(TARGET wam APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
   set_property(TARGET wam APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/native-codecs")
-  set(WAM_NATIVE_FFMPEG_LIBRARIES libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib)
+  set(WAM_NATIVE_FFMPEG_LIBRARIES ${WAM_NATIVE_AVCODEC_DYLIB} ${WAM_NATIVE_AVUTIL_DYLIB})
   if(WAM_ENABLE_AVFORMAT_STAGE)
-    list(APPEND WAM_NATIVE_FFMPEG_LIBRARIES libavformat-wamnative.63.dylib)
+    list(APPEND WAM_NATIVE_FFMPEG_LIBRARIES ${WAM_NATIVE_AVFORMAT_DYLIB})
   endif()
   foreach(native_library IN LISTS WAM_NATIVE_FFMPEG_LIBRARIES)
     configure_file("${WAM_FFMPEG_LGPL_ROOT}/lib/${native_library}"
