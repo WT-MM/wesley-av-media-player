@@ -48,6 +48,16 @@ void check(bool condition, const char* expression, int line) {
 #define WAM_CHECK(expression)                                                  \
   check(static_cast<bool>(expression), #expression, __LINE__)
 
+// Every frame carries a distinct output identity, as the native output
+// adapter supplies one for each delivery.
+void submitFrame(wam::macos::QtGlVideoItem* video,
+                 wam::macos::FrameLease frame) {
+  static std::uint64_t delivery = 1000;
+  ++delivery;
+  video->submitTrackedFrame(std::move(frame),
+                            wam::macos::QtGlFrameIdentity{delivery, delivery});
+}
+
 struct PixelBufferCreation {
   CVPixelBufferRef buffer{nullptr};
   CVReturn status{kCVReturnError};
@@ -279,7 +289,7 @@ QImage submitOwnedBufferAndGrab(wam::macos::QtGlVideoItem* video,
   const auto before = video->stats();
   wam::macos::FrameTiming timing;
   timing.generation = generation;
-  video->submitFrame(wam::macos::FrameLease(ownedBuffer, timing));
+  submitFrame(video, wam::macos::FrameLease(ownedBuffer, timing));
   CVPixelBufferRelease(ownedBuffer);
   window->requestUpdate();
   const bool presented = spinUntil(
@@ -311,7 +321,7 @@ void submitOwnedBufferExpectRejected(wam::macos::QtGlVideoItem* video,
                                      CVPixelBufferRef ownedBuffer,
                                      const QString& expectedError) {
   const auto before = video->stats();
-  video->submitFrame(wam::macos::FrameLease(ownedBuffer));
+  submitFrame(video, wam::macos::FrameLease(ownedBuffer));
   CVPixelBufferRelease(ownedBuffer);
   window->requestUpdate();
   WAM_CHECK(spinUntil(
@@ -449,7 +459,7 @@ Item {
       PixelBufferCreation frame = solidBuffer(
           kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
           kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-      video->submitFrame(wam::macos::FrameLease(frame.buffer));
+      submitFrame(video, wam::macos::FrameLease(frame.buffer));
       CVPixelBufferRelease(frame.buffer);
       window.requestUpdate();
       WAM_CHECK(spinUntil(
@@ -546,7 +556,7 @@ Item {
       WAM_CHECK(budgetCharged.currentBytes ==
                 budgetBefore.currentBytes + replacementBytes);
       CVPixelBufferRelease(replacement.buffer);
-      video->submitFrame(std::move(replacementLease));
+      submitFrame(video, std::move(replacementLease));
       window.requestUpdate();
       WAM_CHECK(spinUntil(
           [&] {
@@ -606,7 +616,7 @@ Item {
                                                  nextGenerationTiming);
       WAM_CHECK(nextGenerationLease);
       CVPixelBufferRelease(nextGeneration.buffer);
-      video->submitFrame(std::move(nextGenerationLease));
+      submitFrame(video, std::move(nextGenerationLease));
       window.requestUpdate();
       WAM_CHECK(spinUntil(
           [&] {
@@ -657,7 +667,7 @@ Item {
       PixelBufferCreation frame = solidBuffer(
           kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
           kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-      video->submitFrame(wam::macos::FrameLease(frame.buffer));
+      submitFrame(video, wam::macos::FrameLease(frame.buffer));
       CVPixelBufferRelease(frame.buffer);
       window.requestUpdate();
       WAM_CHECK(spinUntil(
@@ -740,7 +750,7 @@ Item {
   PixelBufferCreation startingFrame = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  startingItem->submitFrame(wam::macos::FrameLease(startingFrame.buffer));
+  submitFrame(startingItem, wam::macos::FrameLease(startingFrame.buffer));
   CVPixelBufferRelease(startingFrame.buffer);
   window.requestUpdate();
   WAM_CHECK(spinUntil(
@@ -777,7 +787,7 @@ Item {
   PixelBufferCreation emptyInitFailure = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  video->submitFrame(wam::macos::FrameLease(emptyInitFailure.buffer));
+  submitFrame(video, wam::macos::FrameLease(emptyInitFailure.buffer));
   CVPixelBufferRelease(emptyInitFailure.buffer);
   window.requestUpdate();
   WAM_CHECK(spinUntil(
@@ -868,7 +878,7 @@ Item {
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   wam::macos::FrameTiming reservationRetryTiming;
   reservationRetryTiming.generation = 1;
-  reservationItem->submitFrame(wam::macos::FrameLease(
+  submitFrame(reservationItem, wam::macos::FrameLease(
       reservationRetry.buffer, reservationRetryTiming));
   CVPixelBufferRelease(reservationRetry.buffer);
   window.requestUpdate();
@@ -1135,7 +1145,7 @@ Item {
   PixelBufferCreation secondRefresh = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  second->submitFrame(wam::macos::FrameLease(secondRefresh.buffer));
+  submitFrame(second, wam::macos::FrameLease(secondRefresh.buffer));
   CVPixelBufferRelease(secondRefresh.buffer);
   WAM_CHECK(spinUntil(
       [&] {
@@ -1160,7 +1170,7 @@ Item {
   PixelBufferCreation secondReuse = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  second->submitFrame(wam::macos::FrameLease(secondReuse.buffer));
+  submitFrame(second, wam::macos::FrameLease(secondReuse.buffer));
   CVPixelBufferRelease(secondReuse.buffer);
   WAM_CHECK(spinUntil(
       [&] {
@@ -1250,7 +1260,7 @@ Item {
   WAM_CHECK(chargedFailureBudget.currentBytes ==
             budgetBeforeFailure.currentBytes + failedSurfaceBytes);
   CVPixelBufferRelease(failed.buffer);
-  video->submitFrame(std::move(failedLease));
+  submitFrame(video, std::move(failedLease));
   window.requestUpdate();
   const bool injectedImportObserved = spinUntil(
       [&] {
@@ -1315,8 +1325,11 @@ Item {
 
   const auto beforePartialFailure = video->stats();
   const auto renderProgress = video->renderProgressToken();
-  WAM_CHECK(!renderProgress.drawAfter(0).has_value());
-  WAM_CHECK(!renderProgress.rejectionAfter(0).has_value());
+  WAM_CHECK(!renderProgress.drawAfter(beforePartialFailure.lastDrawSequence)
+                 .has_value());
+  WAM_CHECK(!renderProgress
+                 .rejectionAfter(beforePartialFailure.renderRejectionSequence)
+                 .has_value());
   video->failSecondPlaneImportForTesting();
   PixelBufferCreation partialFailure = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
@@ -1346,12 +1359,14 @@ Item {
             beforePartialFailure.importedFrames);
   WAM_CHECK(video->stats().lastRenderedGeneration ==
             beforePartialFailure.lastRenderedGeneration);
-  const auto rejected = renderProgress.rejectionAfter(0);
+  const auto rejected = renderProgress.rejectionAfter(
+      beforePartialFailure.renderRejectionSequence);
   WAM_CHECK(rejected.has_value());
   WAM_CHECK(rejected->deliverySequence == 1);
   WAM_CHECK(rejected->frameSequence == 101);
   WAM_CHECK(rejected->generation == 0);
-  WAM_CHECK(!renderProgress.drawAfter(0).has_value());
+  WAM_CHECK(!renderProgress.drawAfter(beforePartialFailure.lastDrawSequence)
+                 .has_value());
   WAM_CHECK(!video->takeFatalError().has_value());
   PixelBufferCreation afterPartialFailure = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
@@ -1390,7 +1405,7 @@ Item {
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   wam::macos::FrameTiming staleTiming;
   staleTiming.generation = 0;
-  video->submitFrame(wam::macos::FrameLease(stale.buffer, staleTiming));
+  submitFrame(video, wam::macos::FrameLease(stale.buffer, staleTiming));
   CVPixelBufferRelease(stale.buffer);
   WAM_CHECK(video->stats().staleFrames == beforeFlush.staleFrames + 1);
   WAM_CHECK(video->stats().lastRenderedGeneration ==
@@ -1403,7 +1418,7 @@ Item {
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   wam::macos::FrameTiming currentTiming;
   currentTiming.generation = 1;
-  video->submitFrame(wam::macos::FrameLease(currentRed.buffer, currentTiming));
+  submitFrame(video, wam::macos::FrameLease(currentRed.buffer, currentTiming));
   CVPixelBufferRelease(currentRed.buffer);
   window.requestUpdate();
   WAM_CHECK(spinUntil(
@@ -1491,7 +1506,7 @@ Item {
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   wam::macos::FrameTiming regressedTiming;
   regressedTiming.generation = 1;
-  video->submitFrame(
+  submitFrame(video,
       wam::macos::FrameLease(regressedStale.buffer, regressedTiming));
   CVPixelBufferRelease(regressedStale.buffer);
   WAM_CHECK(video->stats().staleFrames ==
@@ -1566,7 +1581,7 @@ Item {
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   wam::macos::FrameTiming generationThreeTiming;
   generationThreeTiming.generation = 3;
-  video->submitFrame(
+  submitFrame(video,
       wam::macos::FrameLease(generationThree.buffer, generationThreeTiming));
   CVPixelBufferRelease(generationThree.buffer);
   window.requestUpdate();
@@ -1731,7 +1746,7 @@ Item {
   PixelBufferCreation blockedFrame = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  blockedItem->submitFrame(wam::macos::FrameLease(blockedFrame.buffer));
+  submitFrame(blockedItem, wam::macos::FrameLease(blockedFrame.buffer));
   CVPixelBufferRelease(blockedFrame.buffer);
   window.requestUpdate();
   WAM_CHECK(spinUntil(

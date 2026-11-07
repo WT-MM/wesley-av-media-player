@@ -1433,7 +1433,7 @@ if(APPLE)
       ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.mm)
     target_include_directories(wam_native_qt_gl_compositor_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_compile_definitions(wam_native_qt_gl_compositor_test PRIVATE
-      WAM_NATIVE_GL_VIDEO_TESTING=1
+      WAM_NATIVE_TEST_SEAMS=1
       GL_SILENCE_DEPRECATION=1)
     target_link_libraries(wam_native_qt_gl_compositor_test PRIVATE
       wam_macos_native_video_core
@@ -1465,7 +1465,7 @@ if(APPLE)
       ${PROJECT_SOURCE_DIR}/src/qt/macos/qt_gl_video_item.mm)
     target_include_directories(wam_native_qt_gl_output_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_compile_definitions(wam_native_qt_gl_output_test PRIVATE
-      WAM_NATIVE_GL_VIDEO_TESTING=1
+      WAM_NATIVE_TEST_SEAMS=1
       GL_SILENCE_DEPRECATION=1)
     target_link_libraries(wam_native_qt_gl_output_test PRIVATE
       wam_macos_native_video_core
