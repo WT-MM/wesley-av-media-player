@@ -190,6 +190,21 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
         run(command)
         result = run([a.routed_probe,short_video,root/'tail.f32','0'])
         assert 'exact=1 drained=1' in result.stderr, result.stderr
+        # Bytes after the last box route 48 kHz AAC MP4 to libavformat. Its
+        # seeks must preroll a few packets, not decode from the origin.
+        trailing = root/'trailing.mp4'
+        command = generation.copy()
+        command[command.index('aac_at')] = 'aac'
+        command[-1] = trailing
+        run(command)
+        trailing.write_bytes(trailing.read_bytes() + bytes(6))
+        whole = run([a.routed_probe,trailing,root/'whole.f32','0'])
+        seek = run([a.routed_probe,trailing,root/'seek.f32','3'])
+        assert 'stage=Libavformat' in seek.stderr and 'exact=1 drained=1' in seek.stderr, seek.stderr
+        assert int(re.search(r'\btrim=(\d+)', seek.stderr).group(1)) < 8192, seek.stderr
+        full = np.fromfile(root/'whole.f32',dtype='<f4').reshape(-1,2)
+        part = np.fromfile(root/'seek.f32',dtype='<f4').reshape(-1,2)
+        assert len(part) == len(full)-144000 and np.max(np.abs(full[144000:]-part)) < .002, seek.stderr
 
     def counts(log):
         return {key: int(re.search(r'\b'+key+r'=(\d+)', log).group(1))

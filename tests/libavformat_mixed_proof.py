@@ -1,5 +1,5 @@
 """Independent ffmpeg video timestamps and retained PCM for two-track libavformat playback."""
-import argparse,hashlib,json,pathlib,subprocess,tempfile
+import argparse,hashlib,json,pathlib,re,subprocess,tempfile
 from fractions import Fraction
 import numpy as np
 p=argparse.ArgumentParser()
@@ -41,14 +41,18 @@ with tempfile.TemporaryDirectory(prefix='wam-mixed-proof-',dir='/private/tmp') a
    rms=(squared/samples)**.5
    if baseline is None:
     assert maximum<.002 and rms<.0001,(name,target,maximum,rms)
-    baseline=actualPcm
+    baseline=actualPcm;exact=True
    else:
+    # A seek that decodes from the origin must reproduce the baseline exactly.
+    # Bounded AAC preroll differs only by decoder noise-substitution state.
+    exact=int(re.search(r'\btrim=(\d+)',result.stderr).group(1))>=first
     for begin in range(0,len(actualPcm),48000):
-     assert np.array_equal(actualPcm[begin:begin+48000],baseline[first+begin:first+begin+len(actualPcm[begin:begin+48000])]),(name,target,'native seek differs from exact baseline slice')
+     part=actualPcm[begin:begin+48000];base=baseline[first+begin:first+begin+len(part)]
+     assert np.array_equal(part,base) if exact else np.max(np.abs(part-base))<.002,(name,target,'native seek differs from baseline slice')
    # The first second provides a bounded correlation window at each exact landing.
    count=min(48000,len(actualPcm));x=np.asarray(actualPcm[:count,0]);y=np.asarray(want[first:first+count,0]);lag_errors={str(lag):float(np.mean((x[max(lag,0):count+min(lag,0)]-y[max(-lag,0):count-max(lag,0)])**2)) for lag in [-2,-1,0,1,2]}
    if first==0:assert lag_errors['0']<=min(lag_errors.values())+1e-14,(name,target,lag_errors)
-   cases.append(dict(target=target,first_frame=first,frames=len(actualPcm),max_error=maximum,rms=rms,alignment_frames=0,exact_baseline_slice=True,reference_lag_errors=lag_errors,log=result.stderr))
+   cases.append(dict(target=target,first_frame=first,frames=len(actualPcm),max_error=maximum,rms=rms,alignment_frames=0,exact_baseline_slice=exact,reference_lag_errors=lag_errors,log=result.stderr))
    del actualPcm;pcm.unlink()
   rows.append(dict(asset=name,asset_sha256=hashlib.sha256(asset.read_bytes()).hexdigest(),video_end=str(videoEnd),audio_end=str(duration),endpoint_difference=str(videoEnd-duration),video_frames=len(expected),exact_pts=len(actual),exact_durations=len(actual),video_log=video.stdout+video.stderr,audio_frames=len(want),cases=cases))
   del want,baseline;reference.unlink()
