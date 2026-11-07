@@ -41,15 +41,27 @@ def records(text):
 def run(executable, args, env, log, timeout):
     """Runs WAM to completion with stdout/stderr in log. Returns (code, text).
 
-    Kills only its own child on timeout and raises."""
+    On timeout, samples the hung child's stacks into <log>.sample.txt, kills
+    only that child and raises with the log tail, so a hang fails in bounded
+    time with the evidence needed to find it."""
     log = Path(log)
     with log.open('w') as sink:
         child = subprocess.Popen([str(executable)] + [str(a) for a in args], env=env,
-                                 stdout=sink, stderr=sink)
+                                 stdin=subprocess.DEVNULL, stdout=sink, stderr=sink)
         try:
             code = child.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            stacks = log.with_name(log.name + '.sample.txt')
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                subprocess.run(['/usr/bin/sample', str(child.pid), '1', '-file', str(stacks)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
             child.kill()
-            child.wait()
-            raise AssertionError('Own child timed out; log: ' + str(log))
+            try:
+                child.wait(timeout=10)
+                fate = 'killed'
+            except subprocess.TimeoutExpired:
+                fate = 'still alive 10 s after SIGKILL (stuck in the kernel)'
+            raise AssertionError(f'WAM pid {child.pid} did not exit within {timeout:g} s and was {fate}; '
+                                 f'stacks: {stacks}; log: {log}\n'
+                                 + log.read_text(errors='replace')[-3000:])
     return code, log.read_text(errors='replace')
