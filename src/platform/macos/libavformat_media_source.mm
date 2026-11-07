@@ -474,13 +474,10 @@ struct LibavformatMediaSource::Impl final
   context->audioOnly=audioOnly;context->audioStream=audio;
   context->audioOrigin=audioOrigin;
   context->audioDemuxOrigin=audioOrigin;
-  // 48 kHz AAC on the exact-demux-timeline route, and FLV AAC, decode from the
-  // origin to keep bit-identical PCM (including decoder noise state). Other
-  // AAC (other rates, ordinary MP4/Matroska) uses bounded preroll.
+  // AAC seeks use bounded preroll; decoding from the origin makes seek cost
+  // grow with the target time. FLV AAC still decodes from the origin.
   context->aacBoundedSeek=audio && audioTrack.codec==MediaCodec::Aac &&
-      std::string_view(reader->cursor.formatName())!="flv" &&
-      (audioTrack.audio->sampleRate!=48000 ||
-       !LibavformatCursor::requiresExactDemuxTimeline(path,cancellation()));
+      std::string_view(reader->cursor.formatName())!="flv";
   if(audio)context->audioQuantum=reader->cursor.stream(*audio).timeBase;
   if(audioOnly)context->raps.push_back({0,1});
   LibavformatCursor::Packet packet;
