@@ -172,7 +172,7 @@ bool SoftwareAvcodecAudioBackend::outputChannelRoles(std::span<media::AudioChann
   std::copy_n(s.roles.begin(),s.configuration.outputChannels,roles.begin());
   if(count)*count=s.configuration.outputChannels;return true;
 }
-#if defined(WAM_AVCODEC_AUDIO_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 media::avcodec::FrameResult SoftwareAvcodecAudioBackendTestAccess::receive(
     SoftwareAvcodecAudioBackend& backend,const AVFrame& frame) noexcept {
   return SoftwareAvcodecAudioBackend::Impl::receive(backend.impl_.get(),frame,{});

@@ -1327,11 +1327,9 @@ if(WAM_ENABLE_AVCODEC_STAGE)
     software_avcodec_video_hi10p software_avcodec_video_h264422 software_avcodec_video_asp
     software_avcodec_video_vp9 software_avcodec_video_vp9p2
     PROPERTIES FIXTURES_REQUIRED avcodec_media)
-  add_executable(wam_software_avcodec_audio_test software_avcodec_audio_test.cpp
-    ${PROJECT_SOURCE_DIR}/src/platform/macos/software_avcodec_audio_backend.cpp)
-  target_compile_definitions(wam_software_avcodec_audio_test PRIVATE WAM_AVCODEC_AUDIO_TESTING=1)
-  target_link_libraries(wam_software_avcodec_audio_test PRIVATE wam_avcodec_worker)
-  target_sources(wam_software_avcodec_audio_test PRIVATE ${PROJECT_SOURCE_DIR}/src/media/audio_downmix.cpp)
+  add_executable(wam_software_avcodec_audio_test software_avcodec_audio_test.cpp)
+  target_link_libraries(wam_software_avcodec_audio_test PRIVATE
+    wam_avcodec_worker_test_seams wam_native_core_test_seams)
   foreach(specimen IN ITEMS dts truehd mlp)
     add_test(NAME software_avcodec_audio_${specimen} COMMAND wam_software_avcodec_audio_test
       "${PROJECT_BINARY_DIR}/test-media/native-coverage/phase2/${specimen}.audio-packets"
@@ -1352,7 +1350,7 @@ if(WAM_ENABLE_AVCODEC_STAGE)
   target_include_directories(wam_avcodec_instrumented PUBLIC ${PROJECT_SOURCE_DIR}/src)
   target_compile_features(wam_avcodec_instrumented PUBLIC cxx_std_20)
   target_compile_definitions(wam_avcodec_instrumented PRIVATE WAM_AVCODEC_ALLOCATION_PROBE=1)
-  target_link_libraries(wam_avcodec_instrumented PUBLIC wam_ffmpeg_lgpl)
+  target_link_libraries(wam_avcodec_instrumented PUBLIC wam_ffmpeg_lgpl wam_pins)
   add_library(wam_avcodec_probe_hooks SHARED avcodec_allocation_probe.cpp)
   target_include_directories(wam_avcodec_probe_hooks PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_compile_definitions(wam_avcodec_probe_hooks PRIVATE WAM_AVCODEC_ALLOCATION_PROBE=1)
@@ -1360,12 +1358,14 @@ if(WAM_ENABLE_AVCODEC_STAGE)
   add_executable(wam_avcodec_allocation_test avcodec_worker_test.cpp)
   target_compile_definitions(wam_avcodec_allocation_test PRIVATE WAM_AVCODEC_ALLOCATION_PROBE=1)
   target_link_libraries(wam_avcodec_allocation_test PRIVATE wam_avcodec_instrumented)
+  # The allocation-probe build is instrumented code, not a seam: it keeps a
+  # private copy of the audio backend compiled with the probe.
   add_executable(wam_avcodec_audio_allocation_test software_avcodec_audio_test.cpp
     ${PROJECT_SOURCE_DIR}/src/platform/macos/software_avcodec_audio_backend.cpp)
   target_compile_definitions(wam_avcodec_audio_allocation_test PRIVATE
-    WAM_AVCODEC_ALLOCATION_PROBE=1 WAM_AVCODEC_AUDIO_TESTING=1)
-  target_link_libraries(wam_avcodec_audio_allocation_test PRIVATE wam_avcodec_instrumented)
-  target_sources(wam_avcodec_audio_allocation_test PRIVATE ${PROJECT_SOURCE_DIR}/src/media/audio_downmix.cpp)
+    WAM_AVCODEC_ALLOCATION_PROBE=1 WAM_NATIVE_TEST_SEAMS=1)
+  target_link_libraries(wam_avcodec_audio_allocation_test PRIVATE
+    wam_avcodec_instrumented wam_native_core_test_seams)
 
   foreach(specimen IN ITEMS dts51 truehd51)
     add_test(NAME software_avcodec_audio_${specimen} COMMAND wam_software_avcodec_audio_test
