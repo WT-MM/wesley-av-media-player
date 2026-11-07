@@ -195,6 +195,10 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/main.cpp
   src/qt/player_controller.cpp
   src/qt/player_controller.hpp
+  src/qt/app_settings.cpp
+  src/qt/app_settings.hpp
+  src/qt/mpv_engine.cpp
+  src/qt/mpv_engine.hpp
   src/qt/subtitle_sources.cpp
   src/qt/subtitle_sources.hpp
   src/qt/subtitle_bitmap_provider.cpp
@@ -210,6 +214,8 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/mpv_video_item.hpp
   src/qt/window_manager.cpp
   src/qt/window_manager.hpp
+  src/qt/media_url.cpp
+  src/qt/media_url.hpp
   src/jobs.cpp
   src/jobs.hpp
   src/caption_service.cpp
@@ -231,7 +237,6 @@ qt_add_qml_module(wam
     qml/QuickEditSheet.qml
     qml/CropOverlay.qml
     qml/PreferencesWindow.qml
-    qml/AppPreferences.qml
     qml/Scrubber.qml
     qml/AppMenuBar.qml
     qml/AppMenu.qml)
@@ -970,6 +975,12 @@ if(BUILD_TESTING)
   target_include_directories(wam_playback_policy_test PRIVATE src)
   add_test(NAME playback_policy COMMAND wam_playback_policy_test)
 
+  add_executable(wam_launch_rules_test tests/launch_rules_test.cpp
+    src/qt/media_url.cpp src/qt/media_url.hpp)
+  target_include_directories(wam_launch_rules_test PRIVATE src src/qt)
+  target_link_libraries(wam_launch_rules_test PRIVATE Qt6::Core)
+  add_test(NAME launch_rules COMMAND wam_launch_rules_test)
+
   add_executable(wam_mpv_hwdec_interop_policy_test
     tests/mpv_hwdec_interop_policy_test.cpp
     src/qt/mpv_hwdec_interop_policy.hpp)
@@ -1006,6 +1017,10 @@ if(BUILD_TESTING)
     src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
+    src/qt/app_settings.cpp
+    src/qt/app_settings.hpp
+    src/qt/mpv_engine.cpp
+    src/qt/mpv_engine.hpp
     src/qt/subtitle_sources.cpp
     src/qt/subtitle_sources.hpp
     src/qt/subtitle_bitmap_provider.cpp
@@ -1038,7 +1053,8 @@ if(BUILD_TESTING)
     Qt6::Gui
     Qt6::Quick
     Qt6::OpenGL
-    ${WAM_MPV_INTEGRATION_TEST_TARGET})
+    ${WAM_MPV_INTEGRATION_TEST_TARGET}
+    wam_mpv_runtime)
   add_test(NAME player_controller_lazy COMMAND wam_player_controller_lazy_test)
   set_tests_properties(player_controller_lazy PROPERTIES TIMEOUT 20)
 
@@ -1048,6 +1064,10 @@ if(BUILD_TESTING)
     src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
+    src/qt/app_settings.cpp
+    src/qt/app_settings.hpp
+    src/qt/mpv_engine.cpp
+    src/qt/mpv_engine.hpp
     src/qt/subtitle_sources.cpp
     src/qt/subtitle_sources.hpp
     src/qt/subtitle_bitmap_provider.cpp
@@ -1085,7 +1105,8 @@ if(BUILD_TESTING)
     Qt6::Gui
     Qt6::Quick
     Qt6::OpenGL
-    ${WAM_MPV_INTEGRATION_TEST_TARGET})
+    ${WAM_MPV_INTEGRATION_TEST_TARGET}
+    wam_mpv_runtime)
   add_test(NAME player_core_render_context_permission
     COMMAND wam_player_core_render_context_permission_test)
   set_tests_properties(player_core_render_context_permission PROPERTIES
@@ -1137,6 +1158,10 @@ if(BUILD_TESTING)
       src/qt/mpv_video_item.hpp
       src/qt/player_controller.cpp
       src/qt/player_controller.hpp
+      src/qt/app_settings.cpp
+      src/qt/app_settings.hpp
+      src/qt/mpv_engine.cpp
+      src/qt/mpv_engine.hpp
       src/qt/subtitle_sources.cpp
       src/qt/subtitle_sources.hpp
       src/qt/subtitle_bitmap_provider.cpp

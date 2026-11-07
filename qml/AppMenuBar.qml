@@ -43,7 +43,7 @@ Platform.MenuBar {
     function stepLabel(action) {
         if (!root.hasController)
             return action;
-        const step = Number(root.controller.seekStepSeconds);
+        const step = Number(appSettings.seekStepSeconds);
         const formatted = step.toFixed(step % 1 === 0 ? 0 : 1);
         return action + " " + formatted + (step === 1 ? " Second" : " Seconds");
     }
@@ -390,9 +390,9 @@ Platform.MenuBar {
             id: hugsVideoMenuItem
             text: "Window Hugs Video"
             checkable: true
-            checked: root.hasController ? root.controller.windowHugsVideo : true
+            checked: appSettings.windowHugsVideo
             enabled: root.hasController
-            onTriggered: root.controller.setWindowHugsVideo(checked)
+            onTriggered: appSettings.windowHugsVideo = checked
         }
         Platform.MenuSeparator {}
         // Vivid boost and Theater dim: two independent viewing modes, kept as
@@ -438,27 +438,24 @@ Platform.MenuBar {
         }
     }
 
-    // Keeps the View menu's "Window Hugs Video" checkbox following the focused
-    // controller's actual value -- both for external changes (Preferences,
-    // another window) and to undo Qt.labs.platform's own direct write to
+    // Keeps the View menu's "Window Hugs Video" checkbox following the
+    // setting's actual value -- both for external changes (Preferences) and
+    // to undo Qt.labs.platform's own direct write to
     // `checked` on every click, which per ordinary QML property semantics
     // detaches any plain Binding on that property for good the first time the
     // item is clicked. Connections sidesteps that: it establishes no binding,
     // just an imperative re-write triggered by the real signal, so it keeps
-    // working after any number of clicks. It re-targets as focus moves between
-    // windows, which is what makes one app-level menu bar honest about N
-    // windows' state.
+    // working after any number of clicks.
     Connections {
-        target: root.controller
+        target: appSettings
         function onWindowHugsVideoChanged() {
-            if (root.controller)
-                hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
+            hugsVideoMenuItem.checked = appSettings.windowHugsVideo;
         }
     }
 
     // The same imperative re-sync for the padded-fill item, against the
-    // focused WINDOW rather than its controller -- padded fill is per window
-    // and deliberately not a controller-level (mirrored, persisted) setting.
+    // focused WINDOW -- padded fill is per window and deliberately not an
+    // app-level (persisted) setting.
     Connections {
         target: root.appRoot
         function onFillScreenPaddedChanged() {
@@ -496,13 +493,6 @@ Platform.MenuBar {
         // The Subtitles menu is per focused window: moving focus between two
         // windows must show each one's own tracks and its own selection.
         root.rebuildSubtitleItems();
-        // Reads `root.controller` directly rather than the `hasController`
-        // convenience: on the way out the controller reference and the derived
-        // binding are cleared in an unspecified order, and this handler runs
-        // on the reference's change. Testing the thing actually about to be
-        // dereferenced is the only ordering-independent guard.
-        if (root.controller)
-            hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
     }
 
     Platform.MessageDialog {

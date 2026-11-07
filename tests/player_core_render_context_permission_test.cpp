@@ -70,7 +70,7 @@ public:
   }
 
   static std::shared_ptr<PlayerCore> core(PlayerController &owner) {
-    return owner.core_;
+    return owner.mpv_.core;
   }
 
   static void injectEventQueue(PlayerCore &core, std::function<bool()> queue) {

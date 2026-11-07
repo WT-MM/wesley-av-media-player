@@ -39,32 +39,10 @@ enum class NativeOwnerError : std::uint8_t {
 
 class NativePlaybackOwner {
 public:
-  enum class PauseDisposition : std::uint8_t {
-    NotOwned,
-    NativeHandled,
-    FallbackHandled,
-  };
-
-  enum class SeekDisposition : std::uint8_t {
-    NotOwned,
-    NativeHandled,
-    NativeRejected,
-    FallbackHandled,
-  };
-
-  enum class PreviewDisposition : std::uint8_t {
-    NotOwned,
-    Accepted,
-    Replaced,
-    Stale,
-    Rejected,
-  };
-
-  enum class PreviewHandoffDisposition : std::uint8_t {
-    Prepared,
-    Deferred,
-    Unsupported,
-  };
+  using PauseDisposition = playback_router::PauseDisposition;
+  using SeekDisposition = playback_router::SeekDisposition;
+  using PreviewDisposition = playback_router::PreviewDisposition;
+  using PreviewHandoffDisposition = playback_router::PreviewHandoffDisposition;
 
   NativePlaybackOwner();
   virtual ~NativePlaybackOwner();
@@ -75,12 +53,6 @@ public:
   // the lane without a second main-consumer quiesce. Refusal is deliberately
   // quiet; the final CommitSeek remains authoritative even when visual
   // preview preparation is unavailable.
-  // Deferred and Unsupported are both quiet refusals, but they mean opposite
-  // things to a caller: Deferred is "not right now" (wrong router state, a
-  // handoff already in flight) and the next gesture may well succeed, while
-  // Unsupported is "not for this source at all" -- an audio-only binding has
-  // no frame to preview and never will, so the caller should stop demanding
-  // one for the whole gesture instead of collecting a failure per sample.
   [[nodiscard]] PreviewHandoffDisposition preparePreviewHandoff();
   [[nodiscard]] PreviewDisposition previewFrame(double, std::uint64_t, std::uint64_t);
   [[nodiscard]] SeekDisposition commitSeek(media::MediaTime, std::uint64_t, std::uint64_t, bool);
