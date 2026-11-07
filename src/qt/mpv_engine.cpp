@@ -51,6 +51,30 @@ struct ReadyMpvClient final {
   return api && handle ? ReadyMpvClient{api, handle} : ReadyMpvClient{};
 }
 
+bool readFlag(const mpv_event_property *property, bool fallback) {
+  return property && property->format == MPV_FORMAT_FLAG && property->data
+             ? *static_cast<int *>(property->data) != 0
+             : fallback;
+}
+
+double readDouble(const mpv_event_property *property, double fallback) {
+  if (!property || property->format != MPV_FORMAT_DOUBLE || !property->data)
+    return fallback;
+  const double value = *static_cast<double *>(property->data);
+  return std::isfinite(value) ? value : fallback;
+}
+
+QString readString(const mpv_event_property *property) {
+  if (!property || property->format != MPV_FORMAT_STRING || !property->data)
+    return {};
+  const char *value = *static_cast<char **>(property->data);
+  return value ? QString::fromUtf8(value) : QString{};
+}
+
+std::int64_t readTrackSelection(const mpv_event_property *property) {
+  return parseTrackSelection(readString(property));
+}
+
 } // namespace
 
 std::int64_t parseTrackSelection(const QString &text) {
@@ -1278,7 +1302,7 @@ void MpvEngine::finishRenderRecoveryCompletion(
   // Property events already queued by the synchronous restore writes must
   // remain gated. A later EOF, Open, Stop or renderer invalidation mutates the
   // identity checked below and wins over this completion.
-  host_.drainMpvEvents();
+  drainMpvEvents();
   if (!completion_is_current())
     return;
 
@@ -1411,7 +1435,7 @@ void MpvEngine::finishStartupPlaybackSync(
   // The one-shot pause/idle transitions for a new file may precede START_FILE.
   // Drain them while startup synchronization still gates observations, then
   // publish a single authoritative snapshot from the live engine.
-  host_.drainMpvEvents();
+  drainMpvEvents();
   if (!completion_is_current())
     return;
 
@@ -1548,7 +1572,8 @@ void MpvEngine::degradeRenderRecovery(const QString &error) {
 void MpvEngine::handleRenderInvalidated(
     std::uint64_t retired_render_stamp) {
   const std::shared_ptr<PlayerCore> notifying_core = core;
-  host_.fallbackRenderStateChanged();
+  if (NativeEngine *native = host_.nativeEngine())
+    native->fallbackRenderStateChanged();
   if (core != notifying_core)
     return;
   if (host_.requestedSource().isEmpty())
@@ -1883,7 +1908,8 @@ void MpvEngine::handleOpenCommandReply(std::uint64_t attempt_id,
   if (lineage.routed_fallback_open) {
     const RoutedFallbackOpen routed = *lineage.routed_fallback_open;
     lineage.routed_fallback_open.reset();
-    host_.fallbackOpenSucceeded(routed.attempt, routed.serial,
+    if (NativeEngine *native = host_.nativeEngine())
+      native->fallbackOpenSucceeded(routed.attempt, routed.serial,
                                 routed.source_key);
   }
 }
@@ -2130,8 +2156,10 @@ void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
     lineage.last_error_playlist_entry_id = end.playlist_entry_id;
     QString failure = QStringLiteral("Could not open this file: %1")
                           .arg(mpvErrorDetail(end.error));
-    host_.setLastError(host_.playbackFailureText(failure));
-    host_.fallbackPlaybackFailed();
+    NativeEngine *native = host_.nativeEngine();
+    host_.setLastError(native ? native->playbackFailureText(failure) : failure);
+    if (native)
+      native->fallbackPlaybackFailed();
   }
 }
 
@@ -2201,7 +2229,7 @@ void MpvEngine::handlePlaybackReady(bool file_loaded) {
     // check in applyObservedVideoFacts while mpv still has the outgoing file;
     // this is the reliable second look, and updateVideoFacts dedupes so
     // the common case where both agree costs one comparison.
-    host_.applyObservedVideoFacts();
+    applyObservedVideoFacts();
   }
   restoreRenderRecovery();
 }
@@ -2255,11 +2283,12 @@ void MpvEngine::cacheCurrentEntrySource() {
 }
 
 void MpvEngine::notifyRoutedFallbackOpenFailed() {
-  if (!host_.hasNativeEngine() || !lineage.routed_fallback_open)
+  NativeEngine *native = host_.nativeEngine();
+  if (!native || !lineage.routed_fallback_open)
     return;
   const RoutedFallbackOpen routed = *lineage.routed_fallback_open;
   lineage.routed_fallback_open.reset();
-  host_.fallbackOpenFailed(routed.attempt, routed.serial, routed.source_key);
+  native->fallbackOpenFailed(routed.attempt, routed.serial, routed.source_key);
 }
 
 void MpvEngine::RenderRecovery::restartForNewRenderContext() {
@@ -2301,6 +2330,329 @@ void MpvEngine::RenderRecovery::restartForNewPlaylistEntry() {
   restore_retry_count = 0;
   restore_retry_queued = false;
   restore_failure.clear();
+}
+
+void MpvEngine::observeProperties() {
+  mpv_handle *handle = core->handle();
+  const MpvApi &api = core->api();
+  const auto observe = [&api, handle](ObservedProperty id, const char *name,
+                                      mpv_format format) {
+    api.mpv_observe_property(handle, static_cast<uint64_t>(id), name, format);
+  };
+  observe(ObservedProperty::Pause, "pause", MPV_FORMAT_FLAG);
+  observe(ObservedProperty::Idle, "idle-active", MPV_FORMAT_FLAG);
+  observe(ObservedProperty::Position, "time-pos", MPV_FORMAT_DOUBLE);
+  observe(ObservedProperty::Duration, "duration", MPV_FORMAT_DOUBLE);
+  observe(ObservedProperty::Volume, "volume", MPV_FORMAT_DOUBLE);
+  observe(ObservedProperty::Mute, "mute", MPV_FORMAT_FLAG);
+  observe(ObservedProperty::Rate, "speed", MPV_FORMAT_DOUBLE);
+  // sub-visibility is deliberately NOT observed: it is pinned off above and is
+  // not the user's caption switch. captionsVisible means "a subtitle source is
+  // selected", which is app state on both routes.
+  observe(ObservedProperty::Path, "path", MPV_FORMAT_STRING);
+  observe(ObservedProperty::MediaTitle, "media-title", MPV_FORMAT_STRING);
+  observe(ObservedProperty::PreservePitch, "audio-pitch-correction",
+          MPV_FORMAT_FLAG);
+  observe(ObservedProperty::EofReached, "eof-reached", MPV_FORMAT_FLAG);
+  observe(ObservedProperty::VideoTrack, "vid", MPV_FORMAT_STRING);
+  observe(ObservedProperty::AudioTrack, "aid", MPV_FORMAT_STRING);
+  observe(ObservedProperty::SubtitleTrack, "sid", MPV_FORMAT_STRING);
+  observe(ObservedProperty::SubtitleText, "sub-text", MPV_FORMAT_STRING);
+  observe(ObservedProperty::TrackListCount, "track-list/count",
+          MPV_FORMAT_INT64);
+  observe(ObservedProperty::DisplayWidth, "dwidth", MPV_FORMAT_INT64);
+  observe(ObservedProperty::DisplayHeight, "dheight", MPV_FORMAT_INT64);
+  observe(ObservedProperty::VideoGamma, "video-params/gamma", MPV_FORMAT_STRING);
+}
+
+void MpvEngine::drainMpvEvents() {
+  if (!ready())
+    return;
+
+  struct NativeDrainScope final {
+    NativeEngine *owner{nullptr};
+    explicit NativeDrainScope(NativeEngine *value) : owner(value) {
+      if (owner)
+        owner->beginFallbackEventDrain();
+    }
+    ~NativeDrainScope() {
+      if (owner)
+        owner->endFallbackEventDrain();
+    }
+  } native_drain_scope{host_.nativeEngine()};
+
+  NativeEngine *const native = host_.nativeEngine();
+  while (true) {
+    mpv_event *event = core->api().mpv_wait_event(core->handle(), 0.0);
+    if (!event || event->event_id == MPV_EVENT_NONE)
+      break;
+
+    if (event->event_id == MPV_EVENT_COMMAND_REPLY) {
+      const MpvReplyTag reply = parseMpvReply(event->reply_userdata);
+      if (native && reply.kind == MpvReply::FallbackStop) {
+        native->fallbackStopCommandReply(reply.id, event->error);
+        continue;
+      }
+      if (reply.kind == MpvReply::Scrub) {
+        handleScrubCommandReply(reply.id, event->error);
+        continue;
+      }
+      if (reply.kind == MpvReply::Open) {
+        observeOpenCommandReply(reply.id, event->error);
+        continue;
+      }
+      if (reply.kind == MpvReply::RenderRecovery) {
+        handleRenderRecoveryCommandReply(reply.id, event->error);
+        continue;
+      }
+    }
+
+    // A retained compatibility handle is dormant during native playback.
+    // Ignore its stale file/property stream, while the exact Stop command
+    // reply above and idle observation below remain admitted during fallback
+    // retirement.
+    if (native &&
+        !native->acceptsFallbackPlaybackEvents()) {
+      continue;
+    }
+
+    if (event->event_id == MPV_EVENT_START_FILE) {
+      core->beginFallbackMetricsEpoch();
+      const auto *start = static_cast<mpv_event_start_file *>(event->data);
+      handleStartFile(start ? start->playlist_entry_id : -1);
+      continue;
+    }
+
+    if (event->event_id == MPV_EVENT_FILE_LOADED) {
+      handlePlaybackReady(true);
+      continue;
+    }
+
+    if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) {
+      if (native)
+        native->noteFallbackSeek(false);
+      handleScrubPlaybackRestart();
+      handlePlaybackReady(false);
+      continue;
+    }
+
+    if (event->event_id == MPV_EVENT_SEEK) {
+      noteSeekStarted();
+      continue;
+    }
+
+    if (event->event_id == MPV_EVENT_LOG_MESSAGE) {
+      const auto *message = static_cast<mpv_event_log_message *>(event->data);
+      if (message && message->text) {
+        qWarning().noquote().nospace()
+            << "WAM media engine [" << (message->prefix ? message->prefix : "")
+            << "]: " << QString::fromUtf8(message->text).trimmed();
+      }
+      continue;
+    }
+
+    if (event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
+      auto *property = static_cast<mpv_event_property *>(event->data);
+      if (!property)
+        continue;
+      const auto id = static_cast<ObservedProperty>(event->reply_userdata);
+      switch (id) {
+      case ObservedProperty::Pause:
+        applyObservedPause(readFlag(property, true));
+        break;
+      case ObservedProperty::Idle: {
+        const bool idle = readFlag(property, true);
+        applyObservedIdle(idle);
+        if (native)
+          native->fallbackIdleChanged(idle);
+        break;
+      }
+      case ObservedProperty::Position: {
+        // mpv reports an unavailable property with no data while replacing a
+        // file or video output. Preserve the last real timestamp so renderer
+        // recovery can resume instead of silently falling back to zero.
+        if (property->format != MPV_FORMAT_DOUBLE || !property->data)
+          break;
+        applyObservedPosition(readDouble(property, 0.0));
+        break;
+      }
+      case ObservedProperty::Duration: {
+        if (property->format != MPV_FORMAT_DOUBLE || !property->data)
+          break;
+        applyObservedDuration(readDouble(property, 0.0));
+        break;
+      }
+      case ObservedProperty::Volume:
+        host_.applyObservedVolume(readDouble(property, 100.0) / 100.0);
+        break;
+      case ObservedProperty::Mute:
+        host_.applyObservedMute(readFlag(property, false));
+        break;
+      case ObservedProperty::Rate:
+        host_.applyObservedRate(readDouble(property, 1.0));
+        break;
+      case ObservedProperty::Path: {
+        const QUrl observed_source = urlFromMpvPath(readString(property));
+        // host_.requestedSource() is authoritative across asynchronous replacement.
+        // Ignore empty transition values and paths from an older request; Stop
+        // clears the visible source synchronously itself.
+        if (host_.requestedSource().isEmpty() || observed_source.isEmpty())
+          break;
+        if (lineage.pending_source.isEmpty() && lineage.committed_open &&
+            lineage.committed_open->request_serial == host_.requestSerial() &&
+            lineage.committed_open->playlist_entry_id >= 0 &&
+            lineage.committed_open->playlist_entry_id ==
+                lineage.active_event_playlist_entry_id) {
+          lineage.committed_entry_source = observed_source;
+        }
+        if (sourceIdentity(observed_source) !=
+            sourceIdentity(host_.requestedSource())) {
+          break;
+        }
+        lineage.observed_current_path = true;
+        host_.updateSource(observed_source);
+        break;
+      }
+      case ObservedProperty::MediaTitle: {
+        QString value = readString(property);
+        if (!lineage.observed_current_path && !value.isEmpty())
+          break;
+        if (value.isEmpty())
+          value = fallbackTitle(host_.source());
+        host_.updateMediaTitle(value);
+        break;
+      }
+      case ObservedProperty::PreservePitch:
+        host_.applyObservedPreservePitch(readFlag(property, true));
+        break;
+      case ObservedProperty::EofReached:
+        applyObservedEof(readFlag(property, false));
+        break;
+      case ObservedProperty::VideoTrack:
+        applyObservedVideoTrack(readTrackSelection(property));
+        break;
+      case ObservedProperty::AudioTrack:
+        applyObservedAudioTrack(readTrackSelection(property));
+        break;
+      case ObservedProperty::SubtitleTrack:
+        applyObservedSubtitleTrack(readTrackSelection(property));
+        break;
+      case ObservedProperty::SubtitleText:
+        host_.applyObservedSubtitleText(readString(property));
+        break;
+      case ObservedProperty::TrackListCount:
+        // A `sub-add` (generated captions, a loaded file) changes the track
+        // set without any other signal, so this is how a new source reaches
+        // the menu.
+        host_.refreshSubtitleSources();
+        break;
+      case ObservedProperty::DisplayWidth:
+      case ObservedProperty::DisplayHeight:
+      case ObservedProperty::VideoGamma:
+        // Any of them means "the picture may have changed"; each reads all
+        // three back (see the enum comment).
+        applyObservedVideoFacts();
+        break;
+      }
+      continue;
+    }
+
+    if (event->event_id == MPV_EVENT_END_FILE) {
+      const auto *end = static_cast<mpv_event_end_file *>(event->data);
+      if (end) {
+        // Failed/empty opens may end without PLAYBACK_RESTART. Retire their
+        // accepted command using the matching START_FILE identity as well.
+        if (lineage.open_attempt && lineage.open_attempt->reply_ready &&
+            lineage.open_attempt->playlist_entry_id == end->playlist_entry_id)
+          handleOpenCommandReply(lineage.open_attempt->id, 0);
+        handleEndFile(*end);
+      }
+    }
+  }
+}
+
+void MpvEngine::applyObservedPause(bool paused) {
+  if (acceptsPlaybackObservation())
+    host_.updatePause(paused);
+}
+
+void MpvEngine::applyObservedPosition(double position) {
+  if (!std::isfinite(position))
+    return;
+  const double value = std::max(0.0, position);
+  if (observeScrubPosition(value))
+    return;
+  if (!acceptsPlaybackObservation())
+    return;
+  host_.updatePosition(value);
+}
+
+void MpvEngine::applyObservedDuration(double duration) {
+  if (!acceptsPlaybackObservation() || !std::isfinite(duration))
+    return;
+  host_.updateDuration(duration);
+}
+
+void MpvEngine::applyObservedVideoFacts() {
+  if (!core || !ready() || lineage.open_attempt)
+    return;
+  // Deliberately NOT gated on acceptsPlaybackObservation(), which every other
+  // observation here does use. mpv announces dwidth/dheight once per file,
+  // during the open, while that gate is still closed, and never again unless
+  // the value changes. Gating here would discard the only announcement there
+  // is and leave the fallback route's size at (0, 0) for the whole session.
+  //
+  // The hazard the gate guards against -- a previous file's value landing on
+  // the current one -- is checked directly instead, and more precisely: the
+  // size and the path it belongs to are read from the same mpv instance in
+  // the same breath, and the pair is published only if that path is the media
+  // this controller has already committed to. A size read while mpv still has
+  // the outgoing file loaded therefore cannot be attributed to the incoming
+  // one.
+  const QSize size = currentVideoDisplaySize();
+  if (size.isEmpty())
+    return;
+  const QString gamma = stringProperty("video-params/gamma").value_or(QString());
+  const bool hdr = gamma == QLatin1String("pq") || gamma == QLatin1String("hlg");
+  const auto path = stringProperty("path");
+  if (!path)
+    return;
+  const QUrl playing = urlFromMpvPath(*path);
+  if (playing.isEmpty() || playing != host_.source())
+    return;
+  host_.updateVideoFacts({size.width(), 1}, {size.height(), 1}, hdr);
+}
+
+void MpvEngine::applyObservedIdle(bool idle) {
+  if (acceptsPlaybackObservation())
+    host_.updateIdle(idle);
+}
+
+void MpvEngine::applyObservedEof(bool eof_reached) {
+  if (acceptsPlaybackObservation())
+    host_.updateEof(eof_reached);
+}
+
+void MpvEngine::applyObservedVideoTrack(std::int64_t video_track_id) {
+  if (!acceptsPlaybackObservation())
+    return;
+  lineage.selected_video_track_id = video_track_id >= 0 ? video_track_id : -1;
+  lineage.selected_tracks_playlist_entry_id = lineage.committed_open->playlist_entry_id;
+}
+
+void MpvEngine::applyObservedAudioTrack(std::int64_t audio_track_id) {
+  if (!acceptsPlaybackObservation())
+    return;
+  lineage.selected_audio_track_id = audio_track_id >= 0 ? audio_track_id : -1;
+  lineage.selected_tracks_playlist_entry_id = lineage.committed_open->playlist_entry_id;
+}
+
+void MpvEngine::applyObservedSubtitleTrack(
+    std::int64_t subtitle_track_id) {
+  if (!acceptsPlaybackObservation())
+    return;
+  lineage.selected_subtitle_track_id = subtitle_track_id >= 0 ? subtitle_track_id : -1;
+  lineage.selected_tracks_playlist_entry_id = lineage.committed_open->playlist_entry_id;
 }
 
 void MpvEngine::detachOwner() {

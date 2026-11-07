@@ -512,42 +512,6 @@ private:
   using NativePreviewDemandObserver = void (*)(
       void *context, const NativePreviewIntent &intent) noexcept;
 
-  enum class ObservedProperty : uint64_t {
-    Pause = 1,
-    Idle,
-    Position,
-    Duration,
-    Volume,
-    Mute,
-    Rate,
-    Path,
-    MediaTitle,
-    PreservePitch,
-    EofReached,
-    VideoTrack,
-    AudioTrack,
-    SubtitleTrack,
-    // The current subtitle line, as mpv times it. Observed rather than polled
-    // because mpv is the only thing that knows when a cue turns over, and it
-    // keeps publishing this with its own rendering switched off.
-    SubtitleText,
-    // A cheap scalar that changes whenever the track set does -- which is how
-    // a `sub-add` becomes a new entry in the Subtitles menu. Observing
-    // `track-list` itself would mean MPV_FORMAT_NODE and a matching
-    // mpv_free_node_contents, which is not in the resolved symbol table.
-    TrackListCount,
-    // The video facts (see videoDisplaySize). mpv's dwidth/dheight already
-    // apply the container's aspect ratio and rotation.
-    //
-    // Three observations, one fact: they arrive as independent events and
-    // either size half alone would publish half a new aspect over half an old
-    // one. Every handler therefore reads all three back synchronously
-    // (mpv_get_property, an in-process struct read) and publishes them
-    // together; the observation only decides WHEN to look.
-    DisplayWidth,
-    DisplayHeight,
-    VideoGamma,
-  };
 
   void requestVideoUpdate() override;
   [[nodiscard]] static std::optional<std::uint64_t>
@@ -643,8 +607,6 @@ private:
   void publishNativeFrameGeometry(double start_seconds,
                                   double duration_seconds) override;
   void updatePosition(double position) override;
-  void applyObservedPause(bool paused);
-  void applyObservedPosition(double position);
   // --- subtitles -------------------------------------------------------
   // Rebuilds the source list for the current media from whichever engine owns
   // it. Idempotent and cheap to call again; it does nothing when the route and
@@ -666,16 +628,6 @@ private:
   // Adds a sidecar subtitle file on whichever route is live and selects it.
   bool attachSubtitleSource(const std::filesystem::path &path, int origin,
                             const QString &label);
-  void applyObservedDuration(double duration);
-  // Reads mpv's dwidth/dheight pair and gamma back and publishes them. Takes
-  // no argument on purpose: the observation that triggered it carries only
-  // one of them, and half a size is not a fact to publish.
-  void applyObservedVideoFacts() override;
-  void applyObservedIdle(bool idle);
-  void applyObservedEof(bool eof_reached);
-  void applyObservedVideoTrack(std::int64_t video_track_id);
-  void applyObservedAudioTrack(std::int64_t audio_track_id);
-  void applyObservedSubtitleTrack(std::int64_t subtitle_track_id);
   [[nodiscard]] bool engineReady() const override;
   [[nodiscard]] std::uint64_t requestSerial() const override {
     return request_serial_;
@@ -687,18 +639,15 @@ private:
   [[nodiscard]] MpvTransportChange
   assignTransport(const MpvTransport &transport) override;
   void publishTransport(const MpvTransportChange &change) override;
-  void fallbackRenderStateChanged() override;
-  void drainMpvEvents() override;
+  void applyObservedVolume(double volume) override;
+  void applyObservedMute(bool muted) override;
+  void applyObservedRate(double rate) override;
+  void applyObservedPreservePitch(bool preserve) override { preserve_pitch_ = preserve; }
+  void applyObservedSubtitleText(const QString &text) override;
   void setRequestedSource(const QUrl &source) override {
     requested_source_ = source;
   }
-  [[nodiscard]] bool hasNativeEngine() const override { return native_ != nullptr; }
-  void fallbackOpenSucceeded(std::uint64_t attempt, std::uint64_t serial,
-                             std::uint64_t source_key) override;
-  void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
-                          std::uint64_t source_key) override;
-  [[nodiscard]] QString playbackFailureText(const QString &fallback) const override;
-  void fallbackPlaybackFailed() override;
+  [[nodiscard]] NativeEngine *nativeEngine() const override { return native_.get(); }
   [[nodiscard]] MpvEngine &mpvEngine() noexcept override { return mpv_; }
   [[nodiscard]] bool needsRenderContext() const;
   bool initializePlaybackEngine() override;

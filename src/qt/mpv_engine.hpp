@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/native_display_geometry.hpp"
 #include "playback_policy.hpp"
 #include "native_playback_metrics.hpp"
 
@@ -26,6 +27,7 @@ class QTimer;
 
 namespace wam::qt {
 
+class NativeEngine;
 class PlayerController;
 class PlayerControllerTestAccess;
 class PlayerCore;
@@ -68,8 +70,6 @@ public:
   [[nodiscard]] virtual MpvTransportChange
   assignTransport(const MpvTransport &transport) = 0;
   virtual void publishTransport(const MpvTransportChange &change) = 0;
-  // Tells the native router the fallback render state moved.
-  virtual void fallbackRenderStateChanged() = 0;
 
   [[nodiscard]] virtual QUrl source() const = 0;
   virtual void setRequestedSource(const QUrl &source) = 0;
@@ -81,20 +81,18 @@ public:
   virtual void refreshSubtitleSources() = 0;
   virtual void requestVideoUpdate() = 0;
 
-  // The native router's half of a routed fallback open, and how a fallback
-  // failure is worded and reported to it. No-ops without a native engine.
-  [[nodiscard]] virtual bool hasNativeEngine() const = 0;
-  virtual void fallbackOpenSucceeded(std::uint64_t attempt, std::uint64_t serial,
-                                     std::uint64_t source_key) = 0;
-  virtual void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
-                                  std::uint64_t source_key) = 0;
-  [[nodiscard]] virtual QString
-  playbackFailureText(const QString &fallback) const = 0;
-  virtual void fallbackPlaybackFailed() = 0;
+  // The native router, which this engine tells about fallback opens, stops,
+  // render state and failures; null in a build without native playback.
+  [[nodiscard]] virtual NativeEngine *nativeEngine() const = 0;
 
-  // Event handling still on the controller.
-  virtual void drainMpvEvents() = 0;
-  virtual void applyObservedVideoFacts() = 0;
+  virtual void updateVideoFacts(media::MediaRational width,
+                                media::MediaRational height, bool hdr) = 0;
+  // Engine-side settings mpv reported; the controller owns their bounds.
+  virtual void applyObservedVolume(double volume) = 0;
+  virtual void applyObservedMute(bool muted) = 0;
+  virtual void applyObservedRate(double rate) = 0;
+  virtual void applyObservedPreservePitch(bool preserve) = 0;
+  virtual void applyObservedSubtitleText(const QString &text) = 0;
 
 protected:
   ~MpvEngineHost() = default;
@@ -421,6 +419,25 @@ public:
   void finishScrubGesture(bool restore_transport);
   void invalidateScrubGesture();
 
+  // --- Events ----------------------------------------------------------
+  // Drains every pending mpv event and routes it: command replies by their
+  // MpvReply tag, file events to the open lineage, property changes to the
+  // observation handlers below.
+  void observeProperties();
+  void drainMpvEvents();
+  void applyObservedPause(bool paused);
+  void applyObservedPosition(double position);
+  void applyObservedDuration(double duration);
+  // Reads mpv's dwidth/dheight pair and gamma back and publishes them. Takes
+  // no argument on purpose: the observation that triggered it carries only
+  // one of them, and half a size is not a fact to publish.
+  void applyObservedVideoFacts();
+  void applyObservedIdle(bool idle);
+  void applyObservedEof(bool eof_reached);
+  void applyObservedVideoTrack(std::int64_t video_track_id);
+  void applyObservedAudioTrack(std::int64_t audio_track_id);
+  void applyObservedSubtitleTrack(std::int64_t subtitle_track_id);
+
   // --- Open lineage ------------------------------------------------------
   // A pending open is flushed as one loadfile once rendering is ready; its
   // reply, START_FILE/END_FILE and FILE_LOADED/PLAYBACK_RESTART commit it.
@@ -487,6 +504,43 @@ public:
 
 private:
   friend class PlayerControllerTestAccess;
+
+  enum class ObservedProperty : uint64_t {
+    Pause = 1,
+    Idle,
+    Position,
+    Duration,
+    Volume,
+    Mute,
+    Rate,
+    Path,
+    MediaTitle,
+    PreservePitch,
+    EofReached,
+    VideoTrack,
+    AudioTrack,
+    SubtitleTrack,
+    // The current subtitle line, as mpv times it. Observed rather than polled
+    // because mpv is the only thing that knows when a cue turns over, and it
+    // keeps publishing this with its own rendering switched off.
+    SubtitleText,
+    // A cheap scalar that changes whenever the track set does -- which is how
+    // a `sub-add` becomes a new entry in the Subtitles menu. Observing
+    // `track-list` itself would mean MPV_FORMAT_NODE and a matching
+    // mpv_free_node_contents, which is not in the resolved symbol table.
+    TrackListCount,
+    // The video facts (see videoDisplaySize). mpv's dwidth/dheight already
+    // apply the container's aspect ratio and rotation.
+    //
+    // Three observations, one fact: they arrive as independent events and
+    // either size half alone would publish half a new aspect over half an old
+    // one. Every handler therefore reads all three back synchronously
+    // (mpv_get_property, an in-process struct read) and publishes them
+    // together; the observation only decides WHEN to look.
+    DisplayWidth,
+    DisplayHeight,
+    VideoGamma,
+  };
 
   struct ScrubSeek {
     std::uint64_t gesture = 0;

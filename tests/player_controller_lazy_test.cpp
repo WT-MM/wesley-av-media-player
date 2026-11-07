@@ -58,7 +58,7 @@ class PlayerControllerTestAccess final {
   }
 
   static void drainMpvEvents(PlayerController &controller) {
-    controller.drainMpvEvents();
+    controller.mpv_.drainMpvEvents();
   }
 
   static RenderTicket makeRendererReady(PlayerController &controller) {
@@ -539,7 +539,7 @@ class PlayerControllerTestAccess final {
 
   static void scrubObservedPosition(PlayerController &controller,
                                     double position) {
-    controller.applyObservedPosition(position);
+    controller.mpv_.applyObservedPosition(position);
   }
 
   static void scrubTimeout(PlayerController &controller,
@@ -1049,18 +1049,18 @@ class PlayerControllerTestAccess final {
 
   static void applyObservedPlaybackState(PlayerController &controller,
                                          double position, bool paused) {
-    controller.applyObservedPosition(position);
-    controller.applyObservedPause(paused);
+    controller.mpv_.applyObservedPosition(position);
+    controller.mpv_.applyObservedPause(paused);
   }
 
   static void applyObservedTimeline(PlayerController &controller,
                                     double position, double duration,
                                     bool paused, bool idle, bool eof) {
-    controller.applyObservedPosition(position);
-    controller.applyObservedDuration(duration);
-    controller.applyObservedPause(paused);
-    controller.applyObservedIdle(idle);
-    controller.applyObservedEof(eof);
+    controller.mpv_.applyObservedPosition(position);
+    controller.mpv_.applyObservedDuration(duration);
+    controller.mpv_.applyObservedPause(paused);
+    controller.mpv_.applyObservedIdle(idle);
+    controller.mpv_.applyObservedEof(eof);
   }
 
   static bool idle(const PlayerController &controller) {

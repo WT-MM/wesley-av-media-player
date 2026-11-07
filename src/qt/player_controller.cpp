@@ -159,30 +159,6 @@ QString subtitleSourceLabel(SubtitleSources::Origin origin,
   return QStringLiteral("Track %1").arg(ordinal);
 }
 
-bool readFlag(const mpv_event_property *property, bool fallback) {
-  return property && property->format == MPV_FORMAT_FLAG && property->data
-             ? *static_cast<int *>(property->data) != 0
-             : fallback;
-}
-
-double readDouble(const mpv_event_property *property, double fallback) {
-  if (!property || property->format != MPV_FORMAT_DOUBLE || !property->data)
-    return fallback;
-  const double value = *static_cast<double *>(property->data);
-  return std::isfinite(value) ? value : fallback;
-}
-
-QString readString(const mpv_event_property *property) {
-  if (!property || property->format != MPV_FORMAT_STRING || !property->data)
-    return {};
-  const char *value = *static_cast<char **>(property->data);
-  return value ? QString::fromUtf8(value) : QString{};
-}
-
-std::int64_t readTrackSelection(const mpv_event_property *property) {
-  return parseTrackSelection(readString(property));
-}
-
 } // namespace
 
 PlayerController::PlayerController(QObject *parent)
@@ -268,9 +244,6 @@ bool PlayerController::initializePlaybackEngine() {
     return false;
   }
 
-  mpv_handle *handle = mpv_.core->handle();
-  const MpvApi &api = mpv_.core->api();
-
   // Restore cached UI settings synchronously before observing properties.
   // This prevents mpv's defaults from briefly overwriting the saved state on
   // the first file open.
@@ -296,34 +269,7 @@ bool PlayerController::initializePlaybackEngine() {
   mpv_.setCoreProperty("audio-pitch-correction", MPV_FORMAT_FLAG,
                   &engine_preserve_pitch);
 
-  const auto observe = [&api, handle](ObservedProperty id, const char *name,
-                                      mpv_format format) {
-    api.mpv_observe_property(handle, static_cast<uint64_t>(id), name, format);
-  };
-  observe(ObservedProperty::Pause, "pause", MPV_FORMAT_FLAG);
-  observe(ObservedProperty::Idle, "idle-active", MPV_FORMAT_FLAG);
-  observe(ObservedProperty::Position, "time-pos", MPV_FORMAT_DOUBLE);
-  observe(ObservedProperty::Duration, "duration", MPV_FORMAT_DOUBLE);
-  observe(ObservedProperty::Volume, "volume", MPV_FORMAT_DOUBLE);
-  observe(ObservedProperty::Mute, "mute", MPV_FORMAT_FLAG);
-  observe(ObservedProperty::Rate, "speed", MPV_FORMAT_DOUBLE);
-  // sub-visibility is deliberately NOT observed: it is pinned off above and is
-  // not the user's caption switch. captionsVisible means "a subtitle source is
-  // selected", which is app state on both routes.
-  observe(ObservedProperty::Path, "path", MPV_FORMAT_STRING);
-  observe(ObservedProperty::MediaTitle, "media-title", MPV_FORMAT_STRING);
-  observe(ObservedProperty::PreservePitch, "audio-pitch-correction",
-          MPV_FORMAT_FLAG);
-  observe(ObservedProperty::EofReached, "eof-reached", MPV_FORMAT_FLAG);
-  observe(ObservedProperty::VideoTrack, "vid", MPV_FORMAT_STRING);
-  observe(ObservedProperty::AudioTrack, "aid", MPV_FORMAT_STRING);
-  observe(ObservedProperty::SubtitleTrack, "sid", MPV_FORMAT_STRING);
-  observe(ObservedProperty::SubtitleText, "sub-text", MPV_FORMAT_STRING);
-  observe(ObservedProperty::TrackListCount, "track-list/count",
-          MPV_FORMAT_INT64);
-  observe(ObservedProperty::DisplayWidth, "dwidth", MPV_FORMAT_INT64);
-  observe(ObservedProperty::DisplayHeight, "dheight", MPV_FORMAT_INT64);
-  observe(ObservedProperty::VideoGamma, "video-params/gamma", MPV_FORMAT_STRING);
+  mpv_.observeProperties();
   return true;
 }
 
@@ -2593,237 +2539,6 @@ bool PlayerController::attachSubtitleFile(
   return true;
 }
 
-void PlayerController::drainMpvEvents() {
-  if (!engineReady())
-    return;
-
-  struct NativeDrainScope final {
-    NativeEngine *owner{nullptr};
-    explicit NativeDrainScope(NativeEngine *value) : owner(value) {
-      if (owner)
-        owner->beginFallbackEventDrain();
-    }
-    ~NativeDrainScope() {
-      if (owner)
-        owner->endFallbackEventDrain();
-    }
-  } native_drain_scope{native_.get()};
-
-  while (true) {
-    mpv_event *event = mpv_.core->api().mpv_wait_event(mpv_.core->handle(), 0.0);
-    if (!event || event->event_id == MPV_EVENT_NONE)
-      break;
-
-    if (event->event_id == MPV_EVENT_COMMAND_REPLY) {
-      const MpvReplyTag reply = parseMpvReply(event->reply_userdata);
-      if (native_ && reply.kind == MpvReply::FallbackStop) {
-        native_->fallbackStopCommandReply(reply.id, event->error);
-        continue;
-      }
-      if (reply.kind == MpvReply::Scrub) {
-        mpv_.handleScrubCommandReply(reply.id, event->error);
-        continue;
-      }
-      if (reply.kind == MpvReply::Open) {
-        mpv_.observeOpenCommandReply(reply.id, event->error);
-        continue;
-      }
-      if (reply.kind == MpvReply::RenderRecovery) {
-        mpv_.handleRenderRecoveryCommandReply(reply.id, event->error);
-        continue;
-      }
-    }
-
-    // A retained compatibility handle is dormant during native playback.
-    // Ignore its stale file/property stream, while the exact Stop command
-    // reply above and idle observation below remain admitted during fallback
-    // retirement.
-    if (native_ &&
-        !native_->acceptsFallbackPlaybackEvents()) {
-      continue;
-    }
-
-    if (event->event_id == MPV_EVENT_START_FILE) {
-      mpv_.core->beginFallbackMetricsEpoch();
-      const auto *start = static_cast<mpv_event_start_file *>(event->data);
-      mpv_.handleStartFile(start ? start->playlist_entry_id : -1);
-      continue;
-    }
-
-    if (event->event_id == MPV_EVENT_FILE_LOADED) {
-      mpv_.handlePlaybackReady(true);
-      continue;
-    }
-
-    if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) {
-      if (native_)
-        native_->noteFallbackSeek(false);
-      mpv_.handleScrubPlaybackRestart();
-      mpv_.handlePlaybackReady(false);
-      continue;
-    }
-
-    if (event->event_id == MPV_EVENT_SEEK) {
-      mpv_.noteSeekStarted();
-      continue;
-    }
-
-    if (event->event_id == MPV_EVENT_LOG_MESSAGE) {
-      const auto *message = static_cast<mpv_event_log_message *>(event->data);
-      if (message && message->text) {
-        qWarning().noquote().nospace()
-            << "WAM media engine [" << (message->prefix ? message->prefix : "")
-            << "]: " << QString::fromUtf8(message->text).trimmed();
-      }
-      continue;
-    }
-
-    if (event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-      auto *property = static_cast<mpv_event_property *>(event->data);
-      if (!property)
-        continue;
-      const auto id = static_cast<ObservedProperty>(event->reply_userdata);
-      switch (id) {
-      case ObservedProperty::Pause:
-        applyObservedPause(readFlag(property, true));
-        break;
-      case ObservedProperty::Idle: {
-        const bool idle = readFlag(property, true);
-        applyObservedIdle(idle);
-        if (native_)
-          native_->fallbackIdleChanged(idle);
-        break;
-      }
-      case ObservedProperty::Position: {
-        // mpv reports an unavailable property with no data while replacing a
-        // file or video output. Preserve the last real timestamp so renderer
-        // recovery can resume instead of silently falling back to zero.
-        if (property->format != MPV_FORMAT_DOUBLE || !property->data)
-          break;
-        applyObservedPosition(readDouble(property, 0.0));
-        break;
-      }
-      case ObservedProperty::Duration: {
-        if (property->format != MPV_FORMAT_DOUBLE || !property->data)
-          break;
-        applyObservedDuration(readDouble(property, 0.0));
-        break;
-      }
-      case ObservedProperty::Volume: {
-        const double value =
-            std::clamp(readDouble(property, 100.0) / 100.0, kMinimumVolume,
-                       maximum_volume_);
-        if (!nearlyEqual(volume_, value)) {
-          volume_ = value;
-          emit volumeChanged();
-        }
-        break;
-      }
-      case ObservedProperty::Mute: {
-        const bool value = readFlag(property, false);
-        if (muted_ != value) {
-          muted_ = value;
-          emit mutedChanged();
-        }
-        break;
-      }
-      case ObservedProperty::Rate: {
-        const double value = readDouble(property, 1.0);
-        if (!nearlyEqual(rate_, value)) {
-          rate_ = value;
-          emit rateChanged();
-        }
-        break;
-      }
-      case ObservedProperty::Path: {
-        const QUrl observed_source = urlFromMpvPath(readString(property));
-        // requested_source_ is authoritative across asynchronous replacement.
-        // Ignore empty transition values and paths from an older request; Stop
-        // clears the visible source synchronously itself.
-        if (requested_source_.isEmpty() || observed_source.isEmpty())
-          break;
-        if (mpv_.lineage.pending_source.isEmpty() && mpv_.lineage.committed_open &&
-            mpv_.lineage.committed_open->request_serial == request_serial_ &&
-            mpv_.lineage.committed_open->playlist_entry_id >= 0 &&
-            mpv_.lineage.committed_open->playlist_entry_id ==
-                mpv_.lineage.active_event_playlist_entry_id) {
-          mpv_.lineage.committed_entry_source = observed_source;
-        }
-        if (sourceIdentity(observed_source) !=
-            sourceIdentity(requested_source_)) {
-          break;
-        }
-        mpv_.lineage.observed_current_path = true;
-        updateSource(observed_source);
-        break;
-      }
-      case ObservedProperty::MediaTitle: {
-        QString value = readString(property);
-        if (!mpv_.lineage.observed_current_path && !value.isEmpty())
-          break;
-        if (value.isEmpty())
-          value = fallbackTitle(source_);
-        updateMediaTitle(value);
-        break;
-      }
-      case ObservedProperty::PreservePitch: {
-        preserve_pitch_ = readFlag(property, true);
-        break;
-      }
-      case ObservedProperty::EofReached:
-        applyObservedEof(readFlag(property, false));
-        break;
-      case ObservedProperty::VideoTrack:
-        applyObservedVideoTrack(readTrackSelection(property));
-        break;
-      case ObservedProperty::AudioTrack:
-        applyObservedAudioTrack(readTrackSelection(property));
-        break;
-      case ObservedProperty::SubtitleTrack:
-        applyObservedSubtitleTrack(readTrackSelection(property));
-        break;
-      case ObservedProperty::SubtitleText:
-        // The compatibility route's feed into the shared overlay. mpv reports
-        // the line with its own markup already resolved, so nothing here has
-        // to re-parse ASS or SRT: that work only exists on the native route,
-        // where there is no mpv to do it.
-        if (subtitles_ && subtitles_->activeIsGenerated()) break;
-        if (subtitles_ && subtitles_->activeId() != SubtitleSources::kOffId)
-          publishSubtitleText(readString(property));
-        else
-          publishSubtitleText({});
-        break;
-      case ObservedProperty::TrackListCount:
-        // A `sub-add` (generated captions, a loaded file) changes the track
-        // set without any other signal, so this is how a new source reaches
-        // the menu.
-        refreshSubtitleSources();
-        break;
-      case ObservedProperty::DisplayWidth:
-      case ObservedProperty::DisplayHeight:
-      case ObservedProperty::VideoGamma:
-        // Any of them means "the picture may have changed"; each reads all
-        // three back (see the enum comment).
-        applyObservedVideoFacts();
-        break;
-      }
-      continue;
-    }
-
-    if (event->event_id == MPV_EVENT_END_FILE) {
-      const auto *end = static_cast<mpv_event_end_file *>(event->data);
-      if (end) {
-        // Failed/empty opens may end without PLAYBACK_RESTART. Retire their
-        // accepted command using the matching START_FILE identity as well.
-        if (mpv_.lineage.open_attempt && mpv_.lineage.open_attempt->reply_ready &&
-            mpv_.lineage.open_attempt->playlist_entry_id == end->playlist_entry_id)
-          mpv_.handleOpenCommandReply(mpv_.lineage.open_attempt->id, 0);
-        mpv_.handleEndFile(*end);
-      }
-    }
-  }
-}
-
 void PlayerController::requestVideoUpdate() {
   // On the CALayer presentation route the frame is already on screen: the
   // AVSampleBufferDisplayLayer sitting below Qt's view was handed the decoded
@@ -2851,28 +2566,6 @@ bool PlayerController::needsRenderContext() const {
          !requested_source_.isEmpty();
 }
 
-void PlayerController::applyObservedPause(bool paused) {
-  if (mpv_.acceptsPlaybackObservation())
-    updatePause(paused);
-}
-
-void PlayerController::applyObservedPosition(double position) {
-  if (!std::isfinite(position))
-    return;
-  const double value = std::max(0.0, position);
-  if (mpv_.observeScrubPosition(value))
-    return;
-  if (!mpv_.acceptsPlaybackObservation())
-    return;
-  updatePosition(value);
-}
-
-void PlayerController::applyObservedDuration(double duration) {
-  if (!mpv_.acceptsPlaybackObservation() || !std::isfinite(duration))
-    return;
-  updateDuration(duration);
-}
-
 void PlayerController::updateDuration(double duration) {
   if (!std::isfinite(duration))
     return;
@@ -2884,36 +2577,6 @@ void PlayerController::updateDuration(double duration) {
   }
   if (trim_out_ <= 0.0 || nearlyEqual(trim_out_, old_duration))
     setTrimOut(value);
-}
-
-void PlayerController::applyObservedVideoFacts() {
-  if (!mpv_.core || !engineReady() || mpv_.lineage.open_attempt)
-    return;
-  // Deliberately NOT gated on mpv_.acceptsPlaybackObservation(), which every other
-  // observation here does use. mpv announces dwidth/dheight once per file,
-  // during the open, while that gate is still closed, and never again unless
-  // the value changes. Gating here would discard the only announcement there
-  // is and leave the fallback route's size at (0, 0) for the whole session.
-  //
-  // The hazard the gate guards against -- a previous file's value landing on
-  // the current one -- is checked directly instead, and more precisely: the
-  // size and the path it belongs to are read from the same mpv instance in
-  // the same breath, and the pair is published only if that path is the media
-  // this controller has already committed to. A size read while mpv still has
-  // the outgoing file loaded therefore cannot be attributed to the incoming
-  // one.
-  const QSize size = mpv_.currentVideoDisplaySize();
-  if (size.isEmpty())
-    return;
-  const QString gamma = mpv_.stringProperty("video-params/gamma").value_or(QString());
-  const bool hdr = gamma == QLatin1String("pq") || gamma == QLatin1String("hlg");
-  const auto path = mpv_.stringProperty("path");
-  if (!path)
-    return;
-  const QUrl playing = urlFromMpvPath(*path);
-  if (playing.isEmpty() || playing != source_)
-    return;
-  updateVideoFacts({size.width(), 1}, {size.height(), 1}, hdr);
 }
 
 void PlayerController::updateVideoFacts(media::MediaRational width,
@@ -2934,38 +2597,6 @@ void PlayerController::updateVideoFacts(media::MediaRational width,
   video_display_size_ = value;
   video_hdr_ = hdr;
   emit videoDisplaySizeChanged();
-}
-
-void PlayerController::applyObservedIdle(bool idle) {
-  if (mpv_.acceptsPlaybackObservation())
-    updateIdle(idle);
-}
-
-void PlayerController::applyObservedEof(bool eof_reached) {
-  if (mpv_.acceptsPlaybackObservation())
-    updateEof(eof_reached);
-}
-
-void PlayerController::applyObservedVideoTrack(std::int64_t video_track_id) {
-  if (!mpv_.acceptsPlaybackObservation())
-    return;
-  mpv_.lineage.selected_video_track_id = video_track_id >= 0 ? video_track_id : -1;
-  mpv_.lineage.selected_tracks_playlist_entry_id = mpv_.lineage.committed_open->playlist_entry_id;
-}
-
-void PlayerController::applyObservedAudioTrack(std::int64_t audio_track_id) {
-  if (!mpv_.acceptsPlaybackObservation())
-    return;
-  mpv_.lineage.selected_audio_track_id = audio_track_id >= 0 ? audio_track_id : -1;
-  mpv_.lineage.selected_tracks_playlist_entry_id = mpv_.lineage.committed_open->playlist_entry_id;
-}
-
-void PlayerController::applyObservedSubtitleTrack(
-    std::int64_t subtitle_track_id) {
-  if (!mpv_.acceptsPlaybackObservation())
-    return;
-  mpv_.lineage.selected_subtitle_track_id = subtitle_track_id >= 0 ? subtitle_track_id : -1;
-  mpv_.lineage.selected_tracks_playlist_entry_id = mpv_.lineage.committed_open->playlist_entry_id;
 }
 
 void PlayerController::attachVideoItem(MpvVideoItem *item) {
@@ -3009,32 +2640,38 @@ void PlayerController::publishTransport(const MpvTransportChange &change) {
     emit playingChanged();
 }
 
-void PlayerController::fallbackOpenSucceeded(std::uint64_t attempt,
-                                             std::uint64_t serial,
-                                             std::uint64_t source_key) {
-  if (native_)
-    native_->fallbackOpenSucceeded(attempt, serial, source_key);
+void PlayerController::applyObservedVolume(double volume) {
+  const double value = std::clamp(volume, kMinimumVolume, maximum_volume_);
+  if (!nearlyEqual(volume_, value)) {
+    volume_ = value;
+    emit volumeChanged();
+  }
 }
 
-void PlayerController::fallbackOpenFailed(std::uint64_t attempt,
-                                          std::uint64_t serial,
-                                          std::uint64_t source_key) {
-  if (native_)
-    native_->fallbackOpenFailed(attempt, serial, source_key);
+void PlayerController::applyObservedMute(bool muted) {
+  if (muted_ != muted) {
+    muted_ = muted;
+    emit mutedChanged();
+  }
 }
 
-QString PlayerController::playbackFailureText(const QString &fallback) const {
-  return native_ ? native_->playbackFailureText(fallback) : fallback;
+void PlayerController::applyObservedRate(double rate) {
+  if (!nearlyEqual(rate_, rate)) {
+    rate_ = rate;
+    emit rateChanged();
+  }
 }
 
-void PlayerController::fallbackPlaybackFailed() {
-  if (native_)
-    native_->fallbackPlaybackFailed();
-}
-
-void PlayerController::fallbackRenderStateChanged() {
-  if (native_)
-    native_->fallbackRenderStateChanged();
+void PlayerController::applyObservedSubtitleText(const QString &text) {
+  // The compatibility route's feed into the shared overlay. mpv reports the
+  // line with its own markup already resolved, so nothing here has to
+  // re-parse ASS or SRT: that work only exists on the native route.
+  if (subtitles_ && subtitles_->activeIsGenerated())
+    return;
+  if (subtitles_ && subtitles_->activeId() != SubtitleSources::kOffId)
+    publishSubtitleText(text);
+  else
+    publishSubtitleText({});
 }
 
 void PlayerController::updatePause(bool paused) {

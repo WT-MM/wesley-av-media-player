@@ -967,7 +967,7 @@ void PlayerCore::queueEventDrain() noexcept {
               } else
 #endif
               {
-                owner->drainMpvEvents();
+                owner->mpv_.drainMpvEvents();
               }
             } catch (...) {
               // No exception may escape Qt's event dispatch. The bit was
