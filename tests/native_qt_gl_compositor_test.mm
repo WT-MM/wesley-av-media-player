@@ -1,4 +1,5 @@
 #include "support/expect.hpp"
+#include "support/process_wait.hpp"
 #include "qt/macos/qt_gl_video_item.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -6,7 +7,6 @@
 #include <IOSurface/IOSurface.h>
 
 #include <QColor>
-#include <QElapsedTimer>
 #include <QEventLoop>
 #include "accelerated_gl_gate.hpp"
 #include <QGuiApplication>
@@ -203,13 +203,10 @@ bool fillAlternatingChroma(CVPixelBufferRef buffer) {
 }
 
 bool spinUntil(const std::function<bool()>& predicate, int timeoutMs) {
-  QElapsedTimer timer;
-  timer.start();
-  while (!predicate() && timer.elapsed() < timeoutMs) {
+  return waitUntil(predicate, std::chrono::milliseconds(timeoutMs), [] {
     QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
-  }
-  return predicate();
+  });
 }
 
 bool verifyRawGlSamplerStateOnRenderThread(QQuickWindow& window) {

@@ -1,4 +1,5 @@
 #include "support/expect.hpp"
+#include "support/process_wait.hpp"
 #include "qt/macos/native_qt_gl_output.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -26,24 +27,12 @@
 
 namespace {
 
-// Returns the value of the LAST evaluation, never re-evaluating after success.
-// Several predicates consume a capacity-one mailbox (takeEvent()); a trailing
-// re-evaluation would take the event a second time, see an empty mailbox, and
-// report the wait as failed exactly when it had succeeded.
 template <typename Predicate>
 bool spinUntil(Predicate predicate, int timeoutMs = 5000) {
-  QElapsedTimer timer;
-  timer.start();
-  for (;;) {
-    if (predicate()) {
-      return true;
-    }
-    if (timer.elapsed() >= timeoutMs) {
-      return false;
-    }
+  return waitUntil(predicate, std::chrono::milliseconds(timeoutMs), [] {
     QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
-  }
+  });
 }
 
 void pumpEventsFor(int durationMs) {

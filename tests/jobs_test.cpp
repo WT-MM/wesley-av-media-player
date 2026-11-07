@@ -121,6 +121,15 @@ int main(int argc, char** argv) {
 #endif
 
   {
+    // The shared poll helper must report a consuming predicate (true once)
+    // as met, even when the deadline has already passed.
+    bool pending = true;
+    expect(waitUntil([&] { return std::exchange(pending, false); },
+                     std::chrono::seconds(0)),
+           "waitUntil reports a consuming predicate that held");
+  }
+
+  {
     // ------------------------------------------------------------------
     // Export presets. Pure argv assertions -- no encoder runs here; the
     // container/codec matrix is proved by running the real commands
@@ -420,11 +429,8 @@ int main(int argc, char** argv) {
 #endif
     const auto started_at = std::chrono::steady_clock::now();
     job.cancel();
-    while (!job.finished() &&
-           std::chrono::steady_clock::now() - started_at < std::chrono::seconds(3)) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    expect(job.finished(), "cancelled job finishes promptly");
+    expect(waitUntil([&] { return job.finished(); }, std::chrono::seconds(3)),
+           "cancelled job finishes promptly");
     expect(!job.succeeded(), "cancelled job is not successful");
     expect(job.exitCode() == 130,
            "cancelled job reports the canonical cancellation code");
@@ -454,10 +460,7 @@ int main(int argc, char** argv) {
         job.cancel();
       starter.join();
 
-      const auto deadline =
-          std::chrono::steady_clock::now() + std::chrono::seconds(2);
-      while (!job.finished() && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      waitUntil([&] { return job.finished(); }, std::chrono::seconds(2));
       lost_cancellation = !started || !job.finished() || job.succeeded() ||
                           job.exitCode() != 130;
       if (!job.finished())

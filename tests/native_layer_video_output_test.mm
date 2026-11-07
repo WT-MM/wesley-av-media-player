@@ -7,6 +7,7 @@
 #include "platform/macos/native_tracked_video_output.hpp"
 #include "platform/macos/native_video_presenter.hpp"
 #include "support/expect.hpp"
+#include "support/process_wait.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMedia/CoreMedia.h>
@@ -95,18 +96,10 @@ using namespace wam::macos;
 // a callback that never arrives fails the test instead of hanging it.
 template <typename Predicate>
 bool spinUntil(Predicate predicate, int timeoutMs = 5000) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-  for (;;) {
-    if (predicate()) {
-      return true;
-    }
-    if (std::chrono::steady_clock::now() >= deadline) {
-      return predicate();
-    }
+  return waitUntil(predicate, std::chrono::milliseconds(timeoutMs), [] {
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.002, true);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  });
 }
 
 void pumpFor(int durationMs) {

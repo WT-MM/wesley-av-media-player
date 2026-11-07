@@ -4,6 +4,7 @@
 #include "qt/subtitle_sources.hpp"
 
 #include "support/expect.hpp"
+#include "support/process_wait.hpp"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -1167,15 +1168,10 @@ template <typename Predicate>
 bool processEventsUntil(
     Predicate predicate,
     std::chrono::milliseconds timeout = std::chrono::milliseconds(2000)) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
+  return waitUntil([&] {
     QCoreApplication::processEvents(QEventLoop::AllEvents);
-    if (predicate())
-      return true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  QCoreApplication::processEvents(QEventLoop::AllEvents);
-  return predicate();
+    return predicate();
+  }, timeout);
 }
 
 double readDouble(mpv_handle *handle, const char *name) {
