@@ -490,7 +490,7 @@ struct AVFoundationPreviewSource::Impl final {
   std::atomic<std::uint64_t> discontinuitiesRead{0};
   std::atomic<std::uint64_t> forwardRetargets{0};
   std::atomic<bool> open{false};
-#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   std::atomic<AVFoundationPreviewCancelInterleaveHook> cancelInterleaveHook{
       nullptr};
   std::atomic<void*> cancelInterleaveContext{nullptr};
@@ -797,7 +797,7 @@ void AVFoundationPreviewSource::requestCancel(
       impl_->operationEpoch.load(std::memory_order_acquire) != epoch) {
     return;
   }
-#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (const auto hook = impl_->cancelInterleaveHook.load(
           std::memory_order_acquire)) {
     hook(epoch,
@@ -899,7 +899,7 @@ AVFoundationPreviewSource::memoryFacts() const noexcept {
   return result;
 }
 
-#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 void AVFoundationPreviewSourceTestAccess::setCancelInterleaveHook(
     AVFoundationPreviewSource& source,
     AVFoundationPreviewCancelInterleaveHook hook,

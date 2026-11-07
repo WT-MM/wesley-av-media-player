@@ -1290,7 +1290,7 @@ struct NativeVideoConsumer::Impl {
   bool previewQuiesced{false};
   bool previewDecoderFlushed{false};
   bool previewResumeNeedsKeyFrame{false};
-#if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   // Fixture-free scheduler tests do not create a real codec configuration.
   // This proves only that the public handoff state machine treats their
   // synthetic configured scheduler as configured; shipping objects contain
@@ -1574,7 +1574,7 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
 
   const VideoDecoderStats decoderFacts = impl.decoder.stats();
   bool decoderConfigured = decoderFacts.configured;
-#if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   decoderConfigured =
       decoderConfigured || impl.testSyntheticDecoderConfigured;
 #endif
@@ -1687,7 +1687,7 @@ NativeVideoConsumer::releasePreviewQuiesce(
   }
   const VideoDecoderStats decoderFacts = impl.decoder.stats();
   bool decoderConfigured = decoderFacts.configured;
-#if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   decoderConfigured =
       decoderConfigured || impl.testSyntheticDecoderConfigured;
 #endif
@@ -2636,7 +2636,7 @@ NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
   return result;
 }
 
-#if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 bool NativeVideoConsumerTestAccess::installSchedulerGeneration(
     NativeVideoConsumer& consumer,
     const media::NativeMediaGenerationTimeline& timeline) noexcept {

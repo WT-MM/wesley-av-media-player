@@ -632,33 +632,10 @@ if(APPLE)
     TIMEOUT 20)
 
   if(WAM_ENABLE_MACOS_NATIVE_VIDEO)
-    # Fixture-free gates with test-only declarations compile their complete
-    # macro-bearing implementations privately. Production-layout contract
-    # gates may link the production archive directly.
-    add_executable(wam_avfoundation_media_source_test
-      avfoundation_media_source_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.mm)
-    target_include_directories(
-      wam_avfoundation_media_source_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(wam_avfoundation_media_source_test PRIVATE
-      WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING=1)
-    target_link_libraries(wam_avfoundation_media_source_test PRIVATE
-      wam_native_core
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    # Tests that drive WAM_NATIVE_TEST_SEAMS link the *_test_seams twins
+    # (cmake/TestSeams.cmake); the rest link the production libraries.
+    add_executable(wam_avfoundation_media_source_test avfoundation_media_source_test.mm)
+    target_link_libraries(wam_avfoundation_media_source_test PRIVATE wam_macos_native_backend_test_seams)
     add_test(NAME macos_avfoundation_reader_cancellation
       COMMAND wam_avfoundation_media_source_test --cancel-only
         "${WAMKIT_TEST_FIXTURE_DIR}/av.mp4")
@@ -669,30 +646,8 @@ if(APPLE)
     set_tests_properties(macos_avfoundation_media_source PROPERTIES
       TIMEOUT 30)
 
-    add_executable(wam_avfoundation_preview_source_test
-      avfoundation_preview_source_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.mm)
-    target_include_directories(
-      wam_avfoundation_preview_source_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(
-      wam_avfoundation_preview_source_test PRIVATE
-      WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING=1)
-    target_link_libraries(wam_avfoundation_preview_source_test PRIVATE
-      wam_native_core
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    add_executable(wam_avfoundation_preview_source_test avfoundation_preview_source_test.mm)
+    target_link_libraries(wam_avfoundation_preview_source_test PRIVATE wam_macos_native_backend_test_seams)
     add_test(NAME macos_avfoundation_preview_source
       COMMAND wam_avfoundation_preview_source_test)
     set_tests_properties(macos_avfoundation_preview_source PROPERTIES
@@ -893,38 +848,8 @@ if(APPLE)
       set_tests_properties(macos_software_vp8 PROPERTIES TIMEOUT 60)
     endif()
 
-    add_executable(wam_native_video_consumer_test
-      native_video_consumer_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_consumer.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_consumer.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_surface_budget.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_surface_budget.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_presenter.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_presenter.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/video_toolbox_decoder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/video_toolbox_decoder.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/software_vp8_decoder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/software_vp8_decoder.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/software_presentation_pool.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/video_decode_lane.hpp)
-    target_include_directories(wam_native_video_consumer_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(wam_native_video_consumer_test PRIVATE
-      WAM_NATIVE_VIDEO_CONSUMER_TESTING=1)
-    if(WAM_ENABLE_SOFTWARE_VP8)
-      target_link_libraries(wam_native_video_consumer_test PRIVATE
-        PkgConfig::WAM_LIBVPX)
-    endif()
-    target_link_libraries(wam_native_video_consumer_test PRIVATE
-      wam_native_core
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_IOSURFACE_FRAMEWORK}"
-      "${WAM_METAL_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    add_executable(wam_native_video_consumer_test native_video_consumer_test.mm)
+    target_link_libraries(wam_native_video_consumer_test PRIVATE wam_macos_native_backend_test_seams)
     add_test(NAME macos_native_video_consumer
       COMMAND wam_native_video_consumer_test)
     set_tests_properties(macos_native_video_consumer PROPERTIES TIMEOUT 30)
@@ -982,55 +907,9 @@ if(APPLE)
     set_tests_properties(macos_native_tracked_video_arbiter PROPERTIES
       TIMEOUT 20)
 
-    # The Matroska preview source's own contract. It links the main
-    # Matroska media source as well, so the promoted sample builders in
-    # matroska_sample_builder.hpp are proved to serve both consumers from
-    # one definition rather than two copies.
-    add_executable(wam_matroska_preview_source_test
-      matroska_preview_source_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.mm
-      # native_preview_source.mm switches exhaustively on backendKind, so
-      # every backend's preview implementation is part of this test's link
-      # closure whether or not the test exercises it.
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_source.mm)
-    target_include_directories(
-      wam_matroska_preview_source_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(wam_matroska_preview_source_test PRIVATE
-      wam_native_core
-      wam_macos_native_video_core
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    # The Matroska preview source's own contract.
+    add_executable(wam_matroska_preview_source_test matroska_preview_source_test.mm)
+    target_link_libraries(wam_matroska_preview_source_test PRIVATE wam_macos_native_backend)
     add_test(NAME macos_matroska_preview_source
       COMMAND wam_matroska_preview_source_test)
     set_tests_properties(macos_matroska_preview_source PROPERTIES
@@ -1040,234 +919,47 @@ if(APPLE)
     # driven over their neutral public surface against containers muxed at
     # test time.
 
-    add_executable(wam_matroska_media_source_test
-      matroska_media_source_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.mm)
-    target_include_directories(
-      wam_matroska_media_source_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(wam_matroska_media_source_test PRIVATE
-      wam_native_core
-      wam_macos_native_video_core
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}")
+    add_executable(wam_matroska_media_source_test matroska_media_source_test.mm)
+    target_link_libraries(wam_matroska_media_source_test PRIVATE wam_macos_native_backend)
     add_test(NAME macos_matroska_media_source
       COMMAND wam_matroska_media_source_test "${WAM_TEST_FFMPEG}")
     set_tests_properties(macos_matroska_media_source PROPERTIES
       TIMEOUT 120
       SKIP_RETURN_CODE 77)
 
-    add_executable(wam_mpegts_media_source_test
-      mpegts_media_source_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.mm)
-    target_include_directories(
-      wam_mpegts_media_source_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(wam_mpegts_media_source_test PRIVATE
-      wam_native_core
-      wam_macos_native_video_core
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}")
+    add_executable(wam_mpegts_media_source_test mpegts_media_source_test.mm)
+    target_link_libraries(wam_mpegts_media_source_test PRIVATE wam_macos_native_backend)
     add_test(NAME macos_mpegts_media_source
       COMMAND wam_mpegts_media_source_test "${WAM_MPEGTS_FIXTURE_DIR}")
     set_tests_properties(macos_mpegts_media_source PROPERTIES
       TIMEOUT 120
       FIXTURES_REQUIRED mpegts_corpus)
 
-    add_executable(wam_mpegts_preview_source_test
-      mpegts_preview_source_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.mm
-      # native_preview_source.mm switches exhaustively on backendKind, so
-      # every backend's preview implementation is part of this test's link
-      # closure whether or not the test exercises it.
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_source.mm)
-    target_include_directories(
-      wam_mpegts_preview_source_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(wam_mpegts_preview_source_test PRIVATE
-      wam_native_core
-      wam_macos_native_video_core
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    add_executable(wam_mpegts_preview_source_test mpegts_preview_source_test.mm)
+    target_link_libraries(wam_mpegts_preview_source_test PRIVATE wam_macos_native_backend)
     add_test(NAME macos_mpegts_preview_source
       COMMAND wam_mpegts_preview_source_test "${WAM_TEST_FFMPEG}")
     set_tests_properties(macos_mpegts_preview_source PROPERTIES
       TIMEOUT 120
       SKIP_RETURN_CODE 77)
 
-    # The Traits seam of the shared custom-source core: both backends are
-    # linked so the two Traits can be compared in one binary.
-    add_executable(wam_native_custom_source_traits_test
-      native_custom_source_traits_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_custom_source_core.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.mm)
-    target_include_directories(
-      wam_native_custom_source_traits_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(wam_native_custom_source_traits_test PRIVATE
-      wam_native_core
-      wam_macos_native_video_core
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}")
+    # The Traits seam of the shared custom-source core.
+    add_executable(wam_native_custom_source_traits_test native_custom_source_traits_test.mm)
+    target_link_libraries(wam_native_custom_source_traits_test PRIVATE wam_macos_native_backend)
     add_test(NAME macos_native_custom_source_traits
       COMMAND wam_native_custom_source_traits_test)
     set_tests_properties(macos_native_custom_source_traits PROPERTIES
       TIMEOUT 30)
 
-    # The lane's deterministic synthetic-frame seam is absent from the
-    # shipping class. Compile the lane and its source dependency privately
-    # under one macro, while reusing the production decoder/video core.
-    add_executable(wam_native_preview_frame_lane_test
-      native_preview_frame_lane_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_frame_lane.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_frame_lane.mm)
-    target_include_directories(
-      wam_native_preview_frame_lane_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(
-      wam_native_preview_frame_lane_test PRIVATE
-      WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING=1)
-    target_link_libraries(wam_native_preview_frame_lane_test PRIVATE
-      wam_native_core
-      wam_macos_native_video_core
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    add_executable(wam_native_preview_frame_lane_test native_preview_frame_lane_test.mm)
+    target_link_libraries(wam_native_preview_frame_lane_test PRIVATE wam_macos_native_backend_test_seams)
     add_test(NAME macos_native_preview_frame_lane
       COMMAND wam_native_preview_frame_lane_test)
     set_tests_properties(macos_native_preview_frame_lane PROPERTIES
       TIMEOUT 30)
 
-    # Every implementation in this private closure sees the session test
-    # seam, and no production archive containing a differently laid-out
-    # NativeMediaSession is linked.
-    add_executable(wam_native_media_session_test
-      native_media_session_test.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_media_source.mm
-      ${PROJECT_SOURCE_DIR}/src/media/native_media_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/media/native_media_source.cpp
-      ${PROJECT_SOURCE_DIR}/src/media/native_media_dispatcher.hpp
-      ${PROJECT_SOURCE_DIR}/src/media/native_media_dispatcher.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_media_support.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_video_codec_capability.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_asset_context.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/avfoundation_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/core_media_carriage.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/matroska_sample_builder.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_asset_context.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/mpegts_sample_builder.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_source.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_source.mm
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_media_session.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_media_session.mm
-      ${PROJECT_SOURCE_DIR}/src/media/native_media_clock.hpp
-      ${PROJECT_SOURCE_DIR}/src/media/native_media_clock.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_silent_timebase.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_silent_timebase.cpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_frame_lane.hpp
-      ${PROJECT_SOURCE_DIR}/src/platform/macos/native_preview_frame_lane.mm)
-    target_include_directories(wam_native_media_session_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_compile_definitions(wam_native_media_session_test PRIVATE
-      WAM_AVFOUNDATION_ASSET_CONTEXT_TESTING=1
-      WAM_NATIVE_MEDIA_SESSION_TESTING=1)
-    target_link_libraries(wam_native_media_session_test PRIVATE
-      wam_native_core
-      wam_macos_native_video_core
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREAUDIO_FRAMEWORK}"
-      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-      "${WAM_COREGRAPHICS_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    add_executable(wam_native_media_session_test native_media_session_test.mm)
+    target_link_libraries(wam_native_media_session_test PRIVATE wam_macos_native_backend_test_seams)
     add_test(NAME macos_native_media_session
       COMMAND wam_native_media_session_test)
     add_test(NAME macos_mpegts_session_fallback

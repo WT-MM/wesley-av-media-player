@@ -20,7 +20,7 @@
 
 namespace wam::macos {
 
-#if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 struct NativeVideoConsumerTestAccess;
 #endif
 
@@ -419,12 +419,12 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   quarantineSlots() noexcept;
   std::unique_ptr<Impl> impl_;
 
-#if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
   friend struct NativeVideoConsumerTestAccess;
 #endif
 };
 
-#if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
+#if defined(WAM_NATIVE_TEST_SEAMS)
 // Fixture-free access to the owner-thread scheduler only. It never creates or
 // replaces the production decoder and is absent from shipping objects.
 struct NativeVideoConsumerTestAccess {
