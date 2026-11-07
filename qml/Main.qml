@@ -10,6 +10,15 @@ ApplicationWindow {
 
     // `player` is supplied as a QML context property by the application host.
     readonly property var controller: player
+    // Every command this window offers; see PlayerActions.qml.
+    readonly property PlayerActions actions: PlayerActions { window: root }
+
+    // The test seam's way in (src/qt/test_seams.cpp): false for an unknown or
+    // disabled command.
+    function triggerAction(name) {
+        const command = root.actions[name];
+        return command !== undefined && command !== null && command.trigger !== undefined && command.trigger();
+    }
     property int appearance: 0 // Light by default; 1 Dark; 2 Follow system.
     readonly property bool darkAppearance: appearance === 1 || (appearance === 2 && systemPalette.window.hslLightness < 0.5)
     property bool quickEditOpen: false
@@ -845,97 +854,31 @@ ApplicationWindow {
         }
     }
 
-    // Window-scoped, NOT application-scoped. With N player windows open an
-    // application-scoped Shortcut is registered N times over, and Qt refuses
-    // the whole ambiguous set ("Ambiguous shortcut overload") rather than
-    // picking one -- Space would stop working the moment a second window
-    // opened. Window scope is also the correct semantics: the transport keys
-    // act on the window you are looking at.
-    Shortcut {
-        sequence: "Space"
-        context: Qt.WindowShortcut
-        autoRepeat: false
-        enabled: root.controller.hasMedia && !root.nativeDialogVisible
-        onActivated: {
-            root.controller.togglePlayPause();
-            root.revealControls();
+    // The "window" scope commands' keys. Window-scoped, NOT
+    // application-scoped: with N player windows open an application-scoped
+    // Shortcut is registered N times over, and Qt refuses the whole ambiguous
+    // set ("Ambiguous shortcut overload") rather than picking one. Window
+    // scope is also the right semantics: the keys act on the window you are
+    // looking at. A native dialog owns the keyboard while it is up.
+    Instantiator {
+        model: root.actions.windowKeyed
+        delegate: Shortcut {
+            required property var modelData
+            sequence: modelData.key
+            context: Qt.WindowShortcut
+            autoRepeat: modelData.autoRepeat
+            enabled: modelData.enabled && !root.nativeDialogVisible
+            onActivated: modelData.trigger()
         }
     }
 
-    Shortcut {
-        sequence: "Left"
-        context: Qt.WindowShortcut
-        enabled: root.controller.hasMedia && !root.nativeDialogVisible
-        onActivated: {
-            root.controller.skipBackward();
-            root.revealControls();
-        }
-    }
-
-    Shortcut {
-        sequence: "Right"
-        context: Qt.WindowShortcut
-        enabled: root.controller.hasMedia && !root.nativeDialogVisible
-        onActivated: {
-            root.controller.skipForward();
-            root.revealControls();
-        }
-    }
-
-    // "." / "," -- one frame later / earlier, the editor convention (Premiere,
-    // Resolve, Final Cut and mpv all use this pair). Window-scoped for exactly
-    // the reason stated above Space; autoRepeat stays ON, because holding a
-    // step key to crawl through a passage is the whole point of the gesture.
-    // The controller pauses first if the transport is running.
-    Shortcut {
-        sequence: "."
-        context: Qt.WindowShortcut
-        enabled: root.controller.hasMedia && !root.nativeDialogVisible
-        onActivated: {
-            root.controller.stepFrame(1);
-            root.showPositionOsd();
-            root.revealControls();
-        }
-    }
-
-    Shortcut {
-        sequence: ","
-        context: Qt.WindowShortcut
-        enabled: root.controller.hasMedia && !root.nativeDialogVisible
-        onActivated: {
-            root.controller.stepFrame(-1);
-            root.showPositionOsd();
-            root.revealControls();
-        }
-    }
-
-    // Up/Down step this window's volume by a wheel notch (5%), clamped to the
-    // configured maximum, with the same OSD + flash feedback the scroll
-    // gesture gives -- the keys and the wheel are one control at two speeds.
-    Shortcut {
-        sequence: "Up"
-        context: Qt.WindowShortcut
-        enabled: root.controller.hasMedia && !root.nativeDialogVisible
-        onActivated: {
-            root.controller.setVolume(Math.min(root.controller.maximumVolume,
-                                               root.controller.volume + 0.05));
-            transport.flashVolume();
-            root.showVolumeOsd();
-            root.revealControls();
-        }
-    }
-
-    Shortcut {
-        sequence: "Down"
-        context: Qt.WindowShortcut
-        enabled: root.controller.hasMedia && !root.nativeDialogVisible
-        onActivated: {
-            root.controller.setVolume(Math.max(0,
-                                               root.controller.volume - 0.05));
-            transport.flashVolume();
-            root.showVolumeOsd();
-            root.revealControls();
-        }
+    // Up/Down: one wheel notch, with the scroll gesture's OSD and flash.
+    function nudgeVolume(delta) {
+        root.controller.setVolume(Math.max(0, Math.min(root.controller.maximumVolume,
+                                                       root.controller.volume + delta)));
+        transport.flashVolume();
+        root.showVolumeOsd();
+        root.revealControls();
     }
 
     Component {
@@ -1770,6 +1713,7 @@ ApplicationWindow {
             width: root.quickEditOpen && !transport.suppressed ? Math.min(540, parent.width - root.quickEditWidth - root.quickEditRightMargin - SafeArea.margins.left - 24) : Math.min(680, parent.width - SafeArea.margins.left - SafeArea.margins.right - 24)
             height: width < 560 ? 98 : 90
             player: root.controller
+            actions: root.actions
             revealed: root.controlsRevealed && !root.controller.loading
             instantHide: root.chromeInstantHide
             suppressed: (!root.active && root.controller.hasMedia) || (root.quickEditOpen && root.width < 760)
@@ -1777,13 +1721,10 @@ ApplicationWindow {
             onVolumeOsdRequested: root.showVolumeOsd()
             onInteractionActiveChanged: root.transportInteractionChanged()
             onMoveRequested: (targetX, targetY) => root.moveTransportTo(targetX, targetY)
-            onEditRequested: root.openQuickEdit()
             vividActive: root.vividActive
             vividAvailable: root.vividAvailable
             vividBoost: root.vividBoostApplied
             theaterActive: root.theaterDimEnabled
-            onVividToggleRequested: root.toggleVividBoost()
-            onTheaterToggleRequested: root.toggleTheaterDim()
         }
 
         Timer {
@@ -1902,57 +1843,12 @@ ApplicationWindow {
             sourceComponent: quickEditComponent
         }
 
+        // The "stage" scope commands' keys (PlayerActions.qml). This filter
+        // only runs while no text field holds focus, so typing those letters
+        // into Quick Edit or Preferences is unaffected.
         Keys.onPressed: event => {
-            if (event.matches(StandardKey.Open)) {
-                // Cmd-O is one of the three gestures that must produce a NEW
-                // window (with Finder-open and argv), unless an empty window
-                // is already there to claim it. Loading into the window you
-                // are looking at is drag-and-drop, and the empty player's own
-                // click -- both of which call root.openMedia() instead.
-                appHost.openMedia();
+            if (root.actions.triggerStageKey(event.key))
                 event.accepted = true;
-                return;
-            }
-
-            if (event.key === Qt.Key_H) {
-                // Pause every window and hide the app. H, M, E, V, T and F are
-                // bare keys, bound in this filter rather than as NSMenu key
-                // equivalents (see qml/AppMenuBar.qml's header). Keys.onPressed
-                // on the video stage only ever fires when no text field holds
-                // focus, so typing "h" into Quick Edit or Preferences is
-                // unaffected.
-                root.hideAndPauseAll();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_M && root.controller.hasMedia) {
-                root.controller.toggleMute();
-                root.showVolumeOsd();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_E) {
-                root.toggleQuickEdit();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_V) {
-                root.toggleVividBoost();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_T) {
-                root.toggleTheaterDim();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_F) {
-                root.controller.toggleFullscreen();
-                root.revealControls();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_Escape && root.cropMode) {
-                // Escape unwinds one level at a time: out of crop adjustment
-                // first, and only then out of the sheet.
-                root.setCropMode(false);
-                event.accepted = true;
-            } else if (event.key === Qt.Key_Escape && root.quickEditOpen) {
-                root.closeQuickEdit();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_Escape && root.visibility === Window.FullScreen) {
-                root.visibility = Window.Windowed;
-                root.revealControls();
-                event.accepted = true;
-            }
         }
     }
 
@@ -2237,9 +2133,8 @@ ApplicationWindow {
     // the latch left by the last windowed fade on the way IN, and what
     // restores this window's real revealed state on the way OUT.
     //
-    // Focus. F and Escape are bare keys handled by stage's Keys.onPressed
-    // filter (see the note there), so they only work while `stage` actually
-    // holds focus -- and a fullscreen transition is precisely the kind of
+    // Focus. F is a "stage" key (PlayerActions.qml), so it only works while
+    // `stage` actually holds focus -- and a fullscreen transition is precisely the kind of
     // window-level event that can leave focus on whatever was last clicked.
     // Taking it back here is what makes "press F again to leave" reliable.
     onVisibilityChanged: {
@@ -2277,37 +2172,4 @@ ApplicationWindow {
         repeat: false
         onTriggered: root.reassertTitlebarControls()
     }
-
-    // Escape leaves fullscreen no matter what holds focus.
-    //
-    // The bare-key filter on `stage` (Keys.onPressed) cannot promise that: a
-    // focused transport button, or anything else that took focus during the
-    // transition, swallows the key before the filter ever runs -- and being
-    // unable to leave fullscreen is not a cosmetic failure. A window-scoped
-    // Shortcut is answered by the window itself regardless of the focus item.
-    //
-    // It stands down for the two surfaces that legitimately own Escape while
-    // they are up (Quick Edit closes on it, a native dialog cancels on it),
-    // so this never steals the key from them; the filter on `stage` handles
-    // Escape for Quick Edit.
-    Shortcut {
-        sequence: "Escape"
-        context: Qt.WindowShortcut
-        enabled: root.visibility === Window.FullScreen
-            && !root.quickEditOpen
-            && !root.nativeDialogVisible
-        onActivated: {
-            root.visibility = Window.Windowed;
-            root.revealControls();
-        }
-    }
-
-    // Cmd-Shift-F ("Fill Screen (Padded)") is deliberately NOT bound here.
-    // It lives only on the View menu item (qml/AppMenuBar.qml), which is a
-    // real NSMenu key equivalent -- AppKit dispatches those from
-    // -[NSApplication sendEvent:] before the event ever reaches the key
-    // window, so a QML Shortcut on the same sequence would be dead code in
-    // the normal case and a double-toggle (i.e. a visible no-op) in any case
-    // where it was not. One binding, in the place that also makes the gesture
-    // discoverable.
 }

@@ -4,19 +4,12 @@ import Qt.labs.platform as Platform
 
 // WAM's real desktop menu bar. Qt.labs.platform's MenuBar (unlike QtQuick
 // Controls' in-window one) installs itself as the actual macOS top menu, the
-// way every other native app does -- this is why it lives in its own file
-// rather than QtQuick.Controls.MenuBar inline in Main.qml.
+// way every other native app does.
 //
-// Every action below calls an existing controller/root function; nothing
-// here invents new player behavior. Deliberately not wired: Space, the
-// arrow keys, and F. Main.qml already binds those as bare, unmodified
-// shortcuts (window-scoped Shortcut items for Space/Left/Right, a
-// Keys.onPressed filter for F). A
-// native NSMenu key equivalent for a bare, unmodified key intercepts every
-// matching keystroke application-wide, including inside text fields (Quick
-// Edit's fields, the preferences window), which would silently eat normal
-// typing. Only Cmd-modified shortcuts (Preferences, Open, Close, Quit and
-// Cmd-Shift-F) are bound here, since those can never collide with typed text.
+// Player commands come from the focused window's PlayerActions (labels, keys,
+// enabled rules, check marks, handlers); only Cmd-modified sequences are set
+// here as menu key equivalents -- see PlayerActions.qml for why bare keys are
+// not.
 Platform.MenuBar {
     id: root
 
@@ -39,14 +32,9 @@ Platform.MenuBar {
     readonly property bool hasController: root.controller !== null && root.controller !== undefined
     readonly property bool hasWindow: root.appRoot !== null && root.appRoot !== undefined
     readonly property bool mediaLoaded: root.hasController && root.controller.hasMedia
-
-    function stepLabel(action) {
-        if (!root.hasController)
-            return action;
-        const step = Number(root.controller.seekStepSeconds);
-        const formatted = step.toFixed(step % 1 === 0 ? 0 : 1);
-        return action + " " + formatted + (step === 1 ? " Second" : " Seconds");
-    }
+    // The focused window's commands, or every command disabled with no window.
+    readonly property PlayerActions commands: root.hasWindow ? root.appRoot.actions : idleCommands
+    readonly property PlayerActions idleCommands: PlayerActions { window: null }
 
     Platform.Menu {
         // macOS replaces this title with the application's real name in the
@@ -89,66 +77,24 @@ Platform.MenuBar {
             onTriggered: root.host.openMedia()
         }
         Platform.MenuSeparator {}
-        Platform.MenuItem {
-            text: "Close Window"
+        ActionMenuItem {
+            command: root.commands.closeWindow
             shortcut: StandardKey.Close
-            enabled: root.hasWindow
-            // The focused window's close(), the same path as its red button:
-            // it runs the window's onClosing sequence, and closing never
-            // quits the app.
-            onTriggered: root.appRoot.close()
         }
     }
 
     Platform.Menu {
         title: "Playback"
 
-        Platform.MenuItem {
-            text: "Mute  M"
-            checkable: true
-            checked: root.hasController && root.controller.muted
-            enabled: root.mediaLoaded
-            onTriggered: root.controller.toggleMute()
-        }
-
-        // No `shortcut:` here -- see the file header comment. Space is
-        // Main.qml's own window-scoped Shortcut.
-        Platform.MenuItem {
-            text: root.hasController && root.controller.playing ? "Pause" : "Play"
-            enabled: root.mediaLoaded
-            onTriggered: root.controller.togglePlayPause()
-        }
-        Platform.MenuItem {
-            text: root.stepLabel("Skip Forward")
-            enabled: root.mediaLoaded
-            onTriggered: root.controller.skipForward()
-        }
-        Platform.MenuItem {
-            text: root.stepLabel("Skip Back")
-            enabled: root.mediaLoaded
-            onTriggered: root.controller.skipBackward()
-        }
+        ActionMenuItem { command: root.commands.mute }
+        ActionMenuItem { command: root.commands.playPause }
+        ActionMenuItem { command: root.commands.skipForward }
+        ActionMenuItem { command: root.commands.skipBack }
         Platform.MenuSeparator {}
-        // Same no-`shortcut:` rule as the rest of this menu; "." and "," are
-        // window-scoped Shortcuts in Main.qml. The labels name the keys anyway
-        // so the pair is discoverable from the menu, which is the only place a
-        // user would go looking for them.
-        Platform.MenuItem {
-            text: "Next Frame  ."
-            enabled: root.mediaLoaded
-            onTriggered: root.controller.stepFrame(1)
-        }
-        Platform.MenuItem {
-            text: "Previous Frame  ,"
-            enabled: root.mediaLoaded
-            onTriggered: root.controller.stepFrame(-1)
-        }
+        ActionMenuItem { command: root.commands.nextFrame }
+        ActionMenuItem { command: root.commands.previousFrame }
         Platform.MenuSeparator {}
-        Platform.MenuItem {
-            text: "Seek to Start"
-            enabled: root.mediaLoaded
-            onTriggered: root.controller.seekTo(0)
-        }
+        ActionMenuItem { command: root.commands.seekToStart }
     }
 
     // ---------------------------------------------------------------------
@@ -162,13 +108,12 @@ Platform.MenuBar {
     // compatibility route), so the same menu works either way.
     //
     // A FIXED POOL of items rather than an Instantiator. Qt.labs.platform
-    // mutates the real NSMenu, and its checkable items imperatively
-    // overwrite `checked` and detach any binding on it (see the Window
-    // Hugs Video re-sync at the bottom of this file). A static pool keeps every item's
+    // mutates the real NSMenu and writes a checkable item's `checked` itself
+    // on a click (see ActionMenuItem.qml). A static pool keeps every item's
     // identity stable across focus changes and file changes, so the one
-    // imperative re-sync at the bottom of this file is the whole story;
-    // creating and destroying native menu items on every open would add a
-    // second, harder failure mode for no user-visible gain.
+    // imperative re-sync below is the whole story; creating and destroying
+    // native menu items on every open would add a second, harder failure
+    // mode for no user-visible gain.
     Platform.Menu {
         id: subtitlesMenu
         title: "Subtitles"
@@ -266,18 +211,14 @@ Platform.MenuBar {
 
         Platform.MenuSeparator {}
 
-        Platform.MenuItem {
-            text: "Load Subtitle File…"
-            enabled: root.mediaLoaded
-            onTriggered: root.controller.openSubtitleFileDialog()
-        }
+        ActionMenuItem { command: root.commands.loadSubtitles }
     }
 
     // Keeps the Subtitles menu's items following the focused controller: their
     // labels when a new file is opened or the route flips, their radio marks
     // when the selection changes from anywhere (the menu, the transport
-    // button, a generated caption selecting itself). Imperative for exactly
-    // the reason the View menu's checkbox is -- see the note there.
+    // button, a generated caption selecting itself). Imperative for the
+    // reason ActionMenuItem's check mark is.
     function rebuildSubtitleItems() {
         // Reads root.controller DIRECTLY rather than the derived `tracks` and
         // `hasController` bindings. This runs from onControllerChanged, and a
@@ -285,8 +226,7 @@ Platform.MenuBar {
         // depending on that same property have been re-evaluated yet, so the
         // derived bindings can still hold the previous window's tracks and
         // check mark after focus moves. Reading the thing that actually
-        // changed is the only ordering-independent fix, and it is the same
-        // rule the View menu's checkbox handler follows below.
+        // changed is the only ordering-independent fix.
         const controller = root.controller;
         const list = controller ? controller.subtitleTracks : [];
         const active = controller ? controller.activeSubtitleTrack : -1;
@@ -330,179 +270,35 @@ Platform.MenuBar {
     Platform.Menu {
         title: "View"
 
-        Platform.MenuItem {
-            text: "Actual Size"
-            enabled: root.mediaLoaded && root.hasWindow
-            onTriggered: root.appRoot.resizeToActualSize()
-        }
-        Platform.MenuItem {
-            text: "Fit to Screen"
-            enabled: root.mediaLoaded && root.hasWindow
-            onTriggered: root.appRoot.resizeToFitScreen()
-        }
-        // "Fill Screen (Padded)": grow the window to the screen's whole
-        // visible frame and letterbox/pillarbox the video inside it with
-        // black bars, overriding "Window Hugs Video" for this window while it
-        // is on. A second trigger restores the exact frame the window had.
-        //
-        // Cmd-Shift-F, and this one DOES carry a `shortcut:` -- the file
-        // header's prohibition is on BARE keys only. Nothing else in the app
-        // binds any Cmd-Shift sequence.
-        Platform.MenuItem {
-            id: fillPaddedMenuItem
-            text: "Fill Screen (Padded)"
+        ActionMenuItem { command: root.commands.actualSize }
+        ActionMenuItem { command: root.commands.fitToScreen }
+        // Grows the window to the screen's visible frame and letterboxes the
+        // video inside it, overriding Window Hugs Video for this window; a
+        // second trigger restores the exact frame. Nothing else binds any
+        // Cmd-Shift sequence.
+        ActionMenuItem {
+            command: root.commands.fillScreenPadded
             shortcut: "Ctrl+Shift+F"
-            checkable: true
-            // Only the initial value: Qt.labs.platform's click write detaches
-            // this binding (see the hugs-video re-sync at the end of this
-            // file), so the Connections block there re-syncs it from the
-            // focused window's real state.
-            checked: root.hasWindow ? root.appRoot.fillScreenPadded : false
-            // Fullscreen owns the window frame outright; padding underneath
-            // it would be invisible and a frame AppKit would fight on the way
-            // out.
-            enabled: root.mediaLoaded && root.hasWindow
-                && root.appRoot.visibility !== Window.FullScreen
-            onTriggered: {
-                // Ask the window, then take its answer: the toggle can
-                // legitimately decline (no native bridge, a frame change
-                // already in flight), and this item must not then claim a
-                // state the window is not in.
-                root.appRoot.toggleFillScreenPadded();
-                checked = root.appRoot.fillScreenPadded;
-            }
         }
         Platform.MenuSeparator {}
-        // No `shortcut:` (F is a bare key -- see file header); F itself is
-        // handled in Main.qml, and this is the clickable, discoverable path
-        // to the same action.
-        Platform.MenuItem {
-            text: root.hasWindow && root.appRoot.visibility === Window.FullScreen ? "Exit Full Screen" : "Enter Full Screen"
-            enabled: root.mediaLoaded && root.hasWindow
-            onTriggered: root.controller.toggleFullscreen()
-        }
+        ActionMenuItem { command: root.commands.fullScreenToggle }
         Platform.MenuSeparator {}
-        // QuickTime-style floating window: keep the windowed frame hugging
-        // the video's aspect ratio (no letterbox bars). `checked` below is
-        // only this item's *initial* value; the Connections block at the
-        // bottom of this file re-syncs it (see there for why).
-        Platform.MenuItem {
-            id: hugsVideoMenuItem
-            text: "Window Hugs Video"
-            checkable: true
-            checked: root.hasController ? root.controller.windowHugsVideo : true
-            enabled: root.hasController
-            onTriggered: root.controller.setWindowHugsVideo(checked)
-        }
+        // QuickTime-style floating window: the windowed frame hugs the
+        // video's aspect ratio (no letterbox bars).
+        ActionMenuItem { command: root.commands.windowHugsVideo }
         Platform.MenuSeparator {}
-        // Vivid boost and Theater dim: two independent viewing modes, kept as
-        // two items rather than one combined "Theater Mode" because they are
-        // useful apart -- one is about the picture, the other about
-        // everything that is not the picture. Both are per window, both carry
-        // their bare key in the label rather than a `shortcut:` (see the file
-        // header), and both re-sync their check mark through the Connections
-        // block at the end of this file for the reason documented there.
-        Platform.MenuItem {
-            id: vividMenuItem
-            text: "Vivid Boost  V"
-            checkable: true
-            checked: root.hasWindow ? root.appRoot.vividActive : false
-            // Disabled, not merely unchecked, for an HDR source: that content
-            // already occupies the display's extended range and a boost on
-            // top of it would only clip its highlights.
-            enabled: root.mediaLoaded && root.hasWindow && root.appRoot.vividAvailable
-            onTriggered: {
-                root.appRoot.toggleVividBoost();
-                checked = root.appRoot.vividActive;
-            }
-        }
-        Platform.MenuItem {
-            id: theaterMenuItem
-            text: "Theater Dim  T"
-            checkable: true
-            checked: root.hasWindow ? root.appRoot.theaterDimEnabled : false
-            enabled: root.mediaLoaded && root.hasWindow
-            onTriggered: {
-                root.appRoot.toggleTheaterDim();
-                checked = root.appRoot.theaterDimEnabled;
-            }
-        }
+        // Two independent viewing modes, useful apart: one is about the
+        // picture, the other about everything that is not the picture.
+        ActionMenuItem { command: root.commands.vivid }
+        ActionMenuItem { command: root.commands.theater }
         Platform.MenuSeparator {}
-        // The "h" macro, made discoverable. No `shortcut:` (h is a bare key
-        // -- see the file header); the key itself is bound in qml/Main.qml's
-        // Keys.onPressed filter on the video stage.
-        Platform.MenuItem {
-            text: "Hide and Pause All"
-            enabled: root.host.windowCount > 0
-            onTriggered: root.host.hideAndPauseAll()
-        }
-    }
-
-    // Keeps the View menu's "Window Hugs Video" checkbox following the focused
-    // controller's actual value -- both for external changes (Preferences,
-    // another window) and to undo Qt.labs.platform's own direct write to
-    // `checked` on every click, which per ordinary QML property semantics
-    // detaches any plain Binding on that property for good the first time the
-    // item is clicked. Connections sidesteps that: it establishes no binding,
-    // just an imperative re-write triggered by the real signal, so it keeps
-    // working after any number of clicks. It re-targets as focus moves between
-    // windows, which is what makes one app-level menu bar honest about N
-    // windows' state.
-    Connections {
-        target: root.controller
-        function onWindowHugsVideoChanged() {
-            if (root.controller)
-                hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
-        }
-    }
-
-    // The same imperative re-sync for the padded-fill item, against the
-    // focused WINDOW rather than its controller -- padded fill is per window
-    // and deliberately not a controller-level (mirrored, persisted) setting.
-    Connections {
-        target: root.appRoot
-        function onFillScreenPaddedChanged() {
-            if (root.appRoot)
-                fillPaddedMenuItem.checked = root.appRoot.fillScreenPadded;
-        }
-        // Both directions, which is the whole point: these two modes have a
-        // chrome toggle, a bare key and a menu item, and the check mark has to
-        // follow whichever one the user reached for. `vividActive` rather than
-        // `vividEnabled` so opening an HDR file clears the mark instead of
-        // leaving it standing over a boost that is no longer applied.
-        function onVividActiveChanged() {
-            if (root.appRoot)
-                vividMenuItem.checked = root.appRoot.vividActive;
-        }
-        function onTheaterDimEnabledChanged() {
-            if (root.appRoot)
-                theaterMenuItem.checked = root.appRoot.theaterDimEnabled;
-        }
-    }
-
-    onAppRootChanged: {
-        // Reads root.appRoot directly rather than the `hasWindow` derived
-        // binding, for the same ordering reason onControllerChanged does.
-        fillPaddedMenuItem.checked = root.appRoot
-            ? root.appRoot.fillScreenPadded
-            : false;
-        vividMenuItem.checked = root.appRoot ? root.appRoot.vividActive : false;
-        theaterMenuItem.checked = root.appRoot
-            ? root.appRoot.theaterDimEnabled
-            : false;
+        ActionMenuItem { command: root.commands.hideAndPauseAll }
     }
 
     onControllerChanged: {
         // The Subtitles menu is per focused window: moving focus between two
         // windows must show each one's own tracks and its own selection.
         root.rebuildSubtitleItems();
-        // Reads `root.controller` directly rather than the `hasController`
-        // convenience: on the way out the controller reference and the derived
-        // binding are cleared in an unspecified order, and this handler runs
-        // on the reference's change. Testing the thing actually about to be
-        // dereferenced is the only ordering-independent guard.
-        if (root.controller)
-            hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
     }
 
     Platform.MessageDialog {

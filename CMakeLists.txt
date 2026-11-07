@@ -234,7 +234,9 @@ qt_add_qml_module(wam
     qml/AppPreferences.qml
     qml/Scrubber.qml
     qml/AppMenuBar.qml
-    qml/AppMenu.qml)
+    qml/AppMenu.qml
+    qml/PlayerActions.qml
+    qml/ActionMenuItem.qml)
 
 target_include_directories(wam PRIVATE src src/qt)
 target_compile_definitions(wam PRIVATE WAM_VERSION="${PROJECT_VERSION}")
@@ -492,6 +494,9 @@ if(APPLE)
       WAM_HAS_MACOS_NATIVE_PLAYBACK=1)
     if(WAM_NATIVE_BENCHMARK_TELEMETRY)
       target_sources(wam PRIVATE src/qt/test_seams.hpp src/qt/test_seams.cpp)
+      # The windowkey verb drives the shortcut map through QWindowSystemInterface.
+      find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+      target_link_libraries(wam PRIVATE Qt6::GuiPrivate)
     endif()
     target_compile_options(wam PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")

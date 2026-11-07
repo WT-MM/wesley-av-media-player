@@ -102,11 +102,16 @@ elif case == 'replay':
         check(last['playing']==1 and 0.2<last['pos']<3, 'Play at last frame must restart')
 elif case in ('volume', 'mute'):
     script = ('volume:0:0@1600,mute:0@100,report@100,volume:0:0.7@100,report@100' if case=='volume'
-              else 'volume:0:0@1600,key:0:M@100,report@100,key:0:M@100,report@100,menu@1')
+              else 'volume:0:0@1600,key:0:M@100,report@100,key:0:M@100,report@100,'
+                   'menuclick:Mute@100,key:0:M@100,report@100,menu@1,windowkey:0:Space@100,report@100')
     _, reports, _ = run(case, media, script)
     rows = windows(reports)
     check(rows[0]['muted']==1 and rows[1]['muted']==0, 'Mute/volume keyboard state')
-    if case=='mute': check('[ ] Mute  M' in menu_items(reports), 'Playback menu must expose mute')
+    if case=='mute':
+        # A menu click writes the item's own check mark; a later key toggle
+        # must still move it.
+        check(rows[2]['muted']==0 and '[ ] Mute  M' in menu_items(reports), 'Menu Mute check mark must follow state after a click')
+        check(rows[2]['playing']==1 and rows[3]['playing']==0, 'Space reaches the window-scoped play/pause shortcut')
 elif case in ('subtitles', 'transport'):
     script = (f'subsload:0:{root}/cue.srt@1600,controls:0:0@100,volume:0:0.7@100,mute:0@10,mute:0@10,layout:0@300,grab:0:{root}/hidden.png@1,controls:0:1@50,volume:0:0.8@50,layout:0@150,grab:0:{root}/visible.png@1'
               if case=='subtitles' else f'edit:0@1600,controls:0:1@500,layout:0@100,grab:0:{root}/narrow.png@1')

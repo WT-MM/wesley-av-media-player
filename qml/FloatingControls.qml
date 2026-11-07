@@ -5,6 +5,8 @@ FocusScope {
     id: root
 
     required property var player
+    // The window's PlayerActions; every button triggers one of its commands.
+    required property var actions
     property bool revealed: true
     property bool suppressed: false
     property bool instantHide: false
@@ -106,9 +108,6 @@ FocusScope {
         || theaterButton.down
         || fullscreenButton.down
     readonly property int elapsedWholeSeconds: Math.floor(timeline.displayPosition)
-    signal editRequested
-    signal vividToggleRequested
-    signal theaterToggleRequested
     signal interaction
     signal moveRequested(real targetX, real targetY)
     // A control on this bar changed the level (either slider, or the mute
@@ -360,8 +359,7 @@ FocusScope {
             // says as much as the tip does once it is up.
             toolTip: root.volumePopupOpen ? "" : accessibleName
             onClicked: {
-                root.player.toggleMute();
-                root.volumeOsdRequested();
+                root.actions.mute.trigger();
                 root.interaction();
             }
         }
@@ -606,9 +604,9 @@ FocusScope {
             toolTipClearItem: glass
             iconName: "backward5"
             accessibleName: "Back " + root.formatStepSeconds(root.player.seekStepSeconds) + " seconds"
-            toolTip: accessibleName + " (Left Arrow)"
+            toolTip: accessibleName + " (" + root.actions.skipBack.keyName + ")"
             onClicked: {
-                root.player.skipBackward();
+                root.actions.skipBack.trigger();
                 root.interaction();
             }
         }
@@ -621,9 +619,9 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             accessibleName: root.player.playing ? "Pause" : "Play"
-            toolTip: accessibleName + " (Space)"
+            toolTip: accessibleName + " (" + root.actions.playPause.keyName + ")"
             onClicked: {
-                root.player.togglePlayPause();
+                root.actions.playPause.trigger();
                 root.interaction();
             }
         }
@@ -635,9 +633,9 @@ FocusScope {
             toolTipClearItem: glass
             iconName: "forward5"
             accessibleName: "Forward " + root.formatStepSeconds(root.player.seekStepSeconds) + " seconds"
-            toolTip: accessibleName + " (Right Arrow)"
+            toolTip: accessibleName + " (" + root.actions.skipForward.keyName + ")"
             onClicked: {
-                root.player.skipForward();
+                root.actions.skipForward.trigger();
                 root.interaction();
             }
         }
@@ -872,10 +870,10 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             iconName: "captions"
-            accessibleName: root.player.captionsVisible ? "Hide captions" : "Show captions"
+            accessibleName: root.actions.captions.text
             toolTip: accessibleName
             onClicked: {
-                root.player.toggleCaptions();
+                root.actions.captions.trigger();
                 root.interaction();
             }
         }
@@ -886,10 +884,10 @@ FocusScope {
             compact: true
             toolTipClearItem: glass
             iconName: "edit"
-            accessibleName: "Quick Edit"
-            toolTip: "Open Quick Edit (E)"
+            accessibleName: root.actions.quickEdit.text
+            toolTip: "Open Quick Edit (" + root.actions.quickEdit.keyName + ")"
             onClicked: {
-                root.editRequested();
+                root.actions.quickEdit.trigger();
                 root.interaction();
             }
         }
@@ -912,10 +910,10 @@ FocusScope {
             toolTip: !root.vividAvailable
                 ? "Vivid boost \u2014 not needed, this source is already HDR"
                 : root.vividActive
-                    ? "Vivid boost on, " + root.vividBoost.toFixed(1) + "x (V)"
-                    : "Vivid boost \u2014 brighten the video past the desktop (V)"
+                    ? "Vivid boost on, " + root.vividBoost.toFixed(1) + "x (" + root.actions.vivid.keyName + ")"
+                    : "Vivid boost \u2014 brighten the video past the desktop (" + root.actions.vivid.keyName + ")"
             onClicked: {
-                root.vividToggleRequested();
+                root.actions.vivid.trigger();
                 root.interaction();
             }
         }
@@ -930,10 +928,10 @@ FocusScope {
             selected: root.theaterActive
             accessibleName: root.theaterActive ? "Turn off Theater dim" : "Turn on Theater dim"
             toolTip: root.theaterActive
-                ? "Theater dim on (T)"
-                : "Theater dim \u2014 darken everything around the player (T)"
+                ? "Theater dim on (" + root.actions.theater.keyName + ")"
+                : "Theater dim \u2014 darken everything around the player (" + root.actions.theater.keyName + ")"
             onClicked: {
-                root.theaterToggleRequested();
+                root.actions.theater.trigger();
                 root.interaction();
             }
         }
@@ -945,9 +943,9 @@ FocusScope {
             toolTipClearItem: glass
             iconName: "fullscreen"
             accessibleName: "Enter full screen"
-            toolTip: "Full screen (F)"
+            toolTip: "Full screen (" + root.actions.fullScreenToggle.keyName + ")"
             onClicked: {
-                root.player.toggleFullscreen();
+                root.actions.fullScreenToggle.trigger();
                 root.interaction();
             }
         }

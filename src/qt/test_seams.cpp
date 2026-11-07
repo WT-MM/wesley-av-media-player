@@ -17,6 +17,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QQmlListReference>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -24,6 +25,7 @@
 #include <QTimer>
 #include <QVariantMap>
 #include <QWheelEvent>
+#include <qpa/qwindowsysteminterface.h>
 
 #include <algorithm>
 #include <cmath>
@@ -311,6 +313,16 @@ struct VerbContext {
   [[nodiscard]] double number(qsizetype field) const { return fields.value(field).toDouble(); }
 };
 
+void triggerAction(const VerbContext &c, const QString &name) {
+  PlayerWindow *window = c.window();
+  QVariant taken;
+  if (window == nullptr ||
+      !QMetaObject::invokeMethod(window->qmlRoot(), "triggerAction", Q_RETURN_ARG(QVariant, taken),
+                                 Q_ARG(QVariant, name)) ||
+      !taken.toBool())
+    qCritical().noquote() << "WAM_TEST_WINDOW_SCRIPT: command not taken:" << name;
+}
+
 struct Verb {
   QLatin1StringView name;
   void (*run)(const VerbContext &);
@@ -344,10 +356,10 @@ constexpr Verb kVerbs[] = {
     {QLatin1StringView("nativefail"), [](const VerbContext &c) {
        if (PlayerWindow *window = c.window()) PlayerControllerTestAccess::failNative(*window->controller());
      }},
-    // edit:<i>: toggle Quick Edit without activating the window.
-    {QLatin1StringView("edit"), [](const VerbContext &c) {
-       if (PlayerWindow *window = c.window()) QMetaObject::invokeMethod(window->qmlRoot(), "toggleQuickEdit");
-     }},
+    // action:<i>:<name>: trigger that window's PlayerActions command (qml/PlayerActions.qml).
+    {QLatin1StringView("action"), [](const VerbContext &c) { triggerAction(c, c.fields.value(2)); }},
+    // edit:<i>: the Quick Edit command, without activating the window.
+    {QLatin1StringView("edit"), [](const VerbContext &c) { triggerAction(c, QStringLiteral("quickEdit")); }},
     // controls:<i>:<0|1>: set chrome visibility, modelling the foreground
     // chrome without activating the window.
     {QLatin1StringView("controls"), [](const VerbContext &c) {
@@ -364,6 +376,19 @@ constexpr Verb kVerbs[] = {
            QKeyEvent event(QEvent::KeyPress, c.fields.value(2).at(0).unicode(), Qt::NoModifier);
            QCoreApplication::sendEvent(stage, &event);
          }
+     }},
+    // windowkey:<i>:<Key>: a key through the window's shortcut map, the way
+    // the Cocoa plugin delivers one (e.g. windowkey:0:Space). The window gets
+    // Qt's focus only; the app is never activated.
+    {QLatin1StringView("windowkey"), [](const VerbContext &c) {
+       PlayerWindow *window = c.window();
+       const QKeyCombination key = QKeySequence::fromString(c.fields.value(2))[0];
+       if (window == nullptr || window->window() == nullptr) return;
+       QWindowSystemInterface::handleFocusWindowChanged<QWindowSystemInterface::SynchronousDelivery>(window->window());
+       const QString text = key.key() == Qt::Key_Space ? QStringLiteral(" ") : c.fields.value(2);
+       if (!QWindowSystemInterface::handleShortcutEvent(window->window(), 0, key.key(), key.keyboardModifiers(),
+                                                        0, 0, 0, text))
+         qCritical().noquote() << "WAM_TEST_WINDOW_SCRIPT: no shortcut took" << c.fields.value(2);
      }},
     // layout:<i>: report named overlay/control geometry and the loading title.
     {QLatin1StringView("layout"), [](const VerbContext &c) {
@@ -422,13 +447,8 @@ constexpr Verb kVerbs[] = {
        const bool saved = macos_window_chrome::captureWindowToFile(quick, path);
        Report(QLatin1StringView("VIDEOGRAB")).add("idx", c.index()).add("saved", saved).add("path", path);
      }},
-    // mute:<i>: the transport's mute button (toggle + volume OSD).
-    {QLatin1StringView("mute"), [](const VerbContext &c) {
-       if (PlayerWindow *window = c.window()) {
-         window->controller()->toggleMute();
-         if (QObject *root = window->qmlRoot()) QMetaObject::invokeMethod(root, "showVolumeOsd");
-       }
-     }},
+    // mute:<i>: the Mute command.
+    {QLatin1StringView("mute"), [](const VerbContext &c) { triggerAction(c, QStringLiteral("mute")); }},
     // scroll:<i>:<dx>:<dy>:<count>[:<phase>[:<inverted>[:<fx>:<fy>]]]: <count>
     // wheel events with PIXEL deltas; phase 0..4 = Qt::ScrollPhase; fx/fy are
     // fractions of the window, default (0.5, 0.35): over the picture, clear of
@@ -464,6 +484,25 @@ constexpr Verb kVerbs[] = {
     // menu: one WAM_TEST_MENU line per top-level menu, read off the real
     // Qt.labs.platform menu bar (a screenshot cannot see an auto-hidden bar).
     {QLatin1StringView("menu"), [](const VerbContext &c) { reportMenus(c.windows); }},
+    // menuclick:<label>: activate the first menu item whose title starts
+    // with <label>, as a click does (a checkable item flips its own check
+    // mark before it triggers).
+    {QLatin1StringView("menuclick"), [](const VerbContext &c) {
+       QObject *bar = c.windows.menuBarObject();
+       const QQmlListReference menus(bar, "menus");
+       const QString label = c.tail(1);
+       for (qsizetype m = 0; menus.isValid() && m < menus.count(); ++m) {
+         const QQmlListReference items(menus.at(m), "items");
+         for (qsizetype i = 0; items.isValid() && i < items.count(); ++i) {
+           QObject *item = items.at(i);
+           if (item->property("text").toString().startsWith(label)) {
+             QMetaObject::invokeMethod(item, "activate");
+             return;
+           }
+         }
+       }
+       qCritical().noquote() << "WAM_TEST_WINDOW_SCRIPT: no menu item" << label;
+     }},
     // report: WAM_TEST_WINDOWS, then WINDOW / DIALOG / SUBTITLES per window.
     {QLatin1StringView("report"), [](const VerbContext &c) { reportWindows(c.windows); }},
 };
