@@ -2,7 +2,11 @@
 
 #include "platform/macos/avfoundation_preview_source.hpp"
 #include "platform/macos/avfoundation_media_support.hpp"
+#include "platform/macos/core_media_source_support.hpp"
 #include "platform/macos/native_surface_budget.hpp"
+#if defined(WAM_ENABLE_SOFTWARE_VP8)
+#include "vp8_test_fixture.hpp"
+#endif
 
 #include <CoreVideo/CoreVideo.h>
 
@@ -1284,6 +1288,124 @@ void recordLessCodecsAreAdmittedWithNoConfigurationRecord() {
   }
 }
 
+#if defined(WAM_ENABLE_SOFTWARE_VP8)
+// Serves one VP8 key frame at time zero, then end of stream.
+class Vp8PreviewSource final : public NativePreviewSource {
+ public:
+  explicit Vp8PreviewSource(CMSampleBufferRef sample) noexcept
+      : sample_(sample) {}
+  ~Vp8PreviewSource() override {
+    if (sample_ != nullptr) {
+      CFRelease(sample_);
+    }
+  }
+
+  [[nodiscard]] NativePreviewBeginOutcome begin(
+      NativePreviewRequest request) noexcept override {
+    epoch_ = request.epoch;
+    served_ = false;
+    return {NativePreviewStatus::Ready, epoch_, {0, 30}, {}};
+  }
+  [[nodiscard]] bool advanceTarget(std::uint64_t, MediaTime) noexcept override {
+    return false;
+  }
+  [[nodiscard]] NativePreviewReadResult readNext(
+      std::uint64_t epoch) noexcept override {
+    if (served_ || sample_ == nullptr) {
+      return NativePreviewEndOfStream{epoch};
+    }
+    served_ = true;
+    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
+    MediaSample result;
+    result.generation = epoch;
+    result.track = 1;
+    result.kind = MediaSampleKind::EncodedVideo;
+    result.presentationTime = {0, 30};
+    result.decodeTime = {0, 30};
+    result.duration = {1, 30};
+    result.keyFrame = true;
+    result.sampleCount = 1;
+    CFRetain(sample_);
+    result.payload = MediaPayloadLease(std::make_shared<CoreMediaSampleStorage>(
+        sample_, CMBlockBufferGetDataLength(block)));
+    return result;
+  }
+  void requestCancel(std::uint64_t) noexcept override {}
+  void close() noexcept override {}
+  [[nodiscard]] NativePreviewSourceFacts facts() const noexcept override {
+    return {};
+  }
+  [[nodiscard]] NativePreviewSourceMemoryFacts memoryFacts()
+      const noexcept override {
+    return {};
+  }
+
+ private:
+  CMSampleBufferRef sample_{nullptr};
+  std::uint64_t epoch_{0};
+  bool served_{false};
+};
+
+// The preview lane selects decoders exactly as main playback does, so a VP8
+// track previews through the software stage and draws a real decoded frame.
+void vp8PreviewDecodesThroughTheSoftwareStage() {
+  const auto stream = wam::test::encodeVp8(64, 64, 1);
+  CMVideoFormatDescriptionRef format =
+      wam::test::makeVp8FormatDescription(64, 64);
+  expect(!stream.frames.empty() && format != nullptr,
+         "the VP8 preview fixture is encoded");
+  if (stream.frames.empty() || format == nullptr) {
+    return;
+  }
+  CMSampleBufferRef sample =
+      wam::test::makeVp8Sample(stream.frames[0], format, 0, true);
+  CFRelease(format);
+
+  auto vp8 = std::make_shared<MediaSourceDescriptor>(*descriptor());
+  MediaTrackDescriptor& track = vp8->tracks.front();
+  track.codec = MediaCodec::Vp8;
+  track.timeBase = {1, 30};
+  track.codecConfigurationKind = MediaCodecConfigurationKind::VpcC;
+  track.codecConfiguration.assign(12, std::byte{0});
+  track.codecConfiguration[0] = std::byte{1};
+  track.video->codedWidth = track.video->displayWidth = 64;
+  track.video->codedHeight = track.video->displayHeight = 64;
+  const NativePreviewBinding source{
+      "/private/tmp/wam-preview-lane-fixture.webm", vp8, {}};
+
+  auto port = std::make_shared<FakePreviewPort>(kPlaybackGeneration);
+  auto wakes = std::make_shared<WakeCounter>();
+  auto lane = NativePreviewFrameLane::create(
+      {source, protocol::Generation{kPlaybackGeneration},
+       protocol::Stamp{protocol::AttemptId{1}, protocol::Serial{1}}},
+      port, {wakes, wake, wakes.get()},
+      std::make_unique<Vp8PreviewSource>(sample));
+  expect(lane != nullptr, "a VP8 track configures a preview lane");
+  if (lane == nullptr) {
+    return;
+  }
+  const auto request = command(2, 10, 20, 0.0);
+  expect(lane->request(request, target(0.0)) ==
+             NativePreviewFrameRequestStatus::Accepted,
+         "the VP8 preview command is accepted");
+  for (int turn = 0; turn < 16 && port->stagedFrames() == 0; ++turn) {
+    static_cast<void>(lane->pump());
+  }
+  expect(port->stagedFrames() == 1,
+         "the software stage decodes the VP8 key frame into the output");
+  if (port->stagedFrames() == 1) {
+    port->complete(NativeTrackedVideoPreviewEventKind::FrameDrawn);
+    static_cast<void>(lane->pump());
+    const auto presented = lane->takePresented();
+    expect(presented && protocol::previewPresentedMatches(request, *presented),
+           "the decoded VP8 frame is presented for the exact command");
+  }
+  expect(lane->stop(protocol::Generation{kPlaybackGeneration}) ==
+             NativePreviewFrameCancelProgress::Done,
+         "the VP8 preview lane stops");
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -1307,6 +1429,9 @@ int main() {
   unknownOutputEventsFailClosed();
   deterministicLatestWinsStressStaysBounded();
   recordLessCodecsAreAdmittedWithNoConfigurationRecord();
+#if defined(WAM_ENABLE_SOFTWARE_VP8)
+  vp8PreviewDecodesThroughTheSoftwareStage();
+#endif
   if (failures != 0) {
     return EXIT_FAILURE;
   }

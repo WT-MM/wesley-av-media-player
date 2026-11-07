@@ -438,23 +438,8 @@ if(APPLE)
     find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 
     set(WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES
-      src/platform/macos/native_video_metal_mapper.mm)
-    add_library(wam_macos_native_video_metal_mapper STATIC
-      ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
-    target_include_directories(
-      wam_macos_native_video_metal_mapper PUBLIC src)
-    target_compile_features(
-      wam_macos_native_video_metal_mapper PUBLIC cxx_std_20)
-    target_compile_options(wam_macos_native_video_metal_mapper PRIVATE
-      "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
-      -Wall -Wextra -Wpedantic)
-    target_link_libraries(wam_macos_native_video_metal_mapper
-      PUBLIC
-        wam_macos_native_video_core
-      PRIVATE
-        "${WAM_METAL_FRAMEWORK}")
-    set_target_properties(wam_macos_native_video_metal_mapper PROPERTIES
-      LINKER_LANGUAGE OBJCXX)
+      tests/metal_frame_mapper.hpp
+      tests/metal_frame_mapper.mm)
 
     if(BUILD_TESTING)
       add_executable(wam_native_session_factory_test tests/native_session_factory_test.mm)
@@ -1467,6 +1452,7 @@ if(BUILD_TESTING)
           tests/software_vp8_test.mm
           src/platform/macos/software_vp8_decoder.hpp
           src/platform/macos/software_vp8_decoder.mm
+          src/platform/macos/software_presentation_pool.mm
           src/platform/macos/video_decode_lane.hpp
           src/platform/macos/native_surface_budget.hpp
           src/platform/macos/native_surface_budget.mm
@@ -1478,8 +1464,7 @@ if(BUILD_TESTING)
           src/platform/macos/video_toolbox_decoder.mm)
         target_include_directories(wam_software_vp8_test PRIVATE src)
         target_compile_definitions(wam_software_vp8_test PRIVATE
-          WAM_ENABLE_SOFTWARE_VP8
-          WAM_SOFTWARE_VP8_TESTING=1)
+          WAM_ENABLE_SOFTWARE_VP8)
         target_link_libraries(wam_software_vp8_test PRIVATE
           wam_native_core
           PkgConfig::WAM_LIBVPX
@@ -1512,6 +1497,7 @@ if(BUILD_TESTING)
         src/platform/macos/video_toolbox_decoder.mm
         src/platform/macos/software_vp8_decoder.hpp
         src/platform/macos/software_vp8_decoder.mm
+        src/platform/macos/software_presentation_pool.mm
         src/platform/macos/video_decode_lane.hpp)
       target_include_directories(wam_native_video_consumer_test PRIVATE src)
       target_compile_definitions(wam_native_video_consumer_test PRIVATE
@@ -1552,6 +1538,8 @@ if(BUILD_TESTING)
         src/platform/macos/native_layer_host_view.mm)
       target_include_directories(
         wam_native_layer_video_output_test PRIVATE src)
+      target_compile_definitions(wam_native_layer_video_output_test PRIVATE
+        WAM_NATIVE_LAYER_VIDEO_TESTING=1)
       target_link_libraries(wam_native_layer_video_output_test PRIVATE
         wam_native_core
         wam_macos_native_video_core

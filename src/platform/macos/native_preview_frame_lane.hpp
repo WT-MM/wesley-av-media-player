@@ -113,7 +113,7 @@ struct NativePreviewFrameLaneFacts {
   bool failed{false};
   std::string error;
   NativePreviewSourceFacts source{};
-  VideoToolboxDecoderStats decoder{};
+  VideoDecoderStats decoder{};
 };
 
 // Raw owner-thread leaf facts. Source, lane, and decoder byte fields describe

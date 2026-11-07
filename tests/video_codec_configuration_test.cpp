@@ -1129,6 +1129,9 @@ void testH264Rejections() {
   const auto core = makeAvcC(std::array{H264SpsSpec{.profile = 100U}});
   expect(inspectAvc(extension).facts == inspectAvc(core).facts,
          "SPS chroma overrides contradictory optional hints");
+  expect(inspectAvc(core).admitted() &&
+             inspectAvc(core).facts->avcCoreBytes == core.size(),
+         "an avcC without an extension is all core");
   extension[extension.size() - 3] = 0xFF;
   extension[extension.size() - 2] = 0xFA;
   expect(inspectAvc(extension).facts == inspectAvc(core).facts,

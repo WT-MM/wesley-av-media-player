@@ -8,6 +8,7 @@
 #include "native_presentation_admission.hpp"
 
 #include "media/media_codec_facts.hpp"
+#include "media/video_codec_configuration.hpp"
 #include "core_media_codec_facts.hpp"
 #include "native_video_codec_capability.hpp"
 #include "native_video_color.hpp"
@@ -58,6 +59,196 @@ using media::MediaTimeOrder;
              ? captionNanoseconds(time.value, time.timescale)
              : 0;
 }
+
+// The live H.264 A/53 closed-caption tap: each compressed picture's caption
+// triplets are stashed on consume and released when that picture is
+// presented. Active only with a feed and an admitted H.264 track, whose avcC
+// states the NAL length prefix the triplets are framed with.
+class CaptionTap final {
+ public:
+  void setFeed(std::shared_ptr<media::captions::LiveCaptionFeed> feed) noexcept {
+    feed_ = std::move(feed);
+  }
+
+  void configure(const media::MediaTrackDescriptor& track) noexcept {
+    lengthSize_ = 0;
+    if (feed_ == nullptr || track.codec != media::MediaCodec::H264) {
+      return;
+    }
+    media::VideoCodecConfigurationLimits limits;
+    limits.admitHighDynamicRangeColor = true;
+    limits.admitHardwareH264Profiles = true;
+    limits.admitSoftwareProfiles = true;
+    const auto parsed = media::inspectVideoCodecConfiguration(
+        media::MediaCodec::H264, media::MediaCodecConfigurationKind::AvcC,
+        track.codecConfiguration, limits);
+    lengthSize_ = parsed.admitted() ? parsed.facts->nalLengthBytes : 0;
+  }
+
+  void notePicture(const media::MediaSample& sample) {
+    if (lengthSize_ == 0) {
+      return;
+    }
+    std::span<const std::byte> bytes = sample.payload.contiguousBytes();
+    if (bytes.empty() && sample.payload.byteSize() > 0) {
+      scratch_.resize(sample.payload.byteSize());
+      if (!sample.payload.copyBytes(0, scratch_)) {
+        return;
+      }
+      bytes = scratch_;
+    }
+    if (bytes.empty()) {
+      return;
+    }
+    feed_->noteCompressedPicture(
+        captionNanoseconds(sample.presentationTime),
+        std::string_view(reinterpret_cast<const char*>(bytes.data()),
+                         bytes.size()),
+        lengthSize_);
+  }
+
+  void notePresented(CMTime presentation) {
+    if (lengthSize_ != 0 && CMTIME_IS_NUMERIC(presentation)) {
+      feed_->notePresentedPicture(captionNanoseconds(presentation));
+    }
+  }
+
+  void resetForSeek() {
+    if (feed_ != nullptr) {
+      feed_->resetForSeek();
+    }
+  }
+
+ private:
+  std::shared_ptr<media::captions::LiveCaptionFeed> feed_;
+  std::size_t lengthSize_{0};
+  std::vector<std::byte> scratch_;
+};
+
+// Late-frame telemetry for the benchmark build. The shipping build compiles the
+// empty twin below, so the presentation path calls the same hooks either way.
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+struct ConsumerTrace {
+  media::late_trace::Producer producer;
+  std::uint64_t open{media::late_trace::enabled ? mach_absolute_time() : 0};
+  std::uint64_t seek{}, ordinal{}, deadline{}, previousCommit{};
+  media::late_trace::Record previousSubmission{};
+  std::uint64_t publishedContextOrdinal{};
+  template <typename Owner>
+  void frame(bool late, std::uint64_t commit, const Owner& owner) noexcept {
+    const auto& heldFrame = owner.heldFrame;
+    const auto& currentClock = owner.currentClock;
+    if (!producer.slot || !heldFrame || !currentClock) return;
+    const auto now = mach_absolute_time();
+    const auto& timing = heldFrame->timing();
+    const auto pool = NativeSurfaceBudget::stats();
+    const auto& worker = media::late_trace::worker;
+    media::late_trace::Record record;
+    record.generation = owner.generation;
+    record.ordinal = ordinal;
+    record.pts = timing.presentationTime.value;
+    record.ptsScale = timing.presentationTime.timescale;
+    record.duration = timing.duration.value;
+    record.durationScale = timing.duration.timescale;
+    record.deadline = deadline;
+    record.decodeComplete = timing.decodeCompleteHostTicks;
+    record.lease = timing.surfaceLeaseHostTicks;
+    record.observed = now;
+    record.commit = commit;
+    record.previousCommit = previousCommit;
+    record.sinceOpen = now - open;
+    record.seekKnown = seek != 0;
+    record.sinceSeek = seek ? now - seek : 0;
+    record.ticksPerSecond = owner.clock.ticksPerSecond;
+    record.surfaces = pool.currentSurfaces;
+    record.surfaceRejections = pool.rejections;
+    record.decodedDepth = owner.sink.size();
+    record.videoDepth = worker.videoDepth;
+    record.audioDepth = worker.audioDepth;
+    record.workerStep = worker.stepTicks;
+    record.previousWorkerStep = worker.previousStepTicks;
+    record.clockSample = currentClock->sampledHostTicks;
+    record.clockAnchor = currentClock->anchorHostTicks;
+    record.clockMedia = currentClock->mediaSeconds;
+    record.clockAnchorMedia = currentClock->anchorMediaSeconds;
+    const auto phase = owner.output->diagnosticDisplayPhase();
+    record.display = phase.display;
+    record.refreshHost = phase.host;
+    record.refreshPeriod = phase.period;
+    record.refreshScale = phase.scale;
+    record.outputTicks = worker.outputTicks;
+    record.waitBegin = worker.waitBegin;
+    record.waitEnd = worker.waitEnd;
+    record.waitDue = worker.waitDue;
+    record.waitTimedOut = worker.waitTimedOut;
+    record.waitHostPaced = worker.waitHostPaced;
+    record.slowWaitBegin = worker.slowWaitBegin;
+    record.slowWaitEnd = worker.slowWaitEnd;
+    record.slowWaitDue = worker.slowWaitDue;
+    record.slowWaitTimedOut = worker.slowWaitTimedOut;
+    record.sinceOpenRequest = worker.openTicks ? now - worker.openTicks : 0;
+    record.sinceSeekLanding = worker.lastSeekLanding ? now - worker.lastSeekLanding : 0;
+    record.seekWithinTwoSeconds = worker.lastSeekLanding &&
+        static_cast<__uint128_t>(record.sinceSeekLanding) <
+            static_cast<__uint128_t>(owner.clock.ticksPerSecond) * 2;
+    record.late = late;
+    record.awaitingOutput = owner.awaitingDraw.valid();
+    // Only late retirements and their preceding submission reach the GUI ring.
+    if (late) {
+      if (previousSubmission.commit &&
+          previousSubmission.generation == owner.generation &&
+          previousSubmission.ordinal != publishedContextOrdinal) {
+        producer.push(previousSubmission);
+        publishedContextOrdinal = previousSubmission.ordinal;
+      }
+      producer.push(record);
+    } else {
+      previousSubmission = record;
+      media::late_trace::worker.slowWaitBegin = 0;
+      media::late_trace::worker.slowWaitEnd = 0;
+      media::late_trace::worker.slowWaitDue = 0;
+      media::late_trace::worker.slowWaitTimedOut = false;
+    }
+    if (commit) previousCommit = commit;
+  }
+
+  static void resetOutputTicks() noexcept {
+    if (media::late_trace::enabled) media::late_trace::worker.outputTicks = {};
+  }
+  void stampOutput(std::size_t index) noexcept {
+    if (producer.slot) media::late_trace::worker.outputTicks[index] = mach_absolute_time();
+  }
+  void noteDeadline(std::uint64_t hostTicks) noexcept {
+    if (producer.slot) deadline = hostTicks;
+  }
+  void noteFrameTaken() noexcept {
+    if (!producer.slot) return;
+    ++ordinal;
+    deadline = 0;
+    media::late_trace::worker.outputTicks = {};
+  }
+  void noteTimeline(bool seeking) noexcept {
+    if (producer.slot && seeking) seek = mach_absolute_time();
+  }
+  template <typename Owner> void late(const Owner& owner) noexcept {
+    frame(true, 0, owner);
+  }
+  template <typename Owner> void submitted(const Owner& owner) noexcept {
+    if (producer.slot) frame(false, mach_absolute_time(), owner);
+  }
+};
+#else
+struct ConsumerTrace {
+  static void resetOutputTicks() noexcept {}
+  void stampOutput(std::size_t) noexcept {}
+  void noteDeadline(std::uint64_t) noexcept {}
+  void noteFrameTaken() noexcept {}
+  void noteTimeline(bool) noexcept {}
+  template <typename Owner> void late(const Owner&) noexcept {}
+  template <typename Owner> void submitted(const Owner&) noexcept {}
+};
+#endif
+
 using WideSigned = __int128_t;
 using WideUnsigned = __uint128_t;
 
@@ -111,7 +302,7 @@ void assignError(std::string* error, const char* message) {
 // exceeds codecReorderFrames, so a bound at or below that floor would refuse
 // the very input that produces the next presentable frame.
 [[nodiscard]] std::size_t decodedSurfaceOwnershipBound(
-    const VideoToolboxDecoderStats& decoder) noexcept {
+    const VideoDecoderStats& decoder) noexcept {
   return std::max(NativeVideoConsumer::kMaximumDecodedSurfaceOwnership,
                   decoder.codecReorderFrames + 1);
 }
@@ -130,31 +321,10 @@ void assignError(std::string* error, const char* message) {
 // dispatcher's video lane, which is bounded by payload size rather than by
 // scarce decoded surfaces.
 [[nodiscard]] bool decodedSurfaceAdmissionOpen(
-    const VideoToolboxDecoderStats& decoder) noexcept {
+    const VideoDecoderStats& decoder) noexcept {
   const std::size_t owned =
       decoder.inFlightFrames + decoder.retainedPresentationFrames;
   return owned < decodedSurfaceOwnershipBound(decoder);
-}
-
-[[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
-  if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0 || time.epoch != 0 ||
-      (time.flags & kCMTimeFlags_HasBeenRounded) != 0) {
-    return std::nullopt;
-  }
-  return MediaTime{time.value, time.timescale};
-}
-
-[[nodiscard]] bool sameExactCMTime(CMTime lhs, CMTime rhs) noexcept {
-  return lhs.value == rhs.value && lhs.timescale == rhs.timescale &&
-         lhs.flags == rhs.flags && lhs.epoch == rhs.epoch;
-}
-
-[[nodiscard]] bool sameFrameTiming(const FrameTiming& lhs,
-                                   const FrameTiming& rhs) noexcept {
-  return lhs.generation == rhs.generation &&
-         lhs.keyFrame == rhs.keyFrame &&
-         sameExactCMTime(lhs.presentationTime, rhs.presentationTime) &&
-         sameExactCMTime(lhs.duration, rhs.duration);
 }
 
 // Compares an exact media rational with the exact binary rational represented
@@ -311,7 +481,6 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
               "the facts table's four-character code must be the one the "
               "software stage keys on");
 
-
 [[nodiscard]] bool supportedVideoTrack(
     const media::MediaTrackDescriptor& track) noexcept {
   const media::MediaCodecFacts& codecFacts =
@@ -466,10 +635,10 @@ enum class PumpStatus : std::uint8_t {
 //
 // admittedFrame must be clear: the contract makes BOTH operations return
 // Quiescing until every terminal frame fact has been consumed, so a Done that
-// still names an admitted frame is the output contradicting itself. It is not
-// implied by retainedFrames, which counts leases the output still holds while
-// this is the delivery identity it still claims, nor by the caller's own
-// awaitingDraw, which is this side's record of the same handshake.
+// still names an admitted frame is the output contradicting itself. It is the
+// delivery identity the output still claims, checked alongside its
+// retainedFrames credit and independently of the caller's own awaitingDraw,
+// which is this side's record of the same handshake.
 //
 // fatalIsHistorical admits a frame-scoped fatal that the caller already
 // matched: it stays diagnostic evidence and must not make an exact terminal
@@ -547,11 +716,13 @@ class NativeVideoConsumer::Sink final : public DecodedFrameSink {
 // hardware's native lossless surface; every other presenter samples in process
 // and needs the pinned uncompressed one. Both the construction and the
 // post-configure proof read this same function, so they cannot disagree.
-[[nodiscard]] VideoToolboxOutputInterop decodedSurfaceInteropFor(
+[[nodiscard]] VideoDecoderOutputInterop decodedSurfaceInteropFor(
     const NativeTrackedVideoOutput* output) noexcept {
-  return output != nullptr && output->presentsDecodedSurfacesDirectly()
-             ? VideoToolboxOutputInterop::DisplayLayer
-             : VideoToolboxOutputInterop::OpenGL;
+  return output != nullptr &&
+                 output->presentationCapabilities()
+                     .presentsDecodedSurfacesDirectly
+             ? VideoDecoderOutputInterop::DisplayLayer
+             : VideoDecoderOutputInterop::OpenGL;
 }
 
 struct NativeVideoConsumer::Impl {
@@ -566,11 +737,11 @@ struct NativeVideoConsumer::Impl {
         // `output` is declared before `decoder`, so it is already the live
         // presenter here and the interop is decided once, from the presenter
         // itself, rather than from an environment read in the decode path.
-        decoder(VideoToolboxDecoderOptions{
+        decoder(VideoDecoderOptions{
             NativeVideoConsumer::kMaximumDecoderInFlightFrames,
             kMaximumPresentationReorderFrames,
             decodedSurfaceInteropFor(output.get()),
-            VideoToolboxDecoderProgressHandler{wake.signal, wake.context}}) {}
+            VideoDecoderProgressHandler{wake.signal, wake.context}}) {}
 
   // Every latch names the exact gate it tripped. The message is retained in
   // failureText on the first latch and, when the caller owns an error
@@ -614,6 +785,59 @@ struct NativeVideoConsumer::Impl {
     flushDecoderApplied = false;
   }
 
+  // Everything presentation knows about the current generation's picture.
+  void resetPresentation() noexcept {
+    heldFrame.reset();
+    currentClock.reset();
+    clearDueHint();
+    generationStartPresentation.reset();
+  }
+
+  [[nodiscard]] bool endOfStreamDrained() const noexcept {
+    return decoderEndOfStreamDone && sink.ended() && !heldFrame &&
+           !awaitingDraw.valid();
+  }
+
+  // The terminal close finished: the graph is closed (or cancelled) and gives
+  // its process slot back.
+  void markClosed(Lifecycle ended) noexcept {
+    configured = false;
+    cancelled = ended == Lifecycle::Cancel;
+    closed = true;
+    lifecycle = Lifecycle::None;
+  }
+
+  void resetEndOfStream() noexcept {
+    endOfStreamBegun = false;
+    decoderEndOfStreamDone = false;
+    endOfStreamDone = false;
+  }
+
+  // The highest generation any stage of this graph has been shown: the one
+  // that a terminal close or a retirement must move past.
+  [[nodiscard]] MediaGeneration exposedGeneration() const noexcept {
+    const MediaGeneration outputGeneration =
+        output == nullptr ? 0 : output->facts().generation;
+    return std::max({generation, armGeneration, flushTarget,
+                     highestExposedGeneration, outputGeneration,
+                     decoder.stats().generation});
+  }
+
+  // A non-Done output progress, forwarded: Failed latches, and Quiescing
+  // becomes Progress when this turn consumed an output event.
+  [[nodiscard]] media::NativeMediaConsumerProgress forwardOutputProgress(
+      NativeTrackedVideoOutputProgress output, PumpStatus event,
+      const char* failureText) noexcept {
+    const auto mapped = mapOutputProgress(output);
+    if (mapped == media::NativeMediaConsumerProgress::Failed) {
+      latch(NativeVideoConsumerFailure::Output, failureText);
+    }
+    return event == PumpStatus::Progress &&
+                   mapped == media::NativeMediaConsumerProgress::Quiescing
+               ? media::NativeMediaConsumerProgress::Progress
+               : mapped;
+  }
+
   void clearPreviewHandoff() noexcept {
     previewQuiesceGeneration = 0;
     previewReleasedGeneration = 0;
@@ -639,87 +863,7 @@ struct NativeVideoConsumer::Impl {
            currentClock->generation == generation;
   }
 
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-  media::late_trace::Producer traceProducer;
-  std::uint64_t traceOpen{media::late_trace::enabled ? mach_absolute_time() : 0};
-  std::uint64_t traceSeek{}, traceOrdinal{}, traceDeadline{}, tracePreviousCommit{};
-  media::late_trace::Record tracePreviousSubmission{};
-  std::uint64_t tracePublishedContextOrdinal{};
-  void traceFrame(bool late, std::uint64_t commit = 0) noexcept {
-    if (!traceProducer.slot || !heldFrame || !currentClock) return;
-    const auto now = mach_absolute_time();
-    const auto& timing = heldFrame->timing();
-    const auto pool = NativeSurfaceBudget::stats();
-    const auto& worker = media::late_trace::worker;
-    media::late_trace::Record record;
-    record.generation = generation;
-    record.ordinal = traceOrdinal;
-    record.pts = timing.presentationTime.value;
-    record.ptsScale = timing.presentationTime.timescale;
-    record.duration = timing.duration.value;
-    record.durationScale = timing.duration.timescale;
-    record.deadline = traceDeadline;
-    record.decodeComplete = timing.decodeCompleteHostTicks;
-    record.lease = timing.surfaceLeaseHostTicks;
-    record.observed = now;
-    record.commit = commit;
-    record.previousCommit = tracePreviousCommit;
-    record.sinceOpen = now - traceOpen;
-    record.seekKnown = traceSeek != 0;
-    record.sinceSeek = traceSeek ? now - traceSeek : 0;
-    record.ticksPerSecond = clock.ticksPerSecond;
-    record.surfaces = pool.currentSurfaces;
-    record.surfaceRejections = pool.rejections;
-    record.decodedDepth = sink.size();
-    record.videoDepth = worker.videoDepth;
-    record.audioDepth = worker.audioDepth;
-    record.workerStep = worker.stepTicks;
-    record.previousWorkerStep = worker.previousStepTicks;
-    record.clockSample = currentClock->sampledHostTicks;
-    record.clockAnchor = currentClock->anchorHostTicks;
-    record.clockMedia = currentClock->mediaSeconds;
-    record.clockAnchorMedia = currentClock->anchorMediaSeconds;
-    const auto phase = output->diagnosticDisplayPhase();
-    record.display = phase.display;
-    record.refreshHost = phase.host;
-    record.refreshPeriod = phase.period;
-    record.refreshScale = phase.scale;
-    record.outputTicks = worker.outputTicks;
-    record.waitBegin = worker.waitBegin;
-    record.waitEnd = worker.waitEnd;
-    record.waitDue = worker.waitDue;
-    record.waitTimedOut = worker.waitTimedOut;
-    record.waitHostPaced = worker.waitHostPaced;
-    record.slowWaitBegin = worker.slowWaitBegin;
-    record.slowWaitEnd = worker.slowWaitEnd;
-    record.slowWaitDue = worker.slowWaitDue;
-    record.slowWaitTimedOut = worker.slowWaitTimedOut;
-    record.sinceOpenRequest = worker.openTicks ? now - worker.openTicks : 0;
-    record.sinceSeekLanding = worker.lastSeekLanding ? now - worker.lastSeekLanding : 0;
-    record.seekWithinTwoSeconds = worker.lastSeekLanding &&
-        static_cast<__uint128_t>(record.sinceSeekLanding) <
-            static_cast<__uint128_t>(clock.ticksPerSecond) * 2;
-    record.late = late;
-    record.awaitingOutput = awaitingDraw.valid();
-    // Only late retirements and their preceding submission reach the GUI ring.
-    if (late) {
-      if (tracePreviousSubmission.commit &&
-          tracePreviousSubmission.generation == generation &&
-          tracePreviousSubmission.ordinal != tracePublishedContextOrdinal) {
-        traceProducer.push(tracePreviousSubmission);
-        tracePublishedContextOrdinal = tracePreviousSubmission.ordinal;
-      }
-      traceProducer.push(record);
-    } else {
-      tracePreviousSubmission = record;
-      media::late_trace::worker.slowWaitBegin = 0;
-      media::late_trace::worker.slowWaitEnd = 0;
-      media::late_trace::worker.slowWaitDue = 0;
-      media::late_trace::worker.slowWaitTimedOut = false;
-    }
-    if (commit) tracePreviousCommit = commit;
-  }
-#endif
+  ConsumerTrace trace;
 
   void clearDueHint() noexcept {
     nextDueMediaTime = {};
@@ -767,9 +911,7 @@ struct NativeVideoConsumer::Impl {
     nextDueMediaTime = presentation;
     nextDueHostTicks = currentClock->sampledHostTicks + delta;
     nextDueKnown = true;
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-    if (traceProducer.slot) traceDeadline = nextDueHostTicks;
-#endif
+    trace.noteDeadline(nextDueHostTicks);
   }
 
   [[nodiscard]] PumpStatus consumeOutputEvent() noexcept {
@@ -877,13 +1019,9 @@ struct NativeVideoConsumer::Impl {
         return PumpStatus::Blocked;
       }
       heldFrame = sink.take();
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-      if (traceProducer.slot && heldFrame) {
-        ++traceOrdinal;
-        traceDeadline = 0;
-        media::late_trace::worker.outputTicks = {};
+      if (heldFrame) {
+        trace.noteFrameTaken();
       }
-#endif
       if (!heldFrame) {
         return submissionBlocked ? PumpStatus::Blocked : PumpStatus::Idle;
       }
@@ -974,9 +1112,7 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Failed;
     }
     if (*endAgainstClock != MediaTimeOrder::Greater) {
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-      traceFrame(true);
-#endif
+      trace.late(*this);
       heldFrame.reset();
       ++discardedLateFrames;
       return PumpStatus::Progress;
@@ -991,13 +1127,9 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Blocked;
     }
 
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-    if (traceProducer.slot) media::late_trace::worker.outputTicks[0] = mach_absolute_time();
-#endif
+    trace.stampOutput(0);
     const auto outputCapacity = output->capacity(generation);
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-    if (traceProducer.slot) media::late_trace::worker.outputTicks[1] = mach_absolute_time();
-#endif
+    trace.stampOutput(1);
     switch (outputCapacity) {
     case NativeTrackedVideoCapacity::Backpressure:
       return PumpStatus::Blocked;
@@ -1016,13 +1148,9 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Failed;
     }
     const NativeTrackedFrameSequence submittedSequence = nextFrameSequence;
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-    if (traceProducer.slot) media::late_trace::worker.outputTicks[2] = mach_absolute_time();
-#endif
+    trace.stampOutput(2);
     const auto submitted = output->submit(*heldFrame, submittedSequence, error);
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-    if (traceProducer.slot) media::late_trace::worker.outputTicks[9] = mach_absolute_time();
-#endif
+    trace.stampOutput(9);
     switch (submitted) {
     case NativeTrackedVideoSubmitStatus::Backpressure:
       return PumpStatus::Blocked;
@@ -1035,10 +1163,8 @@ struct NativeVideoConsumer::Impl {
     case NativeTrackedVideoSubmitStatus::Accepted:
       break;
     }
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-    if (traceProducer.slot) traceFrame(false, mach_absolute_time());
-#endif
-    noteCaptionPresented(timing.presentationTime);
+    trace.submitted(*this);
+    captions.notePresented(timing.presentationTime);
     awaitingDraw = submittedSequence;
     awaitingTiming = timing;
     heldFrame.reset();
@@ -1124,54 +1250,7 @@ struct NativeVideoConsumer::Impl {
   std::shared_ptr<void> externalLifetime;
   const NativeVideoClockSeam clock;
   std::shared_ptr<NativeTrackedVideoOutput> output;
-  // The live closed-caption tap. `captionTap` is settled at configure (feed
-  // present and the track is H.264); the NAL length prefix width is read
-  // from the first sample's format description.
-  std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed;
-  bool captionTap{false};
-  std::size_t captionLengthSize{0};
-  std::vector<std::byte> captionScratch;
-
-  void noteCaptionPicture(const media::MediaSample& sample,
-                          CMSampleBufferRef nativeSample) {
-    if (!captionTap) {
-      return;
-    }
-    if (captionLengthSize == 0) {
-      int prefix = 0;
-      CMFormatDescriptionRef format =
-          CMSampleBufferGetFormatDescription(nativeSample);
-      captionLengthSize =
-          format != nullptr &&
-                  CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-                      format, 0, nullptr, nullptr, nullptr, &prefix) == noErr &&
-                  (prefix == 1 || prefix == 2 || prefix == 4)
-              ? static_cast<std::size_t>(prefix)
-              : 4;
-    }
-    std::span<const std::byte> bytes = sample.payload.contiguousBytes();
-    if (bytes.empty() && sample.payload.byteSize() > 0) {
-      captionScratch.resize(sample.payload.byteSize());
-      if (!sample.payload.copyBytes(0, captionScratch)) {
-        return;
-      }
-      bytes = captionScratch;
-    }
-    if (bytes.empty()) {
-      return;
-    }
-    captionFeed->noteCompressedPicture(
-        captionNanoseconds(sample.presentationTime),
-        std::string_view(reinterpret_cast<const char*>(bytes.data()),
-                         bytes.size()),
-        captionLengthSize);
-  }
-
-  void noteCaptionPresented(CMTime presentation) {
-    if (captionTap && CMTIME_IS_NUMERIC(presentation)) {
-      captionFeed->notePresentedPicture(captionNanoseconds(presentation));
-    }
-  }
+  CaptionTap captions;
   const NativeVideoConsumerWakeSeam wake;
   Sink sink;
   VideoDecodeLane decoder;
@@ -1320,7 +1399,7 @@ std::unique_ptr<NativeVideoConsumer> NativeVideoConsumer::create(
   try {
     auto impl = std::make_unique<Impl>(
         std::move(externalLifetime), clock, std::move(output), wake);
-    impl->captionFeed = std::move(captionFeed);
+    impl->captions.setFeed(std::move(captionFeed));
     return std::unique_ptr<NativeVideoConsumer>(
         new NativeVideoConsumer(std::move(impl)));
   } catch (...) {
@@ -1416,17 +1495,9 @@ NativeVideoConsumer::quarantineFacts() noexcept {
   return result;
 }
 
-bool NativeVideoConsumer::selectedTrackDurationsSupported(
-    MediaTime audioDuration, MediaTime videoDuration) noexcept {
-  return native_video_limits::acceptsSelectedTrackDurations(audioDuration,
-                                                            videoDuration);
-}
-
 NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
     MediaGeneration generation) noexcept {
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-  if (media::late_trace::enabled) media::late_trace::worker.outputTicks = {};
-#endif
+  ConsumerTrace::resetOutputTicks();
   if (impl_ == nullptr || impl_->output == nullptr || generation == 0 ||
       generation == std::numeric_limits<MediaGeneration>::max()) {
     if (impl_ != nullptr) {
@@ -1529,14 +1600,11 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
     // does not call the tracked output's flush/close lifecycle. Software
     // releases its worker so preview can reuse bounded process capacity.
     impl.decoder.suspendForPreview(generation);
-    impl.heldFrame.reset();
-    impl.currentClock.reset();
-    impl.clearDueHint();
-    impl.generationStartPresentation.reset();
+    impl.resetPresentation();
     impl.previewDecoderFlushed = true;
   }
 
-  const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+  const VideoDecoderStats decoderFacts = impl.decoder.stats();
   bool decoderConfigured = decoderFacts.configured;
 #if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
   decoderConfigured =
@@ -1649,7 +1717,7 @@ NativeVideoConsumer::releasePreviewQuiesce(
                "video decoder could not resume after preview handoff");
     return NativeVideoConsumerPreviewProgress::Failed;
   }
-  const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+  const VideoDecoderStats decoderFacts = impl.decoder.stats();
   bool decoderConfigured = decoderFacts.configured;
 #if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
   decoderConfigured =
@@ -1698,13 +1766,22 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
     return media::NativeMediaConsumeResult::Failed;
   }
   if (!supportedVideoTrack(track)) {
-    assignError(error, "video track is outside native SDR v1");
+    assignError(error, "video track is outside native video admission");
     return media::NativeMediaConsumeResult::Unsupported;
   }
-  if (const char* refusal = nativePresentationRefusal(*track.video,
-                                                     *impl.output, track.codec)) {
+  if (const char* refusal = nativePresentationRefusal(
+          *track.video, impl.output->presentationCapabilities(),
+          track.codec)) {
     assignError(error, refusal);
     return media::NativeMediaConsumeResult::Unsupported;
+  }
+  if (!impl.output->applyPresentationGeometry(
+          media::mediaVideoDisplaySize(*track.video),
+          normalizedQuarterTurn(track.video->rotationDegrees).value_or(0))) {
+    impl.latch(NativeVideoConsumerFailure::Output,
+               "tracked video output refused admitted presentation geometry",
+               error);
+    return media::NativeMediaConsumeResult::Failed;
   }
   if (!validTimeline(timeline, generation, track.duration)) {
     impl.latch(NativeVideoConsumerFailure::InvalidTimeline,
@@ -1723,43 +1800,14 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
 
   impl.armConsumed = true;
   impl.sink.flush(generation);
-  const media::MediaVideoFormat& video = *track.video;
-  const CMVideoCodecType codec = coreMediaCodecType(track.codec);
-  // The hardware REQUIREMENT is what makes a host without a VP9 or AV1 block
-  // fall back instead of quietly burning battery in software; the codecs whose
-  // rows drop it would otherwise fail VTDecompressionSessionCreate with
-  // kVTCouldNotFindVideoDecoderErr (-12906) on a stream that demonstrably
-  // decodes. Every codec still PREFERS hardware, which costs nothing and keeps
-  // the request identical for those that have a block.
-  const bool requireHardwareDecode =
-      media::mediaCodecFacts(track.codec).requiresHardwareDecode;
-  const VideoStreamConfiguration configuration{
-      codec,
-      {static_cast<std::int32_t>(video.codedWidth),
-       static_cast<std::int32_t>(video.codedHeight)},
-      track.codecConfiguration,
-      true,
-      requireHardwareDecode,
-      generation,
-      // See VideoStreamConfiguration::highDynamicRangeTransfer: the HDR
-      // presentation path is engaged by the decode surface's DEPTH, not by
-      // the colour tag, so an HDR transfer forces a 10-bit output surface
-      // even when the coded stream is 8-bit.
-      video.transferFunction == media::MediaTransferFunction::Pq ||
-          video.transferFunction == media::MediaTransferFunction::Hlg,
-      // The colour the decoder's synthesized description must carry. Routes
-      // that hand over their own description (AVFoundation) are unaffected in
-      // practice -- their description already agrees -- but stating it here
-      // keeps ONE source for the decision instead of one per container.
-      colorPrimariesExtension(video.colorPrimaries),
-      transferFunctionExtension(video.transferFunction),
-      ycbcrMatrixExtension(video.matrixCoefficients), video.fullRangeVideo};
+  const VideoStreamConfiguration configuration =
+      videoStreamConfigurationFor(track, generation);
   if (!impl.decoder.configure(configuration, impl.sink, error)) {
     impl.latch(NativeVideoConsumerFailure::DecoderConfiguration,
                "native video decoder configuration was refused", error);
     return media::NativeMediaConsumeResult::Failed;
   }
-  const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+  const VideoDecoderStats decoderFacts = impl.decoder.stats();
   if (!decoderFacts.configured || decoderFacts.generation != generation ||
       decoderFacts.maxInFlightFrames != kMaximumDecoderInFlightFrames ||
       decoderFacts.outputInterop !=
@@ -1773,13 +1821,8 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   impl.track = track.id;
   impl.trackDuration = track.duration;
   impl.timeline = timeline;
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-  if (impl.traceProducer.slot && timeline.requestedTarget.value != 0)
-    impl.traceSeek = mach_absolute_time();
-#endif
-  impl.captionTap =
-      impl.captionFeed != nullptr && track.codec == media::MediaCodec::H264;
-  impl.captionLengthSize = 0;
+  impl.trace.noteTimeline(timeline.requestedTarget.value != 0);
+  impl.captions.configure(track);
   impl.currentClock.reset();
   impl.generationStartPresentation.reset();
   impl.configured = true;
@@ -1862,7 +1905,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::capacity(
   case PumpStatus::Idle:
     break;
   }
-  const VideoToolboxDecoderStats decoder = impl.decoder.stats();
+  const VideoDecoderStats decoder = impl.decoder.stats();
   if (decoder.generation != generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
@@ -1935,7 +1978,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
   // decoder credit alone permits maxInFlightFrames + codecReorderFrames
   // decoded surfaces and that is more than this route's share of the
   // per-session decoded-surface budget.
-  const VideoToolboxDecoderStats admission = impl.decoder.stats();
+  const VideoDecoderStats admission = impl.decoder.stats();
   if (admission.generation != impl.generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
@@ -2024,7 +2067,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
                "CoreMedia video lease does not match sample facts", error);
     return media::NativeMediaConsumeResult::Failed;
   }
-  impl.noteCaptionPicture(sample, nativeSample);
+  impl.captions.notePicture(sample);
 
   switch (impl.decoder.submitCMSampleBuffer(nativeSample, sample.generation,
                                              error)) {
@@ -2141,8 +2184,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::drain(
   case PumpStatus::Failed:
     return media::NativeMediaConsumerProgress::Failed;
   case PumpStatus::Progress:
-    if (impl.decoderEndOfStreamDone && impl.sink.ended() &&
-        !impl.heldFrame && !impl.awaitingDraw.valid()) {
+    if (impl.endOfStreamDrained()) {
       impl.endOfStreamDone = true;
       return media::NativeMediaConsumerProgress::Done;
     }
@@ -2152,8 +2194,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::drain(
   case PumpStatus::Idle:
     break;
   }
-  if (impl.decoderEndOfStreamDone && impl.sink.ended() &&
-      !impl.heldFrame && !impl.awaitingDraw.valid()) {
+  if (impl.endOfStreamDrained()) {
     impl.endOfStreamDone = true;
     return media::NativeMediaConsumerProgress::Done;
   }
@@ -2211,16 +2252,9 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
   }
   if (!impl.flushDecoderApplied) {
     impl.decoder.flush(nextGeneration);
-    if (impl.captionFeed) {
-      impl.captionFeed->resetForSeek();
-    }
-    impl.heldFrame.reset();
-    impl.currentClock.reset();
-    impl.clearDueHint();
-    impl.generationStartPresentation.reset();
-    impl.endOfStreamBegun = false;
-    impl.decoderEndOfStreamDone = false;
-    impl.endOfStreamDone = false;
+    impl.captions.resetForSeek();
+    impl.resetPresentation();
+    impl.resetEndOfStream();
     impl.flushDecoderApplied = true;
   }
   const PumpStatus event = impl.consumeOutputEvent();
@@ -2234,15 +2268,9 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
   const NativeTrackedVideoOutputProgress output =
       impl.output->flushProgress(retiredGeneration, nextGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
-    const auto mapped = mapOutputProgress(output);
-    if (mapped == media::NativeMediaConsumerProgress::Failed) {
-      impl.latch(NativeVideoConsumerFailure::Output,
-                 "tracked video output failed the seek flush");
-    }
-    return event == PumpStatus::Progress &&
-                   mapped == media::NativeMediaConsumerProgress::Quiescing
-               ? media::NativeMediaConsumerProgress::Progress
-               : mapped;
+    return impl.forwardOutputProgress(
+        output, event,
+        "tracked video output failed the seek flush");
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
   if (!outputSettledAt(outputFacts, nextGeneration, false, false) ||
@@ -2256,10 +2284,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
   impl.completedFlush = true;
   impl.generation = nextGeneration;
   impl.timeline = timeline;
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-  if (impl.traceProducer.slot && timeline.requestedTarget.value != 0)
-    impl.traceSeek = mach_absolute_time();
-#endif
+  impl.trace.noteTimeline(timeline.requestedTarget.value != 0);
   impl.lifecycle = Lifecycle::None;
   impl.clearFlushState();
   return media::NativeMediaConsumerProgress::Done;
@@ -2302,13 +2327,7 @@ template <typename ImplType>
     return media::NativeMediaConsumerProgress::Failed;
   }
   if (impl.lifecycle != lifecycle) {
-    const NativeTrackedVideoOutputFacts facts =
-        impl.output == nullptr ? NativeTrackedVideoOutputFacts{}
-                               : impl.output->facts();
-    const MediaGeneration active = std::max(
-        {impl.generation, impl.armGeneration, impl.flushTarget,
-         impl.highestExposedGeneration, facts.generation});
-    const auto final = media::nextMediaGeneration(active);
+    const auto final = media::nextMediaGeneration(impl.exposedGeneration());
     if (!final) {
       impl.latch(NativeVideoConsumerFailure::Lifecycle,
                  "native video terminal generation would overflow");
@@ -2327,9 +2346,7 @@ template <typename ImplType>
   if (!impl.decoderClosed) {
     impl.decoder.close();
     impl.decoderClosed = true;
-    impl.heldFrame.reset();
-    impl.currentClock.reset();
-    impl.clearDueHint();
+    impl.resetPresentation();
   }
   if (impl.outputProtocolViolation) {
     return media::NativeMediaConsumerProgress::Failed;
@@ -2362,16 +2379,9 @@ template <typename ImplType>
       const NativeTrackedVideoOutputProgress flushOutput =
           impl.output->flushProgress(impl.flushRetired, impl.flushTarget);
       if (flushOutput != NativeTrackedVideoOutputProgress::Done) {
-        const auto mapped = mapOutputProgress(flushOutput);
-        if (mapped == media::NativeMediaConsumerProgress::Failed) {
-          impl.latch(NativeVideoConsumerFailure::Output,
-                     "tracked video output failed the flush superseded by "
-                     "close");
-        }
-        return flushEvent == PumpStatus::Progress &&
-                       mapped == media::NativeMediaConsumerProgress::Quiescing
-                   ? media::NativeMediaConsumerProgress::Progress
-                   : mapped;
+        return impl.forwardOutputProgress(
+            flushOutput, flushEvent,
+            "tracked video output failed the flush superseded by close");
       }
       const NativeTrackedVideoOutputFacts flushed = impl.output->facts();
       if (!outputSettledAt(flushed, impl.flushTarget, false, false) ||
@@ -2411,25 +2421,16 @@ template <typename ImplType>
     impl.clearFlushState();
   }
   if (impl.output == nullptr) {
-    impl.configured = false;
-    impl.cancelled = lifecycle == Lifecycle::Cancel;
-    impl.closed = true;
-    impl.lifecycle = Lifecycle::None;
+    impl.markClosed(lifecycle);
     releaseConsumerClaim(impl);
     return media::NativeMediaConsumerProgress::Done;
   }
   const NativeTrackedVideoOutputProgress output =
       impl.output->closeProgress(impl.terminalGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
-    const auto mapped = mapOutputProgress(output);
-    if (mapped == media::NativeMediaConsumerProgress::Failed) {
-      impl.latch(NativeVideoConsumerFailure::Output,
-                 "tracked video output failed the terminal close");
-    }
-    return event == PumpStatus::Progress &&
-                   mapped == media::NativeMediaConsumerProgress::Quiescing
-               ? media::NativeMediaConsumerProgress::Progress
-               : mapped;
+    return impl.forwardOutputProgress(
+        output, event,
+        "tracked video output failed the terminal close");
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
   if (impl.outputProtocolViolation ||
@@ -2442,10 +2443,7 @@ template <typename ImplType>
     return media::NativeMediaConsumerProgress::Failed;
   }
   impl.output.reset();
-  impl.configured = false;
-  impl.cancelled = lifecycle == Lifecycle::Cancel;
-  impl.closed = true;
-  impl.lifecycle = Lifecycle::None;
+  impl.markClosed(lifecycle);
   releaseConsumerClaim(impl);
   return media::NativeMediaConsumerProgress::Done;
 }
@@ -2473,14 +2471,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
          impl.lifecycle != Lifecycle::Flush)) {
       return media::NativeMediaConsumerProgress::Failed;
     }
-    const NativeTrackedVideoOutputFacts outputFacts =
-        impl.output == nullptr ? NativeTrackedVideoOutputFacts{}
-                               : impl.output->facts();
-    const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
-    const MediaGeneration exposed = std::max(
-        {impl.generation, impl.armGeneration, impl.flushTarget,
-         impl.highestExposedGeneration, outputFacts.generation,
-         decoderFacts.generation});
+    const MediaGeneration exposed = impl.exposedGeneration();
     if (retiredGeneration != exposed || invalidationGeneration == 0 ||
         invalidationGeneration <= exposed) {
       return retiredGeneration != exposed
@@ -2512,9 +2503,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
     impl.matchedFrameFailure = true;
   }
   impl.clearFlushState();
-  impl.heldFrame.reset();
-  impl.currentClock.reset();
-  impl.clearDueHint();
+  impl.resetPresentation();
 
   if (!impl.decoderClosed) {
     const MediaGeneration decoderRetired = impl.decoder.stats().generation;
@@ -2536,7 +2525,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   if (impl.sink.generation() != invalidationGeneration) {
     impl.sink.flush(invalidationGeneration);
   }
-  const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+  const VideoDecoderStats decoderFacts = impl.decoder.stats();
   if (decoderFacts.configured ||
       decoderFacts.generation != invalidationGeneration ||
       decoderFacts.inFlightFrames != 0 ||
@@ -2555,15 +2544,9 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   const NativeTrackedVideoOutputProgress output =
       impl.output->closeProgress(invalidationGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
-    const auto mapped = mapOutputProgress(output);
-    if (mapped == media::NativeMediaConsumerProgress::Failed) {
-      impl.latch(NativeVideoConsumerFailure::Output,
-                 "tracked video output failed the retirement invalidation");
-    }
-    return event == PumpStatus::Progress &&
-                   mapped == media::NativeMediaConsumerProgress::Quiescing
-               ? media::NativeMediaConsumerProgress::Progress
-               : mapped;
+    return impl.forwardOutputProgress(
+        output, event,
+        "tracked video output failed the retirement invalidation");
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
   if (impl.outputProtocolViolation ||
@@ -2579,9 +2562,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   impl.output.reset();
   impl.generation = invalidationGeneration;
   impl.configured = false;
-  impl.endOfStreamBegun = false;
-  impl.decoderEndOfStreamDone = false;
-  impl.endOfStreamDone = false;
+  impl.resetEndOfStream();
   impl.closed = true;
   impl.retirementDone = true;
   releaseConsumerClaim(impl);
@@ -2618,7 +2599,6 @@ const std::string& NativeVideoConsumer::failureText() const noexcept {
       "native video consumer has no live graph (quarantined)";
   return impl_ == nullptr ? quarantined : impl_->failureText;
 }
-
 
 std::optional<NativeTrackedVideoEvent>
 NativeVideoConsumer::takeOutputEvent() noexcept {

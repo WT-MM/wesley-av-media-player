@@ -3,6 +3,7 @@
 #include "media/audio_codec_timing.hpp"
 #include "media/native_media_source.hpp"
 #include "media/media_codec_facts.hpp"
+#include "platform/macos/core_media_time.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -51,27 +52,8 @@ inline void assignError(std::string* error, const char* message) {
   return order && *order != media::MediaTimeOrder::Greater;
 }
 
-// A CoreMedia time is exact only when it is numeric, unrounded, on epoch 0
-// and on a positive timescale.
-[[nodiscard]] inline std::optional<media::MediaTime> exactMediaTime(
-    CMTime time) noexcept {
-  if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0 || time.epoch != 0 ||
-      (time.flags & kCMTimeFlags_HasBeenRounded) != 0) {
-    return std::nullopt;
-  }
-  return media::MediaTime{time.value, time.timescale};
-}
-
 [[nodiscard]] inline media::MediaTime optionalMediaTime(CMTime time) noexcept {
   return exactMediaTime(time).value_or(media::MediaTime{});
-}
-
-[[nodiscard]] inline std::optional<CMTime> exactCMTime(
-    media::MediaTime time) noexcept {
-  if (!time.valid()) {
-    return std::nullopt;
-  }
-  return CMTimeMake(time.value, time.timescale);
 }
 
 // The neutral timeline window `0 <= actualDecodeStart <= target`, stated by

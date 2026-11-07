@@ -4,21 +4,9 @@
 #endif
 #include "native_video_presenter.hpp"
 
-#include <deque>
-#include <mutex>
-#include <stdexcept>
 #include <utility>
 
 namespace wam::macos {
-namespace {
-
-void assignError(std::string *error, std::string message) {
-  if (error != nullptr) {
-    *error = std::move(message);
-  }
-}
-
-} // namespace
 
 FrameLease::FrameLease(CVPixelBufferRef pixelBuffer,
                        FrameTiming timing) noexcept {
@@ -144,102 +132,6 @@ void FrameLease::swap(FrameLease &other) noexcept {
   swap(pixelBuffer_, other.pixelBuffer_);
   swap(timing_, other.timing_);
   swap(surface_budget_token_, other.surface_budget_token_);
-}
-
-struct BoundedFrameQueue::Impl {
-  explicit Impl(std::size_t queueCapacity, std::uint64_t initialGeneration)
-      : capacity(queueCapacity), generation(initialGeneration) {}
-
-  const std::size_t capacity;
-  std::uint64_t generation;
-  bool endOfStream{false};
-  mutable std::mutex mutex;
-  std::deque<FrameLease> frames;
-};
-
-BoundedFrameQueue::BoundedFrameQueue(std::size_t capacity,
-                                     std::uint64_t initialGeneration) {
-  if (capacity == 0) {
-    throw std::invalid_argument(
-        "frame queue capacity must be greater than zero");
-  }
-  impl_ = std::make_unique<Impl>(capacity, initialGeneration);
-}
-
-BoundedFrameQueue::~BoundedFrameQueue() = default;
-
-FrameEnqueueResult BoundedFrameQueue::enqueue(FrameLease frame,
-                                              std::string *error) {
-  if (error != nullptr) {
-    error->clear();
-  }
-  if (!frame) {
-    assignError(error, "cannot enqueue an empty frame lease");
-    return FrameEnqueueResult::Rejected;
-  }
-
-  std::lock_guard lock(impl_->mutex);
-  if (frame.timing().generation != impl_->generation) {
-    assignError(error, "rejecting a stale decoded-frame generation");
-    return FrameEnqueueResult::Rejected;
-  }
-  if (impl_->endOfStream) {
-    assignError(error, "cannot enqueue after end of stream");
-    return FrameEnqueueResult::Rejected;
-  }
-  if (impl_->frames.size() >= impl_->capacity) {
-    assignError(error, "decoded-frame queue is full");
-    return FrameEnqueueResult::Backpressure;
-  }
-  impl_->frames.push_back(std::move(frame));
-  return FrameEnqueueResult::Accepted;
-}
-
-void BoundedFrameQueue::endOfStream(std::uint64_t generation) {
-  std::lock_guard lock(impl_->mutex);
-  if (generation == impl_->generation) {
-    impl_->endOfStream = true;
-  }
-}
-
-void BoundedFrameQueue::flush(std::uint64_t nextGeneration) noexcept {
-  std::deque<FrameLease> retired;
-  {
-    std::lock_guard lock(impl_->mutex);
-    retired.swap(impl_->frames);
-    impl_->generation = nextGeneration;
-    impl_->endOfStream = false;
-  }
-  // Release potentially expensive decoder surfaces outside the queue lock.
-}
-
-std::optional<FrameLease> BoundedFrameQueue::tryTake() {
-  std::lock_guard lock(impl_->mutex);
-  if (impl_->frames.empty()) {
-    return std::nullopt;
-  }
-  FrameLease frame = std::move(impl_->frames.front());
-  impl_->frames.pop_front();
-  return frame;
-}
-
-std::size_t BoundedFrameQueue::size() const noexcept {
-  std::lock_guard lock(impl_->mutex);
-  return impl_->frames.size();
-}
-
-std::size_t BoundedFrameQueue::capacity() const noexcept {
-  return impl_->capacity;
-}
-
-std::uint64_t BoundedFrameQueue::generation() const noexcept {
-  std::lock_guard lock(impl_->mutex);
-  return impl_->generation;
-}
-
-bool BoundedFrameQueue::reachedEndOfStream() const noexcept {
-  std::lock_guard lock(impl_->mutex);
-  return impl_->endOfStream && impl_->frames.empty();
 }
 
 } // namespace wam::macos

@@ -2,7 +2,24 @@
 #import <Foundation/Foundation.h>
 #include <array>
 #include <cstring>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 namespace wam::macos {
+namespace {
+void interleaveChroma8(std::uint8_t* out,const std::uint8_t* u,const std::uint8_t* v,unsigned width) noexcept {
+  unsigned column=0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  for(;column+16<=width;column+=16) {
+    uint8x16x2_t pair;
+    pair.val[0]=vld1q_u8(u+column);
+    pair.val[1]=vld1q_u8(v+column);
+    vst2q_u8(out+2*column,pair);
+  }
+#endif
+  for(;column<width;++column) { out[2*column]=u[column]; out[2*column+1]=v[column]; }
+}
+}
 SoftwarePresentationPool::~SoftwarePresentationPool() { close(); }
 bool SoftwarePresentationPool::configure(std::int32_t width,std::int32_t height,OSType format) {
   close();
@@ -41,6 +58,18 @@ bool copySoftwarePlanes(CVPixelBufferRef destination,const std::uint8_t* const p
   if(CVPixelBufferGetBytesPerRowOfPlane(destination,0)<width*bytes ||
       CVPixelBufferGetBytesPerRowOfPlane(destination,1)<chromaWidth*2*bytes) return false;
   if(CVPixelBufferLockBaseAddress(destination,0)!=kCVReturnSuccess) return false;
+  if(bytes==1) {
+    auto* luma=static_cast<std::uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(destination,0));
+    auto* chroma=static_cast<std::uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(destination,1));
+    const auto lumaStride=CVPixelBufferGetBytesPerRowOfPlane(destination,0);
+    const auto chromaStride=CVPixelBufferGetBytesPerRowOfPlane(destination,1);
+    if(!luma||!chroma) { CVPixelBufferUnlockBaseAddress(destination,0); return false; }
+    for(unsigned y=0;y<height;++y) std::memcpy(luma+y*lumaStride,planes[0]+y*strides[0],width);
+    for(unsigned y=0;y<chromaHeight;++y)
+      interleaveChroma8(chroma+y*chromaStride,planes[1]+y*strides[1],planes[2]+y*strides[2],chromaWidth);
+    CVPixelBufferUnlockBaseAddress(destination,0);
+    return true;
+  }
   for(unsigned p=0;p<2;++p) {
     auto* output=static_cast<std::uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(destination,p));
     const auto rowStride=CVPixelBufferGetBytesPerRowOfPlane(destination,p);
@@ -51,8 +80,7 @@ bool copySoftwarePlanes(CVPixelBufferRef destination,const std::uint8_t* const p
         for(unsigned component=0;component<(p?2U:1U);++component) {
           const unsigned source=p?1+component:0, index=p?2*x+component:x;
           const auto* input=planes[source]+y*strides[source]+x*bytes;
-          if(bytes==1) row[index]=*input;
-          else { std::uint16_t value; std::memcpy(&value,input,2); value=std::uint16_t(value<<6); std::memcpy(row+index*2,&value,2); }
+          std::uint16_t value; std::memcpy(&value,input,2); value=std::uint16_t(value<<6); std::memcpy(row+index*2,&value,2);
         }
       }
     }

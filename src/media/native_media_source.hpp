@@ -162,6 +162,12 @@ enum class MediaTransferFunction : std::uint8_t {
   OtherExplicit,
 };
 
+[[nodiscard]] constexpr bool mediaTransferIsHighDynamicRange(
+    MediaTransferFunction transfer) noexcept {
+  return transfer == MediaTransferFunction::Pq ||
+         transfer == MediaTransferFunction::Hlg;
+}
+
 enum class MediaMatrixCoefficients : std::uint8_t {
   Unknown,
   Bt601,
