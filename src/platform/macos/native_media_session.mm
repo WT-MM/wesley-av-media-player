@@ -879,7 +879,8 @@ struct NativeMediaSession::Impl final {
   void publishAudioClock(protocol::AudioClockProof proof) noexcept {
     {
       std::lock_guard lock(mutex);
-      if (publishedStop.has_value() || endedPublished || published.ending ||
+      if (publishedStop.has_value() || endPhase == EndPhase::Ended ||
+          published.ending ||
           proof.stamp != publicRequestedRunStamp ||
           proof.stamp != publicAppliedRunStamp) {
         return;
@@ -950,7 +951,7 @@ struct NativeMediaSession::Impl final {
       if (factMailbox.has_value()) {
         return false;
       }
-      stoppedPublished = true;
+      stopPhase = StopPhase::Stopped;
       published = workerFacts();
       factMailbox.emplace(protocol::Stopped{
           stopCommand.stamp, stopCommand.invalidationGeneration});
@@ -1111,15 +1112,14 @@ struct NativeMediaSession::Impl final {
   [[nodiscard]] PublishedFacts workerFacts() const noexcept {
     return {ownership,        preparedPublished,  startedPublished,
             dispatcherObservedVideo, directVideoRetired, directAudioRetired,
-            stoppedPublished, endingLatched,      endedPublished,
-            liveFailed,       appliedPaused};
+            stopPhase == StopPhase::Stopped, endingLatched(),
+            endPhase == EndPhase::Ended, liveFailed, appliedPaused};
   }
 
   void publishVideoDueHint() noexcept {
     std::uint64_t due = 0;
-    if (!stopLatched && !liveFailed && !endingLatched && !endedPublished &&
-        !commitInFlight() && !previewActivity && !previewPending &&
-        videoPort != nullptr) {
+    if (transportLive() && !commitInFlight() && !previewActivity &&
+        !previewPending && videoPort != nullptr) {
       due = videoPort->nextDueHostTicks();
     }
     dependencies.wake->publishVideoDueHostTicks(due);
@@ -1135,9 +1135,9 @@ struct NativeMediaSession::Impl final {
     {
       std::lock_guard lock(mutex);
     if (publishedStop.has_value()) {
-      if (!stopLatched) {
+      if (stopPhase == StopPhase::None) {
         stopCommand = *publishedStop;
-        stopLatched = true;
+        stopPhase = StopPhase::Retiring;
         clearForStopLatchLocked();
       }
       return;
@@ -1193,9 +1193,7 @@ struct NativeMediaSession::Impl final {
       exactCommitProof.target = commitTarget;
       commitDrawBaseline = publishedCommit->drawBaseline;
       if (publishedCommit->reviveFromEnded) {
-        endingLatched = false;
-        endedPublished = false;
-        dispatcherExhausted = false;
+        endPhase = EndPhase::Live;
         endingStamp = {};
       }
       publishedCommit.reset();
@@ -1440,7 +1438,7 @@ struct NativeMediaSession::Impl final {
     bool publishedFailure = false;
     {
       std::lock_guard lock(mutex);
-      if (!previewTerminalLocked(endedPublished)) {
+      if (!previewTerminalLocked(endPhase == EndPhase::Ended)) {
         publishedFailure = failPreviewHandoffLocked();
       }
     }
@@ -1529,7 +1527,8 @@ struct NativeMediaSession::Impl final {
   }
 
   void progressPreview() noexcept {
-    if ((!previewHandoffPending && !previewPending) || stopLatched ||
+    if ((!previewHandoffPending && !previewPending) ||
+        stopPhase != StopPhase::None ||
         liveFailed || commitInFlight() || previewHandoffFailed ||
         videoPort == nullptr) {
       return;
@@ -1539,7 +1538,7 @@ struct NativeMediaSession::Impl final {
     // report EOS drained; Ended follows only after audio Stop Done. The main
     // video lane therefore owns no decoder/scheduler/output credit here and
     // must not be asked to enter its pre-EOS quiesce contract again.
-    const bool previewFromPublishedEnd = endedPublished;
+    const bool previewFromPublishedEnd = endPhase == EndPhase::Ended;
     if (previewFromPublishedEnd) {
       previewMainQuiesced = true;
     }
@@ -1776,7 +1775,7 @@ struct NativeMediaSession::Impl final {
                  media::NativeMediaConsumerProgress::Quiescing) {
         return false;
       } else {
-        stopFailed = true;
+        stopPhase = StopPhase::Failed;
         return false;
       }
     }
@@ -1799,7 +1798,7 @@ struct NativeMediaSession::Impl final {
                  media::NativeMediaConsumerProgress::Quiescing) {
         return false;
       } else {
-        stopFailed = true;
+        stopPhase = StopPhase::Failed;
         return false;
       }
     }
@@ -1815,7 +1814,7 @@ struct NativeMediaSession::Impl final {
         return false;
       }
       if (closed.status != media::NativeMediaDispatcherLifecycleStatus::Done) {
-        stopFailed = true;
+        stopPhase = StopPhase::Failed;
         return false;
       }
     }
@@ -1838,7 +1837,7 @@ struct NativeMediaSession::Impl final {
     }
     if (result.status !=
         media::NativeMediaDispatcherLifecycleStatus::Pending) {
-      stopFailed = true;
+      stopPhase = StopPhase::Failed;
     }
     return false;
   }
@@ -1850,7 +1849,7 @@ struct NativeMediaSession::Impl final {
     // spin: every retirement pass observes the tracked video output, and an
     // output with a close still pending re-signals this worker's wake on each
     // observation, so wait() would never block again.
-    if (!stopLatched || stoppedPublished || stopFailurePublished) {
+    if (stopPhase != StopPhase::Retiring) {
       return;
     }
     const NativePreviewFrameCancelProgress previewStopped =
@@ -1859,7 +1858,7 @@ struct NativeMediaSession::Impl final {
       return;
     }
     if (previewStopped != NativePreviewFrameCancelProgress::Done) {
-      stopFailed = true;
+      stopPhase = StopPhase::Failed;
     }
     bool done = false;
     if (ownership == NativeMediaSessionOwnershipPhase::PrearmOwned ||
@@ -1867,7 +1866,7 @@ struct NativeMediaSession::Impl final {
             NativeMediaSessionOwnershipPhase::DispatcherUnobserved ||
         ownership == NativeMediaSessionOwnershipPhase::DirectRetiring) {
       if (videoObserver == nullptr || audioObserver == nullptr) {
-        stopFailed = true;
+        stopPhase = StopPhase::Failed;
       } else {
         done = directRetire();
       }
@@ -1879,11 +1878,7 @@ struct NativeMediaSession::Impl final {
     } else if (ownership == NativeMediaSessionOwnershipPhase::Empty) {
       done = true;
     }
-    if (stopFailed) {
-      if (stopFailurePublished) {
-        return;
-      }
-      stopFailurePublished = true;
+    if (stopPhase == StopPhase::Failed) {
       publishWorkerFacts();
       static_cast<void>(publishFailure(protocol::FailureReason::Stop, "stop",
                                        stopCommand.stamp));
@@ -1896,7 +1891,7 @@ struct NativeMediaSession::Impl final {
   }
 
   void progressPrepare() noexcept {
-    if (stopLatched || preparedPublished || prepareFailed) {
+    if (stopPhase != StopPhase::None || preparedPublished || prepareFailed) {
       return;
     }
     bool graphBuilt{};
@@ -1940,7 +1935,7 @@ case NativeVideoConsumerArmProgress::Failed:
       acceptPublishedCommands();
       return;
     }
-    if (stopLatched) {
+    if (stopPhase != StopPhase::None) {
       return;
     }
     bool transferred{};
@@ -2105,7 +2100,8 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
   }
 
   void progressStart() noexcept {
-    if (stopLatched || !preparedPublished || startedPublished ||
+    if (stopPhase != StopPhase::None || !preparedPublished ||
+        startedPublished ||
         !startPending || startCommand.preparedGeneration.value !=
                              reservedGeneration) {
       return;
@@ -2165,8 +2161,7 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void progressRunState() noexcept {
-    if (stopLatched || endingLatched || endedPublished || liveFailed ||
-        !startedPublished || !runPending ||
+    if (!transportLive() || !startedPublished || !runPending ||
         authority == nullptr) {
       return;
     }
@@ -2214,7 +2209,7 @@ if (result != NativeAudioSessionProgress::Done) {
           publicAppliedRunStamp = appliedRunStamp;
           published.appliedPaused = appliedPaused;
           runPending = false;
-          if (!dispatcherExhausted) {
+          if (endPhase == EndPhase::Live) {
             runStateAppliedSlot =
                 NativeMediaSessionRunStateApplied{issued};
             acknowledgementInserted = true;
@@ -2248,7 +2243,7 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void progressAudioClockProof() noexcept {
-    if (!audioProofPending.has_value() || stopLatched || endingLatched ||
+    if (!audioProofPending.has_value() || !transportLive() ||
         authority == nullptr) {
       return;
     }
@@ -2316,10 +2311,8 @@ if (result != NativeAudioSessionProgress::Done) {
   // straight back here, and Invalid only means the precondition moved.
   void progressAudioSuspend() noexcept {
     if (authority == nullptr || !authority->suspendsForPause() ||
-        !startedPublished ||
-        stopLatched || liveFailed || endingLatched || endedPublished ||
-        commitInFlight() || previewPending || previewActivity ||
-        previewHandoffPending || runPending || !appliedPaused ||
+        !startedPublished || !transportLive() || commitInFlight() ||
+        previewPending || previewActivity || previewHandoffPending || runPending || !appliedPaused ||
         audioProofPending.has_value()) {
       return;
     }
@@ -2351,8 +2344,7 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void progressAudioControls() noexcept {
-    if (stopLatched || endingLatched || endedPublished || liveFailed ||
-        authority == nullptr) {
+    if (!transportLive() || authority == nullptr) {
       return;
     }
     if (gainPending) {
@@ -2373,7 +2365,7 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
     }
-    if (mutedPending && !liveFailed && !endingLatched) {
+    if (mutedPending && transportLive()) {
       NativeAudioSessionProgress result{};
       if (!withLiveIssue(
               [&] { result = authority->setMuted(requestedMuted); })) {
@@ -2481,9 +2473,8 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void progressCommitSeek() noexcept {
-    if (!commitInFlight() || stopLatched || liveFailed ||
-        dispatcher == nullptr || authority == nullptr ||
-        authority == nullptr || authority == nullptr) {
+    if (!commitInFlight() || stopPhase != StopPhase::None || liveFailed ||
+        dispatcher == nullptr || authority == nullptr) {
       return;
     }
 
@@ -2530,7 +2521,7 @@ if (result != NativeAudioSessionProgress::Done) {
       if (!enterCommitPhase(CommitPhase::AwaitingSeekCommit)) {
         return;
       }
-      dispatcherExhausted = false;
+      endPhase = EndPhase::Live;
       if (sought.status == media::NativeMediaDispatcherSeekStatus::Accepted) {
         if (!enterCommitPhase(CommitPhase::ActivatingTimebase)) {
           return;
@@ -2777,8 +2768,7 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void captureVideoDrawProof() noexcept {
-    if (stopLatched || endingLatched || endedPublished || liveFailed ||
-        videoPort == nullptr) {
+    if (!transportLive() || videoPort == nullptr) {
       return;
     }
     if (!retainedVideoEvent.has_value()) {
@@ -2850,14 +2840,15 @@ if (result != NativeAudioSessionProgress::Done) {
   [[nodiscard]] bool publishEnded(double finalPositionSeconds) noexcept {
     {
       std::lock_guard lock(mutex);
-      if (publishedStop.has_value() || liveFailed || endedPublished ||
+      if (publishedStop.has_value() || liveFailed ||
+          endPhase == EndPhase::Ended ||
           !protocol::validPosition(finalPositionSeconds)) {
         return false;
       }
       if (factMailbox.has_value()) {
         return false;
       }
-      endedPublished = true;
+      endPhase = EndPhase::Ended;
       published.ending = true;
       published.ended = true;
       runStateAppliedSlot.reset();
@@ -2876,14 +2867,13 @@ if (result != NativeAudioSessionProgress::Done) {
   // is quiescing can atomically replace it without racing the worker.
   [[nodiscard]] bool latchEnding() noexcept {
     std::lock_guard lock(mutex);
-    if (!dispatcherExhausted || endingLatched || endedPublished ||
-        liveFailed || publishedStop.has_value() || 
-        publicCommit != PublicCommit::Idle || !startedPublished ||
-        !protocol::validLive(latestAcceptedStamp)) {
-      return endingLatched;
+    if (endPhase != EndPhase::Exhausted || liveFailed ||
+        publishedStop.has_value() || publicCommit != PublicCommit::Idle ||
+        !startedPublished || !protocol::validLive(latestAcceptedStamp)) {
+      return endingLatched();
     }
     endingStamp = latestAcceptedStamp;
-    endingLatched = true;
+    endPhase = EndPhase::Ending;
     published.ending = true;
     dependencies.wake->publishVideoDueHostTicks(0);
     clearForEndingLocked();
@@ -2891,12 +2881,12 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void progressEnded() noexcept {
-    if (!dispatcherExhausted || endedPublished || liveFailed || stopLatched ||
-        !startedPublished || authority == nullptr ||
+    if ((endPhase != EndPhase::Exhausted && endPhase != EndPhase::Ending) ||
+        liveFailed || stopPhase != StopPhase::None || !startedPublished ||
         authority == nullptr) {
       return;
     }
-    if (!endingLatched && !latchEnding()) {
+    if (endPhase == EndPhase::Exhausted && !latchEnding()) {
       return;
     }
     NativeAudioSessionProgress stopped{};
@@ -3010,8 +3000,7 @@ if (result != NativeAudioSessionProgress::Done) {
   // store per worker pass and no extra wake.
   void publishRunningPositionForVideoLessGeneration() noexcept {
     if (!videoLessGeneration() || authority == nullptr ||
-        stopLatched || endingLatched || endedPublished || liveFailed ||
-        appliedPaused || commitInFlight()) {
+        !transportLive() || appliedPaused || commitInFlight()) {
       return;
     }
     protocol::Stamp runStamp{};
@@ -3087,8 +3076,7 @@ if (result != NativeAudioSessionProgress::Done) {
 #endif
 
   void syncHostPacedDeadlines() noexcept {
-    const bool active = !endedPublished && !stopLatched && !liveFailed &&
-                        !endingLatched &&
+    const bool active = transportLive() &&
                         (commitInFlight() || previewPending || !appliedPaused);
     dependencies.wake->setHostPacedDeadlines(
         active ? dependencies.hostClock : media::NativeMediaHostClock{},
@@ -3136,7 +3124,7 @@ if (result != NativeAudioSessionProgress::Done) {
         if (factBlocked()) {
           continue;
         }
-        if (stopLatched) {
+        if (stopPhase != StopPhase::None) {
           progressStop();
           continue;
         }
@@ -3146,7 +3134,7 @@ if (result != NativeAudioSessionProgress::Done) {
         if (commitInFlight()) {
           progressCommitSeek();
           publishMetrics();
-          if (stopLatched) {
+          if (stopPhase != StopPhase::None) {
             progressStop();
           }
           continue;
@@ -3157,7 +3145,7 @@ if (result != NativeAudioSessionProgress::Done) {
         if (preparePending) {
           progressPrepare();
         }
-        if (stopLatched) {
+        if (stopPhase != StopPhase::None) {
           progressStop();
           continue;
         }
@@ -3188,7 +3176,7 @@ if (result != NativeAudioSessionProgress::Done) {
           continue;
         }
         if (dispatcher != nullptr && preparedPublished &&
-            !dispatcherExhausted && !previewActivity && !previewPending) {
+            endPhase == EndPhase::Live && !previewActivity && !previewPending) {
           bool callAgain = false;
           bool terminalFailure = false;
           for (unsigned stepCount = 0; stepCount != kWorkerPassBudget; ++stepCount) {
@@ -3209,7 +3197,7 @@ if (result != NativeAudioSessionProgress::Done) {
             }
             if (step.state == media::NativeMediaDispatcherState::Exhausted ||
                 step.action == media::NativeMediaDispatcherAction::Exhausted) {
-              dispatcherExhausted = true;
+              endPhase = EndPhase::Exhausted;
               static_cast<void>(latchEnding());
               callAgain = false;
               break;
@@ -3224,8 +3212,9 @@ if (result != NativeAudioSessionProgress::Done) {
           if (callAgain) {
             dependencies.wake->notify();
           }
-          if (terminalFailure && !dispatcherFailurePublished) {
-            dispatcherFailurePublished = true;
+          // publishFailure() latches liveFailed, or a published Stop refused
+          // it; either way the dispatcher is never stepped again.
+          if (terminalFailure) {
 #if defined(WAM_NATIVE_TEST_SEAMS)
             if (failureDetectionEntered != nullptr &&
                 failureDetectionRelease != nullptr) {
@@ -3248,7 +3237,7 @@ if (result != NativeAudioSessionProgress::Done) {
         if (factBlocked()) {
           continue;
         }
-        if (dispatcherExhausted) {
+        if (endPhase == EndPhase::Exhausted) {
           static_cast<void>(latchEnding());
         }
         progressRunState();
@@ -3340,6 +3329,21 @@ if (result != NativeAudioSessionProgress::Done) {
   PublicCommit publicCommit{PublicCommit::Idle};
   [[nodiscard]] bool commitPendingLocked() const noexcept {
     return publicCommit == PublicCommit::Pending;
+  }
+  [[nodiscard]] bool endingLatched() const noexcept {
+    switch (endPhase) {
+    case EndPhase::Live:
+    case EndPhase::Exhausted:
+      return false;
+    case EndPhase::Ending:
+    case EndPhase::Ended:
+      return true;
+    }
+    return true;
+  }
+  // The generation may still take transport, audio-control and proof work.
+  [[nodiscard]] bool transportLive() const noexcept {
+    return stopPhase == StopPhase::None && !liveFailed && !endingLatched();
   }
   bool publicPreviewHandoffPending{false};
   bool publicPreviewHandoffReady{false};
@@ -3447,15 +3451,21 @@ if (result != NativeAudioSessionProgress::Done) {
   bool previewMainQuiesced{false};
   bool gainPending{false};
   bool mutedPending{false};
-  bool stopLatched{false};
-  bool stopFailed{false};
-  bool stopFailurePublished{false};
-  bool dispatcherFailurePublished{false};
+  // Stop retirement. Failed is set by the retirement step that failed and is
+  // published once, at the end of that same progressStop() pass; Failed and
+  // Stopped are both final.
+  enum class StopPhase : std::uint8_t { None, Retiring, Failed, Stopped };
+  StopPhase stopPhase{StopPhase::None};
+  // End of media for the active generation. Exhausted: the dispatcher has
+  // drained every selected lane but ending has not latched yet (a commit
+  // handshake is open, Start has not published, or no live stamp exists).
+  // Ending: audio Stop is draining. Ended: the Ended fact is published. A
+  // commit returns any phase to Live.
+  enum class EndPhase : std::uint8_t { Live, Exhausted, Ending, Ended };
+  EndPhase endPhase{EndPhase::Live};
+  // Absorbing and orthogonal to both phases above: a live failure may land
+  // while ending drains, and Stop still retires a failed generation.
   bool liveFailed{false};
-  bool stoppedPublished{false};
-  bool endingLatched{false};
-  bool endedPublished{false};
-  bool dispatcherExhausted{false};
   bool dispatcherObservedVideo{false};
   // True once the dispatcher has exposed this generation on either lane. It is
   // the clock-publication gate; dispatcherObservedVideo above is the video
