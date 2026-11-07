@@ -41,11 +41,18 @@ private final class Session: @unchecked Sendable {
 @available(macOS 26, *)
 private actor Engine {
     let session: Session
-    var locale: Locale?
-    var module: SpeechTranscriber?
-    var analyzer: SpeechAnalyzer?
-    var reader: Task<Void, Error>?
-    var prepared = false
+    // closed --query--> reserved --prepare--> preparing --> prepared;
+    // start runs from prepared and stays there. cancel() finishes the analyzer,
+    // so preparing/prepared become cancelled, which only close() (or a query,
+    // which closes first) leaves. close() returns to closed from anywhere.
+    enum State {
+        case closed
+        case reserved(Locale, SpeechTranscriber)
+        case preparing(Locale, SpeechTranscriber, SpeechAnalyzer, Task<Void, Error>)
+        case prepared(Locale, SpeechTranscriber, SpeechAnalyzer, Task<Void, Error>, offset: Int64)
+        case cancelled(Locale, Task<Void, Error>)
+    }
+    var state: State = .closed
     // Production idle deadline. Query cancels the timer and awaits any close
     // already in progress before reserving/re-preparing the next request.
     var idleVersion: UInt64 = 0
@@ -71,7 +78,6 @@ private actor Engine {
         idle?.cancel(); idle = nil
         await eviction?.value; eviction = nil
     }
-    var offset: Int64 = 0
     var generation: UInt64 = 0
     var base: Double = 0
     var duration: Double = 0
@@ -82,23 +88,32 @@ private actor Engine {
               let resolved = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier:language)) else {
             session.emit(g,1,flags:0); return
         }
-        if locale != resolved {
+        switch state {
+        case .reserved(let locale, _) where locale == resolved,
+             .prepared(let locale, _, _, _, _) where locale == resolved:
+            break
+        case .closed, .reserved, .preparing, .prepared, .cancelled:
             await close()
-            locale = resolved
-            module = SpeechTranscriber(locale:resolved,preset:.timeIndexedProgressiveTranscription)
+            state = .reserved(resolved, SpeechTranscriber(locale:resolved,preset:.timeIndexedProgressiveTranscription))
         }
         try await AssetInventory.reserve(locale:resolved)
         let ready = await isReady()
         session.emit(g,1,resolved.identifier,flags:ready ? 3 : 5)
     }
+    func reservation() -> (Locale, SpeechTranscriber)? {
+        switch state {
+        case .reserved(let l, let m), .preparing(let l, let m, _, _), .prepared(let l, let m, _, _, _): return (l, m)
+        case .closed, .cancelled: return nil
+        }
+    }
     func isReady() async -> Bool {
-        guard let m = module, let l = locale else { return false }
+        guard let (l, m) = reservation() else { return false }
         let status = await AssetInventory.status(forModules:[m])
         let installed = await SpeechTranscriber.installedLocales
         return status == .installed || installed.contains(l)
     }
     func prepare(_ consent: Bool, _ g: UInt64) async throws {
-        guard let m = module else { throw Failure("Apple Speech locale unavailable") }
+        guard let (locale, m) = reservation() else { throw Failure("Apple Speech locale unavailable") }
         if !(await isReady()) {
             guard consent else { throw Failure("Language download was not approved") }
             if let install = try await AssetInventory.assetInstallationRequest(supporting:[m]) {
@@ -121,18 +136,22 @@ private actor Engine {
             guard await isReady() else { throw Failure("Language asset is not ready after installation") }
         }
         try Task.checkCancellation()
-        if !prepared {
-            let a = SpeechAnalyzer(modules:[m])
-            analyzer = a
-            reader = Task {
-                for try await result in m.results { self.receive(result) }
-            }
-            // Streaming input must be Int16, not AVAudioFile's default Float32.
-            let format = AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:16000,channels:1,interleaved:false)!
-            try await a.prepareToAnalyze(in:format)
-            prepared = true
-            session.emit(g,4,"Apple Speech prepared",progress:1)
+        guard case .reserved = state else {
+            if case .prepared = state { session.emit(g,2); return }
+            throw Failure("Apple Speech was not prepared")
         }
+        let a = SpeechAnalyzer(modules:[m])
+        let reader = Task {
+            for try await result in m.results { self.receive(result) }
+        }
+        // Published before the await so cancel() can finish it mid-preparation.
+        state = .preparing(locale, m, a, reader)
+        // Streaming input must be Int16, not AVAudioFile's default Float32.
+        let format = AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:16000,channels:1,interleaved:false)!
+        try await a.prepareToAnalyze(in:format)
+        guard case .preparing = state else { throw CancellationError() }
+        state = .prepared(locale, m, a, reader, offset: 0)
+        session.emit(g,4,"Apple Speech prepared",progress:1)
         session.emit(g,2)
     }
     func receive(_ r: SpeechTranscriber.Result) {
@@ -141,13 +160,14 @@ private actor Engine {
         session.emit(generation,4,"Apple Speech: transcribing on device…",progress:duration > 0 ? min(1,(r.resultsFinalizationTime.seconds-base)/duration) : 0)
     }
     func start(_ path: String, _ g: UInt64) async throws {
-        guard prepared, let a = analyzer else { throw Failure("Apple Speech was not prepared") }
+        guard case .prepared(let locale, _, let a, let reader, let origin) = state else {
+            throw Failure("Apple Speech was not prepared")
+        }
         let file = try AVAudioFile(forReading:URL(fileURLWithPath:path),commonFormat:.pcmFormatInt16,interleaved:false)
         guard file.processingFormat.sampleRate == 16000, file.processingFormat.channelCount == 1 else {
             throw Failure("Expected 16 kHz mono PCM")
         }
-        generation = g; base = Double(offset)/16000; duration = Double(file.length)/16000
-        let origin = offset
+        generation = g; base = Double(origin)/16000; duration = Double(file.length)/16000
         // Pull-based sequence: at most one second of PCM in flight at this seam.
         let input = AsyncThrowingStream<AnalyzerInput,Error>(unfolding: {
             try Task.checkCancellation()
@@ -165,31 +185,41 @@ private actor Engine {
         // an empty volatile range is not proof that final events were consumed.
         // A fresh module also fixes the macOS 26.3.1 repeated-file text leak.
         // The same analyzer remains prepared (see docs/captions/CAPTION_ENGINES.md).
-        guard let locale else { throw Failure("Caption locale was released") }
         let fresh = SpeechTranscriber(locale:locale,preset:.timeIndexedProgressiveTranscription)
         try await a.setModules([fresh])
-        try await reader?.value
+        try await reader.value
         try Task.checkCancellation()
-        module = fresh
-        reader = Task {
+        guard case .prepared = state else { throw CancellationError() }
+        let freshReader = Task {
             for try await result in fresh.results { self.receive(result) }
         }
-        offset += file.length
+        state = .prepared(locale, fresh, a, freshReader, offset: origin + file.length)
         armIdle()
         session.emit(g,5)
     }
     func cancel() async {
-        reader?.cancel()
-        if let a = analyzer { await a.cancelAndFinishNow() }
+        switch state {
+        case .preparing(let locale, _, let a, let reader), .prepared(let locale, _, let a, let reader, _):
+            state = .cancelled(locale, reader)
+            reader.cancel()
+            await a.cancelAndFinishNow()
+        case .closed, .reserved, .cancelled:
+            break
+        }
     }
     func close() async {
         idleVersion &+= 1
         idle?.cancel(); idle = nil
         await cancel()
-        _ = try? await reader?.value
-        reader = nil; analyzer = nil; module = nil; prepared = false; offset = 0
+        let locale: Locale?
+        switch state {
+        case .closed: locale = nil
+        case .reserved(let l, _): locale = l
+        case .preparing(let l, _, _, _), .prepared(let l, _, _, _, _): locale = l  // cancel() already moved these on
+        case .cancelled(let l, let reader): locale = l; _ = try? await reader.value
+        }
+        state = .closed
         if let l = locale { _ = await AssetInventory.release(reservedLocale:l) }
-        locale = nil
     }
 }
 private struct Failure: Error { let message: String; init(_ message:String) { self.message = message } }
