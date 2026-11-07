@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -198,9 +199,10 @@ class BackgroundJob {
   BackgroundJob& operator=(const BackgroundJob&) = delete;
 
   bool start(std::string label, ProcessCommand command);
-  bool running() const { return running_.load(); }
-  bool succeeded() const { return finished_.load() && exit_code_.load() == 0; }
-  bool finished() const { return finished_.load(); }
+  bool running() const { return state_.load() == State::Running; }
+  bool succeeded() const { return finished() && exit_code_.load() == 0; }
+  bool finished() const { return state_.load() == State::Finished; }
+  // -1 until finished, and when the worker could not be started.
   int exitCode() const { return exit_code_.load(); }
   std::string label() const;
   void cancel() noexcept;
@@ -215,8 +217,11 @@ class BackgroundJob {
   std::thread worker_;
   detail::CancellationFlag cancellation_;
   mutable std::mutex worker_mutex_;
-  std::atomic<bool> running_{false};
-  std::atomic<bool> finished_{false};
+  // Idle -> Running (start) -> Finished (worker, after storing exit_code_)
+  // -> Idle (reset). Only start() and reset() leave Idle/Finished, under
+  // worker_mutex_.
+  enum class State : std::uint8_t { Idle, Running, Finished };
+  std::atomic<State> state_{State::Idle};
   std::atomic<int> exit_code_{-1};
   mutable std::mutex label_mutex_;
   std::string label_;

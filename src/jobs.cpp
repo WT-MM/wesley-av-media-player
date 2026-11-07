@@ -855,20 +855,19 @@ bool BackgroundJob::startWorker(
     std::string label,
     std::function<int(const detail::CancellationFlag&)> operation) {
   std::lock_guard worker_lock(worker_mutex_);
-  if (running_.load(std::memory_order_acquire)) return false;
+  if (state_.load(std::memory_order_acquire) == State::Running) return false;
   if (worker_.joinable()) worker_.join();
 
   // Reset the reusable source before publishing the new job as running.
   // cancel() never takes worker_mutex_, so every request made after this
   // publication remains visible to the worker and cannot be overwritten.
   cancellation_.reset();
-  finished_ = false;
   exit_code_ = -1;
   {
     std::lock_guard lock(label_mutex_);
     label_ = std::move(label);
   }
-  running_.store(true, std::memory_order_release);
+  state_.store(State::Running, std::memory_order_release);
   try {
     worker_ = std::thread(
         [this, operation = std::move(operation)] {
@@ -879,16 +878,14 @@ bool BackgroundJob::startWorker(
             code = 1;
           }
           exit_code_ = code;
-          running_ = false;
-          finished_ = true;
+          state_.store(State::Finished, std::memory_order_release);
         });
   } catch (...) {
-    // `running_` is claimed before thread creation to serialize callers. Give
+    // Running is claimed before thread creation to serialize callers. Give
     // that claim back if the OS cannot create the worker, otherwise this job
     // object can never be used again.
     exit_code_ = -1;
-    finished_ = true;
-    running_ = false;
+    state_.store(State::Finished, std::memory_order_release);
     throw;
   }
   return true;
@@ -908,9 +905,9 @@ void BackgroundJob::wait() {
 
 void BackgroundJob::reset() {
   std::lock_guard worker_lock(worker_mutex_);
-  if (running_.load(std::memory_order_acquire)) return;
+  if (state_.load(std::memory_order_acquire) == State::Running) return;
   if (worker_.joinable()) worker_.join();
-  finished_ = false;
+  state_.store(State::Idle, std::memory_order_release);
   exit_code_ = -1;
   std::lock_guard lock(label_mutex_);
   label_.clear();
