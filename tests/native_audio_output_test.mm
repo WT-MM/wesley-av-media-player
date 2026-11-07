@@ -2255,6 +2255,13 @@ void testWakeAndListenerPinsDrainBeforeClose() {
              listenerExit.wake.calls.load(std::memory_order_relaxed) == 1,
          "Quiescing retry rearms a coalesced device-listener wake");
   listenerExit.wake.clear();
+  // A close that waited on a draining bridge has already detached it, so the
+  // output must stay Detaching: a stop() that completed to Stopped would let
+  // start() reopen admission over a bridge every callback now rejects.
+  expect(listenerExit.output->facts().state ==
+                 NativeAudioOutputState::Detaching &&
+             listenerExit.output->stop() == NativeAudioOutputProgress::Invalid,
+         "a draining close stays Detaching and refuses stop");
   afterListenerWake.release.store(true, std::memory_order_release);
   changingListener.join();
   NativeAudioOutputTestAccess::setAfterListenerWakeHook(

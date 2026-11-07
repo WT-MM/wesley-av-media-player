@@ -86,16 +86,15 @@ void NativePlaybackOwner::refreshNativePhaseWatchdog() {
   // exactly while a seek is in flight, independent of any host stream.
   if (nativeSession_) nativeSession_->setSeekMetricsEnabled(seeking && !retirementPending());
   if (retirementPending() || !playback_router::isBoundedNativePhase(router_.snapshot().state)) {
-    ++nativePhaseWatchdogEpoch_;
-    nativePhaseWatchdogArmed_ = false;
+    nativePhaseWatchdog_.reset();
     return;
   }
-  if (nativePhaseWatchdogArmed_) {
+  if (nativePhaseWatchdog_) {
     return;
   }
-  nativePhaseWatchdogArmed_ = true;
   if (!seeking) nativeSeekProgress_ = {};
-  const std::uint64_t epoch = ++nativePhaseWatchdogEpoch_;
+  const std::uint64_t epoch = ++nativePhaseWatchdogEpochs_;
+  nativePhaseWatchdog_ = epoch;
   const auto lifetime = ownerLifetime_;
   const int milliseconds = seeking ? media::SeekProgressDeadline::pollMilliseconds
                                    : int(media::kNativeStallDeadlineMilliseconds);
@@ -107,10 +106,10 @@ void NativePlaybackOwner::refreshNativePhaseWatchdog() {
 
 void NativePlaybackOwner::expireNativePhaseWatchdog(std::uint64_t epoch) {
   assert([NSThread isMainThread]);
-  if (!nativePhaseWatchdogArmed_ || epoch != nativePhaseWatchdogEpoch_) {
+  if (nativePhaseWatchdog_ != epoch) {
     return;
   }
-  nativePhaseWatchdogArmed_ = false;
+  nativePhaseWatchdog_.reset();
   if (nativeSession_ != nullptr) {
     // A fact may have been queued but not yet drained. Consume it first so a
     // session that did finish is never retired by its own watchdog.
@@ -250,8 +249,9 @@ NativePlaybackOwner::previewFrame(double targetSeconds, std::uint64_t gesture,
     return PreviewDisposition::Rejected;
   }
 
-  nativePreviewTarget_ = std::move(target);
-  nativePreview_ = transition.action->previewFrame;
+  nativePreview_.emplace(PendingPreview{
+      transition.action->previewFrame,
+      PendingPreview::Reserved{std::move(*target)}});
   nativePreviewDisposition_ = PreviewDisposition::Rejected;
   execute(std::move(transition));
   return nativePreviewDisposition_;
@@ -315,12 +315,10 @@ NativePlaybackOwner::commitSeek(media::MediaTime target, std::uint64_t gesture,
   }
 
   const native_protocol::CommitSeek command = transition.action->commitSeek;
-  nativeCommitTarget_ = std::move(commitTarget);
-  nativeCommit_ = command;
+  nativeCommit_.emplace(PendingCommit{
+      command, commitTarget->exact(), commitTarget->drawBaseline(),
+      PendingCommit::Reserved{std::move(*commitTarget)}});
   nativeSeekProgress_ = {};
-  nativeCommitDrawBaseline_ = nativeCommitTarget_->drawBaseline();
-  nativeCommitTime_ = nativeCommitTarget_->exact();
-  nativeCommitDispatchAccepted_ = false;
 
   // The controller may have changed logical play/pause during a scrub while
   // native playback stayed physically paused. Retain that latest intent only
@@ -338,8 +336,8 @@ NativePlaybackOwner::commitSeek(media::MediaTime target, std::uint64_t gesture,
   }
 
   execute(std::move(transition));
-  return nativeCommitDispatchAccepted_ ? SeekDisposition::NativeHandled
-                                       : SeekDisposition::NativeRejected;
+  return nativeCommitDispatched() ? SeekDisposition::NativeHandled
+                                  : SeekDisposition::NativeRejected;
 }
 
 bool NativePlaybackOwner::setGain(float gain) {
@@ -543,20 +541,25 @@ NativePlaybackOwner::executeAction(const playback_router::Action &action) {
     return std::nullopt;
   }
   case Kind::NativePreviewFrame: {
-    if (nativeSession_ == nullptr || !nativePreviewTarget_.has_value() ||
-        !nativePreview_.has_value() ||
-        nativePreview_->stamp != action.previewFrame.stamp ||
-        nativePreview_->generation != action.previewFrame.generation ||
-        nativePreview_->gesture != action.previewFrame.gesture ||
-        nativePreview_->request != action.previewFrame.request ||
-        nativePreview_->targetSeconds != action.previewFrame.targetSeconds) {
+    auto* const reserved =
+        nativePreview_
+            ? std::get_if<PendingPreview::Reserved>(&nativePreview_->phase)
+            : nullptr;
+    const native_protocol::PreviewFrame* const command =
+        nativePreview_ ? &nativePreview_->command : nullptr;
+    if (nativeSession_ == nullptr || reserved == nullptr ||
+        command->stamp != action.previewFrame.stamp ||
+        command->generation != action.previewFrame.generation ||
+        command->gesture != action.previewFrame.gesture ||
+        command->request != action.previewFrame.request ||
+        command->targetSeconds != action.previewFrame.targetSeconds) {
       clearNativePreview();
       nativePreviewDisposition_ = PreviewDisposition::Rejected;
       return std::nullopt;
     }
     const auto status = nativeSession_->previewFrame(
-        action.previewFrame, std::move(*nativePreviewTarget_));
-    nativePreviewTarget_.reset();
+        action.previewFrame, std::move(reserved->target));
+    nativePreview_->phase = PendingPreview::Dispatched{};
     switch (status) {
     case macos::NativePreviewFrameRequestStatus::Accepted:
       nativePreviewDisposition_ = PreviewDisposition::Accepted;
@@ -581,25 +584,29 @@ NativePlaybackOwner::executeAction(const playback_router::Action &action) {
   }
   case Kind::NativeCommitSeek: {
     clearNativePreview();
-    if (nativeSession_ == nullptr || !nativeCommitTarget_.has_value() ||
-        !nativeCommit_.has_value() ||
-        nativeCommit_->stamp != action.commitSeek.stamp ||
-        nativeCommit_->sourceGeneration != action.commitSeek.sourceGeneration ||
-        nativeCommit_->targetGeneration != action.commitSeek.targetGeneration ||
-        nativeCommit_->gesture != action.commitSeek.gesture ||
-        nativeCommit_->request != action.commitSeek.request ||
-        nativeCommit_->targetSeconds != action.commitSeek.targetSeconds) {
+    auto* const reserved =
+        nativeCommit_
+            ? std::get_if<PendingCommit::Reserved>(&nativeCommit_->phase)
+            : nullptr;
+    const native_protocol::CommitSeek* const command =
+        nativeCommit_ ? &nativeCommit_->command : nullptr;
+    if (nativeSession_ == nullptr || reserved == nullptr ||
+        command->stamp != action.commitSeek.stamp ||
+        command->sourceGeneration != action.commitSeek.sourceGeneration ||
+        command->targetGeneration != action.commitSeek.targetGeneration ||
+        command->gesture != action.commitSeek.gesture ||
+        command->request != action.commitSeek.request ||
+        command->targetSeconds != action.commitSeek.targetSeconds) {
       clearNativeCommit(false);
       return rejectNativeCommand(action.commitSeek.stamp);
     }
     const auto status = nativeSession_->commitSeek(
-        action.commitSeek, std::move(*nativeCommitTarget_));
-    nativeCommitTarget_.reset();
+        action.commitSeek, std::move(reserved->target));
     if (status != macos::NativeMediaSessionCommandStatus::Accepted) {
       clearNativeCommit(false);
       return rejectNativeCommand(action.commitSeek.stamp);
     }
-    nativeCommitDispatchAccepted_ = true;
+    nativeCommit_->phase = PendingCommit::Dispatched{};
     commitSubmitted(action.commitSeek);
     return std::nullopt;
   }
@@ -711,23 +718,18 @@ bool NativePlaybackOwner::exactCurrent(
 }
 
 void NativePlaybackOwner::clearNativePreview() noexcept {
-  nativePreviewTarget_.reset();
   nativePreview_.reset();
   nativePreviewGesture_ = 0;
   nativePreviewDisposition_ = PreviewDisposition::Rejected;
 }
 
 void NativePlaybackOwner::clearNativeCommit(bool notifyFailure) noexcept {
-  const std::optional<native_protocol::CommitSeek> command = nativeCommit_;
-  const bool accepted = nativeCommitDispatchAccepted_;
-  nativeCommitTarget_.reset();
-  nativeCommit_.reset();
-  nativeCommitDrawBaseline_ = 0;
-  nativeCommitTime_ = {};
-  nativeCommitDispatchAccepted_ = false;
-  if (notifyFailure && accepted && command.has_value()) {
-    commitFailed(command->gesture.value,
-                                   command->request.value);
+  const std::optional<PendingCommit> pending =
+      std::exchange(nativeCommit_, std::nullopt);
+  if (notifyFailure && pending &&
+      std::holds_alternative<PendingCommit::Dispatched>(pending->phase)) {
+    commitFailed(pending->command.gesture.value,
+                 pending->command.request.value);
   }
 }
 
@@ -773,7 +775,8 @@ void NativePlaybackOwner::consumeLifecycle(const NativeMediaSessionFact& fact, b
 void NativePlaybackOwner::consumePreviewPresented(
     const native_protocol::PreviewPresented &presented) {
   if (!nativePreview_.has_value() ||
-      !native_protocol::previewPresentedMatches(*nativePreview_, presented)) {
+      !native_protocol::previewPresentedMatches(nativePreview_->command,
+                                                presented)) {
     return;
   }
   const playback_router::Snapshot snapshot = router_.snapshot();
@@ -794,7 +797,8 @@ void NativePlaybackOwner::consumePreviewPresented(
 void NativePlaybackOwner::consumePreviewFailed(
     const native_protocol::PreviewFailed &failed) {
   if (!nativePreview_.has_value() ||
-      !native_protocol::previewFailedMatches(*nativePreview_, failed)) {
+      !native_protocol::previewFailedMatches(nativePreview_->command,
+                                             failed)) {
     return;
   }
   const playback_router::Snapshot snapshot = router_.snapshot();
@@ -845,9 +849,10 @@ void NativePlaybackOwner::consumeVideoDraw(
 }
 void NativePlaybackOwner::consumeCommitReady(
     const native_protocol::CommitReady &ready) {
-  if (!nativeCommit_.has_value() || !nativeCommitDispatchAccepted_ ||
-      !native_protocol::commitReadyMatches(*nativeCommit_, nativeCommitTime_,
-                                           nativeCommitDrawBaseline_, ready)) {
+  if (!nativeCommitDispatched() ||
+      !native_protocol::commitReadyMatches(
+          nativeCommit_->command, nativeCommit_->time,
+          nativeCommit_->drawBaseline, ready)) {
     return;
   }
   playback_router::Transition transition =
@@ -856,7 +861,7 @@ void NativePlaybackOwner::consumeCommitReady(
     return;
   }
 
-  const native_protocol::CommitSeek completed = *nativeCommit_;
+  const native_protocol::CommitSeek completed = nativeCommit_->command;
   clearNativeCommit(false);
   // Admit both embedded proofs while the router's exact current stamp is
   // still the CommitSeek command. execute(SetRunState) advances the serial.
@@ -896,8 +901,7 @@ void NativePlaybackOwner::retireNativeSession(std::function<void()> continuation
   clearNativeCommit(true);
   if (observationBridge_) observationBridge_->owner = nullptr;
   observationBridge_.reset();
-  ++nativePhaseWatchdogEpoch_;
-  nativePhaseWatchdogArmed_ = false;
+  nativePhaseWatchdog_.reset();
   lastAudioProofSerial_ = 0;
   lastVideoDrawSequence_ = 0;
   firstNativeDrawReported_ = false;

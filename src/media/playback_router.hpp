@@ -346,6 +346,7 @@ private:
   reserveStopGeneration(native::Generation &generation) noexcept;
   [[nodiscard]] Tick deadline(Tick now, std::uint64_t duration) const noexcept;
   [[nodiscard]] bool deadlineExpired(Tick now) const noexcept;
+  void armDeadline(Tick now, std::uint64_t duration) noexcept;
 
   [[nodiscard]] Transition beginOpen(PendingOpen pending, Tick now) noexcept;
   [[nodiscard]] Transition beginFallback(PendingOpen pending) noexcept;
@@ -390,8 +391,7 @@ private:
   // same command, because at the audio stage the two are one decision.
   bool intendedPreservePitch_{true};
   Tick lastTick_{};
-  Tick deadline_{};
-  bool deadlineArmed_{false};
+  std::optional<Tick> deadline_;
 };
 
 } // namespace wam::media::playback_router

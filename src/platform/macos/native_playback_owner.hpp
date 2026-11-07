@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <optional>
+#include <variant>
 
 namespace wam::macos {
 namespace playback_router = ::wam::media::playback_router;
@@ -111,6 +112,9 @@ protected:
   void retireNativeSession(std::function<void()> continuation = {});
   void abandonNativeSession();
   bool retirementPending() const noexcept;
+  // Holds one owner command until the pending retirement finishes. The slot is
+  // last-wins: a later command (open after stop, stop after open) supersedes
+  // the earlier one, which is what the host's latest intent means.
   bool deferOwnerCommand(std::function<void()> command);
   virtual void sessionCleared() noexcept = 0;
   virtual void publishExactDraw(const NativeMediaSessionExactDraw&) {}
@@ -143,26 +147,52 @@ protected:
   virtual void commitProved(const native_protocol::CommitReady&, bool) {}
   virtual void publishCommitReady(const native_protocol::CommitReady&) = 0;
 
-  std::optional<NativePreviewFrameTarget> nativePreviewTarget_;
-  std::optional<native_protocol::PreviewFrame> nativePreview_;
-  std::optional<NativeMediaSessionCommitTarget> nativeCommitTarget_;
-  std::optional<native_protocol::CommitSeek> nativeCommit_;
+  // The latest preview the router admitted. Reserved holds the session's
+  // target until the action is dispatched; Dispatched awaits its presentation
+  // or failure.
+  struct PendingPreview {
+    struct Reserved {
+      NativePreviewFrameTarget target;
+    };
+    struct Dispatched {};
+    native_protocol::PreviewFrame command{};
+    std::variant<Reserved, Dispatched> phase;
+  };
+  std::optional<PendingPreview> nativePreview_;
+  // A commit the router has reserved lineage for. Reserved holds the session's
+  // target token until the action is dispatched; Dispatched means the session
+  // accepted it and its CommitReady (or a failure) is awaited.
+  struct PendingCommit {
+    struct Reserved {
+      NativeMediaSessionCommitTarget target;
+    };
+    struct Dispatched {};
+    native_protocol::CommitSeek command{};
+    media::MediaTime time{};
+    std::uint64_t drawBaseline{0};
+    std::variant<Reserved, Dispatched> phase;
+  };
+  std::optional<PendingCommit> nativeCommit_;
+  [[nodiscard]] bool nativeCommitDispatched() const noexcept {
+    return nativeCommit_ &&
+           std::holds_alternative<PendingCommit::Dispatched>(
+               nativeCommit_->phase);
+  }
   std::optional<native_protocol::Stop> nativeStop_;
   std::uint64_t nextObservationEpoch_{0};
   std::uint64_t lastAudioProofSerial_{0};
   std::uint64_t lastVideoDrawSequence_{0};
   std::uint64_t nativePreviewGesture_{0};
   std::uint64_t nativePreviewSubmissionEpoch_{0};
-  std::uint64_t nativeCommitDrawBaseline_{0};
-  media::MediaTime nativeCommitTime_{};
-  std::uint64_t nativePhaseWatchdogEpoch_{0};
-  bool nativePhaseWatchdogArmed_{false};
+  // The epoch of the armed phase watchdog, if one is armed. Epochs are never
+  // reused, so an expiry from a disarmed or re-armed watchdog is stale.
+  std::optional<std::uint64_t> nativePhaseWatchdog_;
+  std::uint64_t nativePhaseWatchdogEpochs_{0};
   // The host metrics stream's reason, reapplied to every new session.
   bool hostMetricsEnabled_{false};
   media::SeekProgressDeadline nativeSeekProgress_{};
   bool firstNativeDrawReported_{false};
   PreviewDisposition nativePreviewDisposition_{PreviewDisposition::Rejected};
-  bool nativeCommitDispatchAccepted_{false};
   // Router commands for hosts. Each is stamped with the owner's next tick;
   // the host executes the returned transition.
   [[nodiscard]] playback_router::Snapshot routeSnapshot() const noexcept {

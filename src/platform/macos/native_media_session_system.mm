@@ -64,6 +64,9 @@ class AudioSessionAuthority final : public SessionClockAuthority {
   media::MediaGeneration highestExposedGeneration() const noexcept override {
     return session_.facts().highestExposedGeneration;
   }
+  std::string_view failureText() const noexcept override {
+    return session_.failureText();
+  }
   bool suspendsForPause() const noexcept override { return true; }
   NativeAudioSessionProgress suspendForPause() noexcept override {
     return session_.suspendOutputForPause();

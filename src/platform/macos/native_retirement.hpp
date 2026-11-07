@@ -3,6 +3,7 @@
 #include "native_test_seams.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 
 namespace wam::macos {
@@ -27,13 +28,19 @@ public:
   using Completion = void (*)(std::shared_ptr<void>) noexcept;
   void retire(std::shared_ptr<void> graph, std::shared_ptr<void> lifetime,
               Completion completion) noexcept;
-  bool started() const noexcept { return started_; }
-  bool complete() const noexcept { return complete_.load(std::memory_order_acquire); }
+  bool started() const noexcept {
+    return phase_.load(std::memory_order_acquire) != Phase::Reserved;
+  }
+  bool complete() const noexcept {
+    return phase_.load(std::memory_order_acquire) == Phase::Complete;
+  }
 private:
+  // Reserved -> Retiring (retire(), main thread) -> Complete (the destruction
+  // worker, once the graph is gone).
+  enum class Phase : std::uint8_t { Reserved, Retiring, Complete };
   explicit NativeRetirement(unsigned slot) noexcept : slot_(slot) {}
   unsigned slot_;
-  bool started_{false};
-  std::atomic<bool> complete_{false};
+  std::atomic<Phase> phase_{Phase::Reserved};
   std::shared_ptr<void> graph_;
 };
 }
