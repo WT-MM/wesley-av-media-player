@@ -353,6 +353,10 @@ WindowManager::WindowManager(QQmlEngine &engine, ::wam::StateStore &store,
           &WindowManager::requestCheckpoint);
   connect(&settings_, &AppSettings::appearanceChanged, this,
           &WindowManager::darkAppearanceChanged);
+  // Under "System" the scheme follows the OS, so it changes without the
+  // setting changing.
+  connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
+          &WindowManager::darkAppearanceChanged);
   component_ = new QQmlComponent(&engine, QStringLiteral("Wam"),
                                  QStringLiteral("Main"), this);
   WAM_STARTUP_STAMP(QmlComponentLoaded);
