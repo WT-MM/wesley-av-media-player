@@ -1239,7 +1239,7 @@ void PlayerCore::drainRenderNotifications(
           render_ready_work_for_testing_(stamp);
         else
 #endif
-          static_cast<void>(expected_owner->flushPendingOpen(stamp));
+          static_cast<void>(expected_owner->mpv_.flushPendingOpen(stamp));
       }
 
       {

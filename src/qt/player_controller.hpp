@@ -211,7 +211,7 @@ public:
   [[nodiscard]] bool available() const;
   [[nodiscard]] bool loading() const { return loading_; }
   [[nodiscard]] bool hasMedia() const { return !source_.isEmpty(); }
-  [[nodiscard]] QUrl source() const { return source_; }
+  [[nodiscard]] QUrl source() const override { return source_; }
   [[nodiscard]] QString mediaTitle() const { return media_title_; }
   [[nodiscard]] bool playing() const {
     return !paused_ && !idle_ && !eof_reached_;
@@ -550,9 +550,6 @@ private:
   };
 
   void requestVideoUpdate() override;
-  // Each takes the command id parseMpvReply extracted for its protocol.
-  void observeOpenCommandReply(std::uint64_t attempt_id, int error);
-  void handleOpenCommandReply(std::uint64_t attempt_id, int error);
   [[nodiscard]] static std::optional<std::uint64_t>
   reserveNativeSeekIdentity(std::uint64_t &high_water) noexcept;
   [[nodiscard]] double boundedSeekTarget(double seconds) const noexcept;
@@ -646,16 +643,13 @@ private:
   void publishNativeFrameGeometry(double start_seconds,
                                   double duration_seconds) override;
   void updatePosition(double position) override;
-  void handleStartFile(std::int64_t playlist_entry_id);
-  void handleEndFile(const mpv_event_end_file &end);
-  void handlePlaybackReady(bool file_loaded);
   void applyObservedPause(bool paused);
   void applyObservedPosition(double position);
   // --- subtitles -------------------------------------------------------
   // Rebuilds the source list for the current media from whichever engine owns
   // it. Idempotent and cheap to call again; it does nothing when the route and
   // the media have not changed since the last successful build.
-  void refreshSubtitleSources();
+  void refreshSubtitleSources() override;
   void buildMpvSubtitleSources();
   void buildNativeSubtitleSources();
   void applySubtitleDefaultPolicy();
@@ -676,15 +670,12 @@ private:
   // Reads mpv's dwidth/dheight pair and gamma back and publishes them. Takes
   // no argument on purpose: the observation that triggered it carries only
   // one of them, and half a size is not a fact to publish.
-  void applyObservedVideoFacts();
+  void applyObservedVideoFacts() override;
   void applyObservedIdle(bool idle);
   void applyObservedEof(bool eof_reached);
   void applyObservedVideoTrack(std::int64_t video_track_id);
   void applyObservedAudioTrack(std::int64_t audio_track_id);
   void applyObservedSubtitleTrack(std::int64_t subtitle_track_id);
-  void cacheCurrentEntrySource();
-  [[nodiscard]] bool
-  playlistEntryBelongsToCurrentLineage(std::int64_t playlist_entry_id) const;
   [[nodiscard]] bool engineReady() const override;
   [[nodiscard]] std::uint64_t requestSerial() const override {
     return request_serial_;
@@ -697,11 +688,17 @@ private:
   assignTransport(const MpvTransport &transport) override;
   void publishTransport(const MpvTransportChange &change) override;
   void fallbackRenderStateChanged() override;
-  void abandonPendingOpen() override;
-  void continuePendingOpen() override;
-  void cacheCurrentTrackSelection() override;
   void drainMpvEvents() override;
-  void notifyRoutedFallbackOpenFailed() override;
+  void setRequestedSource(const QUrl &source) override {
+    requested_source_ = source;
+  }
+  [[nodiscard]] bool hasNativeEngine() const override { return native_ != nullptr; }
+  void fallbackOpenSucceeded(std::uint64_t attempt, std::uint64_t serial,
+                             std::uint64_t source_key) override;
+  void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
+                          std::uint64_t source_key) override;
+  [[nodiscard]] QString playbackFailureText(const QString &fallback) const override;
+  void fallbackPlaybackFailed() override;
   [[nodiscard]] MpvEngine &mpvEngine() noexcept override { return mpv_; }
   [[nodiscard]] bool needsRenderContext() const;
   bool initializePlaybackEngine() override;
@@ -714,7 +711,6 @@ private:
   [[nodiscard]] bool resetRoutedFallbackCoreAfterRelease(
       const std::shared_ptr<PlayerCore> &expected_core) override;
   void finishStopUi(bool stop_compatibility_engine) override;
-  bool flushPendingOpen(std::uint64_t render_stamp);
   void attachVideoItem(MpvVideoItem *item);
   void detachVideoItem(MpvVideoItem *item);
   [[nodiscard]] std::shared_ptr<PlayerCore> coreForRendering() const;
@@ -739,7 +735,7 @@ private:
                         bool hdr) override;
   void updateSource(const QUrl &source) override;
   void updateMediaTitle(const QString &title) override;
-  void resetTimeline();
+  void resetTimeline() override;
   void cancelCaptionsForMediaChange();
   void setLastError(const QString &error) override;
   // Non-blocking counterpart to setLastError: fallback-continuation notices
@@ -842,7 +838,6 @@ private:
   // window is on its way out.
   bool tearing_down_ = false;
   std::uint64_t request_serial_ = 0;
-  std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_native_seek_gesture_id_ = 0;
   std::uint64_t next_native_seek_request_id_ = 0;
   // The subset of mpv_.lineage.attached_subtitle_files this player GENERATED,

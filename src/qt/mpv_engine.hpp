@@ -71,12 +71,30 @@ public:
   // Tells the native router the fallback render state moved.
   virtual void fallbackRenderStateChanged() = 0;
 
-  // Open lineage and event handling still on the controller.
-  virtual void abandonPendingOpen() = 0;
-  virtual void continuePendingOpen() = 0;
-  virtual void cacheCurrentTrackSelection() = 0;
+  [[nodiscard]] virtual QUrl source() const = 0;
+  virtual void setRequestedSource(const QUrl &source) = 0;
+  virtual void updateLoading(bool loading) = 0;
+  virtual void updateSource(const QUrl &source) = 0;
+  virtual void updateMediaTitle(const QString &title) = 0;
+  // Forgets the previous file's timeline (position, duration, size, trims).
+  virtual void resetTimeline() = 0;
+  virtual void refreshSubtitleSources() = 0;
+  virtual void requestVideoUpdate() = 0;
+
+  // The native router's half of a routed fallback open, and how a fallback
+  // failure is worded and reported to it. No-ops without a native engine.
+  [[nodiscard]] virtual bool hasNativeEngine() const = 0;
+  virtual void fallbackOpenSucceeded(std::uint64_t attempt, std::uint64_t serial,
+                                     std::uint64_t source_key) = 0;
+  virtual void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
+                                  std::uint64_t source_key) = 0;
+  [[nodiscard]] virtual QString
+  playbackFailureText(const QString &fallback) const = 0;
+  virtual void fallbackPlaybackFailed() = 0;
+
+  // Event handling still on the controller.
   virtual void drainMpvEvents() = 0;
-  virtual void notifyRoutedFallbackOpenFailed() = 0;
+  virtual void applyObservedVideoFacts() = 0;
 
 protected:
   ~MpvEngineHost() = default;
@@ -92,6 +110,11 @@ protected:
 [[nodiscard]] QUrl displayUrlForSource(const QUrl &source);
 [[nodiscard]] QString sourceIdentity(const QUrl &source);
 [[nodiscard]] QString displayPath(const std::filesystem::path &path);
+// The title shown for a source mpv has not named.
+[[nodiscard]] QString fallbackTitle(const QUrl &source);
+// Probes a local mount synchronously: only for builds with no native engine,
+// whose open preflight classifies off the GUI thread instead.
+[[nodiscard]] PlaybackSourceClass playbackSourceClass(const QUrl &source);
 
 // mpv's `path` (and playlist filename) as a URL: local paths become file URLs.
 [[nodiscard]] QUrl urlFromMpvPath(const QString &path);
@@ -232,6 +255,17 @@ public:
     int restore_retry_count = 0;
     bool restore_retry_queued = false;
     QString restore_failure;
+
+    // Three restarts, each clearing exactly the progress its event voids.
+    // A second render-context loss: re-run the restore from the top, with
+    // the captured position and its override kept.
+    void restartForNewRenderContext();
+    // A video reselect whose entry then failed: reload the file instead,
+    // keeping the captured per-file state and the retry budget.
+    void escalateToFullReload();
+    // The reload started a different playlist entry (a redirect child):
+    // its position and track snapshot are no longer this recovery's.
+    void restartForNewPlaylistEntry();
   };
 
   struct RenderRecoveryAttempt {
@@ -387,6 +421,24 @@ public:
   void finishScrubGesture(bool restore_transport);
   void invalidateScrubGesture();
 
+  // --- Open lineage ------------------------------------------------------
+  // A pending open is flushed as one loadfile once rendering is ready; its
+  // reply, START_FILE/END_FILE and FILE_LOADED/PLAYBACK_RESTART commit it.
+  void continuePendingOpen();
+  bool flushPendingOpen(std::uint64_t render_stamp);
+  // Each takes the command id parseMpvReply extracted for its protocol.
+  void observeOpenCommandReply(std::uint64_t attempt_id, int error);
+  void handleOpenCommandReply(std::uint64_t attempt_id, int error);
+  [[nodiscard]] bool
+  playlistEntryBelongsToCurrentLineage(std::int64_t playlist_entry_id) const;
+  void handleStartFile(std::int64_t playlist_entry_id);
+  void handleEndFile(const mpv_event_end_file &end);
+  void handlePlaybackReady(bool file_loaded);
+  void abandonPendingOpen();
+  void cacheCurrentTrackSelection();
+  void cacheCurrentEntrySource();
+  void notifyRoutedFallbackOpenFailed();
+
   // --- Render recovery and startup sync --------------------------------
   // A lost render context reloads (or reselects) the committed file and
   // restores its per-file state and transport before observations resume.
@@ -472,6 +524,7 @@ private:
   std::optional<ScrubSeek> scrub_seek_;
   std::uint64_t next_scrub_gesture_id_ = 0;
   std::uint64_t next_scrub_command_id_ = 0;
+  std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;
   std::uint64_t next_render_recovery_completion_token_ = 0;
   std::uint64_t next_startup_playback_sync_token_ = 0;

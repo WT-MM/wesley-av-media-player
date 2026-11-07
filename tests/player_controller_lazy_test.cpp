@@ -102,12 +102,12 @@ class PlayerControllerTestAccess final {
 
   static void observeOpenReply(PlayerController &controller, std::uint64_t id,
                                int error = 0) {
-    controller.observeOpenCommandReply(id, error);
+    controller.mpv_.observeOpenCommandReply(id, error);
   }
 
   static void completeOpenAttempt(PlayerController &controller,
                                   std::uint64_t attempt_id, int error = 0) {
-    controller.handleOpenCommandReply(attempt_id, error);
+    controller.mpv_.handleOpenCommandReply(attempt_id, error);
   }
 
   static void renderInvalidated(PlayerController &controller,
@@ -302,7 +302,7 @@ class PlayerControllerTestAccess final {
   }
 
   static bool flush(PlayerController &controller, RenderTicket ticket) {
-    return controller.flushPendingOpen(ticket.stamp);
+    return controller.mpv_.flushPendingOpen(ticket.stamp);
   }
 
   static bool initializeEngine(PlayerController &controller) {
@@ -435,12 +435,12 @@ class PlayerControllerTestAccess final {
 
   static void startFile(PlayerController &controller,
                         std::int64_t playlist_entry_id) {
-    controller.handleStartFile(playlist_entry_id);
+    controller.mpv_.handleStartFile(playlist_entry_id);
   }
 
   static void playbackReady(PlayerController &controller,
                             bool file_loaded = false) {
-    controller.handlePlaybackReady(file_loaded);
+    controller.mpv_.handlePlaybackReady(file_loaded);
   }
 
   static bool hasScrub(const PlayerController &controller) {
@@ -1140,7 +1140,7 @@ class PlayerControllerTestAccess final {
     end.playlist_entry_id = playlist_entry_id;
     end.playlist_insert_id = insert_id;
     end.playlist_insert_num_entries = insert_count;
-    controller.handleEndFile(end);
+    controller.mpv_.handleEndFile(end);
   }
 
   static void setNativeSeekCeiling(PlayerController &controller,

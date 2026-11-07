@@ -8,11 +8,23 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFileInfo>
+#include <QStorageInfo>
 #include <QTimer>
 
 #include <algorithm>
 #include <new>
 #include <vector>
+
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace wam::qt {
 namespace {
@@ -74,6 +86,46 @@ QString displayPath(const std::filesystem::path &path) {
 #else
   return QFile::decodeName(path.string().c_str());
 #endif
+}
+
+QString fallbackTitle(const QUrl &source) {
+  if (source.isLocalFile())
+    return QFileInfo(source.toLocalFile()).fileName();
+  const QString file_name = source.fileName();
+  return file_name.isEmpty() ? source.host() : file_name;
+}
+
+// The classification of an open no router classified. Probing a mount is a
+// blocking filesystem call, and on an unresponsive network share it blocks
+// for as long as the kernel's mount timeout, so a routed open never asks here:
+// NativeOpenPreflight classifies it off the GUI thread and flushPendingOpen
+// uses that answer (RoutedFallbackOpen::source_class). Only a build with no
+// native engine has no such worker edge and answers synchronously.
+PlaybackSourceClass playbackSourceClass(const QUrl &source) {
+  if (!source.isLocalFile())
+    return PlaybackSourceClass::Network;
+
+  const QString local_path = source.toLocalFile();
+  const QStorageInfo storage(local_path);
+  if (storage.isValid() &&
+      isRemoteFilesystemType(storage.fileSystemType().toStdString())) {
+    return PlaybackSourceClass::BufferedLocal;
+  }
+
+#if defined(Q_OS_WIN)
+  // A mapped drive can report the server's ordinary on-disk filesystem type,
+  // so Windows' drive classification is the authoritative second check.
+  const QString root = storage.isValid() ? storage.rootPath()
+                                         : QFileInfo(local_path).absolutePath();
+  const UINT drive_type = GetDriveTypeW(
+      reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(root).utf16()));
+  if (drive_type == DRIVE_REMOTE || drive_type == DRIVE_REMOVABLE ||
+      drive_type == DRIVE_CDROM) {
+    return PlaybackSourceClass::BufferedLocal;
+  }
+#endif
+
+  return PlaybackSourceClass::FastLocal;
 }
 
 QUrl urlFromMpvPath(const QString &path) {
@@ -930,7 +982,7 @@ bool MpvEngine::flushRenderRecovery(std::uint64_t render_stamp) {
   host_.setLastError({});
 
   if (!core->validateRenderTicket(ticket))
-    host_.continuePendingOpen();
+    continuePendingOpen();
   return true;
 }
 
@@ -953,7 +1005,7 @@ void MpvEngine::handleRenderRecoveryCommandReply(
   if (!current_request)
     return;
   if (!current_renderer) {
-    host_.continuePendingOpen();
+    continuePendingOpen();
     return;
   }
   if (error < 0) {
@@ -1435,7 +1487,7 @@ void MpvEngine::commitStartupPlaybackSync(
            ? startup_sync.intended_position.value_or(host_.position())
            : live_state.position.value_or(host_.position())});
   lineage.startup_playback_sync.reset();
-  host_.cacheCurrentTrackSelection();
+  cacheCurrentTrackSelection();
   if (live_state.duration)
     host_.updateDuration(*live_state.duration);
 
@@ -1488,7 +1540,7 @@ void MpvEngine::degradeRenderRecovery(const QString &error) {
     } else {
       host_.updatePause(recovery.paused);
     }
-    host_.cacheCurrentTrackSelection();
+    cacheCurrentTrackSelection();
   }
   host_.setLastError(error);
 }
@@ -1621,18 +1673,7 @@ void MpvEngine::handleRenderInvalidated(
           recovery.preserve_playlist_context || !lineage.redirect_ranges.empty();
       lineage.render_recovery = std::move(recovery);
     } else {
-      lineage.render_recovery->accepted_render_stamp = 0;
-      lineage.render_recovery->command_failed = false;
-      lineage.render_recovery->file_loaded = false;
-      lineage.render_recovery->playback_restarted = false;
-      lineage.render_recovery->external_subtitles_restored = false;
-      lineage.render_recovery->external_subtitles_restored_count = 0;
-      lineage.render_recovery->per_file_state_restored = false;
-      lineage.render_recovery->transport_restored = false;
-      lineage.render_recovery->completion_token = 0;
-      lineage.render_recovery->restore_retry_count = 0;
-      lineage.render_recovery->restore_retry_queued = false;
-      lineage.render_recovery->restore_failure.clear();
+      lineage.render_recovery->restartForNewRenderContext();
     }
 
     lineage.render_recovery_attempt.reset();
@@ -1642,7 +1683,7 @@ void MpvEngine::handleRenderInvalidated(
   }
 
   if (needs_retry)
-    host_.continuePendingOpen();
+    continuePendingOpen();
 }
 
 void MpvEngine::handleRenderInitializationFailure(
@@ -1655,15 +1696,611 @@ void MpvEngine::handleRenderInitializationFailure(
   lineage.last_reported_render_failure_stamp = render_stamp;
   const bool routed_fallback_failure = lineage.routed_fallback_open.has_value();
   if (routed_fallback_failure)
-    host_.abandonPendingOpen();
+    abandonPendingOpen();
   host_.setLastError(error);
   if (routed_fallback_failure)
-    host_.notifyRoutedFallbackOpenFailed();
+    notifyRoutedFallbackOpenFailed();
 }
 
 std::int64_t MpvEngine::authoritativePlaylistEntry(
     std::int64_t live_entry, std::int64_t captured_start_entry) {
   return live_entry >= 0 ? live_entry : captured_start_entry;
+}
+
+void MpvEngine::continuePendingOpen() {
+  if (core) {
+    if (const auto ticket = core->readyRenderTicket()) {
+      static_cast<void>(flushPendingOpen(ticket->stamp));
+      return;
+    }
+  }
+  host_.requestVideoUpdate();
+}
+
+bool MpvEngine::flushPendingOpen(std::uint64_t render_stamp) {
+  if (!core || !ready())
+    return true;
+
+  if (lineage.pending_source.isEmpty() || lineage.pending_request_serial == 0) {
+    if (!lineage.render_recovery && lineage.committed_open &&
+        lineage.committed_open->request_serial == host_.requestSerial() &&
+        lineage.committed_open->render_stamp == 0 &&
+        core->validateRenderTicket({render_stamp})) {
+      lineage.committed_open->render_stamp = render_stamp;
+    }
+    return flushRenderRecovery(render_stamp);
+  }
+
+  const RenderTicket ticket{render_stamp};
+  if (!core->validateRenderTicket(ticket))
+    return true;
+
+  if (lineage.open_attempt &&
+      lineage.open_attempt->request_serial == lineage.pending_request_serial &&
+      lineage.open_attempt->render_stamp == render_stamp) {
+    return true;
+  }
+
+  const QUrl source = lineage.pending_source;
+  const std::uint64_t request_serial = lineage.pending_request_serial;
+  const QString argument = sourceArgument(source);
+  if (argument.isEmpty()) {
+    abandonPendingOpen();
+    host_.setLastError(QStringLiteral("Unable to open an empty media location."));
+    notifyRoutedFallbackOpenFailed();
+    return false;
+  }
+
+  const PlaybackSourceClass source_class =
+      lineage.routed_fallback_open
+          ? lineage.routed_fallback_open->source_class
+          : playbackSourceClass(displayUrlForSource(source));
+  applyPlaybackBufferPolicy(source_class);
+  if (!core->validateRenderTicket(ticket)) {
+    continuePendingOpen();
+    return true;
+  }
+
+  const std::uint64_t reply_userdata = mpvReplyUserdata(
+      MpvReply::Open, nextMpvReplyId(MpvReply::Open, next_open_attempt_id_));
+  const QByteArray utf8 = argument.toUtf8();
+  const int result = sendCommand({QByteArrayLiteral("loadfile"), utf8, QByteArrayLiteral("replace")},
+      reply_userdata);
+  if (result < 0) {
+    // A queueing failure is stable for this request. Leave renderer retries to
+    // an explicit subsequent open instead of spinning every frame.
+    abandonPendingOpen();
+    host_.setLastError(QStringLiteral("Unable to open media: %1")
+                     .arg(mpvErrorDetail(result)));
+    notifyRoutedFallbackOpenFailed();
+    return false;
+  }
+
+  lineage.open_attempt =
+      OpenAttempt{next_open_attempt_id_, request_serial, render_stamp};
+  host_.setLastError({});
+
+  // Do not clear lineage.pending_source here. mpv_command_async only queues work;
+  // the matching command reply is the first point where execution is known.
+  if (!core->validateRenderTicket(ticket))
+    continuePendingOpen();
+  return true;
+}
+
+void MpvEngine::observeOpenCommandReply(std::uint64_t attempt_id,
+                                               int error) {
+  if (error >= 0 && lineage.open_attempt &&
+      lineage.open_attempt->id == attempt_id &&
+      !lineage.open_attempt->playback_restarted) {
+    // Metadata reads in handleOpenCommandReply are synchronous. Before the
+    // first frame they can wait on mpv's VO while Qt needs this GUI thread to
+    // dispatch rendering. Retain one reply in the existing attempt, then read
+    // metadata after PLAYBACK_RESTART (also emitted for paused/audio opens).
+    lineage.open_attempt->reply_ready = true;
+    return;
+  }
+  const bool loaded = lineage.open_attempt && lineage.open_attempt->file_loaded;
+  const bool restarted = lineage.open_attempt && lineage.open_attempt->playback_restarted;
+  handleOpenCommandReply(attempt_id, error);
+  if (error >= 0 && !lineage.open_attempt && restarted) {
+    if (loaded) handlePlaybackReady(true);
+    handlePlaybackReady(false);
+  }
+}
+
+void MpvEngine::handleOpenCommandReply(std::uint64_t attempt_id,
+                                              int error) {
+  if (!lineage.open_attempt || lineage.open_attempt->id != attempt_id)
+    return;
+
+  const OpenAttempt attempt = *lineage.open_attempt;
+  const bool current_request =
+      attempt.request_serial == host_.requestSerial() &&
+      attempt.request_serial == lineage.pending_request_serial &&
+      !lineage.pending_source.isEmpty();
+  const bool current_renderer =
+      core && core->validateRenderTicket({attempt.render_stamp});
+
+  if (!current_request) {
+    lineage.open_attempt.reset();
+    return;
+  }
+
+  if (!current_renderer) {
+    // A later Ready notification submits this same authoritative intent in
+    // the replacement generation. Old-generation replies are harmless.
+    lineage.open_attempt.reset();
+    continuePendingOpen();
+    return;
+  }
+
+  if (error < 0) {
+    abandonPendingOpen();
+    host_.setLastError(QStringLiteral("Unable to open media: %1")
+                     .arg(mpvErrorDetail(error)));
+    notifyRoutedFallbackOpenFailed();
+    return;
+  }
+
+  const QUrl loaded_source = lineage.pending_source;
+  host_.updateSource(displayUrlForSource(loaded_source));
+  host_.updateMediaTitle(fallbackTitle(loaded_source));
+  OpenAttempt committed = attempt;
+  const std::int64_t current_entry = currentPlaylistEntryId();
+  committed.playlist_entry_id =
+      authoritativePlaylistEntry(current_entry, attempt.playlist_entry_id);
+  lineage.committed_open = committed;
+  const bool live_paused = flagProperty("pause").value_or(host_.paused());
+  StartupPlaybackSync startup_sync;
+  startup_sync.request_serial = committed.request_serial;
+  startup_sync.render_stamp = committed.render_stamp;
+  startup_sync.playlist_entry_id = committed.playlist_entry_id;
+  startup_sync.intended_paused = live_paused;
+  lineage.startup_playback_sync = startup_sync;
+  lineage.committed_entry_source = displayUrlForSource(loaded_source);
+  lineage.committed_playlist_position =
+      playlistPositionForEntry(committed.playlist_entry_id);
+  lineage.terminal_playlist_entry_id = -1;
+  lineage.redirect_ranges.clear();
+  lineage.render_recovery_attempt.reset();
+  lineage.render_recovery.reset();
+  lineage.attached_subtitle_files.clear();
+  lineage.current_file_has_audio_track.reset();
+  lineage.selected_video_track_id = -1;
+  lineage.selected_audio_track_id = -1;
+  lineage.selected_subtitle_track_id = -1;
+  lineage.selected_tracks_playlist_entry_id = -1;
+  if (lineage.active_event_playlist_entry_id != committed.playlist_entry_id)
+    lineage.active_event_playlist_entry_id = -1;
+  const std::int64_t video_track = currentTrackId("vid");
+  if (video_track > 0 && committed.playlist_entry_id >= 0) {
+    lineage.selected_video_track_id = video_track;
+    lineage.selected_tracks_playlist_entry_id = committed.playlist_entry_id;
+  }
+  lineage.pending_source.clear();
+  lineage.pending_request_serial = 0;
+  lineage.open_attempt.reset();
+  if (lineage.routed_fallback_open) {
+    const RoutedFallbackOpen routed = *lineage.routed_fallback_open;
+    lineage.routed_fallback_open.reset();
+    host_.fallbackOpenSucceeded(routed.attempt, routed.serial,
+                                routed.source_key);
+  }
+}
+
+bool MpvEngine::playlistEntryBelongsToCurrentLineage(
+    std::int64_t playlist_entry_id) const {
+  if (playlist_entry_id < 0 || !lineage.committed_open ||
+      lineage.committed_open->request_serial != host_.requestSerial() ||
+      lineage.committed_open->playlist_entry_id < 0) {
+    return false;
+  }
+  if (playlist_entry_id == lineage.committed_open->playlist_entry_id)
+    return true;
+  for (const PlaylistEntryRange &range : lineage.redirect_ranges) {
+    if (range.first < 0 || playlist_entry_id < range.first)
+      continue;
+    const auto distance =
+        static_cast<std::uint64_t>(playlist_entry_id - range.first);
+    if (distance < range.count)
+      return true;
+  }
+  return false;
+}
+
+void MpvEngine::handleStartFile(std::int64_t playlist_entry_id) {
+  if (scrubbing()) {
+    invalidateScrubGesture();
+  }
+  if (playlist_entry_id < 0) {
+    lineage.active_event_playlist_entry_id = -1;
+    return;
+  }
+  if (lineage.render_recovery_attempt &&
+      lineage.render_recovery_attempt->request_serial == host_.requestSerial() &&
+      lineage.render_recovery_attempt->mode == RenderRecoveryMode::FullReload) {
+    lineage.render_recovery_attempt->started_playlist_entry_id = playlist_entry_id;
+    lineage.active_event_playlist_entry_id = playlist_entry_id;
+    lineage.terminal_playlist_entry_id = -1;
+    return;
+  }
+
+  if (lineage.open_attempt && lineage.open_attempt->request_serial == host_.requestSerial() &&
+      lineage.open_attempt->request_serial == lineage.pending_request_serial) {
+    lineage.open_attempt->playlist_entry_id = playlist_entry_id;
+    lineage.active_event_playlist_entry_id = playlist_entry_id;
+    lineage.terminal_playlist_entry_id = -1;
+    return;
+  }
+
+  const bool initial_start_without_committed_entry =
+      lineage.startup_playback_sync && lineage.committed_open &&
+      lineage.startup_playback_sync->request_serial == host_.requestSerial() &&
+      lineage.committed_open->request_serial == host_.requestSerial() &&
+      lineage.committed_open->playlist_entry_id < 0 &&
+      lineage.startup_playback_sync->playlist_entry_id < 0;
+  if (!lineage.pending_source.isEmpty() ||
+      (!initial_start_without_committed_entry &&
+       !playlistEntryBelongsToCurrentLineage(playlist_entry_id))) {
+    lineage.active_event_playlist_entry_id = -1;
+    return;
+  }
+
+  // A redirect child becomes the concrete current entry. Retain all accepted
+  // ranges so a sibling or a nested redirect child can be promoted later.
+  const bool entry_changed =
+      lineage.committed_open->playlist_entry_id != playlist_entry_id;
+  lineage.committed_open->playlist_entry_id = playlist_entry_id;
+  if (lineage.startup_playback_sync &&
+      lineage.startup_playback_sync->request_serial == host_.requestSerial()) {
+    lineage.startup_playback_sync->playlist_entry_id = playlist_entry_id;
+    lineage.startup_playback_sync->completion_token = 0;
+    lineage.startup_playback_sync->retry_count = 0;
+  }
+  const std::int64_t live_playlist_position =
+      ready() ? playlistPositionForEntry(playlist_entry_id)
+                    : -1;
+  if (live_playlist_position >= 0 || entry_changed)
+    lineage.committed_playlist_position = live_playlist_position;
+  if (entry_changed) {
+    lineage.committed_entry_source =
+        ready() ? playlistEntrySource(playlist_entry_id)
+                      : QUrl{};
+  }
+  lineage.active_event_playlist_entry_id = playlist_entry_id;
+  lineage.terminal_playlist_entry_id = -1;
+  host_.updateEof(false);
+  if (!lineage.render_recovery && lineage.committed_open->render_stamp == 0) {
+    RenderRecovery adoption;
+    adoption.request_serial = host_.requestSerial();
+    adoption.mode = RenderRecoveryMode::NoReselection;
+    if (core) {
+      if (const auto ready = core->readyRenderTicket()) {
+        adoption.accepted_render_stamp = ready->stamp;
+        lineage.committed_open->render_stamp = ready->stamp;
+      }
+    }
+    lineage.render_recovery = std::move(adoption);
+  }
+  if (lineage.render_recovery && lineage.render_recovery->request_serial == host_.requestSerial()) {
+    if (lineage.render_recovery->accepted_render_stamp != 0 && core &&
+        core->validateRenderTicket(
+            {lineage.render_recovery->accepted_render_stamp})) {
+      lineage.committed_open->render_stamp = lineage.render_recovery->accepted_render_stamp;
+    }
+    if (lineage.render_recovery_attempt &&
+        lineage.render_recovery_attempt->request_serial == host_.requestSerial() &&
+        lineage.render_recovery_attempt->mode == RenderRecoveryMode::VideoReselect) {
+      lineage.render_recovery_attempt->playlist_entry_id = playlist_entry_id;
+    }
+  }
+  if (entry_changed) {
+    host_.resetTimeline();
+    lineage.observed_current_path = false;
+    host_.updateMediaTitle({});
+    lineage.selected_video_track_id = -1;
+    lineage.selected_audio_track_id = -1;
+    lineage.selected_subtitle_track_id = -1;
+    lineage.selected_tracks_playlist_entry_id = -1;
+    lineage.current_file_has_audio_track.reset();
+    if (lineage.render_recovery)
+      lineage.render_recovery->restartForNewPlaylistEntry();
+  }
+}
+
+void MpvEngine::handleEndFile(const mpv_event_end_file &end) {
+  const bool startup_entry =
+      lineage.startup_playback_sync && lineage.committed_open &&
+      lineage.startup_playback_sync->request_serial == host_.requestSerial() &&
+      lineage.startup_playback_sync->playlist_entry_id == end.playlist_entry_id;
+  const bool current_entry =
+      end.playlist_entry_id >= 0 && lineage.committed_open &&
+      lineage.committed_open->request_serial == host_.requestSerial() &&
+      lineage.committed_open->playlist_entry_id == end.playlist_entry_id &&
+      (lineage.active_event_playlist_entry_id == end.playlist_entry_id ||
+       startup_entry);
+  if (!current_entry)
+    return;
+
+  invalidateScrubGesture();
+
+  lineage.active_event_playlist_entry_id = -1;
+
+  const bool expected_video_only_teardown =
+      end.reason == MPV_END_FILE_REASON_ERROR &&
+      (lineage.selected_tracks_playlist_entry_id !=
+           lineage.committed_open->playlist_entry_id ||
+       lineage.selected_audio_track_id <= 0) &&
+      core && !core->validateRenderTicket({lineage.committed_open->render_stamp});
+  if (expected_video_only_teardown)
+    return;
+
+  // A video-only full reload first stops the retained old entry. That stop is
+  // part of recovery, not a terminal event for the user's current request.
+  if (lineage.render_recovery_attempt &&
+      lineage.render_recovery_attempt->mode == RenderRecoveryMode::FullReload &&
+      lineage.render_recovery_attempt->playlist_entry_id == end.playlist_entry_id) {
+    return;
+  }
+
+  if (end.reason == MPV_END_FILE_REASON_ERROR && lineage.render_recovery &&
+      lineage.render_recovery->mode == RenderRecoveryMode::VideoReselect) {
+    // A successful `set vid` reply is not sufficient proof that the VO lived:
+    // libmpv can report success and then asynchronously unload the entry.
+    // Preserve the captured per-file state and escalate this one recovery to
+    // the guarded full-reload path.
+    lineage.render_recovery->escalateToFullReload();
+    lineage.render_recovery_attempt.reset();
+    lineage.committed_open->render_stamp = 0;
+    continuePendingOpen();
+    return;
+  }
+
+  if (end.reason == MPV_END_FILE_REASON_REDIRECT) {
+    if (end.playlist_insert_id >= 0 && end.playlist_insert_num_entries > 0) {
+      lineage.redirect_ranges.push_back(PlaylistEntryRange{
+          end.playlist_insert_id,
+          static_cast<std::uint64_t>(end.playlist_insert_num_entries)});
+    }
+    return;
+  }
+  if (end.reason == MPV_END_FILE_REASON_EOF) {
+    lineage.startup_playback_sync.reset();
+    if (lineage.render_recovery) {
+      // EOF terminates this entry's transport/track recovery, but not the
+      // replacement render generation: a redirect sibling may start next.
+      // Carry only generation adoption so the sibling establishes a fresh
+      // FILE_LOADED track snapshot instead of replaying the old child.
+      std::uint64_t adoption_stamp = lineage.render_recovery->accepted_render_stamp;
+      if ((!core || !core->validateRenderTicket({adoption_stamp})) && core) {
+        if (const auto ready = core->readyRenderTicket())
+          adoption_stamp = ready->stamp;
+        else
+          adoption_stamp = 0;
+      }
+      RenderRecovery adoption;
+      adoption.request_serial = host_.requestSerial();
+      adoption.paused = host_.paused();
+      adoption.mode = RenderRecoveryMode::NoReselection;
+      adoption.accepted_render_stamp = adoption_stamp;
+      lineage.render_recovery = std::move(adoption);
+      lineage.render_recovery_attempt.reset();
+      lineage.committed_open->render_stamp = adoption_stamp;
+      host_.updateEof(true);
+      if (adoption_stamp == 0)
+        continuePendingOpen();
+      const std::uint64_t terminal_serial = host_.requestSerial();
+      const std::int64_t terminal_entry = end.playlist_entry_id;
+      QTimer::singleShot(0, owner_, [this, terminal_serial, terminal_entry] {
+        if (!lineage.render_recovery || host_.requestSerial() != terminal_serial ||
+            !lineage.committed_open ||
+            lineage.committed_open->playlist_entry_id != terminal_entry ||
+            lineage.active_event_playlist_entry_id >= 0 || !host_.eofReached() ||
+            lineage.render_recovery->mode != RenderRecoveryMode::NoReselection) {
+          return;
+        }
+        const std::uint64_t adoption_stamp =
+            lineage.render_recovery->accepted_render_stamp;
+        lineage.render_recovery.reset();
+        lineage.render_recovery_attempt.reset();
+        lineage.committed_open->render_stamp = adoption_stamp;
+        lineage.terminal_playlist_entry_id = terminal_entry;
+      });
+      return;
+    }
+    lineage.render_recovery.reset();
+    lineage.render_recovery_attempt.reset();
+    lineage.terminal_playlist_entry_id = end.playlist_entry_id;
+    host_.updateEof(true);
+    return;
+  }
+  if (end.reason == MPV_END_FILE_REASON_ERROR) {
+    lineage.startup_playback_sync.reset();
+    lineage.render_recovery.reset();
+    lineage.render_recovery_attempt.reset();
+    host_.updatePause(true);
+    host_.updateIdle(true);
+    host_.updateEof(false);
+    host_.resetTimeline();
+    host_.updateLoading(false);
+    host_.updateSource({});
+    host_.updateMediaTitle({});
+    host_.setRequestedSource({});
+    lineage.committed_open.reset();
+    lineage.last_error_playlist_entry_id = end.playlist_entry_id;
+    QString failure = QStringLiteral("Could not open this file: %1")
+                          .arg(mpvErrorDetail(end.error));
+    host_.setLastError(host_.playbackFailureText(failure));
+    host_.fallbackPlaybackFailed();
+  }
+}
+
+void MpvEngine::handlePlaybackReady(bool file_loaded) {
+  if (!file_loaded) host_.updateLoading(false);
+  if (lineage.open_attempt) {
+    if (file_loaded) lineage.open_attempt->file_loaded = true;
+    else lineage.open_attempt->playback_restarted = true;
+    if (file_loaded || !lineage.open_attempt->reply_ready) return;
+    const auto attempt = *lineage.open_attempt;
+    handleOpenCommandReply(attempt.id, 0);
+    if (attempt.file_loaded) handlePlaybackReady(true);
+  }
+  if (file_loaded)
+    cacheCurrentEntrySource();
+  if (file_loaded && lineage.last_error_playlist_entry_id >= 0 &&
+      lineage.active_event_playlist_entry_id >= 0 &&
+      lineage.active_event_playlist_entry_id != lineage.last_error_playlist_entry_id) {
+    lineage.last_error_playlist_entry_id = -1;
+    host_.setLastError({});
+  }
+  if (lineage.render_recovery) {
+    bool matching_lineage = false;
+    if (lineage.committed_open && lineage.committed_open->playlist_entry_id >= 0 &&
+        lineage.committed_open->playlist_entry_id == lineage.active_event_playlist_entry_id) {
+      matching_lineage = true;
+    }
+    if (lineage.render_recovery_attempt &&
+        lineage.render_recovery_attempt->mode == RenderRecoveryMode::FullReload &&
+        lineage.render_recovery_attempt->started_playlist_entry_id >= 0 &&
+        lineage.render_recovery_attempt->started_playlist_entry_id ==
+            lineage.active_event_playlist_entry_id) {
+      matching_lineage = true;
+    }
+    if (matching_lineage) {
+      if (file_loaded)
+        lineage.render_recovery->file_loaded = true;
+      else if (lineage.render_recovery->accepted_render_stamp != 0 &&
+               !lineage.render_recovery_attempt && core &&
+               core->validateRenderTicket(
+                   {lineage.render_recovery->accepted_render_stamp}))
+        lineage.render_recovery->playback_restarted = true;
+    }
+  } else if (lineage.startup_playback_sync && lineage.committed_open &&
+             lineage.startup_playback_sync->request_serial == host_.requestSerial() &&
+             lineage.startup_playback_sync->playlist_entry_id >= 0 &&
+             lineage.startup_playback_sync->playlist_entry_id ==
+                 lineage.active_event_playlist_entry_id &&
+             lineage.committed_open->playlist_entry_id ==
+                 lineage.active_event_playlist_entry_id) {
+    if (file_loaded)
+      cacheCurrentTrackSelection();
+    else
+      queueStartupPlaybackSync();
+  } else if (file_loaded && acceptsPlaybackObservation()) {
+    cacheCurrentTrackSelection();
+  }
+  // FILE_LOADED is the moment mpv's track-list is complete, and it is the one
+  // hook that fires on both a first open and every fallback the router takes,
+  // so it is where the Subtitles menu learns what this file offers.
+  if (file_loaded) {
+    host_.refreshSubtitleSources();
+    // And the moment the picture's size is knowable, for the same reason: it
+    // is the one hook that fires on a first open and on every fallback the
+    // router takes. The dwidth/dheight observations usually land just before
+    // this, but they land inside the open and can be dropped by the path
+    // check in applyObservedVideoFacts while mpv still has the outgoing file;
+    // this is the reliable second look, and updateVideoFacts dedupes so
+    // the common case where both agree costs one comparison.
+    host_.applyObservedVideoFacts();
+  }
+  restoreRenderRecovery();
+}
+
+void MpvEngine::abandonPendingOpen() {
+  host_.setRequestedSource(host_.source());
+  lineage.observed_current_path = !host_.source().isEmpty();
+  lineage.pending_source.clear();
+  lineage.pending_request_serial = 0;
+  lineage.open_attempt.reset();
+  lineage.render_recovery.reset();
+  lineage.render_recovery_attempt.reset();
+  if (lineage.committed_open && !host_.requestedSource().isEmpty()) {
+    // The previous source remains authoritative when a replacement command
+    // could not be accepted. Associate it with the now-current request serial
+    // so a later scene-graph loss still recovers that visible media.
+    lineage.committed_open->request_serial = host_.requestSerial();
+  } else {
+    lineage.committed_open.reset();
+  }
+  host_.requestVideoUpdate();
+}
+
+void MpvEngine::cacheCurrentTrackSelection() {
+  if (!core || !ready() || !lineage.committed_open ||
+      lineage.active_event_playlist_entry_id < 0 ||
+      lineage.active_event_playlist_entry_id != lineage.committed_open->playlist_entry_id) {
+    return;
+  }
+  lineage.selected_video_track_id = currentTrackSelection("vid");
+  lineage.selected_audio_track_id = currentTrackSelection("aid");
+  lineage.selected_subtitle_track_id = currentTrackSelection("sid");
+  lineage.selected_tracks_playlist_entry_id = lineage.committed_open->playlist_entry_id;
+  lineage.current_file_has_audio_track = currentFileHasTrackType("audio");
+}
+
+void MpvEngine::cacheCurrentEntrySource() {
+  if (!core || !ready() || !lineage.committed_open ||
+      lineage.committed_open->playlist_entry_id < 0 ||
+      lineage.committed_open->playlist_entry_id != lineage.active_event_playlist_entry_id) {
+    return;
+  }
+  const auto path = stringProperty("path");
+  if (!path)
+    return;
+  const QUrl source = urlFromMpvPath(*path);
+  if (!source.isEmpty()) {
+    lineage.committed_entry_source = source;
+    lineage.committed_playlist_position = playlistPositionForEntry(lineage.committed_open->playlist_entry_id);
+  }
+}
+
+void MpvEngine::notifyRoutedFallbackOpenFailed() {
+  if (!host_.hasNativeEngine() || !lineage.routed_fallback_open)
+    return;
+  const RoutedFallbackOpen routed = *lineage.routed_fallback_open;
+  lineage.routed_fallback_open.reset();
+  host_.fallbackOpenFailed(routed.attempt, routed.serial, routed.source_key);
+}
+
+void MpvEngine::RenderRecovery::restartForNewRenderContext() {
+  accepted_render_stamp = 0;
+  command_failed = false;
+  file_loaded = false;
+  playback_restarted = false;
+  external_subtitles_restored = false;
+  external_subtitles_restored_count = 0;
+  per_file_state_restored = false;
+  transport_restored = false;
+  completion_token = 0;
+  restore_retry_count = 0;
+  restore_retry_queued = false;
+  restore_failure.clear();
+}
+
+void MpvEngine::RenderRecovery::escalateToFullReload() {
+  mode = RenderRecoveryMode::FullReload;
+  accepted_render_stamp = 0;
+  command_failed = false;
+  file_loaded = false;
+  playback_restarted = false;
+  external_subtitles_restored = false;
+  external_subtitles_restored_count = 0;
+  per_file_state_restored = false;
+  transport_restored = false;
+  completion_token = 0;
+}
+
+void MpvEngine::RenderRecovery::restartForNewPlaylistEntry() {
+  position = 0.0;
+  position_overridden = false;
+  file_loaded = false;
+  playback_restarted = false;
+  track_snapshot_proven = false;
+  transport_restored = false;
+  completion_token = 0;
+  restore_retry_count = 0;
+  restore_retry_queued = false;
+  restore_failure.clear();
 }
 
 void MpvEngine::detachOwner() {
