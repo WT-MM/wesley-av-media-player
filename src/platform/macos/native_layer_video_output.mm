@@ -137,7 +137,7 @@ struct NativeLayerVideoOutput::State
   }
 
   [[nodiscard]] bool usableLocked() const noexcept {
-    return !fatal && !tracked.closeDone;
+    return !fatal && !tracked.closed();
   }
 
   [[nodiscard]] std::size_t retainedLeaseCountLocked() const noexcept {
@@ -777,7 +777,7 @@ NativeTrackedVideoOutputFacts NativeLayerVideoOutput::facts() const noexcept {
   const std::shared_ptr<State> state = state_;
   std::lock_guard lock(state->mutex);
   return state->tracked.facts(state->acceptedGeneration,
-                              state->tracked.closeDone, state->fatal);
+                              state->tracked.closed(), state->fatal);
 }
 
 #if defined(WAM_NATIVE_TEST_SEAMS)

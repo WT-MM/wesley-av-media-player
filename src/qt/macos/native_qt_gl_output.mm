@@ -16,6 +16,7 @@
 #include <mutex>
 #include <new>
 #include <optional>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -548,9 +549,15 @@ struct NativeQtGlOutput::State
   std::shared_ptr<GuiContext> guiContext;
   std::optional<FrameLease> pendingFrame;
   QtGlFrameIdentity pendingFrameIdentity{};
-  std::optional<std::uint64_t> pendingFlush;
-  bool forcePendingFlush{false};
-  bool pendingFinalFlush{false};
+  // A generation flush waiting for the GUI drain. Advance applies only past
+  // the GUI's generation; Forced applies even at or below it (a fail-closed
+  // flush); Final is close()'s terminal flush.
+  struct PendingFlush {
+    enum class Kind : std::uint8_t { Advance, Forced, Final };
+    std::uint64_t generation;
+    Kind kind;
+  };
+  std::optional<PendingFlush> pendingFlush;
   std::string failureMessage;
   std::uint64_t acceptedGeneration{0};
   std::uint64_t guiAppliedGeneration{0};
@@ -573,7 +580,6 @@ struct NativeQtGlOutput::State
   // second in-process open on a reused item.
   NativeTrackedOutputProtocol tracked;
   std::uint64_t nextTrackedDeliverySequence{0};
-  bool trackedFatal{false};
   // Coalesces signals between owner calls; each owner entry clears it.
   std::atomic<bool> trackedWakePending{false};
   std::atomic<bool> guiRenderObservationPending{false};
@@ -591,7 +597,11 @@ struct NativeQtGlOutput::State
           std::make_shared<std::atomic<std::uint64_t>>(0)};
   std::size_t presenterPendingRetirements{0};
   unsigned retirementGracePolls{0};
-  bool failureLatched{false};
+  // FrameRejected: the tracked admission path failed (a rejected frame, a
+  // refused delivery, an exhausted sequence) but terminal close may still
+  // prove invalidation. Failed: a latched failure, which vetoes close.
+  enum class Health : std::uint8_t { Live, FrameRejected, Failed };
+  Health health{Health::Live};
   bool transientObservation{false};
   bool closed{false};
   std::atomic<bool> observationArmed{false};
@@ -611,9 +621,9 @@ struct NativeQtGlOutput::State
 
   void updateObservationArmLocked() noexcept {
     observationArmed.store(
-        !failureLatched && (!closed || tracked.closePending) &&
+        health != Health::Failed && (!closed || tracked.closing()) &&
             (transientObservation || tracked.frameOutstanding() ||
-             tracked.flushPending || tracked.closePending),
+             tracked.pendingInvalidation()),
         std::memory_order_release);
   }
 
@@ -651,11 +661,22 @@ struct NativeQtGlOutput::State
 
   [[nodiscard]] bool publishTrackedFrameEventLocked(
       NativeTrackedVideoEventKind kind) noexcept {
-    return tracked.publish(kind, &trackedFatal);
+    bool sequenceExhausted = false;
+    const bool published = tracked.publish(kind, &sequenceExhausted);
+    if (sequenceExhausted) {
+      rejectTrackedLocked();
+    }
+    return published;
+  }
+
+  void rejectTrackedLocked() noexcept {
+    if (health == Health::Live) {
+      health = Health::FrameRejected;
+    }
   }
 
   [[nodiscard]] bool trackedUsableLocked() const noexcept {
-    return !failureLatched && !trackedFatal && !closed;
+    return health == Health::Live && !closed;
   }
 
   [[nodiscard]] bool trackedGenerationCurrentLocked(
@@ -670,27 +691,10 @@ struct NativeQtGlOutput::State
            observedInvalidation->generation >= generation;
   }
 
-  void latchFailureLocked(std::string message) noexcept {
-    if (!failureLatched) {
-      failureLatched = true;
-      try {
-        failureMessage = std::move(message);
-      } catch (...) {
-        try {
-          failureMessage = "native Qt OpenGL output failed";
-        } catch (...) {
-        }
-      }
-      if (tracked.frame.valid() || tracked.flushPending ||
-          tracked.closePending || trackedFatal) {
-        signalTrackedProgressNoexcept();
-      }
-    }
-  }
-
-  void latchFailureLocked(const char* message) noexcept {
-    if (!failureLatched) {
-      failureLatched = true;
+  void latchFailureLocked(std::string_view message) noexcept {
+    if (health != Health::Failed) {
+      const bool rejected = health == Health::FrameRejected;
+      health = Health::Failed;
       try {
         failureMessage = message;
       } catch (...) {
@@ -699,8 +703,8 @@ struct NativeQtGlOutput::State
         } catch (...) {
         }
       }
-      if (tracked.frame.valid() || tracked.flushPending ||
-          tracked.closePending || trackedFatal) {
+      if (tracked.frame.valid() || tracked.pendingInvalidation() ||
+          rejected) {
         signalTrackedProgressNoexcept();
       }
     }
@@ -709,7 +713,7 @@ struct NativeQtGlOutput::State
   void failSchedulingNoexcept(const char* message) noexcept {
     try {
       std::lock_guard lock(mutex);
-      if (closed && !tracked.closePending) {
+      if (closed && !tracked.closing()) {
         return;
       }
       latchFailureLocked(message);
@@ -790,8 +794,6 @@ struct NativeQtGlOutput::State
       pendingFrame.reset();
       pendingFrameIdentity = {};
       pendingFlush.reset();
-      forcePendingFlush = false;
-      pendingFinalFlush = false;
     }
     assignErrorNoexcept(error,
                         "Qt rejected the native video GUI delivery request");
@@ -808,8 +810,6 @@ struct NativeQtGlOutput::State
       pendingFrame.reset();
       pendingFrameIdentity = {};
       pendingFlush.reset();
-      forcePendingFlush = false;
-      pendingFinalFlush = false;
       latchFailureLocked("native Qt OpenGL GUI delivery callback failed");
       transientObservation = false;
       updateObservationArmLocked();
@@ -850,7 +850,7 @@ struct NativeQtGlOutput::State
           rejection->deliverySequence == nextTrackedDeliverySequence &&
           rejection->frameSequence == tracked.frame.value &&
           rejection->generation == tracked.frameGeneration) {
-        trackedFatal = true;
+        rejectTrackedLocked();
         (void)publishTrackedFrameEventLocked(
             NativeTrackedVideoEventKind::Failed);
         signalTracked = true;
@@ -863,17 +863,14 @@ struct NativeQtGlOutput::State
           invalidation->eventSequence;
       observedPresenterInvalidationSequenceAtomic->store(
           invalidation->eventSequence, std::memory_order_release);
-      if (tracked.frame.valid() && !tracked.event &&
-          (tracked.flushPending || tracked.closePending) &&
-          invalidation->generation >=
-              (tracked.closePending ? tracked.closeGeneration
-                                   : tracked.flushNext)) {
+      const auto pending = tracked.pendingInvalidation();
+      if (tracked.frame.valid() && !tracked.event && pending &&
+          invalidation->generation >= *pending) {
         signalTracked = publishTrackedFrameEventLocked(
                             NativeTrackedVideoEventKind::FrameSuperseded) ||
                         signalTracked;
       }
-      signalTracked = tracked.flushPending || tracked.closePending ||
-                      signalTracked;
+      signalTracked = pending.has_value() || signalTracked;
     }
     return signalTracked;
   }
@@ -959,18 +956,18 @@ struct NativeQtGlOutput::State
       std::lock_guard lock(mutex);
       QtGlVideoItem* item = guiContext->itemOnGui();
       if (item == nullptr) {
-        trackedFatal = true;
+        rejectTrackedLocked();
         latchFailureLocked("native Qt OpenGL video item was destroyed");
       } else {
         try {
           samplePresenterLocked(item);
         } catch (...) {
-          trackedFatal = true;
+          rejectTrackedLocked();
           latchFailureLocked(
               "native Qt OpenGL presenter telemetry failed");
         }
       }
-      if (failureLatched) {
+      if (health == Health::Failed) {
         transientObservation = false;
       } else if (presenterPendingRetirements != 0) {
         transientObservation = true;
@@ -983,7 +980,7 @@ struct NativeQtGlOutput::State
         transientObservation = false;
       }
       updateObservationArmLocked();
-      if (trackedFatal) {
+      if (health != Health::Live) {
         signalTrackedProgressNoexcept();
       }
     }
@@ -1027,12 +1024,9 @@ struct NativeQtGlOutput::State
     pendingFrame.reset();
     pendingFrameIdentity = {};
     pendingFlush.reset();
-    forcePendingFlush = false;
-    pendingFinalFlush = false;
     observationArmed.store(false, std::memory_order_release);
     observationPollQueued.store(false, std::memory_order_release);
     latchFailureLocked("native Qt OpenGL video item was destroyed");
-    trackedFatal = true;
     signalTrackedProgressNoexcept();
   }
 
@@ -1050,12 +1044,7 @@ struct NativeQtGlOutput::State
         return;
       }
       queuedDrainToken = 0;
-      std::optional<std::uint64_t> flushGeneration = pendingFlush;
-      pendingFlush.reset();
-      const bool forceFlush = forcePendingFlush;
-      forcePendingFlush = false;
-      const bool finalFlush = pendingFinalFlush;
-      pendingFinalFlush = false;
+      const std::optional<PendingFlush> flush = std::exchange(pendingFlush, {});
       std::optional<FrameLease> frame = std::move(pendingFrame);
       pendingFrame.reset();
       const QtGlFrameIdentity frameIdentity = pendingFrameIdentity;
@@ -1068,9 +1057,10 @@ struct NativeQtGlOutput::State
         // No Qt/pipeline callback is registered under this mutex. Keeping the
         // short flush+submit pair locked prevents seek/stop from slipping
         // between them, while all QQuickItem calls remain on the GUI thread.
-        if (flushGeneration &&
-            (forceFlush || *flushGeneration > guiAppliedGeneration)) {
-          if (applyFlushOnGuiLocked(item, *flushGeneration, finalFlush)) {
+        if (flush && (flush->kind != PendingFlush::Kind::Advance ||
+                      flush->generation > guiAppliedGeneration)) {
+          if (applyFlushOnGuiLocked(item, flush->generation,
+                                    flush->kind == PendingFlush::Kind::Final)) {
             transientObservation = true;
             updateObservationArmLocked();
             retirementGracePolls = 1;
@@ -1252,7 +1242,7 @@ bool NativeQtGlOutput::flushImpl(std::uint64_t nextGeneration,
       assignErrorNoexcept(error, "native Qt OpenGL output is closed");
       return false;
     }
-    if (state->failureLatched) {
+    if ((state->health == State::Health::Failed)) {
       assignErrorNoexcept(error, state->failureMessage);
       success = false;
     }
@@ -1260,7 +1250,7 @@ bool NativeQtGlOutput::flushImpl(std::uint64_t nextGeneration,
         nextGeneration <= state->acceptedGeneration;
     if (forceFailClosed) {
       success = false;
-      if (!state->failureLatched) {
+      if (!(state->health == State::Health::Failed)) {
         assignErrorNoexcept(
             error, nextGeneration < state->acceptedGeneration
                        ? "native Qt OpenGL flush generation regressed"
@@ -1282,7 +1272,6 @@ bool NativeQtGlOutput::flushImpl(std::uint64_t nextGeneration,
       // Controller-originated start/seek calls invalidate the retained Qt
       // frame synchronously. No blocking cross-thread invoke is ever used.
       state->pendingFlush.reset();
-      state->forcePendingFlush = false;
       QtGlVideoItem* item = state->guiContext->itemOnGui();
       if (item == nullptr) {
         state->latchFailureLocked(
@@ -1304,8 +1293,9 @@ bool NativeQtGlOutput::flushImpl(std::uint64_t nextGeneration,
         }
       }
     } else {
-      state->pendingFlush = nextGeneration;
-      state->forcePendingFlush = forceFailClosed;
+      state->pendingFlush = State::PendingFlush{
+          nextGeneration, forceFailClosed ? State::PendingFlush::Kind::Forced
+                                          : State::PendingFlush::Kind::Advance};
       if (!state->queueDrainLocked(error)) {
         state->latchFailureLocked(
             "Qt rejected the native video generation flush");
@@ -1336,7 +1326,6 @@ void NativeQtGlOutput::close(std::uint64_t finalGeneration) noexcept {
 
     if (state->guiContext->isGuiThread()) {
       state->pendingFlush.reset();
-      state->forcePendingFlush = false;
       if (QtGlVideoItem* item = state->guiContext->itemOnGui()) {
         // close() is a terminal invalidation, so even an exhausted/equal
         // generation must clear Qt's retained lease. QtGlVideoItem treats the
@@ -1346,9 +1335,8 @@ void NativeQtGlOutput::close(std::uint64_t finalGeneration) noexcept {
       }
     } else {
       state->guiContext->requireFinalFlush(state->acceptedGeneration);
-      state->pendingFlush = state->acceptedGeneration;
-      state->forcePendingFlush = true;
-      state->pendingFinalFlush = true;
+      state->pendingFlush = State::PendingFlush{
+          state->acceptedGeneration, State::PendingFlush::Kind::Final};
       std::string ignoredError;
       if (!state->queueDrainLocked(&ignoredError)) {
         state->latchFailureLocked(
@@ -1448,14 +1436,14 @@ NativeTrackedVideoSubmitStatus NativeQtGlOutput::submit(
       break;
     }
     if (!state->tracked.advances(sequence)) {
-      state->trackedFatal = true;
+      state->rejectTrackedLocked();
       state->latchFailureLocked(
           "native video frame sequence repeated or regressed");
       assignErrorNoexcept(error, state->failureMessage);
       result = NativeTrackedVideoSubmitStatus::Failed;
     } else if (state->nextTrackedDeliverySequence ==
                std::numeric_limits<std::uint64_t>::max()) {
-      state->trackedFatal = true;
+      state->rejectTrackedLocked();
       state->latchFailureLocked("native video delivery sequence exhausted");
       assignErrorNoexcept(error, state->failureMessage);
       result = NativeTrackedVideoSubmitStatus::Failed;
@@ -1468,7 +1456,7 @@ NativeTrackedVideoSubmitStatus NativeQtGlOutput::submit(
       // after a successful queue is not observable as a later admission.
       if (!state->queueDrainLocked(error)) {
         state->pendingFrameIdentity = {};
-        state->trackedFatal = true;
+        state->rejectTrackedLocked();
         state->latchFailureLocked(
             "Qt rejected tracked native video delivery");
         result = NativeTrackedVideoSubmitStatus::Failed;
@@ -1493,9 +1481,9 @@ std::optional<NativeTrackedVideoEvent> NativeQtGlOutput::takeEvent()
     std::lock_guard lock(state->mutex);
     signalTrackedProgress = state->sampleTrackedRenderProgressLocked();
     result = state->tracked.take();
-    signalTrackedProgress = state->tracked.flushPending ||
-                            state->tracked.closePending ||
-                            signalTrackedProgress;
+    signalTrackedProgress =
+        state->tracked.pendingInvalidation().has_value() ||
+        signalTrackedProgress;
     state->updateObservationArmLocked();
   }
   if (signalTrackedProgress) {
@@ -1529,7 +1517,7 @@ NativeTrackedVideoOutputProgress NativeQtGlOutput::flushProgress(
     std::string ignored;
     if (!flushImpl(nextGeneration, &ignored)) {
       std::lock_guard lock(state->mutex);
-      state->trackedFatal = true;
+      state->rejectTrackedLocked();
       return NativeTrackedVideoOutputProgress::Failed;
     }
     if (state->guiContext->isGuiThread()) {
@@ -1559,9 +1547,9 @@ NativeTrackedVideoOutputProgress NativeQtGlOutput::closeProgress(
   bool mustApply = false;
   {
     std::lock_guard lock(state->mutex);
-    // trackedFatal is historical admission failure, not a teardown veto.
-    // Terminal close must still invalidate the exact final generation and
-    // retire every retained lease so the router can safely enter fallback.
+    // A FrameRejected output is not vetoed here: terminal close must still
+    // invalidate the exact final generation and retire every retained lease
+    // so the router can safely enter fallback.
     const auto step =
         state->tracked.beginClose(finalGeneration, state->acceptedGeneration);
     if (step == NativeTrackedOutputProtocol::Step::Done) {
@@ -1587,9 +1575,9 @@ NativeTrackedVideoOutputProgress NativeQtGlOutput::closeProgress(
   state->sampleTrackedRenderProgressAndSignalNoexcept();
   {
     std::lock_guard lock(state->mutex);
-    if (state->failureLatched || state->tracked.frameOutstanding() ||
+    if ((state->health == State::Health::Failed) || state->tracked.frameOutstanding() ||
         !state->trackedInvalidationObservedLocked(finalGeneration)) {
-      return state->failureLatched
+      return (state->health == State::Health::Failed)
                  ? NativeTrackedVideoOutputProgress::Failed
                  : NativeTrackedVideoOutputProgress::Quiescing;
     }
@@ -1600,8 +1588,7 @@ NativeTrackedVideoOutputProgress NativeQtGlOutput::closeProgress(
       return NativeTrackedVideoOutputProgress::Quiescing;
     }
     // A terminal invalidation supersedes any arm/seek flush only after the
-    // stronger final-generation render proof above. Keep trackedFatal as a
-    // historical diagnostic, but leave no lifecycle work outstanding.
+    // stronger final-generation render proof above.
     state->tracked.completeClose();
     state->updateObservationArmLocked();
   }
@@ -1613,8 +1600,9 @@ NativeTrackedVideoOutputFacts NativeQtGlOutput::facts() const noexcept {
   state->consumeDeferredSchedulingFailureNoexcept();
   state->sampleTrackedRenderProgressAndSignalNoexcept();
   std::lock_guard lock(state->mutex);
-  return state->tracked.facts(state->acceptedGeneration, state->closed,
-                              state->failureLatched || state->trackedFatal);
+  return state->tracked.facts(state->acceptedGeneration,
+                              state->tracked.closed(),
+                              state->health != State::Health::Live);
 }
 
 #if defined(WAM_NATIVE_TEST_SEAMS)
