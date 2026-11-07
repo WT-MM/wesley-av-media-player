@@ -100,7 +100,6 @@ if(APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
 endif()
 
 if(APPLE AND WAM_BUILD_QUICKLOOK_APPEX)
-  find_library(WAM_IMAGEIO_FRAMEWORK ImageIO REQUIRED)
   add_executable(wam_quicklook_thumbnail_frame_test
     quicklook_thumbnail_frame_test.mm
     ${WAM_QUICKLOOK_FRAME_SOURCES})
@@ -1485,7 +1484,6 @@ if(APPLE)
       COMMAND wam_native_qt_gl_output_test)
     set_tests_properties(macos_native_qt_gl_output PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
-    find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
     add_executable(wam_video_toolbox_decoder_test
       video_toolbox_decoder_test.mm
       ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}

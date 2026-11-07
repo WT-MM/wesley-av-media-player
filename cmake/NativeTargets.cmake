@@ -109,6 +109,7 @@ if(APPLE OR WAM_BUILD_APP)
 endif()
 
 if(APPLE)
+# Every Apple framework the build links, found once.
 find_library(WAM_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
 find_library(WAM_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
 find_library(WAM_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
@@ -122,6 +123,10 @@ find_library(WAM_COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
 find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
 find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
+find_library(WAM_OPENGL_FRAMEWORK OpenGL REQUIRED)
+find_library(WAM_METAL_FRAMEWORK Metal REQUIRED)
+find_library(WAM_IMAGEIO_FRAMEWORK ImageIO REQUIRED)
+find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing REQUIRED)
   set(WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES
     src/platform/macos/native_surface_budget.hpp
     src/platform/macos/native_surface_budget.mm

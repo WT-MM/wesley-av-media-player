@@ -224,13 +224,6 @@ if(APPLE)
   # FrameLease/video primitives in one Apple-only production closure. Metal
   # texture mapping lives in its opt-in archive below so the OpenGL route does
   # not acquire Metal merely by retaining decoded-frame leases.
-  find_library(WAM_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
-  find_library(WAM_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
-  find_library(WAM_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
-  find_library(WAM_FOUNDATION_FRAMEWORK Foundation REQUIRED)
-  find_library(WAM_IOSURFACE_FRAMEWORK IOSurface REQUIRED)
-  find_library(WAM_OPENGL_FRAMEWORK OpenGL REQUIRED)
-  find_library(WAM_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
 
   add_library(wam_macos_native_qt_tracked STATIC
     src/qt/macos/native_qt_gl_output.hpp
@@ -269,12 +262,6 @@ if(APPLE)
   # aspect-ratio-locked interactive resizing, double-click Actual Size) is a
   # small always-on AppKit UI helper, independent of which video backend is
   # selected, so it is not gated behind WAM_ENABLE_MACOS_NATIVE_VIDEO below.
-  find_library(WAM_APPKIT_FRAMEWORK AppKit REQUIRED)
-  find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
-  find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
-  # Named explicitly because the layer contract test links the host view
-  # without the umbrella that otherwise drags CoreImage in for the app.
-  find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
   target_sources(wam PRIVATE
     src/qt/macos_window_chrome.hpp
     src/qt/macos_window_chrome.mm
@@ -297,14 +284,6 @@ if(APPLE)
   target_link_libraries(wam PRIVATE wam_caption_prompt)
 
   if(WAM_ENABLE_MACOS_NATIVE_VIDEO)
-    find_library(WAM_COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
-    find_library(WAM_APPKIT_FRAMEWORK AppKit REQUIRED)
-    find_library(WAM_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
-    find_library(WAM_COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
-    find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
-    find_library(WAM_METAL_FRAMEWORK Metal REQUIRED)
-    find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
-
 
     target_sources(wam PRIVATE
       src/qt/native_benchmark_telemetry.hpp
@@ -376,10 +355,6 @@ if(APPLE)
     "Build and embed the QuickLook thumbnail extension in WAM.app" ON)
 
   if(WAM_BUILD_QUICKLOOK_APPEX)
-    find_library(WAM_COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
-    find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing
-      REQUIRED)
-
     set(WAM_QUICKLOOK_BUNDLE_IDENTIFIER
       "com.wesleymaa.wam.quicklook.thumbnail")
     set(WAM_QUICKLOOK_INFO_PLIST
