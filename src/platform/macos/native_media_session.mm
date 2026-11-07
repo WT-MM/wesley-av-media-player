@@ -940,7 +940,6 @@ struct NativeMediaSession::Impl final {
       published.appliedPaused = true;
       publicCommit = PublicCommit::ReadyAwaitingRun;
       publishedStart.reset();
-      startPending = false;
       publicStartAccepted = true;
       commitReadySlot = ready;
     }
@@ -1031,7 +1030,9 @@ struct NativeMediaSession::Impl final {
   }
 
   void dropPendingTransportWork() noexcept {
-    startPending = false;
+    if (startPhase == StartPhase::Queued) {
+      startPhase = StartPhase::Idle;
+    }
     runPending = false;
     gainPending = false;
     mutedPending = false;
@@ -1111,7 +1112,9 @@ struct NativeMediaSession::Impl final {
 
   // The worker's lifecycle facts as one value, for publication under mutex.
   [[nodiscard]] PublishedFacts workerFacts() const noexcept {
-    return {ownership,        preparedPublished,  startedPublished,
+    return {ownership,
+            preparePhase == PreparePhase::Prepared,
+            startPhase == StartPhase::Started,
             dispatcherObservedVideo, directVideoRetired, directAudioRetired,
             stopPhase == StopPhase::Stopped, endingLatched(),
             endPhase == EndPhase::Ended, liveFailed, appliedPaused};
@@ -1143,16 +1146,18 @@ struct NativeMediaSession::Impl final {
       }
       return;
     }
-    if (publishedPrepare.has_value() && !preparePending) {
+    if (publishedPrepare.has_value() && preparePhase == PreparePhase::None) {
       prepareCommand = publishedPrepare->command;
       reservedGeneration = prepareCommand.reservedGeneration.value;
       initialPosition = publishedPrepare->initialPosition;
-      preparePending = true;
+      preparePhase = PreparePhase::Preparing;
     }
-    if (publishedStart.has_value() && !startPending) {
-      startCommand = *publishedStart;
+    if (publishedStart.has_value() && startPhase != StartPhase::Queued) {
+      if (startPhase == StartPhase::Idle) {
+        startCommand = *publishedStart;
+        startPhase = StartPhase::Queued;
+      }
       publishedStart.reset();
-      startPending = true;
     }
     if (publishedRun.has_value() &&
         (!runPending ||
@@ -1867,7 +1872,8 @@ struct NativeMediaSession::Impl final {
   }
 
   void progressPrepare() noexcept {
-    if (stopPhase != StopPhase::None || preparedPublished || prepareFailed) {
+    if (stopPhase != StopPhase::None ||
+        preparePhase != PreparePhase::Preparing) {
       return;
     }
     bool graphBuilt{};
@@ -1876,7 +1882,7 @@ struct NativeMediaSession::Impl final {
       return;
     }
     if (!graphBuilt) {
-      prepareFailed = true;
+      preparePhase = PreparePhase::Failed;
       static_cast<void>(publishFailure(protocol::FailureReason::Preparation, "open/graph",
                                        prepareCommand.stamp));
       return;
@@ -1903,7 +1909,7 @@ struct NativeMediaSession::Impl final {
       break;
     case NativeVideoConsumerArmProgress::StaleGeneration:
 case NativeVideoConsumerArmProgress::Failed:
-      prepareFailed = true;
+      preparePhase = PreparePhase::Failed;
       static_cast<void>(publishFailure(protocol::FailureReason::Startup, "open/arm"));
       return;
     }
@@ -1920,7 +1926,7 @@ case NativeVideoConsumerArmProgress::Failed:
       return;
     }
 if (!transferred) {
-      prepareFailed = true;
+      preparePhase = PreparePhase::Failed;
       static_cast<void>(publishFailure(protocol::FailureReason::Startup, "open/transfer"));
       return;
     }
@@ -1970,7 +1976,7 @@ if (!transferred) {
       // Output prearm already exposed reservedGeneration. Therefore even a
       // source-level Unsupported result is a Startup failure requiring exact
       // Stop; UnsupportedSource would be a false generation-free proof.
-prepareFailed = true;
+      preparePhase = PreparePhase::Failed;
       {
         std::lock_guard lock(mutex);
         admissionRouteChoice =
@@ -1987,7 +1993,7 @@ prepareFailed = true;
     }
     const auto descriptor = dispatcher->descriptor();
 if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
-      prepareFailed = true;
+      preparePhase = PreparePhase::Failed;
       static_cast<void>(publishFailure(protocol::FailureReason::Protocol, "open/descriptor"));
       return;
     }
@@ -2001,7 +2007,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         admittedAssetContext->descriptor().get() != descriptor.get() ||
         !admittedAssetContext->matchesPreviewBinding(binding.localPath,
                                                      descriptor)) {
-      prepareFailed = true;
+      preparePhase = PreparePhase::Failed;
       static_cast<void>(publishFailure(protocol::FailureReason::Protocol, "open/context"));
       return;
     }
@@ -2016,7 +2022,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       }
       if (silentTimebase == nullptr ||
           !silentTimebase->activate(reservedGeneration, initialPosition)) {
-        prepareFailed = true;
+        preparePhase = PreparePhase::Failed;
         static_cast<void>(publishFailure(protocol::FailureReason::Clock, "open/clock"));
         return;
       }
@@ -2030,7 +2036,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
           !commitPendingLocked() &&
           !factMailbox.has_value()) {
         activeGeneration = reservedGeneration;
-        preparedPublished = true;
+        preparePhase = PreparePhase::Prepared;
         published.prepared = true;
         // Seek admission is bounded by the presentable ceiling, not the
         // source duration: the two differ exactly when audio outlives the last
@@ -2076,15 +2082,15 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
   }
 
   void progressStart() noexcept {
-    if (stopPhase != StopPhase::None || !preparedPublished ||
-        startedPublished ||
-        !startPending || startCommand.preparedGeneration.value !=
-                             reservedGeneration) {
+    if (stopPhase != StopPhase::None ||
+        preparePhase != PreparePhase::Prepared ||
+        startPhase != StartPhase::Queued ||
+        startCommand.preparedGeneration.value != reservedGeneration) {
       return;
     }
 if (authority == nullptr) {
       static_cast<void>(publishFailure(protocol::FailureReason::Startup, "start"));
-      startPending = false;
+      startPhase = StartPhase::Idle;
       return;
     }
     NativeAudioSessionProgress result{};
@@ -2101,7 +2107,7 @@ if (authority == nullptr) {
     }
 if (result != NativeAudioSessionProgress::Done) {
       static_cast<void>(publishFailure(protocol::FailureReason::Startup, "start/audio"));
-      startPending = false;
+      startPhase = StartPhase::Idle;
       return;
     }
     // facts() includes any output event already published but not yet
@@ -2120,8 +2126,7 @@ if (result != NativeAudioSessionProgress::Done) {
           !factMailbox.has_value()) {
         startedDrawBaseline = drawBaseline;
         publicLastOutputEventSequence = drawBaseline;
-        startedPublished = true;
-        startPending = false;
+        startPhase = StartPhase::Started;
         published.started = true;
         factMailbox.emplace(protocol::Started{
             startCommand.stamp, startCommand.preparedGeneration,
@@ -2137,7 +2142,7 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void progressRunState() noexcept {
-    if (!transportLive() || !startedPublished || !runPending ||
+    if (!transportLive() || startPhase != StartPhase::Started || !runPending ||
         authority == nullptr) {
       return;
     }
@@ -2287,7 +2292,8 @@ if (result != NativeAudioSessionProgress::Done) {
   // straight back here, and Invalid only means the precondition moved.
   void progressAudioSuspend() noexcept {
     if (authority == nullptr || !authority->suspendsForPause() ||
-        !startedPublished || !transportLive() || commitInFlight() ||
+        startPhase != StartPhase::Started || !transportLive() ||
+        commitInFlight() ||
         previewRequestPending() || previewLane != PreviewLane::Idle ||
         runPending || !appliedPaused ||
         audioProofPending.has_value()) {
@@ -2577,11 +2583,10 @@ if (result != NativeAudioSessionProgress::Done) {
         if (publishedStop.has_value()) {
           return;
         }
-        startedPublished = true;
+        startPhase = StartPhase::Started;
         published.started = true;
         publicStartAccepted = true;
         publishedStart.reset();
-        startPending = false;
         startedDrawBaseline = commitDrawBaseline;
       }
       if (!enterCommitPhase(CommitPhase::PausingTarget)) {
@@ -2775,7 +2780,8 @@ if (result != NativeAudioSessionProgress::Done) {
     }
     {
       std::lock_guard lock(mutex);
-      if (!startedPublished || !protocol::validLive(appliedRunStamp) ||
+      if (startPhase != StartPhase::Started ||
+          !protocol::validLive(appliedRunStamp) ||
           requestedRunStamp != appliedRunStamp ||
           publicRequestedRunStamp != appliedRunStamp ||
           publishedStop.has_value() || published.ending || published.ended) {
@@ -2851,7 +2857,8 @@ if (result != NativeAudioSessionProgress::Done) {
     std::lock_guard lock(mutex);
     if (endPhase != EndPhase::Exhausted || liveFailed ||
         publishedStop.has_value() || publicCommit != PublicCommit::Idle ||
-        !startedPublished || !protocol::validLive(latestAcceptedStamp)) {
+        startPhase != StartPhase::Started ||
+        !protocol::validLive(latestAcceptedStamp)) {
       return endingLatched();
     }
     endingStamp = latestAcceptedStamp;
@@ -2864,8 +2871,8 @@ if (result != NativeAudioSessionProgress::Done) {
 
   void progressEnded() noexcept {
     if ((endPhase != EndPhase::Exhausted && endPhase != EndPhase::Ending) ||
-        liveFailed || stopPhase != StopPhase::None || !startedPublished ||
-        authority == nullptr) {
+        liveFailed || stopPhase != StopPhase::None ||
+        startPhase != StartPhase::Started || authority == nullptr) {
       return;
     }
     if (endPhase == EndPhase::Exhausted && !latchEnding()) {
@@ -3125,7 +3132,7 @@ if (result != NativeAudioSessionProgress::Done) {
         refreshClock();
         publishRunningPositionForVideoLessGeneration();
         publishMetrics();
-        if (preparePending) {
+        if (preparePhase == PreparePhase::Preparing) {
           progressPrepare();
         }
         if (stopPhase != StopPhase::None) {
@@ -3158,7 +3165,7 @@ if (result != NativeAudioSessionProgress::Done) {
         if (liveFailed) {
           continue;
         }
-        if (dispatcher != nullptr && preparedPublished &&
+        if (dispatcher != nullptr && preparePhase == PreparePhase::Prepared &&
             endPhase == EndPhase::Live && !previewHoldsMain() &&
             !previewRequestPending()) {
           bool callAgain = false;
@@ -3457,12 +3464,13 @@ if (result != NativeAudioSessionProgress::Done) {
   MediaGeneration activeGeneration{0};
   NativeMediaSessionOwnershipPhase ownership{
       NativeMediaSessionOwnershipPhase::Empty};
-  bool preparePending{false};
+  enum class PreparePhase : std::uint8_t { None, Preparing, Prepared, Failed };
+  PreparePhase preparePhase{PreparePhase::None};
   bool admissionRouteChoice{false};
-  bool prepareFailed{false};
-  bool preparedPublished{false};
-  bool startPending{false};
-  bool startedPublished{false};
+  // Queued: a Start command is accepted and not yet applied. Started: the
+  // Started fact (or a commit's audio start) has been published.
+  enum class StartPhase : std::uint8_t { Idle, Queued, Started };
+  StartPhase startPhase{StartPhase::Idle};
   bool runPending{false};
   // Worker-private like every owner field below. Written by enterCommitPhase()
   // (runtime-refused against the step table), by resetCommitPhase() on the
