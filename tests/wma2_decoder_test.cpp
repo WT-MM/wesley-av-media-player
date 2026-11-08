@@ -157,6 +157,127 @@ Result run(const char* path, int bench_runs) {
   return r;
 }
 
+// ffmpeg's encoder writes only fixed-size blocks, VLC exponents and no bit
+// reservoir. To reach the other paths both decoders get the same random
+// payloads under every flag combination; whatever FFmpeg makes of them
+// (output or error), ours must make the same, payload by payload.
+struct FuzzStats {
+  int packets = 0, decoded = 0, mismatched = 0;
+  double max_rel = 0;
+};
+
+FuzzStats fuzz_one(int channels, int rate, int bit_rate, int flags, int packets, uint32_t seed) {
+  FuzzStats st;
+  const int frame_len = rate <= 16000 ? 512 : rate <= 22050 ? 1024 : 2048;
+  const int block_align = std::max(16, int((int64_t)bit_rate * frame_len / rate / 8));
+  uint8_t extradata[6] = {0, 0, 0, 0, uint8_t(flags), uint8_t(flags >> 8)};
+
+  const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_WMAV2);
+  AVCodecContext* ctx = avcodec_alloc_context3(codec);
+  av_channel_layout_default(&ctx->ch_layout, channels);
+  ctx->sample_rate = rate;
+  ctx->bit_rate = bit_rate;
+  ctx->block_align = block_align;
+  ctx->extradata = static_cast<uint8_t*>(av_mallocz(6 + AV_INPUT_BUFFER_PADDING_SIZE));
+  std::copy(extradata, extradata + 6, ctx->extradata);
+  ctx->extradata_size = 6;
+  ctx->thread_count = 1;
+  if (avcodec_open2(ctx, codec, nullptr) < 0) {
+    avcodec_free_context(&ctx);
+    st.mismatched = -1;
+    return st;
+  }
+  wam_wma_config cfg{channels, rate, bit_rate, block_align, extradata, 6};
+  wam_wma_decoder* dec = wam_wma_create(&cfg);
+  if (!dec) {
+    st.mismatched = -1;
+    avcodec_free_context(&ctx);
+    return st;
+  }
+  int cap = wam_wma_max_samples(dec);
+  std::vector<std::vector<float>> buf(2, std::vector<float>(size_t(cap)));
+  float* out[2] = {buf[0].data(), buf[1].data()};
+  AVPacket* pkt = av_packet_alloc();
+  AVFrame* frame = av_frame_alloc();
+  uint32_t x = seed;
+  for (int p = 0; p < packets; p++) {
+    av_new_packet(pkt, block_align);
+    for (int i = 0; i < block_align; i++) {
+      x = x * 1664525u + 1013904223u;
+      pkt->data[i] = uint8_t(x >> 24);
+    }
+    // A plausible superframe header now and then keeps the reservoir busy.
+    if (flags & 2) pkt->data[0] = uint8_t((pkt->data[0] & 0xf0) | (p % 3 == 0 ? 0 : 1 + p % 3));
+    int n = wam_wma_decode(dec, pkt->data, block_align, out, cap);
+    Pcm ref(static_cast<size_t>(channels));
+    avcodec_send_packet(ctx, pkt);
+    while (avcodec_receive_frame(ctx, frame) >= 0) {
+      for (int ch = 0; ch < channels; ch++) {
+        const float* f = reinterpret_cast<const float*>(frame->extended_data[ch]);
+        ref[size_t(ch)].insert(ref[size_t(ch)].end(), f, f + frame->nb_samples);
+      }
+      av_frame_unref(frame);
+    }
+    av_packet_unref(pkt);
+    st.packets++;
+    int got = std::max(n, 0);
+    if (got != int(ref[0].size())) {
+      if (std::getenv("WMA_FUZZ_VERBOSE")) std::printf("  packet %d: %d vs %d samples\n", p, n, int(ref[0].size()));
+      st.mismatched++;
+      continue;
+    }
+    if (got > 0) st.decoded++;
+    // Garbage payloads span a huge dynamic range, so rounding error is
+    // measured against the payload's peak, as for any FFT-based decoder.
+    double peak = 1.0;
+    for (int ch = 0; ch < channels; ch++)
+      for (float v : ref[size_t(ch)])
+        if (std::isfinite(v)) peak = std::max(peak, double(std::fabs(v)));
+    bool bad = false;
+    for (int ch = 0; ch < channels; ch++)
+      for (int i = 0; i < got; i++) {
+        double a = out[ch][i], b = ref[size_t(ch)][size_t(i)];
+        if (std::isnan(a) && std::isnan(b)) continue;
+        double rel = std::fabs(a - b) / peak;
+        if (!(rel <= 1e-4)) {
+          if (!bad && std::getenv("WMA_FUZZ_VERBOSE"))
+            std::printf("  packet %d ch %d i %d: %g vs %g\n", p, ch, i, a, b);
+          bad = true;
+        }
+        if (std::isfinite(rel)) st.max_rel = std::max(st.max_rel, rel);
+      }
+    st.mismatched += bad;
+  }
+  av_frame_free(&frame);
+  av_packet_free(&pkt);
+  avcodec_free_context(&ctx);
+  wam_wma_destroy(dec);
+  return st;
+}
+
+int fuzz(int packets) {
+  int failures = 0;
+  const int flag_sets[] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0xe, 0x1e};
+  const int rates[] = {44100, 48000, 32000, 22050, 16000, 11025, 8000};
+  const int bit_rates[] = {16000, 48000, 128000, 320000};
+  uint32_t seed = 1;
+  for (int channels = 1; channels <= 2; channels++)
+    for (int rate : rates)
+      for (int br : bit_rates)
+        for (int flags : flag_sets) {
+          FuzzStats st = fuzz_one(channels, rate, br, flags, packets, seed++);
+          if (st.mismatched != 0) {
+            std::printf("fuzz ch=%d rate=%d br=%d flags=0x%x: %d/%d packets differ (%d decoded)\n",
+                        channels, rate, br, flags, st.mismatched, st.packets, st.decoded);
+            failures++;
+          } else if (std::getenv("WMA_FUZZ_VERBOSE")) {
+            std::printf("fuzz ch=%d rate=%d br=%d flags=0x%x: %d decoded, max rel %.3g\n",
+                        channels, rate, br, flags, st.decoded, st.max_rel);
+          }
+        }
+  return failures;
+}
+
 void print(const std::string& name, const Result& r, int bench_runs) {
   std::printf("%-28s samples %lld/%lld max_err %.3g", name.c_str(), r.samples_ours,
               r.samples_ffmpeg, r.max_err);
@@ -177,6 +298,7 @@ int main(int argc, char** argv) {
     if (a == "--ffmpeg" && i + 1 < argc) ffmpeg = argv[++i];
     else if (a == "--scratch" && i + 1 < argc) scratch = argv[++i];
     else if (a == "--bench" && i + 1 < argc) bench = std::atoi(argv[++i]);
+    else if (a == "--fuzz" && i + 1 < argc) return fuzz(std::atoi(argv[++i])) ? 1 : 0;
     else files.push_back(a);
   }
   if (!ffmpeg.empty() && !scratch.empty()) {

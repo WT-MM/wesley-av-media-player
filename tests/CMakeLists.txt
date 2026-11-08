@@ -1123,7 +1123,8 @@ if(APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
   file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/wma2-fixtures")
   add_test(NAME wma2_decoder COMMAND wam_wma2_decoder_test
     --ffmpeg "${WAM_TEST_FFMPEG}" --scratch "${PROJECT_BINARY_DIR}/wma2-fixtures")
-  set_tests_properties(wma2_decoder PROPERTIES TIMEOUT 120)
+  add_test(NAME wma2_decoder_differential COMMAND wam_wma2_decoder_test --fuzz 100)
+  set_tests_properties(wma2_decoder wma2_decoder_differential PROPERTIES TIMEOUT 120)
 endif()
 
 if(APPLE)
