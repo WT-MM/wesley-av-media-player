@@ -1,5 +1,14 @@
 #include "platform/macos/mpegts_media_source.hpp"
 
+#if defined(WAM_ENABLE_AVFORMAT_STAGE) || defined(WAM_ENABLE_AVCODEC_STAGE)
+#include "media/avcodec/aac_sbr_probe.hpp"
+#define WAM_INSTALL_AAC_SBR_DETECTOR() ::wam::media::avcodec::installAacSbrDetector()
+#else
+#define WAM_INSTALL_AAC_SBR_DETECTOR() static_cast<void>(0)
+#endif
+
+#include "media/codec/aac.hpp"
+
 #include "platform/macos/mpegts_sample_builder.hpp"
 #include "platform/macos/native_custom_source_core.hpp"
 
@@ -131,6 +140,8 @@ struct MpegTsMediaSource::Impl final
   // larger than everything before it in this generation.
   std::vector<std::byte> payloadWorkspace;
   MpegTsAudioFrameLayout audioLayout;
+  media::codec::AacImplicitSbrCheck aacSbrCheck;
+  bool aacSbrCheckArmed{false};
 
   [[nodiscard]] std::optional<StagedSample> makeHead(
       const MpegTsCompressedSample& raw, bool video, std::string* error) {
@@ -222,6 +233,15 @@ struct MpegTsMediaSource::Impl final
     // frame -- including the config-less one a seek almost always lands on.
     inputs.latmConfig = video ? nullptr : latmConfig;
     inputs.audioPresentationTime = audioPresentation;
+    if (!video && audioCodec == MediaCodec::Aac && !aacSbrCheckArmed) {
+      aacSbrCheckArmed = true;
+      const auto config = media::codec::aacLcAudioSpecificConfig(
+          static_cast<std::uint32_t>(audioSampleRate), audioChannels);
+      aacSbrCheck.reset(config ? std::span<const std::byte>(*config)
+                               : std::span<const std::byte>{},
+                        static_cast<std::uint32_t>(audioSampleRate));
+    }
+    inputs.aacSbrCheck = video ? nullptr : &aacSbrCheck;
     ScopedSampleBuffer owned;
     const MpegTsSampleBuildStatus built =
         buildMpegTsCompressedSampleBuffer(inputs, raw, &owned, error);
@@ -303,6 +323,7 @@ struct MpegTsMediaSource::Impl final
     resetAudioFacts();
     audioChannels = 0;
     audioNextFrame.reset();
+    aacSbrCheckArmed = false;
     audioCodec = MediaCodec::Unknown;
     latmConfig = nullptr;
     videoCodec = MediaCodec::Unknown;
@@ -449,7 +470,9 @@ struct MpegTsMediaSource::Impl final
   void resetContainerFacts() noexcept { audioNextFrame.reset(); }
 };
 
-MpegTsMediaSource::MpegTsMediaSource() : impl_(std::make_unique<Impl>()) {}
+MpegTsMediaSource::MpegTsMediaSource() : impl_(std::make_unique<Impl>()) {
+  WAM_INSTALL_AAC_SBR_DETECTOR();
+}
 
 MpegTsMediaSource::~MpegTsMediaSource() { close(); }
 

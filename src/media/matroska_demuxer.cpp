@@ -2739,6 +2739,8 @@ struct MatroskaCursor::Impl {
   std::uint64_t startBlockOffset{0};
   std::uint16_t startFrameIndex{0};
   std::uint64_t expectedAudioOrdinal{0};
+  codec::AacImplicitSbrCheck aacSbrCheck;
+  bool aacSbrCheckArmed{false};
   // SeekingStart skips Blocks before the plan's start Block; Ended is final.
   // A failed or cancelled read is not a phase: it leaves the position
   // untouched, and the caller decides whether to read again.
@@ -2938,6 +2940,38 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                 return MatroskaCursorFailure{
                     MediaRefusalClass::UnsupportedTrack,
                     "Opus packet duration is not constant"};
+              }
+            }
+          }
+          // A_AAC's CodecPrivate cannot say whether SBR rides implicitly in
+          // the access units; the first ones each cursor emits are scanned.
+          if (state.audio->codec == MediaCodec::Aac) {
+            if (!impl_->aacSbrCheckArmed) {
+              impl_->aacSbrCheckArmed = true;
+              const auto config = codec::aacLcAudioSpecificConfig(
+                  state.audio->audioSampleRate,
+                  state.audio->entry.audio ? state.audio->entry.audio->channels : 0U);
+              impl_->aacSbrCheck.reset(
+                  config ? std::span<const std::byte>(*config) : std::span<const std::byte>{},
+                  state.audio->audioSampleRate);
+            }
+            std::vector<std::byte> unit;
+            for (std::uint16_t index = 0;
+                 index < visitor.frameCount && impl_->aacSbrCheck.pending();
+                 ++index) {
+              const ByteRange frame = visitor.frames[index].bytes;
+              if (frame.size > state.limits.maximumAudioSampleBytes) {
+                return MatroskaCursorFailure{MediaRefusalClass::UnsupportedTrack,
+                                             "AAC access unit exceeds native bounds"};
+              }
+              unit.resize(static_cast<std::size_t>(frame.size));
+              if (!state.reader->readAt(frame.offset, unit)) {
+                return MatroskaCursorFailure{MediaRefusalClass::Io,
+                                             "AAC access unit is unreadable"};
+              }
+              if (const char* refusal = impl_->aacSbrCheck.add(unit)) {
+                return MatroskaCursorFailure{MediaRefusalClass::UnsupportedTrack,
+                                             refusal};
               }
             }
           }

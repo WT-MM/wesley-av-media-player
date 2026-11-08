@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/codec/aac.hpp"
 #include "media/mpegts_demuxer.hpp"
 #include "media/native_media_source.hpp"
 #include "platform/macos/core_media_carriage.hpp"
@@ -113,6 +114,9 @@ struct MpegTsSampleBuildInputs {
   // mpegts_media_source.mm for why the container's 90 kHz stamp cannot be
   // published verbatim for a 44.1 kHz track.
   media::MediaTime audioPresentationTime{};
+  // Audio only, AAC only: this generation's implicit-SBR check
+  // (AacImplicitSbrCheck). Null checks nothing.
+  media::codec::AacImplicitSbrCheck* aacSbrCheck{nullptr};
 };
 
 // Materializes one payload-free cursor sample into a retained CMSampleBuffer.

@@ -1,4 +1,11 @@
 #include "media/native_late_frame_trace.hpp"
+
+#if defined(WAM_ENABLE_AVFORMAT_STAGE) || defined(WAM_ENABLE_AVCODEC_STAGE)
+#include "media/avcodec/aac_sbr_probe.hpp"
+#define WAM_INSTALL_AAC_SBR_DETECTOR() ::wam::media::avcodec::installAacSbrDetector()
+#else
+#define WAM_INSTALL_AAC_SBR_DETECTOR() static_cast<void>(0)
+#endif
 #include "media/startup_benchmark.hpp"
 #include <fstream>
 #include "media/audio_track_admission.hpp"
@@ -667,6 +674,48 @@ constexpr double kMaximumStagedAudioSeconds = 0.256;
 // convenience: the consumer hands this very buffer to VideoToolbox and proves
 // its stamps against the staged sample facts, so the buffer itself must state
 // the movie timeline.
+// CoreMedia cannot see IMPLICIT SBR (an AAC-LC configuration at the core
+// rate): it reports and decodes the LC core. The admission head's first access
+// units are checked instead (AacImplicitSbrCheck).
+[[nodiscard]] const char* implicitSbrRefusal(CMSampleBufferRef sample,
+                                             std::uint32_t coreRate,
+                                             std::uint32_t channels) {
+  std::size_t needed = 0;
+  CMBlockBufferRef data = CMSampleBufferGetDataBuffer(sample);
+  if (data == nullptr ||
+      CMSampleBufferGetAudioStreamPacketDescriptions(sample, 0, nullptr,
+                                                     &needed) != noErr) {
+    return nullptr;
+  }
+  std::vector<AudioStreamPacketDescription> packets(
+      needed / sizeof(AudioStreamPacketDescription));
+  if (packets.empty() ||
+      CMSampleBufferGetAudioStreamPacketDescriptions(
+          sample, needed, packets.data(), nullptr) != noErr) {
+    return nullptr;
+  }
+  const auto config = media::codec::aacLcAudioSpecificConfig(coreRate, channels);
+  media::codec::AacImplicitSbrCheck check;
+  check.reset(config ? std::span<const std::byte>(*config)
+                     : std::span<const std::byte>{},
+              coreRate);
+  std::vector<std::byte> unit;
+  for (const auto& packet : packets) {
+    if (!check.pending()) {
+      break;
+    }
+    unit.resize(packet.mDataByteSize);
+    if (CMBlockBufferCopyDataBytes(data, static_cast<size_t>(packet.mStartOffset),
+                                   unit.size(), unit.data()) != noErr) {
+      return nullptr;
+    }
+    if (const char* refusal = check.add(unit)) {
+      return refusal;
+    }
+  }
+  return nullptr;
+}
+
 [[nodiscard]] CMSampleBufferRef restatedVideoOnMovieTimeline(
     CMSampleBufferRef sample, CMTime shift) noexcept {
   if (sample == nullptr) {
@@ -3454,6 +3503,18 @@ struct AVFoundationMediaSource::Impl final
         }
         continue;
       }
+      if (admission && !video) {
+        const auto* track = media::findMediaTrack(*descriptor, *selected);
+        if (track && track->codec == MediaCodec::Aac && track->audio) {
+          if (const char* refusal = implicitSbrRefusal(
+                  copied.sample,
+                  static_cast<std::uint32_t>(track->audio->sampleRate),
+                  track->audio->channels)) {
+            assignError(error, refusal);
+            return false;
+          }
+        }
+      }
       if (admission && video) {
         // A head-trimmed edit list's random-access point is preroll before
         // the movie origin, so a negative presentation time is admitted.
@@ -3738,11 +3799,15 @@ struct AVFoundationMediaSource::Impl final
 };
 
 AVFoundationMediaSource::AVFoundationMediaSource()
-    : impl_(std::make_unique<Impl>(nullptr)) {}
+    : impl_(std::make_unique<Impl>(nullptr)) {
+  WAM_INSTALL_AAC_SBR_DETECTOR();
+}
 
 AVFoundationMediaSource::AVFoundationMediaSource(
     std::shared_ptr<AVFoundationBackend> backend)
-    : impl_(std::make_unique<Impl>(std::move(backend))) {}
+    : impl_(std::make_unique<Impl>(std::move(backend))) {
+  WAM_INSTALL_AAC_SBR_DETECTOR();
+}
 
 AVFoundationMediaSource::~AVFoundationMediaSource() { close(); }
 

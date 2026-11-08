@@ -310,6 +310,45 @@ def main():
         assert 'track 1 (A_AAC): HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
         assert 'track 2 (A_AAC): HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
         manifest['proofs'].append(dict(file=combined.name,asset_sha256=hashlib.sha256(combined.read_bytes()).hexdigest(),diagnostic=result.stdout.strip()))
+    if a.case in ('all','implicit-sbr'):
+        # Implicit SBR: the configuration names AAC-LC at the core rate and
+        # only the access units carry SBR. Every route must refuse it rather
+        # than decode the band-limited core; plain LC at the same rates plays.
+        he=root/'implicit-source.m4a'
+        run([a.ffmpeg,'-v','error','-y','-f','lavfi','-i','anoisesrc=d=2:r=96000:a=0.2','-ac','2',
+             '-c:a','aac_at','-profile:a','4','-b:a','128k',he])
+        adts=root/'implicit.aac'
+        run([a.ffmpeg,'-v','error','-y','-i',he,'-c','copy','-f','adts',adts])
+        video=['-f','lavfi','-i','testsrc2=size=160x90:rate=30:duration=2']
+        implicit=[]
+        for suffix in ('mp4','ts','mkv'):
+            path=root/f'implicit-sbr.{suffix}'
+            run([a.ffmpeg,'-v','error','-y',*video,'-i',adts,'-c:v','libx264','-preset','ultrafast','-c:a','copy',path])
+            implicit.append(path)
+        # ffmpeg states the decoded rate as OutputSamplingFrequency, which the
+        # Matroska route already refuses; void it so the access units decide.
+        mkv=bytearray(implicit[-1].read_bytes())
+        at=mkv.find(bytes.fromhex('78b588'))
+        assert at>0
+        mkv[at:at+11]=bytes([0xEC,0x89])+bytes(9)
+        implicit[-1].write_bytes(mkv)
+        core=root/'implicit-sbr-core24.mp4'
+        low=root/'implicit-24.m4a'
+        run([a.ffmpeg,'-v','error','-y','-f','lavfi','-i','anoisesrc=d=2:r=48000:a=0.2','-ac','2',
+             '-c:a','aac_at','-profile:a','4','-b:a','64k',low])
+        run([a.ffmpeg,'-v','error','-y','-i',low,'-c','copy','-f','adts',root/'implicit-24.aac'])
+        run([a.ffmpeg,'-v','error','-y',*video,'-i',root/'implicit-24.aac','-c:v','libx264','-preset','ultrafast','-c:a','copy',core])
+        implicit.append(core)
+        for path in implicit:
+            result=run([a.audio,path,root/'refused.f32','0'],expected=1)
+            assert 'open: HeAacSbrDecoderDelayUnproven' in result.stderr, (path.name,result.stderr)
+            manifest['proofs'].append(dict(file=path.name,refusal='HeAacSbrDecoderDelayUnproven',diagnostic=result.stderr.strip()))
+        for rate,suffix in ((24000,'mp4'),(48000,'ts'),(48000,'mkv')):
+            path=root/f'lc-{rate}.{suffix}'
+            run([a.ffmpeg,'-v','error','-y',*video,'-f','lavfi','-i',f'anoisesrc=d=2:r={rate}:a=0.2','-ac','2',
+                 '-c:v','libx264','-preset','ultrafast','-c:a','aac',path])
+            result=run([a.audio,path,root/'lc.f32','0'])
+            assert 'exact=1 drained=1' in result.stderr, (path.name,result.stderr)
     if a.case in ('all','late-first-picture'):
         # Without a video edit list, B-frame composition offsets put the
         # first picture after time 0; some muxers also write a stray
