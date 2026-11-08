@@ -883,15 +883,16 @@ constexpr double kMaximumStagedAudioSeconds = 0.256;
 // synthesises from the file's own Xing/LAME tag, which describes the ENCODER
 // and nothing else. That is the case, and the only case, where the decoder
 // lead-in still has to be subtracted here. FLAC, LPCM and AAC state a zero
-// lead-in and are untouched by construction.
+// lead-in and are untouched by construction. AC-3 and E-AC-3 are not moved
+// either: their swallowed lead-in is presented media, declared as silence by
+// the audio window (media::firstDecodableAudioTime).
 //
 // Empty means the arithmetic is not exactly representable, which fails closed.
 [[nodiscard]] std::optional<CMTime> audioDecoderLeadInShift(
     const MediaTrackDescriptor& audio,
     const std::filesystem::path& path) noexcept {
-  const std::int64_t leadIn =
-      media::decoderLeadInFrames(
-          audio.codec, audio.audio ? audio.audio->framesPerPacket : 0U);
+  const std::int64_t leadIn = media::unstatedDecoderLeadInShiftFrames(
+      audio.codec, audio.audio ? audio.audio->framesPerPacket : 0U);
   if (leadIn == 0 || !bareAudioElementaryStream(path)) {
     return kCMTimeZero;
   }
@@ -3511,6 +3512,26 @@ struct AVFoundationMediaSource::Impl final
     MediaTime mediaStart{0, 1};
     if (declaredMediaStart.valid() && declaredMediaStart.value > 0) {
       mediaStart = declaredMediaStart;
+    }
+    // The stream-origin generation can publish nothing before the decoder's
+    // first output. An ffmpeg MP4 states AC-3's 256-frame priming as a
+    // millisecond edit of 240 frames, so that output lands 16 frames after the
+    // origin; the span is declared silence like a leading empty edit.
+    if (const auto order = media::compareMediaTime(decodeStart, mediaStart);
+        !order) {
+      return std::nullopt;
+    } else if (*order != media::MediaTimeOrder::Greater) {
+      const auto decodable = media::firstDecodableAudioTime(
+          decodeStart, track->codec,
+          static_cast<std::uint32_t>(track->audio->framesPerPacket),
+          sampleRate);
+      if (!decodable) {
+        return std::nullopt;
+      }
+      if (media::compareMediaTime(*decodable, mediaStart) ==
+          media::MediaTimeOrder::Greater) {
+        mediaStart = *decodable;
+      }
     }
     MediaTime presentationEnd{};
     MediaTime audioEnd{};

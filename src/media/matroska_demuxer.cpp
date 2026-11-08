@@ -246,10 +246,6 @@ struct TrackRuntime {
   // Presentation frame index of ordinal 0 is -audioGridOffsetFrames. It is the
   // codec delay, plus any exact AAC origin displacement.
   std::int64_t audioGridOffsetFrames{0};
-  // Frames after access unit 0's presentation time before the decoder's first
-  // output can exist: an AC-3 track whose mux stated less CodecDelay than
-  // AudioToolbox swallows. The span is declared leading silence.
-  std::uint32_t audioDecoderGapFrames{0};
   // Always assigned by makeAudioDescriptor; the literal keeps this struct
   // declarable above kMaximumAacGridTickResidual, which is 1.
   std::int64_t audioTickResidualTolerance{1};
@@ -1544,8 +1540,8 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   // decoder's first output lands exactly on media zero. A mux that states no
   // CodecDelay (mkvmerge) presents the raw decode from access unit 0's
   // timestamp, so AudioToolbox's first output lands 256 frames late and those
-  // frames -- which no decode can return -- are declared leading silence
-  // (measured against ffmpeg's full decode: every later frame is exact). A
+  // frames -- which no decode can return -- are declared leading silence by
+  // the plan (firstDecodableAudioTime). A
   // CodecDelay above the decoder delay would owe a head trim nothing here has
   // measured, so it falls back. The comparison is made in the frame domain the
   // nanosecond value was rounded from.
@@ -1599,7 +1595,6 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   fields.tailDiscardPaddingNanoseconds = probe.tailDiscardPaddingNanoseconds;
   fillAudioDescriptor(entry, *id, fields, result, runtime);
   result->codecConfigurationKind = MediaCodecConfigurationKind::None;
-  runtime->audioDecoderGapFrames = kAc3DecoderDelayFrames - *codecDelayFrames;
   return true;
 }
 
@@ -3427,8 +3422,8 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       }
       const auto gridStart = audioPacketGridTime({presentationOrigin,
           state.audio->audioFirstOrdinal, state.audio->audioSampleRate, samplesPerAccessUnit});
-      const auto mediaStart = gridStart ? addMediaTime(*gridStart,
-          {state.audio->audioDecoderGapFrames, static_cast<std::int32_t>(state.audio->audioSampleRate)})
+      const auto mediaStart = gridStart ? firstDecodableAudioTime(*gridStart,
+          state.audio->codec, samplesPerAccessUnit, state.audio->audioSampleRate)
           : std::nullopt;
       if (!mediaStart) { outcome.error = MediaRefusalClass::InvalidTimeline; return outcome; }
       plan.audioWindow = {*decode, *presentationStart,
