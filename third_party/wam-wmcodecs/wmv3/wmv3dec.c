@@ -864,12 +864,18 @@ static void hpel_mc(uint8_t *dst, const uint8_t *src, int stride, int size, int 
         }
 }
 
-static void chroma_mc8(uint8_t *dst, const uint8_t *src, int stride, int x, int y, int no_rnd)
+static void chroma_mc8(uint8_t *restrict dst, const uint8_t *restrict src, int stride, int x, int y, int no_rnd)
 {
-    const int A = (8 - x) * (8 - y), B = x * (8 - y), C = (8 - x) * y, D = x * y, r = 32 - 4 * no_rnd;
+    if (!(x | y)) {
+        for (int i = 0; i < 8; i++, dst += stride, src += stride) memcpy(dst, src, 8);
+        return;
+    }
+    /* 16-bit lanes: the weighted sum is at most 64 * 255. */
+    const uint16_t A = (uint16_t)((8 - x) * (8 - y)), B = (uint16_t)(x * (8 - y)), C = (uint16_t)((8 - x) * y),
+                   D = (uint16_t)(x * y), r = (uint16_t)(32 - 4 * no_rnd);
     for (int i = 0; i < 8; i++, dst += stride, src += stride)
         for (int j = 0; j < 8; j++)
-            dst[j] = (uint8_t)((A * src[j] + B * src[j + 1] + C * src[j + stride] + D * src[j + stride + 1] + r) >> 6);
+            dst[j] = (uint8_t)((uint16_t)(A * src[j] + B * src[j + 1] + C * src[j + stride] + D * src[j + stride + 1] + r) >> 6);
 }
 
 static void mc_luma(Wmv3Decoder *d, const Pic *ref, int bx, int by, int mx, int my, int size)
@@ -877,7 +883,9 @@ static void mc_luma(Wmv3Decoder *d, const Pic *ref, int bx, int by, int mx, int 
     int sx = clip(bx + (mx >> 2), -16, d->mb_w * 16), sy = clip(by + (my >> 2), -16, d->mb_h * 16);
     const uint8_t *src = ref->p[0] + (ptrdiff_t)sy * d->ls + sx;
     uint8_t *dst = d->pics[d->cur].p[0] + (ptrdiff_t)by * d->ls + bx;
-    if (d->mspel) {
+    if (!((mx | my) & 3)) {
+        for (int i = 0; i < size; i++) memcpy(dst + (ptrdiff_t)i * d->ls, src + (ptrdiff_t)i * d->ls, (size_t)size);
+    } else if (d->mspel) {
         if (size == 16) wmv3_put_mspel16(dst, src, d->ls, mx & 3, my & 3, d->rnd);
         else wmv3_put_mspel8(dst, src, d->ls, mx & 3, my & 3, d->rnd);
     } else {
@@ -1354,7 +1362,8 @@ static int decode_p_frame(Wmv3Decoder *d, const Pic *ref)
         int16_t (*row)[6][64] = d->rows + (y & 1) * d->mb_w;
         int16_t (*prev)[6][64] = y ? d->rows + ((y - 1) & 1) * d->mb_w : NULL;
         for (int x = 0; x < d->mb_w; x++) {
-            if ((d->mv_type_is_raw || d->skip_is_raw) && left(&d->gb) <= 1) return -1;
+            /* FFmpeg stops (and conceals) when <= 1 bit is left before a
+             * raw-plane MB, which drops a valid final skip bit; decode it. */
             if (decode_p_mb(d, ref, row[x], x, y) < 0 || left(&d->gb) < 0) return -1;
         }
         if (ovl) overlap_p_rows(d, prev, row, y);
