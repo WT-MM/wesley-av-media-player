@@ -269,7 +269,8 @@ leaseSampleBuffer(ScopedSampleBuffer&& owned, std::size_t byteSize) {
   asbd.mFormatID = audio.formatTag;
   asbd.mFormatFlags = audio.formatFlags;
   asbd.mBytesPerPacket = audio.bytesPerPacket;
-  asbd.mFramesPerPacket = audio.framesPerPacket;
+  asbd.mFramesPerPacket =
+      audio.variableFramesPerPacket ? 0U : audio.framesPerPacket;
   asbd.mBytesPerFrame = audio.bytesPerFrame;
   asbd.mChannelsPerFrame = audio.channels;
   asbd.mBitsPerChannel = audio.bitsPerChannel;

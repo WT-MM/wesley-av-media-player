@@ -28,7 +28,8 @@ exactAsbd(const media::MediaAudioFormat &format) noexcept {
   result.mFormatID = format.formatTag;
   result.mFormatFlags = format.formatFlags;
   result.mBytesPerPacket = format.bytesPerPacket;
-  result.mFramesPerPacket = format.framesPerPacket;
+  result.mFramesPerPacket =
+      format.variableFramesPerPacket ? 0U : format.framesPerPacket;
   result.mBytesPerFrame = format.bytesPerFrame;
   result.mChannelsPerFrame = format.channels;
   result.mBitsPerChannel = format.bitsPerChannel;

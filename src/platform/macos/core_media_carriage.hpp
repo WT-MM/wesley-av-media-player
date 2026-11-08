@@ -48,6 +48,9 @@ struct CompressedSampleShape {
   CMItemCount sampleCount{1};
   CMItemCount sizeEntryCount{1};
   const std::size_t* sizes{nullptr};
+  // Audio whose packets differ in frame count: one description per packet,
+  // and CoreMedia derives each packet's stamp from them and timing's start.
+  const AudioStreamPacketDescription* packets{nullptr};
   // Video only. Audio leaves the attachment array as CoreMedia created it: a
   // container may state audio units as non-key by convention, and NotSync
   // would publish a decode dependency the codec does not have.

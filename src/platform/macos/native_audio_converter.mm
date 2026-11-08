@@ -704,7 +704,8 @@ struct NativeAudioConverter::Impl {
         asbd->mFormatID != audio.formatTag ||
         asbd->mFormatFlags != audio.formatFlags ||
         asbd->mBytesPerPacket != audio.bytesPerPacket ||
-        asbd->mFramesPerPacket != audio.framesPerPacket ||
+        asbd->mFramesPerPacket !=
+            (audio.variableFramesPerPacket ? 0U : audio.framesPerPacket) ||
         asbd->mBytesPerFrame != audio.bytesPerFrame ||
         asbd->mChannelsPerFrame != audio.channels ||
         asbd->mBitsPerChannel != audio.bitsPerChannel) {
@@ -740,7 +741,9 @@ struct NativeAudioConverter::Impl {
       const std::uint32_t frames =
           aac.piecewise ? kAacFrames : variableFrames != 0 ? variableFrames : audio.framesPerPacket;
       std::uint64_t nextTotal = 0;
-      if (frames == 0 || !checkedAdd(frameTotal, frames, &nextTotal)) {
+      if (frames == 0 || !checkedAdd(frameTotal, frames, &nextTotal) ||
+          (audio.variableFramesPerPacket &&
+           (variableFrames == 0 || variableFrames > audio.framesPerPacket))) {
         return false;
       }
       packet_frames[index] = frames;
@@ -1220,6 +1223,7 @@ struct NativeAudioConverter::Impl {
   std::int64_t prepared_end_frame{0};
   std::int64_t presentation_ceiling_frame{0};
   std::uint32_t lead_in_frames{0};
+  bool lead_in_is_first_packet{false};
   // See decodedWithinBudget: the frames the decoder never emits, which equals
   // lead_in_frames for every codec except MP3.
   std::uint32_t frame_deficit_frames{0};
@@ -1368,6 +1372,8 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   state.statistics.downmixApplied = state.downmix.admitted();
   state.lead_in_frames =
       decoderLeadInFrames(track.codec, state.audio.framesPerPacket);
+  state.lead_in_is_first_packet =
+      media::mediaCodecFacts(track.codec).decoderLeadInIsOnePacket;
   state.frame_deficit_frames =
       decoderFrameDeficitFrames(track.codec, state.audio.framesPerPacket);
   state.tail_shortfall_bound_frames =
@@ -1597,6 +1603,11 @@ bool NativeAudioConverter::commitPrepared(
   state.peak_retained_payload_bytes =
       std::max(state.peak_retained_payload_bytes, retainedBytes);
   if (!state.has_input_timeline) {
+    // A one-packet lead-in is the generation's first packet, whatever its
+    // length.
+    if (state.lead_in_is_first_packet) {
+      state.lead_in_frames = state.frame_deficit_frames = state.packet_frames[0];
+    }
     // The first PCM frame this generation will see is not the first frame of
     // the first packet: the decoder has already consumed its own lead-in.
     if (!checkedFrameEnd(state.prepared_start_frame, state.lead_in_frames,

@@ -525,6 +525,13 @@ if(APPLE)
         --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
         --ffmpeg "${WAM_TEST_FFMPEG}")
     set_tests_properties(ac3_decoder_lead_in PROPERTIES TIMEOUT 240)
+    add_test(NAME vorbis_variable_block
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/vorbis_variable_block_proof.py"
+        --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
+        --ffmpeg "${WAM_TEST_FFMPEG}"
+        --fixtures "${PROJECT_SOURCE_DIR}/tests/fixtures/vorbis")
+    set_tests_properties(vorbis_variable_block PROPERTIES TIMEOUT 240)
 
     add_test(NAME native_coverage_wiring
       COMMAND "${Python3_EXECUTABLE}"

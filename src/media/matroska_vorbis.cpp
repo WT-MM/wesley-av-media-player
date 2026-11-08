@@ -15,26 +15,71 @@ constexpr std::uint8_t kIdentificationHeaderType{1};
 constexpr std::uint8_t kCommentHeaderType{3};
 constexpr std::uint8_t kSetupHeaderType{5};
 
-// Why equal block sizes are required.
-//
-// A Vorbis packet decodes to (blocksize[n-1] + blocksize[n]) / 4 frames, so a
-// stream whose two block sizes differ has a per-packet duration that depends on
-// its predecessor. This demuxer's audio timeline is built on a constant
-// frames-per-access-unit grid: a container tick is projected onto an access
-// unit ordinal, the ordinal is projected back to an exact presentation time,
-// and seeks convert a PCM frame to an ordinal by division. None of that can
-// represent a variable-duration packet stream.
-//
-// When the two block sizes are equal every packet is exactly blocksize/2
-// frames and the grid is exactly right, so the gate is not a heuristic -- it is
-// the precise condition under which the existing machinery is sound.
-//
-// Measured consequence: ffmpeg's native Vorbis encoder emits 2048/2048 and is
-// admitted; reference libvorbis emits 256/2048 at every quality setting and is
-// refused, falling back to mpv. Closing that gap needs a per-packet duration
-// oracle and a cumulative position table rather than an affine grid.
-constexpr bool kUniformBlockSizeRationale{true};
-static_assert(kUniformBlockSizeRationale);
+// Vorbis I 4.2.4: the setup header ends with mode_count - 1 (6 bits), then
+// per mode a blockflag (1), windowtype (16, zero), transformtype (16, zero) and
+// mapping (8), then the framing bit. Everything before the modes is
+// variable-length, so the table is located backwards from the framing bit, the
+// way liboggz and ffmpeg's vorbis parser do: walk back over 41-bit entries
+// whose fixed fields are zero, and take the largest count the preceding six
+// bits agree with. A false match is caught downstream: every packet duration
+// derived from it is proved against the container timestamps.
+constexpr std::size_t kModeEntryBits{41};
+constexpr std::uint8_t kMaximumModes{64};
+
+[[nodiscard]] bool setupBit(std::span<const std::byte> bytes,
+                            std::size_t bit) noexcept {
+  return ((std::to_integer<std::uint8_t>(bytes[bit / 8U]) >> (bit % 8U)) &
+          1U) != 0U;
+}
+
+[[nodiscard]] std::uint32_t setupField(std::span<const std::byte> bytes,
+                                       std::size_t bit,
+                                       std::size_t width) noexcept {
+  std::uint32_t value = 0;
+  for (std::size_t index = 0; index < width; ++index) {
+    value |= static_cast<std::uint32_t>(setupBit(bytes, bit + index)) << index;
+  }
+  return value;
+}
+
+[[nodiscard]] bool parseModeTable(std::span<const std::byte> setup,
+                                  VorbisConfiguration* configuration) noexcept {
+  // The type byte and magic precede every field.
+  constexpr std::size_t kFloorBits{7U * 8U};
+  std::size_t framing = setup.size() * 8U;
+  while (framing > kFloorBits && !setupBit(setup, framing - 1U)) {
+    --framing;
+  }
+  if (framing <= kFloorBits) {
+    return false;
+  }
+  const std::size_t end = framing - 1U;
+  std::size_t count = 0;
+  std::size_t found = 0;
+  for (std::size_t entry = end;
+       entry >= kFloorBits + kModeEntryBits + 6U && count < kMaximumModes;) {
+    entry -= kModeEntryBits;
+    if (setupField(setup, entry + 1U, 16U) != 0U ||
+        setupField(setup, entry + 17U, 16U) != 0U ||
+        setupField(setup, entry + 33U, 8U) >= kMaximumModes) {
+      break;
+    }
+    ++count;
+    if (setupField(setup, entry - 6U, 6U) + 1U == count) {
+      found = count;
+    }
+  }
+  if (found == 0) {
+    return false;
+  }
+  configuration->modeCount = static_cast<std::uint8_t>(found);
+  for (std::size_t mode = 0; mode < found; ++mode) {
+    if (setupBit(setup, end - kModeEntryBits * (found - mode))) {
+      configuration->longModes |= std::uint64_t{1} << mode;
+    }
+  }
+  return true;
+}
 
 [[nodiscard]] std::uint32_t readLittleEndian32(std::span<const std::byte> bytes,
                                                std::size_t offset) noexcept {
@@ -167,14 +212,37 @@ parseVorbisCodecPrivate(std::span<const std::byte> bytes) noexcept {
       configuration.blockSize0 > configuration.blockSize1) {
     return failure(VorbisAdmissionError::InvalidBlockSize);
   }
-  if (configuration.blockSize0 != configuration.blockSize1) {
-    return failure(VorbisAdmissionError::VariableBlockSize);
-  }
   if ((std::to_integer<std::uint8_t>(identification[29]) & 0x01U) == 0U) {
     return failure(VorbisAdmissionError::MissingFramingBit);
   }
+  if (configuration.variableBlockSize() &&
+      !parseModeTable(headers[2], &configuration)) {
+    return failure(VorbisAdmissionError::UnreadableModeTable);
+  }
 
   return VorbisAdmission{VorbisAdmissionError::None, configuration};
+}
+
+std::optional<std::uint32_t>
+vorbisPacketBlockSize(const VorbisConfiguration &configuration,
+                      std::byte first) noexcept {
+  const auto byte = std::to_integer<std::uint8_t>(first);
+  if ((byte & 1U) != 0U) {
+    return std::nullopt;
+  }
+  if (!configuration.variableBlockSize()) {
+    return configuration.blockSize0;
+  }
+  // ilog(modeCount - 1) bits; at most six, so the first byte holds them.
+  const unsigned bits = static_cast<unsigned>(
+      std::bit_width(static_cast<unsigned>(configuration.modeCount - 1U)));
+  const unsigned mode = (byte >> 1U) & ((1U << bits) - 1U);
+  if (mode >= configuration.modeCount) {
+    return std::nullopt;
+  }
+  return ((configuration.longModes >> mode) & 1U) != 0U
+             ? configuration.blockSize1
+             : configuration.blockSize0;
 }
 
 static_assert(kMaximumVorbisPacketFrames == 4'096U,
