@@ -2221,8 +2221,12 @@ class ProductionGeneration final : public AVFoundationGeneration {
           result.error = "AVFoundation could not locate a bounded sync start";
           return result;
         }
+        const CMTime located = decodeStart;
         decodeStart = syncStartWithinTimelineWindow(decodeStart,
                                                     *request_.target);
+        if (CMTimeCompare(located, decodeStart) > 0) {
+          video_origin_ = located;
+        }
 
       }
       const auto exactStart = exactMediaTime(decodeStart);
@@ -2508,6 +2512,28 @@ class ProductionGeneration final : public AVFoundationGeneration {
   [[nodiscard]] AVFoundationCopiedSample
   copyNextVideoSample() override {
     AVFoundationCopiedSample copied = copyNext(video_output_);
+    bool keyFrame = true;
+    // A start clamped up to the video origin reads from the target, so the
+    // reader also returns any non-sync access unit decoded before the first
+    // sync sample (a stray SEI-only unit some muxers write first). Nothing
+    // before that sync sample decodes; drop it.
+    while (CMTIME_IS_NUMERIC(video_origin_) &&
+           copied.status == AVFoundationSampleReadStatus::Sample &&
+           copied.sample != nullptr &&
+           sampleIsKeyFrame(copied.sample, &keyFrame) && !keyFrame &&
+           CMTimeCompare(CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(copied.sample),
+                                   video_movie_shift_),
+                         video_origin_) < 0) {
+      CFRelease(copied.sample);
+      copied = copyNext(video_output_);
+    }
+    // A leading timed marker carries no access unit; the origin waits for
+    // the first real one.
+    if (copied.status != AVFoundationSampleReadStatus::Sample ||
+        copied.sample == nullptr ||
+        CMSampleBufferGetNumSamples(copied.sample) > 0) {
+      video_origin_ = kCMTimeInvalid;
+    }
     if (copied.status != AVFoundationSampleReadStatus::Sample ||
         copied.sample == nullptr) {
       return copied;
@@ -3075,6 +3101,9 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // container with no edit list, and for any edit shape that is not a single
   // constant displacement -- both of which leave video stamps unshifted.
   CMTime video_movie_shift_{kCMTimeZero};
+  // The located video sync start when it lies after the target the
+  // generation was clamped to; invalid once the first video sample is read.
+  CMTime video_origin_{kCMTimeInvalid};
   // Movie time at which this generation's presentation must end when the
   // selected video runs past the end of the selected audio. Invalid means the
   // generation ends at its own audio end, which is every ordinary source.

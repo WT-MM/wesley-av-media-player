@@ -73,6 +73,62 @@ def test_ebml_size_growth():
     assert len(rewritten) == 147
 
 
+def prepend_stray_video_sample(data):
+    """Give the video track a leading non-sync access unit: the first
+    sample's own SEI NAL, one frame earlier and in its own chunk (moov follows
+    mdat, so no payload moves)."""
+    import struct
+    def boxes(blob):
+        offset = 0
+        while offset < len(blob):
+            size, kind = struct.unpack_from('>I4s', blob, offset)
+            yield kind, blob[offset+8:offset+size]
+            offset += size
+    def table(payload, width, head=b'', each=lambda e: e, skip=0):
+        count = struct.unpack_from('>I', payload, 4+skip)[0]
+        at = 8+skip
+        rows = [each(payload[at+i*width:at+(i+1)*width]) for i in range(count)]
+        return payload[:4+skip] + struct.pack('>I', count+(1 if head else 0)) + head + b''.join(rows)
+    def bump(e):
+        return struct.pack('>I', struct.unpack_from('>I', e)[0]+1) + e[4:]
+    video_stbl = None
+    def find(blob, video=False):
+        nonlocal video_stbl
+        for kind, payload in boxes(blob):
+            if kind == b'trak':
+                video = b'vide' in payload
+            if kind == b'stbl' and video:
+                video_stbl = dict(boxes(payload))
+            elif kind in (b'moov', b'trak', b'mdia', b'minf'):
+                find(payload, video)
+    find(data)
+    first = struct.unpack_from('>I', video_stbl[b'stco'], 8)[0]
+    assert data[first+4] & 0x1f == 6, 'first NAL is not SEI'
+    stray = 4 + struct.unpack_from('>I', data, first)[0]
+    delta = struct.unpack_from('>I', video_stbl[b'stts'], 12)[0]
+    edits = {b'stts': lambda p: table(p, 8, struct.pack('>II', 1, delta)),
+             b'ctts': lambda p: table(p, 8, struct.pack('>I', 1) + p[12:16]),
+             b'stss': lambda p: table(p, 4, each=bump),
+             b'stsc': lambda p: table(p, 12, struct.pack('>III', 1, 1, 1), bump),
+             b'stsz': lambda p: table(p, 4, struct.pack('>I', stray), skip=4),
+             b'stco': lambda p: table(p, 4, struct.pack('>I', first))}
+    def rewrite(blob, video=False):
+        out = bytearray()
+        for kind, payload in boxes(blob):
+            if kind == b'trak':
+                video = b'vide' in payload
+            if kind in (b'moov', b'trak', b'mdia', b'minf', b'stbl'):
+                payload = rewrite(payload, video)
+            elif video and kind in edits:
+                payload = edits[kind](payload)
+            elif video and kind == b'mdhd':
+                payload = bytearray(payload)
+                assert payload[0] == 0
+                struct.pack_into('>I', payload, 16, struct.unpack_from('>I', payload, 16)[0] + delta)
+            out += struct.pack('>I4s', len(payload)+8, kind) + payload
+        return bytes(out)
+    return rewrite(data)
+
 def main():
     test_ebml_size_growth()
     args = argparse.ArgumentParser()
@@ -254,6 +310,21 @@ def main():
         assert 'track 1 (A_AAC): HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
         assert 'track 2 (A_AAC): HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
         manifest['proofs'].append(dict(file=combined.name,asset_sha256=hashlib.sha256(combined.read_bytes()).hexdigest(),diagnostic=result.stdout.strip()))
+    if a.case in ('all','late-first-picture'):
+        # Without a video edit list, B-frame composition offsets put the
+        # first picture after time 0; some muxers also write a stray
+        # non-sync access unit first. Both must open at 0, and preview there,
+        # from the first sync sample.
+        late=root/'late-first-picture.mp4'
+        run([a.ffmpeg,'-v','error','-y','-f','lavfi','-i','testsrc2=size=160x90:rate=30:duration=2',
+             '-f','lavfi','-i','sine=f=440:d=2:r=48000','-c:v','libx264','-bf','2','-c:a','aac',
+             '-use_editlist','0',late])
+        stray=root/'stray-first-sample.mp4'
+        stray.write_bytes(prepend_stray_video_sample(late.read_bytes()))
+        for path in (late,stray):
+            result=run([a.source,path,0,'preview'])
+            assert 'preview_status=' in result.stdout, result.stdout
+            manifest['proofs'].append(dict(file=path.name,diagnostic=result.stdout.strip()))
     (root/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 
 if __name__=='__main__': main()
