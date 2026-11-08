@@ -503,6 +503,21 @@ if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
     "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/SOURCE_DISTRIBUTION.md")
 endif()
 
+# The LGPL Windows Media decoders: lazily dlopened from Frameworks, shipped
+# with their license and notice.
+if(WAM_ENABLE_AVFORMAT_STAGE)
+  add_dependencies(wam wam_wmcodecs)
+  add_custom_command(TARGET wam POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:wam>/Contents/Frameworks"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:wam_wmcodecs>"
+      "$<TARGET_BUNDLE_DIR:wam>/Contents/Frameworks/$<TARGET_FILE_NAME:wam_wmcodecs>"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/wam-wmcodecs"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_SOURCE_DIR}/third_party/wam-wmcodecs/LICENSE"
+      "${CMAKE_SOURCE_DIR}/third_party/wam-wmcodecs/NOTICE"
+      "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/wam-wmcodecs/")
+endif()
+
 set(CPACK_PACKAGE_NAME "WAM")
 set(CPACK_PACKAGE_VENDOR "Wesley Maa")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

@@ -13,7 +13,9 @@ notices continue to apply; WAM does not relicense them.
   codecs: https://ffmpeg.org/legal.html
 - wam-wmcodecs (`third_party/wam-wmcodecs`, built as `libwam-wmcodecs.dylib`)
   — LGPL-2.1-or-later. WAM's WMA v2 decoder, derived from FFmpeg's
-  reverse-engineered WMA decoder and tables; see its NOTICE.
+  reverse-engineered WMA decoder and tables; see its NOTICE. The app ships it
+  in `Contents/Frameworks` and loads it at run time (never linked), with its
+  LICENSE and NOTICE in `Contents/Resources/wam-wmcodecs`.
 - libvpx — BSD-3-Clause, with the accompanying patent grant. WAM links it
   directly for the software VP8 decode stage:
   https://github.com/webmproject/libvpx
