@@ -519,6 +519,12 @@ if(APPLE)
       native_coverage_audio_probe.mm)
     target_link_libraries(wam_native_coverage_audio_probe PRIVATE
       wam_macos_native_backend)
+    add_test(NAME ac3_decoder_lead_in
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/ac3_decoder_lead_in_proof.py"
+        --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
+        --ffmpeg "${WAM_TEST_FFMPEG}")
+    set_tests_properties(ac3_decoder_lead_in PROPERTIES TIMEOUT 240)
 
     add_test(NAME native_coverage_wiring
       COMMAND "${Python3_EXECUTABLE}"

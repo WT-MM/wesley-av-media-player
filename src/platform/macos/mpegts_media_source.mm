@@ -12,6 +12,7 @@
 #include "platform/macos/mpegts_sample_builder.hpp"
 #include "platform/macos/native_custom_source_core.hpp"
 
+#include "media/audio_codec_timing.hpp"
 #include "media/media_codec_facts.hpp"
 
 #import <CoreMedia/CoreMedia.h>
@@ -23,8 +24,10 @@
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace wam::macos {
@@ -41,18 +44,18 @@ using media::mpegts::MpegTsCompressedSample;
 using media::mpegts::MpegTsGenerationPlan;
 
 // Frames Apple's decoder swallows at the head of a track before it emits its
-// first PCM frame: media::decoderLeadInFrames, the same function the converter
-// uses. The session proves the generation by checking that the converter's
-// first published frame lands exactly on the presentation floor: the source
-// states the decode start, the converter adds its lead-in, and the two meet.
+// first PCM frame. The session proves the generation by checking that the
+// converter's first published frame lands exactly on the presentation floor:
+// the source states the decode start, the converter adds its lead-in, and the
+// two meet.
 //
-// Matroska gets this for free -- it carries CodecDelay, and its demuxer places
-// access unit 0 that many frames before the presentation origin. A transport
-// stream states nothing of the kind: a PES header carries a presentation time
-// and no delay field at all, so the shift has to be applied here or the first
-// published frame lands `leadIn` frames late and the whole generation is
-// refused. AAC swallows nothing -- its encoder priming is real audio at the
-// head of the elementary stream that the PES timestamps already describe.
+// A PES header carries a presentation time and no delay field, and for AC-3
+// and E-AC-3 that time is where ffmpeg and mpv present the decoder's very first
+// output -- the frames Apple's decoder swallows are presented media. So the
+// anchor stays on the PES stamp and the stream-origin generation declares the
+// swallowed span as silence (media::firstDecodableAudioTime). Only a lead-in
+// that is NOT presented media would move the anchor
+// (media::unstatedDecoderLeadInShiftFrames). AAC swallows nothing.
 
 // Nearest audio frame ordinal to a container timestamp, computed in 128 bits.
 //
@@ -131,17 +134,165 @@ struct MpegTsMediaSource::Impl final
   // first audio unit anchors it.
   std::optional<std::int64_t> audioNextFrame;
 
-  [[nodiscard]] std::int64_t audioLeadInFrames() const noexcept {
-    return media::decoderLeadInFrames(
+  [[nodiscard]] std::int64_t audioAnchorShiftFrames() const noexcept {
+    return media::unstatedDecoderLeadInShiftFrames(
         audioCodec, static_cast<std::uint32_t>(audioFramesPerPacket));
   }
 
   // Reset-not-freed workspaces. `readNext` allocates only when a payload is
   // larger than everything before it in this generation.
   std::vector<std::byte> payloadWorkspace;
+  std::vector<std::byte> audioWorkspace;
   MpegTsAudioFrameLayout audioLayout;
   media::codec::AacImplicitSbrCheck aacSbrCheck;
   bool aacSbrCheckArmed{false};
+  // The leading bytes of an ADTS access unit that commenced in an earlier PES
+  // and continues in the next one. At most one partial frame.
+  std::vector<std::byte> audioCarry;
+
+  // Gathers the next whole audio access units, joining PES payloads where an
+  // ADTS frame straddles a PES boundary, and states their exact presentation
+  // time on the source's frame ordinal.
+  //
+  // The audio timeline is the source's own exact frame ordinal, never the
+  // container's rounded 90 kHz stamp. The first access unit of a generation
+  // seeds the ordinal from its PES timestamp; every later PES timestamp is
+  // checked against the ordinal of the access unit it describes and the units
+  // are published from the ordinal. 13818-1 2.4.3.7 says which unit that is:
+  // the FIRST one COMMENCING in the PES, which is not the first one completed
+  // in it when the PES opens with the rest of a carried frame.
+  [[nodiscard]] bool gatherAudio(const MpegTsCompressedSample& first,
+                                 MediaTime& presentation,
+                                 std::span<const std::byte>& units,
+                                 std::string* error) {
+    const bool adts = audioCodec == MediaCodec::Aac && latmConfig == nullptr;
+    const auto rate = static_cast<std::uint32_t>(audioSampleRate);
+    const auto unitFrames = static_cast<std::uint32_t>(audioFramesPerPacket);
+    MpegTsCompressedSample raw = first;
+    while (true) {
+      const std::size_t carried = audioCarry.size();
+      if (raw.payloadBytes == 0 ||
+          raw.payloadBytes > limits.maximumAudioSampleBytes) {
+        assignError(error, "mpeg-ts sample exceeds native memory bounds");
+        return false;
+      }
+      audioWorkspace.resize(carried + raw.payloadBytes);
+      std::copy(audioCarry.begin(), audioCarry.end(), audioWorkspace.begin());
+      media::MediaRefusalClass copyError = media::MediaRefusalClass::None;
+      if (!assetContext->asset()->copyAccessUnit(
+              raw, std::span(audioWorkspace).subspan(carried), cancellation(),
+              &copyError)) {
+        if (copyError == media::MediaRefusalClass::Cancelled) {
+          publishCancellation(generation);
+          assignError(error, "mpeg-ts payload copy was cancelled");
+        } else if (error != nullptr) {
+          *error = media::refusalMessage("mpeg-ts payload gather failed",
+                                         copyError);
+        }
+        return false;
+      }
+      std::span<const std::byte> joined(audioWorkspace);
+      if (adts && !audioNextFrame && carried == 0) {
+        // A generation may open on a PES that begins inside an access unit it
+        // never saw start. That fragment is not audio this generation can
+        // decode; the first unit commencing after it is the anchor.
+        const std::optional<std::size_t> start = findAdtsAccessUnitStart(
+            joined, rate, audioChannels, unitFrames, audioLayout);
+        joined = joined.subspan(start.value_or(joined.size()));
+      }
+      std::size_t tail = joined.size();
+      audioLayout.reset();
+      if (!joined.empty() &&
+          !layOutMpegTsAudioFrames(joined, audioCodec, latmConfig, rate,
+                                   audioChannels, unitFrames, audioLayout,
+                                   error, adts ? &tail : nullptr)) {
+        return false;
+      }
+      // Ordinal, within `joined`, of the first unit commencing in THIS PES:
+      // everything before byte `carried` began in an earlier one.
+      std::optional<std::size_t> commencing;
+      for (std::size_t i = 0; i < audioLayout.count; ++i) {
+        if (audioLayout.sourceOffset[i] >= carried) {
+          commencing = i;
+          break;
+        }
+      }
+      if (!commencing && tail < joined.size() && tail >= carried) {
+        commencing = audioLayout.count;
+      }
+      if (commencing) {
+        if (!raw.presentationTime.valid() || raw.presentationTime.value < 0) {
+          assignError(error, "mpeg-ts sample has no exact nonnegative timing");
+          return false;
+        }
+        const auto pesFrame = nearestAudioFrame(raw.presentationTime, rate);
+        if (!pesFrame) {
+          assignError(error, "mpeg-ts audio timestamp is not representable");
+          return false;
+        }
+        // The anchor is the PES timestamp, less any lead-in that is not
+        // presented media (see the note at the top of this file).
+        const std::int64_t stated = *pesFrame - audioAnchorShiftFrames();
+        if (!audioNextFrame) {
+          audioNextFrame = stated;
+        } else {
+          // Tolerance is one whole access unit. Anything larger is a dropped
+          // or duplicated PES rather than muxer rounding, and continuing past
+          // it would publish audio the converter's exact-contiguity check
+          // would reject one sample later with a far less useful message.
+          const std::int64_t drift =
+              stated - *audioNextFrame -
+              static_cast<std::int64_t>(*commencing) * audioFramesPerPacket;
+          if (drift > audioFramesPerPacket || drift < -audioFramesPerPacket) {
+            assignError(error,
+                        "mpeg-ts audio access units are not contiguous on the "
+                        "codec frame grid");
+            return false;
+          }
+        }
+      }
+      audioCarry.assign(joined.begin() + static_cast<std::ptrdiff_t>(tail),
+                        joined.end());
+      if (audioLayout.count > 0) {
+        units = joined.first(tail);
+        break;
+      }
+      // No access unit completed yet: the next PES must finish it.
+      const media::mpegts::MpegTsCursorReadResult next =
+          audioCursor->readNext(cancellation());
+      if (std::holds_alternative<media::mpegts::MpegTsCursorCancelled>(next) ||
+          isCancelled()) {
+        publishCancellation(generation);
+        assignError(error, "mpeg-ts generation was cancelled");
+        return false;
+      }
+      if (const auto* failed =
+              std::get_if<media::mpegts::MpegTsCursorFailure>(&next)) {
+        if (error != nullptr) {
+          *error = media::refusalMessage(failed->message.c_str(),
+                                         failed->error);
+        }
+        return false;
+      }
+      const auto* following = std::get_if<MpegTsCompressedSample>(&next);
+      if (following == nullptr) {
+        assignError(error, "mpeg-ts audio ends inside an access unit");
+        return false;
+      }
+      if (following->track != first.track || following->kind != first.kind) {
+        assignError(error, "mpeg-ts cursor emitted an unselected track");
+        return false;
+      }
+      raw = *following;
+    }
+    const auto time = audioFrameTime(*audioNextFrame, rate);
+    if (!time) {
+      assignError(error, "mpeg-ts audio frame ordinal left the time domain");
+      return false;
+    }
+    presentation = *time;
+    return true;
+  }
 
   [[nodiscard]] std::optional<StagedSample> makeHead(
       const MpegTsCompressedSample& raw, bool video, std::string* error) {
@@ -162,56 +313,20 @@ struct MpegTsMediaSource::Impl final
     // audio timeline is not: a lead-in codec's access unit 0 legitimately
     // presents before media time zero, exactly as an Opus track's does in
     // Matroska, and the window proof is what bounds it.
-    if (!raw.presentationTime.valid() || raw.presentationTime.value < 0) {
-      assignError(error, "mpeg-ts sample has no exact nonnegative timing");
-      return std::nullopt;
-    }
-    const std::size_t bytes = raw.payloadBytes;
-    if (bytes == 0 ||
-        (video && bytes > limits.maximumVideoSampleBytes) ||
-        (!video && bytes > limits.maximumAudioSampleBytes)) {
-      assignError(error, "mpeg-ts sample exceeds native memory bounds");
-      return std::nullopt;
-    }
-
-    // The audio timeline is the source's own exact frame ordinal, never the
-    // container's rounded 90 kHz stamp. The first unit of a generation seeds
-    // the ordinal from that stamp; every later unit is checked against it and
-    // published from the ordinal.
     MediaTime audioPresentation{};
-    if (!video) {
-      const auto pesFrame = nearestAudioFrame(
-          raw.presentationTime, static_cast<std::uint32_t>(audioSampleRate));
-      if (!pesFrame) {
-        assignError(error, "mpeg-ts audio timestamp is not representable");
+    std::span<const std::byte> audioUnits;
+    if (video) {
+      if (!raw.presentationTime.valid() || raw.presentationTime.value < 0) {
+        assignError(error, "mpeg-ts sample has no exact nonnegative timing");
         return std::nullopt;
       }
-      if (!audioNextFrame) {
-        // The anchor is the PES timestamp MINUS the decoder lead-in, so that
-        // once the converter has swallowed that lead-in its first published
-        // frame lands exactly on the presentation floor.
-        audioNextFrame = *pesFrame - audioLeadInFrames();
-      } else {
-        // Tolerance is one whole access unit. Anything larger is a dropped or
-        // duplicated PES rather than muxer rounding, and continuing past it
-        // would publish audio the converter's exact-contiguity check would
-        // reject one sample later with a far less useful message.
-        const std::int64_t drift =
-            *pesFrame - audioLeadInFrames() - *audioNextFrame;
-        if (drift > audioFramesPerPacket || drift < -audioFramesPerPacket) {
-          assignError(error,
-                      "mpeg-ts audio access units are not contiguous on the "
-                      "codec frame grid");
-          return std::nullopt;
-        }
-      }
-      const auto time = audioFrameTime(
-          *audioNextFrame, static_cast<std::uint32_t>(audioSampleRate));
-      if (!time) {
-        assignError(error, "mpeg-ts audio frame ordinal left the time domain");
+      if (raw.payloadBytes == 0 ||
+          raw.payloadBytes > limits.maximumVideoSampleBytes) {
+        assignError(error, "mpeg-ts sample exceeds native memory bounds");
         return std::nullopt;
       }
-      audioPresentation = *time;
+    } else if (!gatherAudio(raw, audioPresentation, audioUnits, error)) {
+      return std::nullopt;
     }
 
     MpegTsSampleBuildInputs inputs;
@@ -223,6 +338,7 @@ struct MpegTsMediaSource::Impl final
     inputs.video = video;
     inputs.workspace = &payloadWorkspace;
     inputs.audioLayout = video ? nullptr : &audioLayout;
+    inputs.audioPayload = audioUnits;
     inputs.audioSampleRate = static_cast<std::uint32_t>(audioSampleRate);
     inputs.audioChannels = audioChannels;
     inputs.audioFramesPerPacket =
@@ -324,6 +440,7 @@ struct MpegTsMediaSource::Impl final
     audioChannels = 0;
     audioNextFrame.reset();
     aacSbrCheckArmed = false;
+    audioCarry.clear();
     audioCodec = MediaCodec::Unknown;
     latmConfig = nullptr;
     videoCodec = MediaCodec::Unknown;
@@ -403,6 +520,27 @@ struct MpegTsMediaSource::Impl final
       return false;
     }
     window.presentationStart = *floor;
+    // The stream-origin generation can publish nothing before the decoder's
+    // first output; the span up to it is declared silence.
+    const auto decodeAgainstZero =
+        media::compareMediaTime(window.decodeStart, MediaTime{0, 1});
+    if (decodeAgainstZero && *decodeAgainstZero != MediaTimeOrder::Greater) {
+      const auto decodable = media::firstDecodableAudioTime(
+          window.decodeStart, audioCodec,
+          static_cast<std::uint32_t>(audioFramesPerPacket),
+          static_cast<std::uint32_t>(audioSampleRate));
+      if (!decodable) {
+        assignError(error, "mpeg-ts audio decoder lead-in is not exact");
+        return false;
+      }
+      if (decodable->value > 0) {
+        window.mediaStart = *decodable;
+        if (media::compareMediaTime(*decodable, window.presentationStart) ==
+            MediaTimeOrder::Greater) {
+          window.presentationStart = *decodable;
+        }
+      }
+    }
     const auto decodeAgainstFloor =
         media::compareMediaTime(window.decodeStart, window.presentationStart);
     if (!decodeAgainstFloor ||
@@ -467,7 +605,10 @@ struct MpegTsMediaSource::Impl final
     return true;
   }
 
-  void resetContainerFacts() noexcept { audioNextFrame.reset(); }
+  void resetContainerFacts() noexcept {
+    audioNextFrame.reset();
+    audioCarry.clear();
+  }
 };
 
 MpegTsMediaSource::MpegTsMediaSource() : impl_(std::make_unique<Impl>()) {

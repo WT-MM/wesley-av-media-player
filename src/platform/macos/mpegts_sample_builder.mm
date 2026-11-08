@@ -32,8 +32,12 @@ bool layOutMpegTsAudioFrames(
     const media::mpegts::LatmStreamMuxConfig* latmConfig,
     std::uint32_t sampleRate, std::uint32_t channels,
     std::uint32_t framesPerPacket, MpegTsAudioFrameLayout& layout,
-    std::string* error) noexcept {
+    std::string* error, std::size_t* partialTail) noexcept {
   layout.reset();
+  // Only ADTS may end on a partial frame; see the header.
+  const bool tailAllowed =
+      partialTail != nullptr && codec == MediaCodec::Aac && latmConfig == nullptr;
+  std::size_t tail = payload.size();
   if (payload.empty() || sampleRate == 0 || channels == 0 ||
       framesPerPacket == 0) {
     assignError(error, "mpeg-ts audio payload has no admitted frame grid");
@@ -93,6 +97,17 @@ bool layOutMpegTsAudioFrames(
     } else if (codec == MediaCodec::Aac) {
       AdtsHeader header{};
       if (!media::mpegts::parseAdtsHeader(rest, header)) {
+        // Fewer bytes than a header: the next PES must complete it, and the
+        // walk over the joined bytes then proves it is one.
+        if (tailAllowed && rest.size() < kAdtsHeaderBytes) {
+          tail = cursor;
+        }
+        break;
+      }
+      if (tailAllowed && header.frameBytes > rest.size() &&
+          header.sampleRate == sampleRate &&
+          header.channelConfiguration == channels) {
+        tail = cursor;
         break;
       }
       frameBytes = header.frameBytes;
@@ -176,6 +191,10 @@ bool layOutMpegTsAudioFrames(
     ++layout.count;
     cursor += frameBytes;
   }
+  if (tailAllowed && cursor == tail) {
+    *partialTail = tail;
+    return true;
+  }
   if (layout.count == 0 || cursor != payload.size()) {
     // See the header: a trailing remainder is refused rather than dropped.
     assignError(error,
@@ -184,6 +203,29 @@ bool layOutMpegTsAudioFrames(
     return false;
   }
   return true;
+}
+
+std::optional<std::size_t> findAdtsAccessUnitStart(
+    std::span<const std::byte> payload, std::uint32_t sampleRate,
+    std::uint32_t channels, std::uint32_t framesPerPacket,
+    MpegTsAudioFrameLayout& layout) noexcept {
+  const std::size_t limit = std::min(payload.size(), kMaximumAdtsFrameBytes);
+  for (std::size_t start = 0; start < limit; ++start) {
+    AdtsHeader header{};
+    if (!media::mpegts::parseAdtsHeader(payload.subspan(start), header) ||
+        header.sampleRate != sampleRate ||
+        header.channelConfiguration != channels) {
+      continue;
+    }
+    std::size_t tail = 0;
+    if (layOutMpegTsAudioFrames(payload.subspan(start), MediaCodec::Aac,
+                                nullptr, sampleRate, channels, framesPerPacket,
+                                layout, nullptr, &tail)) {
+      return start;
+    }
+  }
+  layout.reset();
+  return std::nullopt;
 }
 
 MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
@@ -278,27 +320,11 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     videoSizes[0] = payloadBytes;
     sizePointer = videoSizes.data();
   } else {
-    if (inputs.audioLayout == nullptr || inputs.workspace == nullptr) {
-      assignError(error, "mpeg-ts audio framing has no workspace");
+    if (inputs.audioLayout == nullptr || inputs.audioPayload.empty()) {
+      assignError(error, "mpeg-ts audio framing has no gathered payload");
       return MpegTsSampleBuildStatus::Failed;
     }
-    std::vector<std::byte>& workspace = *inputs.workspace;
-    if (workspace.size() < payloadBytes) {
-      workspace.resize(payloadBytes);
-    }
-    const std::span<std::byte> gathered(workspace.data(), payloadBytes);
-    MediaRefusalClass copyError = MediaRefusalClass::None;
-    if (!inputs.asset->copyAccessUnit(sample, gathered, inputs.cancellation,
-                                      &copyError)) {
-      if (copyError == MediaRefusalClass::Cancelled) {
-        return MpegTsSampleBuildStatus::Cancelled;
-      }
-      if (error != nullptr) {
-        *error = media::refusalMessage("mpeg-ts payload gather failed",
-                                         copyError);
-      }
-      return MpegTsSampleBuildStatus::Failed;
-    }
+    const std::span<const std::byte> gathered = inputs.audioPayload;
     MpegTsAudioFrameLayout& layout = *inputs.audioLayout;
     if (!layOutMpegTsAudioFrames(gathered, inputs.codec, inputs.latmConfig,
                                  inputs.audioSampleRate, inputs.audioChannels,

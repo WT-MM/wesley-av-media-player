@@ -181,6 +181,14 @@ struct MediaCodecFacts {
   // zero; see audioCodecPrecedesStreamOrigin for what that relaxes.
   bool precedesStreamOrigin{false};
 
+  // The lead-in Apple's decoder swallows is part of the stream's presentation:
+  // ffmpeg and mpv play those frames from access unit 0's own timestamp. A
+  // container that states the lead-in as a delay (Matroska CodecDelay, an
+  // MP4 edit) moves access unit 0 early by it; one that states nothing puts
+  // the decoder's first output leadIn frames after access unit 0. See
+  // firstDecodableAudioTime.
+  bool decoderLeadInIsPresentedMedia{false};
+
   // The reorder depth of a video codec whose configuration record states none,
   // a property of the codec rather than of the stream. H.264, HEVC and AV1
   // derive theirs from the record and state zero here.
@@ -286,23 +294,25 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      .configurationKind = MediaCodecConfigurationKind::VpcC,
      .carriesConfigurationRecord = true, .statesCodedSampleFormat = true,
      .previewScrubAdmitted = true},
-    // AC-3 and E-AC-3 state a 256-frame CodecDelay -- the decoder delay
-    // Apple's decoder also swallows -- so access unit 0 presents 256 frames
-    // early.
+    // AC-3 and E-AC-3: Apple's decoder swallows 256 leading frames that the
+    // stream presents (the encoder's priming). ffmpeg states them as a
+    // 256-frame CodecDelay, so access unit 0 presents 256 frames early.
     {.codec = MediaCodec::Ac3, .kind = MediaCodecKind::Audio,
      .decoderLeadInFrames =
          static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames),
      .coreAudioFormatTag = 0x61632D33U /* 'ac-3' */,
      .decoderTailShortfallFrames =
          static_cast<std::uint16_t>(codec::kAc3DecoderTailShortfallFrames),
-     .precedesStreamOrigin = true},
+     .precedesStreamOrigin = true,
+     .decoderLeadInIsPresentedMedia = true},
     {.codec = MediaCodec::Eac3, .kind = MediaCodecKind::Audio,
      .decoderLeadInFrames =
          static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames),
      .coreAudioFormatTag = 0x65632D33U /* 'ec-3' */,
      .decoderTailShortfallFrames =
          static_cast<std::uint16_t>(codec::kAc3DecoderTailShortfallFrames),
-     .precedesStreamOrigin = true},
+     .precedesStreamOrigin = true,
+     .decoderLeadInIsPresentedMedia = true},
     // The final FLAC frame carries at least one sample and at most a whole
     // block. FLAC states no CodecDelay and its decoder swallows nothing, so
     // its access unit 0 is media frame 0 exactly: it deliberately does NOT

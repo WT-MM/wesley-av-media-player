@@ -100,7 +100,11 @@ int main(int argc, char **argv) {
   timeline.presentationFloor = origin ? *audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track->audio->sampleRate)) : window.presentationStart;
   timeline.startsAtStreamOrigin = window.startsAtStreamOrigin;
   timeline.presentationCeiling = track->duration;
-  timeline.trimAfterCeiling = true;
+  // A transport stream states durations on its 90 kHz clock, which is not a
+  // whole audio frame; such a track plays to EOS untrimmed.
+  timeline.trimAfterCeiling = exactAudioFrameIndex(
+      track->duration, static_cast<std::uint32_t>(track->audio->sampleRate))
+                                  .has_value();
   std::string error;
   if (!converter.configure(*track, generation, timeline, &error)) {
     std::fprintf(stderr, "configure: %s\n", error.c_str());
@@ -180,10 +184,12 @@ int main(int argc, char **argv) {
               targetFrame ==
           frames;
   std::fprintf(stderr,
-               "track=%u rate=%.0f frames=%llu first=%lld decoded=%llu "
-               "trim=%llu silence=%llu exact=%d drained=%d error=%s\n",
+               "track=%u rate=%.0f frames=%llu first=%lld floor=%lld "
+               "decoded=%llu trim=%llu silence=%llu exact=%d drained=%d "
+               "error=%s\n",
                track->id, track->audio->sampleRate, frames,
-               stats.firstPublishedFrame, stats.decodedPcmFrames,
+               stats.firstPublishedFrame, static_cast<long long>(targetFrame),
+               stats.decodedPcmFrames,
                stats.discardedTrimFrames, stats.insertedSilenceFrames, exact, drained, error.c_str());
   std::fclose(out);
   converter.close();

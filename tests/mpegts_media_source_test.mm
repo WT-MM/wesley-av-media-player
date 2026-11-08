@@ -115,6 +115,9 @@ struct Fixtures {
   std::filesystem::path rejectedAudio;
   std::filesystem::path audioOnly;
   std::filesystem::path opus;
+  std::filesystem::path recutOriginal;
+  std::filesystem::path recut;
+  std::filesystem::path recutJump;
 };
 
 // ---------------------------------------------------------------------------
@@ -467,13 +470,20 @@ void testAudioTimelineIsAnExactFrameOrdinal(const Fixtures& fixtures) {
          "so it is the source's ordinal rather than the muxer's stamp");
 }
 
-// A PES header states no CodecDelay, so the anchor carries the lead-in.
-void testDecoderLeadInShiftsTheAnchor(const Fixtures& fixtures) {
-  const auto firstAudioTime =
-      [](const std::filesystem::path& path) -> std::optional<MediaTime> {
+// A PES header states no delay, and for AC-3 it stamps the decoder's very
+// first output (where ffmpeg and mpv present it). The anchor therefore stays on
+// the stamp, and the frames Apple's decoder swallows are declared silence: the
+// stream-origin window's media start sits exactly the lead-in after it.
+void testPresentedLeadInIsDeclaredSilence(const Fixtures& fixtures) {
+  struct FirstAudio {
+    MediaTime time;
+    wam::media::MediaAudioGenerationWindow window;
+  };
+  const auto firstAudio =
+      [](const std::filesystem::path& path) -> std::optional<FirstAudio> {
     MpegTsMediaSource source;
-    if (openAt(source, path, 1, std::nullopt, videoOptions()).status !=
-        MediaSourceOpenStatus::Ready) {
+    const auto opened = openAt(source, path, 1, std::nullopt, videoOptions());
+    if (opened.status != MediaSourceOpenStatus::Ready) {
       return std::nullopt;
     }
     for (int step = 0; step < 16; ++step) {
@@ -483,29 +493,34 @@ void testDecoderLeadInShiftsTheAnchor(const Fixtures& fixtures) {
         return std::nullopt;
       }
       if (sample->kind == MediaSampleKind::EncodedAudio) {
-        return sample->presentationTime;
+        return FirstAudio{sample->presentationTime, opened.audioWindow};
       }
     }
     return std::nullopt;
   };
 
-  const auto withoutLeadIn = firstAudioTime(fixtures.audioVideo);
-  const auto withLeadIn = firstAudioTime(fixtures.leadIn);
+  const auto withoutLeadIn = firstAudio(fixtures.audioVideo);
+  const auto withLeadIn = firstAudio(fixtures.leadIn);
   expect(withoutLeadIn.has_value() && withLeadIn.has_value(),
          "both lead-in fixtures stage a first audio access unit");
   if (!withoutLeadIn || !withLeadIn) {
     return;
   }
-  expect(sameTime(*withoutLeadIn, MediaTime{0, 1}),
-         "a codec with no decoder lead-in anchors on the container stamp");
+  expect(sameTime(withoutLeadIn->time, MediaTime{0, 1}) &&
+             sameTime(withoutLeadIn->window.mediaStart, MediaTime{0, 1}),
+         "a codec with no decoder lead-in anchors on the container stamp and "
+         "declares no silence");
   const std::int64_t leadIn =
       static_cast<std::int64_t>(wam::media::codec::kAc3DecoderDelayFrames);
   expect(leadIn > 0, "the shared lead-in constant is not vacuous");
-  expect(sameTime(*withLeadIn,
-                  MediaTime{-leadIn, static_cast<std::int32_t>(kFullRateAudio)}),
-         "a lead-in codec anchors exactly that many frames before the "
-         "container stamp so the converter's first published frame lands on "
-         "the presentation floor");
+  const MediaTime decodable{leadIn, static_cast<std::int32_t>(kFullRateAudio)};
+  expect(sameTime(withLeadIn->time, MediaTime{0, 1}),
+         "an AC-3 access unit anchors on its container stamp, not before it");
+  expect(sameTime(withLeadIn->window.mediaStart, decodable) &&
+             sameTime(withLeadIn->window.presentationStart, decodable) &&
+             withLeadIn->window.startsAtStreamOrigin,
+         "the frames the decoder swallows are declared silence, so the first "
+         "published frame lands exactly the lead-in after the stamp");
 }
 
 // The audio-refusal rule this backend does not share with Matroska.
@@ -664,6 +679,89 @@ void testCancellation(const Fixtures& fixtures) {
 
 }  // namespace
 
+// A mux whose ADTS frames and video access units straddle PES packets, and
+// whose first audio PES opens mid-frame, plays exactly as the
+// one-unit-per-PES mux it was cut from: same pictures at the same times, and
+// an audio timeline that is that mux's minus the one frame whose head was cut
+// off. A timestamp that then jumps by more than a frame is still refused.
+void testUnitsSplitAcrossPesPlayExactly(const Fixtures& fixtures) {
+  const auto play = [](const std::filesystem::path& path, Drained& drained) {
+    MpegTsMediaSource source;
+    const MediaSourceOpenOutcome opened =
+        openAt(source, path, 1, std::nullopt, videoOptions());
+    if (opened.status != MediaSourceOpenStatus::Ready) {
+      drained.failure = opened.error;
+      return false;
+    }
+    drained = drain(source, 1);
+    return true;
+  };
+  Drained original;
+  Drained recut;
+  expect(play(fixtures.recutOriginal, original) && original.failure.empty(),
+         "the one-unit-per-PES mux plays to its end");
+  const bool opened = play(fixtures.recut, recut);
+  expect(opened && recut.failure.empty() && recut.exhausted,
+         "a mux with units split across PES packets plays to its end");
+  if (!recut.failure.empty()) {
+    std::cerr << "  " << recut.failure << '\n';
+  }
+  const auto split = [](const Drained& drained, bool video) {
+    std::vector<Drained::Unit> units;
+    for (const Drained::Unit& unit : drained.units) {
+      if (unit.video == video) units.push_back(unit);
+    }
+    return units;
+  };
+  // x - y == u - v, exactly.
+  const auto sameOffset = [](MediaTime x, MediaTime y, MediaTime u,
+                             MediaTime v) {
+    const auto left = wam::media::addMediaTime(x, v);
+    const auto right = wam::media::addMediaTime(u, y);
+    return left && right && sameTime(*left, *right);
+  };
+  const std::vector<Drained::Unit> wantVideo = split(original, true);
+  const std::vector<Drained::Unit> gotVideo = split(recut, true);
+  bool videoSame = !wantVideo.empty() && wantVideo.size() == gotVideo.size();
+  for (std::size_t i = 0; videoSame && i < wantVideo.size(); ++i) {
+    videoSame = gotVideo[i].keyFrame == wantVideo[i].keyFrame &&
+                sameOffset(gotVideo[i].presentation, gotVideo[0].presentation,
+                           wantVideo[i].presentation,
+                           wantVideo[0].presentation);
+  }
+  expect(videoSame, "every picture is staged once, at its own time");
+
+  const std::vector<Drained::Unit> wantAudio = split(original, false);
+  const std::vector<Drained::Unit> gotAudio = split(recut, false);
+  bool contiguous = !gotAudio.empty();
+  for (std::size_t i = 1; contiguous && i < gotAudio.size(); ++i) {
+    const auto end = wam::media::addMediaTime(gotAudio[i - 1].presentation,
+                                              gotAudio[i - 1].duration);
+    contiguous = end && sameTime(*end, gotAudio[i].presentation);
+  }
+  expect(contiguous, "joined ADTS frames stay contiguous on the frame grid");
+  std::uint64_t wantFrames = 0;
+  std::uint64_t gotFrames = 0;
+  for (const auto& unit : wantAudio) wantFrames += unit.sampleCount;
+  for (const auto& unit : gotAudio) gotFrames += unit.sampleCount;
+  const MediaTime oneFrame{1024, static_cast<std::int32_t>(kFullRateAudio)};
+  const auto secondFrame =
+      wantAudio.empty()
+          ? std::nullopt
+          : wam::media::addMediaTime(wantAudio[0].presentation, oneFrame);
+  expect(!gotAudio.empty() && !gotVideo.empty() && !wantVideo.empty() &&
+             gotFrames + 1 == wantFrames && secondFrame &&
+             sameOffset(gotAudio[0].presentation, gotVideo[0].presentation,
+                        *secondFrame, wantVideo[0].presentation),
+         "the split audio is the original's from its second access unit on, "
+         "at the same times");
+
+  Drained jumped;
+  expect(play(fixtures.recutJump, jumped) &&
+             jumped.failure.find("not contiguous") != std::string::npos,
+         "a PES timestamp that jumps off the frame grid is refused");
+}
+
 int main(int argc, char** argv) {
   if (argc != 2) {
     std::cerr << "FAIL: required fixture directory was not supplied\n";
@@ -671,9 +769,11 @@ int main(int argc, char** argv) {
   }
   const std::filesystem::path root(argv[1]);
   Fixtures fixtures{root / "av.ts", root / "odd.ts", root / "leadin.ts",
-                    root / "dts-only.ts", root / "rejected-aac.ts", root / "audio.ts", root / "opus.ts"};
+                    root / "dts-only.ts", root / "rejected-aac.ts", root / "audio.ts", root / "opus.ts",
+                    root / "h264-aac.ts", root / "split.ts", root / "split-jump.ts"};
   for (const auto& path : {fixtures.audioVideo, fixtures.oddRate, fixtures.leadIn,
-                           fixtures.unroutableAudio, fixtures.rejectedAudio, fixtures.audioOnly, fixtures.opus}) {
+                           fixtures.unroutableAudio, fixtures.rejectedAudio, fixtures.audioOnly, fixtures.opus,
+                           fixtures.recutOriginal, fixtures.recut, fixtures.recutJump}) {
     if (!std::filesystem::is_regular_file(path)) {
       std::cerr << "FAIL: missing required fixture " << path << '\n';
       return 1;
@@ -684,11 +784,12 @@ int main(int argc, char** argv) {
   testEntryRefusalsAndPublication(fixtures);
   testMergeKeysOnRealDecodeTimestamps(fixtures);
   testAudioTimelineIsAnExactFrameOrdinal(fixtures);
-  testDecoderLeadInShiftsTheAnchor(fixtures);
+  testPresentedLeadInIsDeclaredSilence(fixtures);
   testUnroutableAudioRefuses(fixtures);
   testAudioOnlyStreamIsRefused(fixtures);
   testAccurateSeekBothDirections(fixtures);
   testCancellation(fixtures);
+  testUnitsSplitAcrossPesPlayExactly(fixtures);
 
   if (failures == 0) {
     std::cout << "mpeg-ts media source contracts passed\n";
