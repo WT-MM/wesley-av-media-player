@@ -26,7 +26,9 @@ static inline uint64_t rb64(const uint8_t *p)
 }
 static inline unsigned show(const Bits *b, int n)
 {
-    return (unsigned)((rb64(b->buf + (b->idx >> 3)) << (b->idx & 7)) >> (64 - n));
+    /* Reads past the end return zeros from the padding; callers check left(). */
+    int i = b->idx < b->size ? b->idx : b->size;
+    return (unsigned)((rb64(b->buf + (i >> 3)) << (i & 7)) >> (64 - n));
 }
 static inline void skip(Bits *b, int n) { b->idx += n; }
 static inline unsigned get(Bits *b, int n)
@@ -1056,7 +1058,11 @@ static int decode_p_block(Wmv3Decoder *d, int16_t block[64], int mquant, int ttm
     int subblkpat = 0, last, skp, value, i, idx, pat = 0;
     int ttblk = ttmb & 7, quant = abs(mquant);
     memset(block, 0, 64 * 2);
-    if (ttmb == -1) ttblk = vc1_ttblk_to_tt[d->tt_index][getvlc(gb, vlc_ttblk[d->tt_index])];
+    if (ttmb == -1) {
+        int t = getvlc(gb, vlc_ttblk[d->tt_index]);
+        if (t < 0) return -1;
+        ttblk = vc1_ttblk_to_tt[d->tt_index][t];
+    }
     if (ttblk == TT_4X4) subblkpat = ~(getvlc(gb, vlc_subblk[d->tt_index]) + 1);
     if ((ttblk != TT_8X8 && ttblk != TT_4X4) &&
         ((d->ttmbf || (ttmb != -1 && (ttmb & 8) && !first_block)) || (!d->res_rtm_flag && !first_block))) {
