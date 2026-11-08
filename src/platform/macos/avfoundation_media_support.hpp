@@ -75,7 +75,8 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept;
 
 // The latest full-sync sample at or before `target`, on the MOVIE timeline,
 // or kCMTimeInvalid. A target inside a leading empty edit searches from the
-// track's first media time. `cancelled`, when given, stops the walk.
+// track's first media time; one before the track's first picture gets its
+// first sync sample. `cancelled`, when given, stops the walk.
 [[nodiscard]] CMTime fullSyncStart(
     AVAssetTrack* track, CMTime target,
     const std::atomic<bool>* cancelled = nullptr) noexcept;

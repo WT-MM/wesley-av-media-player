@@ -1,5 +1,12 @@
 #include "platform/macos/matroska_media_source.hpp"
 
+#if defined(WAM_ENABLE_AVFORMAT_STAGE) || defined(WAM_ENABLE_AVCODEC_STAGE)
+#include "media/avcodec/aac_sbr_probe.hpp"
+#define WAM_INSTALL_AAC_SBR_DETECTOR() ::wam::media::avcodec::installAacSbrDetector()
+#else
+#define WAM_INSTALL_AAC_SBR_DETECTOR() static_cast<void>(0)
+#endif
+
 #include "platform/macos/matroska_sample_builder.hpp"
 #include "platform/macos/native_custom_source_core.hpp"
 
@@ -252,7 +259,9 @@ struct MatroskaMediaSource::Impl final
 };
 
 MatroskaMediaSource::MatroskaMediaSource()
-    : impl_(std::make_unique<Impl>()) {}
+    : impl_(std::make_unique<Impl>()) {
+  WAM_INSTALL_AAC_SBR_DETECTOR();
+}
 
 MatroskaMediaSource::~MatroskaMediaSource() { close(); }
 

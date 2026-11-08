@@ -199,6 +199,7 @@ CMTime fullSyncStart(AVAssetTrack* track, CMTime target,
   if (cursor == nil) {
     cursor = [track makeSampleCursorAtLastSampleInDecodeOrder];
   }
+  bool everySampleLater = true;
   for (std::size_t step = 0;
        cursor != nil && step < kMaximumSyncCursorSteps; ++step) {
     // Decode order is not presentation order, and an open-GOP random-access
@@ -215,11 +216,30 @@ CMTime fullSyncStart(AVAssetTrack* track, CMTime target,
         cancelled->load(std::memory_order_acquire)) {
       return kCMTimeInvalid;
     }
-    if (cursor.currentSampleSyncInfo.sampleIsFullSync &&
-        CMTimeCompare(cursor.presentationTimeStamp, mediaTarget) <= 0) {
+    const bool presentsByTarget =
+        CMTimeCompare(cursor.presentationTimeStamp, mediaTarget) <= 0;
+    if (cursor.currentSampleSyncInfo.sampleIsFullSync && presentsByTarget) {
       return CMTimeSubtract(cursor.presentationTimeStamp, mediaOffset);
     }
+    everySampleLater = everySampleLater && !presentsByTarget;
     if ([cursor stepInDecodeOrderByCount:-1] == 0) {
+      // The track's first sample, and nothing up to here presents at or
+      // before the target: the media begins after it. Without an edit list,
+      // H.264 composition offsets put the first picture after time 0 (ctts
+      // 2000 on a 30000 timescale) -- the same shape as a leading empty edit,
+      // so the first sync sample is the video origin. Samples decoded before
+      // it (a stray SEI-only access unit) cannot present without it.
+      for (; everySampleLater && step < kMaximumSyncCursorSteps; ++step) {
+        if (CMTimeCompare(cursor.presentationTimeStamp, mediaTarget) <= 0) {
+          break;
+        }
+        if (cursor.currentSampleSyncInfo.sampleIsFullSync) {
+          return CMTimeSubtract(cursor.presentationTimeStamp, mediaOffset);
+        }
+        if ([cursor stepInDecodeOrderByCount:1] == 0) {
+          break;
+        }
+      }
       break;
     }
   }

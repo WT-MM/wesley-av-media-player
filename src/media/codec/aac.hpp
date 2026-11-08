@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace wam::media::codec {
 
@@ -89,8 +90,66 @@ buildAacLcEsDescriptorCookie(const AacLcConfiguration &configuration) noexcept;
   return index < std::size(kRates) ? kRates[index] : 0U;
 }
 
+// Measured on AudioToolbox (macOS 26) against ffmpeg's decoder, explicit and
+// implicit SBR alike: the HE-AAC decode itself is deterministic -- 2048
+// output frames per access unit, equal to ffmpeg's output 962 frames later
+// (max error < 4e-4), with Apple's priming stated in core-rate frames (2112 =
+// 4224 output) and the final 962 frames emitted as silence. What stays
+// unproven is a seek: SBR state rebuilt from a cold start differs from the
+// continuous decode (0.06-0.25 peak, in both decoders identically) until a
+// periodic resync point in the SBR stream (every 23 access units from
+// AudioToolbox's encoder; the period is the encoder's choice, plausibly its
+// SBR header interval). No fixed preroll reproduces the continuous PCM.
+//
+// Implicit SBR names plain AAC-LC at the core rate in the AudioSpecificConfig
+// and carries SBR only in the access units (ISO/IEC 14496-3 4.4.2.7), which
+// CoreMedia never looks at: it decodes just the band-limited core. The
+// bundled LGPL libavcodec decodes the first access units and reports whether
+// its decoder switched to SBR; the platform layer installs that detector
+// (src/media/avcodec/aac_sbr_probe.cpp).
+enum class AacSbrDetection : std::uint8_t { Absent, Present, Unavailable };
+using AacSbrDetector = AacSbrDetection (*)(
+    std::span<const std::byte> audioSpecificConfig,
+    std::span<const std::span<const std::byte>> accessUnits);
+void installAacSbrDetector(AacSbrDetector detector) noexcept;
+
+// The two-byte AAC-LC AudioSpecificConfig for a core rate and channel count,
+// for routes whose container states only those (empty when neither a
+// samplingFrequencyIndex nor a channelConfiguration names them).
+[[nodiscard]] std::optional<std::array<std::byte, 2>>
+aacLcAudioSpecificConfig(std::uint32_t sampleRate, std::uint32_t channels) noexcept;
+
+// Access units each route checks from the start of every generation.
+// Encoders that use SBR carry its payload in every access unit.
+inline constexpr std::size_t kAacSbrScanAccessUnits{4};
+// Implicit SBR doubles a core of at most 24 kHz to at most 48 kHz output;
+// without a working detector those cores fail closed.
+inline constexpr std::uint32_t kAacImplicitSbrMaximumCoreRate{24'000};
+
 inline constexpr const char* kHeAacDecoderDelayRefusal =
     "HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof";
+
+// The admission rule every AAC route applies to the access units a
+// generation reads: add() each one. The first kAacSbrScanAccessUnits are
+// decoded (all of them so far, each time) and the HE-AAC refusal is returned
+// once SBR is found -- implicitly signalled SBR is refused too, since decoding
+// just the core would silently drop the high band -- or, with no working
+// detector, for any core of at most 24 kHz. Null otherwise.
+class AacImplicitSbrCheck {
+public:
+  void reset(std::span<const std::byte> audioSpecificConfig,
+             std::uint32_t coreSampleRate);
+  [[nodiscard]] const char* add(std::span<const std::byte> accessUnit);
+  // True until the verdict is final; callers skip reading units after that.
+  [[nodiscard]] bool pending() const noexcept { return !decided_; }
+
+private:
+  std::vector<std::byte> config_;
+  std::vector<std::byte> units_;
+  std::vector<std::size_t> unitEnds_;
+  std::uint32_t coreSampleRate_{0};
+  bool decided_{true};
+};
 
 [[nodiscard]] constexpr bool aacSbrSignaled(std::span<const std::byte> asc) noexcept {
   if (asc.empty()) return false;

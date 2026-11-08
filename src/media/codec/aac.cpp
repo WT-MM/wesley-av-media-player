@@ -1,6 +1,8 @@
 #include "media/codec/aac.hpp"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <limits>
 
 namespace wam::media::codec {
@@ -38,6 +40,7 @@ public:
     return bytes_.size() * 8U - bitOffset_;
   }
 
+
 private:
   std::span<const std::byte> bytes_;
   std::size_t bitOffset_{0};
@@ -47,7 +50,68 @@ private:
   return {error, std::nullopt};
 }
 
+
 } // namespace
+
+namespace {
+std::atomic<AacSbrDetector> installedDetector{nullptr};
+} // namespace
+
+void installAacSbrDetector(AacSbrDetector detector) noexcept {
+  installedDetector.store(detector, std::memory_order_release);
+}
+
+std::optional<std::array<std::byte, 2>>
+aacLcAudioSpecificConfig(std::uint32_t sampleRate, std::uint32_t channels) noexcept {
+  std::uint32_t index = 0;
+  while (index < 13 && aacSampleRateForIndex(static_cast<std::uint8_t>(index)) != sampleRate) {
+    ++index;
+  }
+  const std::uint32_t configuration =
+      channels >= 1 && channels <= 6 ? channels : channels == 8 ? 7U : 0U;
+  if (index == 13 || configuration == 0) {
+    return std::nullopt;
+  }
+  return std::array<std::byte, 2>{
+      static_cast<std::byte>((kAacLcAudioObjectType << 3U) | (index >> 1U)),
+      static_cast<std::byte>(((index & 1U) << 7U) | (configuration << 3U))};
+}
+
+void AacImplicitSbrCheck::reset(std::span<const std::byte> audioSpecificConfig,
+                                std::uint32_t coreSampleRate) {
+  config_.assign(audioSpecificConfig.begin(), audioSpecificConfig.end());
+  coreSampleRate_ = coreSampleRate;
+  units_.clear();
+  unitEnds_.clear();
+  decided_ = false;
+}
+
+const char* AacImplicitSbrCheck::add(std::span<const std::byte> accessUnit) {
+  if (decided_) {
+    return nullptr;
+  }
+  units_.insert(units_.end(), accessUnit.begin(), accessUnit.end());
+  unitEnds_.push_back(units_.size());
+  decided_ = unitEnds_.size() >= kAacSbrScanAccessUnits;
+  std::vector<std::span<const std::byte>> units;
+  std::size_t begin = 0;
+  for (const std::size_t end : unitEnds_) {
+    units.emplace_back(units_.data() + begin, end - begin);
+    begin = end;
+  }
+  const AacSbrDetector detector =
+      installedDetector.load(std::memory_order_acquire);
+  const AacSbrDetection verdict =
+      detector ? detector(config_, units) : AacSbrDetection::Unavailable;
+  if (verdict == AacSbrDetection::Absent) {
+    return nullptr;
+  }
+  decided_ = true;
+  return verdict == AacSbrDetection::Present ||
+                 coreSampleRate_ <= kAacImplicitSbrMaximumCoreRate
+             ? kHeAacDecoderDelayRefusal
+             : nullptr;
+}
 
 AacLcAdmission
 parseAacLcAudioSpecificConfig(std::span<const std::byte> bytes) noexcept {

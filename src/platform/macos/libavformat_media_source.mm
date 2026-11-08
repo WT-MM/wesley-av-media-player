@@ -1,4 +1,11 @@
 #include "platform/macos/libavformat_aac_timing.hpp"
+
+#if defined(WAM_ENABLE_AVFORMAT_STAGE) || defined(WAM_ENABLE_AVCODEC_STAGE)
+#include "media/avcodec/aac_sbr_probe.hpp"
+#define WAM_INSTALL_AAC_SBR_DETECTOR() ::wam::media::avcodec::installAacSbrDetector()
+#else
+#define WAM_INSTALL_AAC_SBR_DETECTOR() static_cast<void>(0)
+#endif
 #include "media/software_color_qualification.hpp"
 #include "media/audio_codec_timing.hpp"
 #include "media/aac_packet_timeline.hpp"
@@ -471,6 +478,10 @@ struct LibavformatMediaSource::Impl final
   MediaTime end{0, 1}, audioEnd{0,1},videoEnd{0,1};
   std::uint64_t& bytes = t.bytes;
   std::uint64_t audioPackets{};
+  codec::AacImplicitSbrCheck aacSbrCheck;
+  if (audio && audioTrack.codec == MediaCodec::Aac)
+    aacSbrCheck.reset(reader->cursor.stream(*audio).extradata,
+                      static_cast<std::uint32_t>(audioTrack.audio->sampleRate));
   bool audioTail = false;
   std::optional<MediaTime> aacProvedEnd;
   std::optional<LibavformatAacEdit> aacEditEnd;
@@ -504,6 +515,11 @@ struct LibavformatMediaSource::Impl final
       return nullptr;
     }
     if(isAudio) {
+      if (audioTrack.codec == MediaCodec::Aac) {
+        if (const char* refusal = aacSbrCheck.add(packet.bytes)) {
+          error = refusal; return nullptr;
+        }
+      }
       if (!audioPackets && audioTrack.codec == MediaCodec::Aac) {
         const auto witnessStarted = Clock::now();
         const auto rate = static_cast<std::uint32_t>(audioTrack.audio->sampleRate);
@@ -844,7 +860,9 @@ struct LibavformatMediaSource::Impl final
   }
 };
 LibavformatMediaSource::LibavformatMediaSource()
-    : impl_(std::make_unique<Impl>()) {}
+    : impl_(std::make_unique<Impl>()) {
+  WAM_INSTALL_AAC_SBR_DETECTOR();
+}
 LibavformatMediaSource::~LibavformatMediaSource() { close(); }
 bool LibavformatMediaSource::armOperation(MediaGeneration generation) noexcept {
   return impl_->arm(generation);

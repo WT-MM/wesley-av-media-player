@@ -73,6 +73,62 @@ def test_ebml_size_growth():
     assert len(rewritten) == 147
 
 
+def prepend_stray_video_sample(data):
+    """Give the video track a leading non-sync access unit: the first
+    sample's own SEI NAL, one frame earlier and in its own chunk (moov follows
+    mdat, so no payload moves)."""
+    import struct
+    def boxes(blob):
+        offset = 0
+        while offset < len(blob):
+            size, kind = struct.unpack_from('>I4s', blob, offset)
+            yield kind, blob[offset+8:offset+size]
+            offset += size
+    def table(payload, width, head=b'', each=lambda e: e, skip=0):
+        count = struct.unpack_from('>I', payload, 4+skip)[0]
+        at = 8+skip
+        rows = [each(payload[at+i*width:at+(i+1)*width]) for i in range(count)]
+        return payload[:4+skip] + struct.pack('>I', count+(1 if head else 0)) + head + b''.join(rows)
+    def bump(e):
+        return struct.pack('>I', struct.unpack_from('>I', e)[0]+1) + e[4:]
+    video_stbl = None
+    def find(blob, video=False):
+        nonlocal video_stbl
+        for kind, payload in boxes(blob):
+            if kind == b'trak':
+                video = b'vide' in payload
+            if kind == b'stbl' and video:
+                video_stbl = dict(boxes(payload))
+            elif kind in (b'moov', b'trak', b'mdia', b'minf'):
+                find(payload, video)
+    find(data)
+    first = struct.unpack_from('>I', video_stbl[b'stco'], 8)[0]
+    assert data[first+4] & 0x1f == 6, 'first NAL is not SEI'
+    stray = 4 + struct.unpack_from('>I', data, first)[0]
+    delta = struct.unpack_from('>I', video_stbl[b'stts'], 12)[0]
+    edits = {b'stts': lambda p: table(p, 8, struct.pack('>II', 1, delta)),
+             b'ctts': lambda p: table(p, 8, struct.pack('>I', 1) + p[12:16]),
+             b'stss': lambda p: table(p, 4, each=bump),
+             b'stsc': lambda p: table(p, 12, struct.pack('>III', 1, 1, 1), bump),
+             b'stsz': lambda p: table(p, 4, struct.pack('>I', stray), skip=4),
+             b'stco': lambda p: table(p, 4, struct.pack('>I', first))}
+    def rewrite(blob, video=False):
+        out = bytearray()
+        for kind, payload in boxes(blob):
+            if kind == b'trak':
+                video = b'vide' in payload
+            if kind in (b'moov', b'trak', b'mdia', b'minf', b'stbl'):
+                payload = rewrite(payload, video)
+            elif video and kind in edits:
+                payload = edits[kind](payload)
+            elif video and kind == b'mdhd':
+                payload = bytearray(payload)
+                assert payload[0] == 0
+                struct.pack_into('>I', payload, 16, struct.unpack_from('>I', payload, 16)[0] + delta)
+            out += struct.pack('>I4s', len(payload)+8, kind) + payload
+        return bytes(out)
+    return rewrite(data)
+
 def main():
     test_ebml_size_growth()
     args = argparse.ArgumentParser()
@@ -254,6 +310,60 @@ def main():
         assert 'track 1 (A_AAC): HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
         assert 'track 2 (A_AAC): HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
         manifest['proofs'].append(dict(file=combined.name,asset_sha256=hashlib.sha256(combined.read_bytes()).hexdigest(),diagnostic=result.stdout.strip()))
+    if a.case in ('all','implicit-sbr'):
+        # Implicit SBR: the configuration names AAC-LC at the core rate and
+        # only the access units carry SBR. Every route must refuse it rather
+        # than decode the band-limited core; plain LC at the same rates plays.
+        he=root/'implicit-source.m4a'
+        run([a.ffmpeg,'-v','error','-y','-f','lavfi','-i','anoisesrc=d=2:r=96000:a=0.2','-ac','2',
+             '-c:a','aac_at','-profile:a','4','-b:a','128k',he])
+        adts=root/'implicit.aac'
+        run([a.ffmpeg,'-v','error','-y','-i',he,'-c','copy','-f','adts',adts])
+        video=['-f','lavfi','-i','testsrc2=size=160x90:rate=30:duration=2']
+        implicit=[]
+        for suffix in ('mp4','ts','mkv'):
+            path=root/f'implicit-sbr.{suffix}'
+            run([a.ffmpeg,'-v','error','-y',*video,'-i',adts,'-c:v','libx264','-preset','ultrafast','-c:a','copy',path])
+            implicit.append(path)
+        # ffmpeg states the decoded rate as OutputSamplingFrequency, which the
+        # Matroska route already refuses; void it so the access units decide.
+        mkv=bytearray(implicit[-1].read_bytes())
+        at=mkv.find(bytes.fromhex('78b588'))
+        assert at>0
+        mkv[at:at+11]=bytes([0xEC,0x89])+bytes(9)
+        implicit[-1].write_bytes(mkv)
+        core=root/'implicit-sbr-core24.mp4'
+        low=root/'implicit-24.m4a'
+        run([a.ffmpeg,'-v','error','-y','-f','lavfi','-i','anoisesrc=d=2:r=48000:a=0.2','-ac','2',
+             '-c:a','aac_at','-profile:a','4','-b:a','64k',low])
+        run([a.ffmpeg,'-v','error','-y','-i',low,'-c','copy','-f','adts',root/'implicit-24.aac'])
+        run([a.ffmpeg,'-v','error','-y',*video,'-i',root/'implicit-24.aac','-c:v','libx264','-preset','ultrafast','-c:a','copy',core])
+        implicit.append(core)
+        for path in implicit:
+            result=run([a.audio,path,root/'refused.f32','0'],expected=1)
+            assert 'open: HeAacSbrDecoderDelayUnproven' in result.stderr, (path.name,result.stderr)
+            manifest['proofs'].append(dict(file=path.name,refusal='HeAacSbrDecoderDelayUnproven',diagnostic=result.stderr.strip()))
+        for rate,suffix in ((24000,'mp4'),(48000,'ts'),(48000,'mkv')):
+            path=root/f'lc-{rate}.{suffix}'
+            run([a.ffmpeg,'-v','error','-y',*video,'-f','lavfi','-i',f'anoisesrc=d=2:r={rate}:a=0.2','-ac','2',
+                 '-c:v','libx264','-preset','ultrafast','-c:a','aac',path])
+            result=run([a.audio,path,root/'lc.f32','0'])
+            assert 'exact=1 drained=1' in result.stderr, (path.name,result.stderr)
+    if a.case in ('all','late-first-picture'):
+        # Without a video edit list, B-frame composition offsets put the
+        # first picture after time 0; some muxers also write a stray
+        # non-sync access unit first. Both must open at 0, and preview there,
+        # from the first sync sample.
+        late=root/'late-first-picture.mp4'
+        run([a.ffmpeg,'-v','error','-y','-f','lavfi','-i','testsrc2=size=160x90:rate=30:duration=2',
+             '-f','lavfi','-i','sine=f=440:d=2:r=48000','-c:v','libx264','-bf','2','-c:a','aac',
+             '-use_editlist','0',late])
+        stray=root/'stray-first-sample.mp4'
+        stray.write_bytes(prepend_stray_video_sample(late.read_bytes()))
+        for path in (late,stray):
+            result=run([a.source,path,0,'preview'])
+            assert 'preview_status=' in result.stdout, result.stdout
+            manifest['proofs'].append(dict(file=path.name,diagnostic=result.stdout.strip()))
     (root/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 
 if __name__=='__main__': main()

@@ -68,6 +68,9 @@ public:
   [[nodiscard]] std::size_t height() const noexcept;
   [[nodiscard]] const FrameTiming &timing() const noexcept;
   void setDuration(CMTime duration) noexcept { timing_.duration = duration; }
+  void setPresentationTime(CMTime time) noexcept {
+    timing_.presentationTime = time;
+  }
 
   void reset() noexcept;
 

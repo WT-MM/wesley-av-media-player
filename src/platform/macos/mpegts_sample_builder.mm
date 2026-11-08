@@ -1,5 +1,6 @@
 #include "platform/macos/mpegts_sample_builder.hpp"
 
+#include "media/codec/aac.hpp"
 #include "media/codec/ac3.hpp"
 #include "media/codec/mpeg_audio.hpp"
 #include "media/mpegts_packet.hpp"
@@ -358,6 +359,20 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
         }
       }
       written += layout.outputSize[index];
+    }
+    if (inputs.codec == MediaCodec::Aac && inputs.aacSbrCheck != nullptr) {
+      std::size_t offset = 0;
+      for (std::size_t index = 0;
+           index < layout.count && inputs.aacSbrCheck->pending(); ++index) {
+        if (const char* refusal = inputs.aacSbrCheck->add(
+                std::span<const std::byte>(destination.data() + offset,
+                                           layout.outputSize[index]))) {
+          CFRelease(block);
+          assignError(error, refusal);
+          return MpegTsSampleBuildStatus::Failed;
+        }
+        offset += layout.outputSize[index];
+      }
     }
     numSamples = static_cast<CMItemCount>(layout.count);
     sizeEntries = numSamples;
