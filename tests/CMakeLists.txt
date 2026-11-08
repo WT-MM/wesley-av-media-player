@@ -519,6 +519,12 @@ if(APPLE)
       native_coverage_audio_probe.mm)
     target_link_libraries(wam_native_coverage_audio_probe PRIVATE
       wam_macos_native_backend)
+    add_test(NAME matroska_ac3_codec_delay
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/matroska_ac3_codec_delay_proof.py"
+        --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
+        --ffmpeg "${WAM_TEST_FFMPEG}")
+    set_tests_properties(matroska_ac3_codec_delay PROPERTIES TIMEOUT 120)
 
     add_test(NAME native_coverage_wiring
       COMMAND "${Python3_EXECUTABLE}"

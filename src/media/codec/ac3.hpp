@@ -31,8 +31,9 @@ inline constexpr std::uint32_t kAc3FramesPerBlock{256};
 // AudioToolbox drops exactly this many leading frames from an AC-3 or E-AC-3
 // stream -- the decoder delay, which is also precisely the CodecDelay every
 // ffmpeg mux states (5,333,333 ns = 256 frames at 48 kHz). So the head trim the
-// caller still owes is CodecDelay - kAc3DecoderDelayFrames, and for every real
-// file that is zero.
+// caller still owes is CodecDelay - kAc3DecoderDelayFrames: zero for an ffmpeg
+// mux, and -256 (the decoder's first output lands 256 frames after media zero)
+// for a mux that states no CodecDelay, such as mkvmerge's.
 //
 // Measured against ffmpeg's decode of the RAW elementary stream with a chirp
 // (a periodic test tone makes the alignment search degenerate): the signed
