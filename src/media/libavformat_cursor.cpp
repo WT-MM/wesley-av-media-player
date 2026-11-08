@@ -568,6 +568,8 @@ const char *LibavformatCursor::codecName(unsigned i) const noexcept {
     return "theora";
   case AV_CODEC_ID_WMV2:
     return "wmv2";
+  case AV_CODEC_ID_WMV3:
+    return "wmv3";
   case AV_CODEC_ID_WMAV2:
     return "wmav2";
   case AV_CODEC_ID_MPEG2VIDEO:

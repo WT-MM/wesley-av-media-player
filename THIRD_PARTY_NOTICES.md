@@ -11,9 +11,9 @@ notices continue to apply; WAM does not relicense them.
 - FFmpeg — LGPL-2.1-or-later, or GPL-2.0-or-later when GPL components are
   enabled. The package-manager builds used during development may enable GPL
   codecs: https://ffmpeg.org/legal.html
-- wam-wmcodecs (`third_party/wam-wmcodecs`, built as `libwam-wmcodecs.dylib`)
-  — LGPL-2.1-or-later. WAM's WMA v2 decoder, derived from FFmpeg's
-  reverse-engineered WMA decoder and tables; see its NOTICE.
+- wam-wmcodecs (`third_party/wam-wmcodecs`, built as `libwam-wmcodecs.dylib`
+  and `libwam_wmv3.dylib`) — LGPL-2.1-or-later. WAM's WMA v2 and WMV3
+  decoders, derived from FFmpeg's decoders and tables; see its NOTICE.
 - libvpx — BSD-3-Clause, with the accompanying patent grant. WAM links it
   directly for the software VP8 decode stage:
   https://github.com/webmproject/libvpx

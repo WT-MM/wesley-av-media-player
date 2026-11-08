@@ -141,6 +141,8 @@ find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing REQUIRED)
     src/platform/macos/software_presentation_pool.mm
     src/platform/macos/software_vp8_decoder.hpp
     src/platform/macos/software_vp8_decoder.mm
+    src/platform/macos/software_wmv3_decoder.hpp
+    src/platform/macos/software_wmv3_decoder.mm
     src/platform/macos/video_decode_lane.hpp)
   target_include_directories(wam_macos_native_video_core PUBLIC src)
   target_compile_features(wam_macos_native_video_core PUBLIC cxx_std_20)

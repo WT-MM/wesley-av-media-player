@@ -133,6 +133,10 @@ enum class MediaCodec : std::uint8_t {
   Dts,
   TrueHd,
   Mlp,
+  // WMV3: SMPTE 421M VC-1 Simple/Main profile video, as Windows Media Video 9
+  // carries it in ASF. No Apple decoder exists; WAM's LGPL WMV3 library
+  // decodes it in software.
+  Wmv3,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {

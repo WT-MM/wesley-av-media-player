@@ -195,7 +195,7 @@ struct MediaCodecFacts {
   std::uint8_t intrinsicReorderDepth{0};
 };
 
-inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
+inline constexpr std::array<MediaCodecFacts, 26> kMediaCodecFacts{{
     {.codec = MediaCodec::Unknown, .kind = MediaCodecKind::Unknown},
     {.codec = MediaCodec::H264, .kind = MediaCodecKind::Video,
      .coreMediaType = 0x61766331U /* 'avc1' */,
@@ -384,6 +384,17 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      .softwareDecoded = true},
     {.codec = MediaCodec::Mlp, .kind = MediaCodecKind::Audio,
      .softwareDecoded = true},
+    // Like VP8, decoded by a software stage that reads the record -- the
+    // 4-byte STRUCT_C sequence header from the BITMAPINFOHEADER -- directly,
+    // so no atom carries it into CoreMedia. 'WMV3' is the stream's own
+    // compression FourCC; VideoToolbox refuses it. Simple/Main profile is
+    // always 4:2:0 8-bit, and with B pictures refused at admission decode
+    // order is presentation order.
+    {.codec = MediaCodec::Wmv3, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x574D5633U /* 'WMV3' */,
+     .configurationKind = MediaCodecConfigurationKind::CodecPrivate,
+     .carriesConfigurationRecord = true, .statesCodedSampleFormat = true,
+     .previewScrubAdmitted = true},
 }};
 
 // CoreAudio's mono and stereo channel layout tags (kAudioChannelLayoutTag_Mono
@@ -463,7 +474,7 @@ mediaCodecFacts(MediaCodec codec) noexcept {
 
 // The last enumerator of the frozen, append-only MediaCodec. Appending one
 // without adding its row fails the coverage assertion below.
-inline constexpr MediaCodec kLastMediaCodec = MediaCodec::Mlp;
+inline constexpr MediaCodec kLastMediaCodec = MediaCodec::Wmv3;
 inline constexpr std::size_t kMediaCodecCount =
     static_cast<std::size_t>(kLastMediaCodec) + 1U;
 
