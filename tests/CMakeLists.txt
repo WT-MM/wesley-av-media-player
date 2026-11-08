@@ -1111,6 +1111,19 @@ if(APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
   target_link_libraries(wam_ffmpeg_coexistence_test PRIVATE
     wam_avcodec_worker_test_seams wam_mpv_runtime_test_seams)
   add_test(NAME ffmpeg_coexistence COMMAND wam_ffmpeg_coexistence_test "$<TARGET_FILE:wam_fake_mpv_valid>")
+
+  # Our WMA v2 decoder against FFmpeg's on ffmpeg-encoded files.
+  add_executable(wam_wma2_decoder_test wma2_decoder_test.cpp)
+  target_include_directories(wam_wma2_decoder_test PRIVATE "${WAM_FFMPEG_LGPL_ROOT}/include")
+  target_link_libraries(wam_wma2_decoder_test PRIVATE wam_wmcodecs
+    "${WAM_FFMPEG_LGPL_ROOT}/lib/libavformat-wamnative.dylib"
+    "${WAM_FFMPEG_LGPL_ROOT}/lib/libavcodec-wamnative.dylib"
+    "${WAM_FFMPEG_LGPL_ROOT}/lib/libavutil-wamnative.dylib")
+  set_target_properties(wam_wma2_decoder_test PROPERTIES BUILD_RPATH "${WAM_FFMPEG_LGPL_ROOT}/lib")
+  file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/wma2-fixtures")
+  add_test(NAME wma2_decoder COMMAND wam_wma2_decoder_test
+    --ffmpeg "${WAM_TEST_FFMPEG}" --scratch "${PROJECT_BINARY_DIR}/wma2-fixtures")
+  set_tests_properties(wma2_decoder PROPERTIES TIMEOUT 120)
 endif()
 
 if(APPLE)

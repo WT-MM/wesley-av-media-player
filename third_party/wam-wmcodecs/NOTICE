@@ -1,0 +1,15 @@
+wam-wmcodecs: Windows Media audio decoders for WAM
+SPDX-License-Identifier: LGPL-2.1-or-later
+
+This library is licensed under the GNU Lesser General Public License,
+version 2.1 or (at your option) any later version; see LICENSE. It is built
+only as a shared library (libwam-wmcodecs.dylib) so that applications under
+other licenses link it dynamically and users can replace it.
+
+WMA has no public specification. The bitstream layout, the Huffman, band and
+LSP tables, and the reconstruction arithmetic come from FFmpeg's
+reverse-engineered WMA decoder (libavcodec/wma.c, wmadec.c, wmadata.h,
+aactab.c, wma_freqs.c; copyright (c) 2002 The FFmpeg Project and
+contributors, LGPL-2.1-or-later). The tables in src/wma_tables.h are copied
+from those files; the decoder in src/wma_decoder.cpp is a C++ rewrite of
+their algorithm. FFmpeg: https://ffmpeg.org/
