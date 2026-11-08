@@ -93,9 +93,9 @@ public:
 
 
 // The contract every video decode backend (VideoToolboxDecoder,
-// SoftwareVp8Decoder, SoftwareAvcodecVideoDecoder) implements for
-// VideoDecodeLane, so the consumer and the preview lane drive all of them
-// identically:
+// SoftwareVp8Decoder, SoftwareWmv3Decoder, SoftwareAvcodecVideoDecoder)
+// implements for VideoDecodeLane, so the consumer and the preview lane drive
+// all of them identically:
 //
 // - configure() flushes the sink to the configured generation. Until the
 //   first key frame after configure or flush, a non-key submission is

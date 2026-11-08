@@ -12,8 +12,8 @@ notices continue to apply; WAM does not relicense them.
   enabled. The package-manager builds used during development may enable GPL
   codecs: https://ffmpeg.org/legal.html
 - wam-wmcodecs (`third_party/wam-wmcodecs`, built as `libwam-wmcodecs.dylib`)
-  — LGPL-2.1-or-later. WAM's WMA v2 decoder, derived from FFmpeg's
-  reverse-engineered WMA decoder and tables; see its NOTICE. The app ships it
+  — LGPL-2.1-or-later. WAM's WMA v2 and WMV3 decoders, derived from FFmpeg's
+  decoders and tables; see its NOTICE. The app ships it
   in `Contents/Frameworks` and loads it at run time (never linked), with its
   LICENSE and NOTICE in `Contents/Resources/wam-wmcodecs`.
 - libvpx — BSD-3-Clause, with the accompanying patent grant. WAM links it

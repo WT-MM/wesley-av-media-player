@@ -1424,6 +1424,17 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
   add_executable(wam_libavformat_preview_decode_test libavformat_preview_decode_test.mm)
   target_link_libraries(wam_libavformat_preview_decode_test PRIVATE wam_macos_native_backend)
 
+  # The WMV3 stage's backend contract on hand-assembled packets, and WMV3 in
+  # ASF on the libavformat route (ffmpeg remuxes those packets; no WMV3
+  # encoder exists). The stage dlopens libwam-wmcodecs from native-codecs.
+  add_executable(wam_software_wmv3_test software_wmv3_test.mm)
+  target_link_libraries(wam_software_wmv3_test PRIVATE wam_macos_native_backend)
+  add_dependencies(wam_software_wmv3_test wam_wmcodecs)
+  file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/wmv3-fixtures")
+  add_test(NAME macos_software_wmv3 COMMAND wam_software_wmv3_test
+    "${WAM_TEST_FFMPEG}" "${PROJECT_BINARY_DIR}/wmv3-fixtures")
+  set_tests_properties(macos_software_wmv3 PROPERTIES TIMEOUT 60)
+
   set(WAM_AVFORMAT_PREVIEW_SPECIMENS fragmented.mp4)
   if(WAM_ENABLE_AVCODEC_STAGE)
     list(APPEND WAM_AVFORMAT_PREVIEW_SPECIMENS asp.avi)

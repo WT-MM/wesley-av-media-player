@@ -29,11 +29,12 @@ Apple silicon only. To build from source, see
   HEVC (8/10-bit, including 4:2:2), VP9 and AV1 (including 10-bit),
   MPEG-2, MPEG-4 SP, VP8, ProRes 422 and 4444/XQ (opaque; alpha is
   ignored), and Motion JPEG video, and AAC, AC-3/E-AC-3, ALAC, ADPCM,
-  FLAC, MP3, Opus, and Vorbis audio, in MP4 (including fragmented and
-  unfinished recordings), MOV, MKV, WebM, MPEG-TS, and Ogg (Opus)
-  containers, up to 4K. Audio-only files work too, down to 8 kHz.
+  FLAC, MP3, Opus, Vorbis and WMA v2 audio, in MP4 (including fragmented
+  and unfinished recordings), MOV, MKV, WebM, MPEG-TS, Ogg (Opus) and ASF
+  containers, up to 4K. WMV3 (Simple/Main) video and WMA v2 audio are
+  decoded by WAM's own decoders. Audio-only files work too, down to 8 kHz.
   Formats Apple hardware cannot decode (MPEG-4 ASP, DTS, TrueHD/MLP,
-  WMV/VC-1, RealMedia, Theora) fall back to a bundled mpv/FFmpeg
+  VC-1 Advanced, RealMedia, Theora) fall back to a bundled mpv/FFmpeg
   engine; native software decoding of MPEG-4 ASP, Hi10P, 4:2:2, DTS and
   TrueHD/MLP is implemented but off by default pending the remaining
   qualification gates (see

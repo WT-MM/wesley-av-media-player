@@ -30,6 +30,10 @@ WMV3_API Wmv3Decoder *wmv3_decoder_open(const uint8_t *extradata, size_t extrada
                                int width, int height);
 WMV3_API void wmv3_decoder_close(Wmv3Decoder *dec);
 
+/* 1 when wmv3_decoder_open() would accept this STRUCT_C, without allocating:
+ * an admission probe. */
+WMV3_API int wmv3_sequence_supported(const uint8_t *extradata, size_t extradata_size);
+
 /* Decodes one packet. Returns 1 if *out holds a picture, 0 if the packet is a
  * skipped frame (the previous picture repeats), negative on error. The frame
  * stays valid until the next call. */

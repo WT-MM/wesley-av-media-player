@@ -43,6 +43,7 @@
 #include "platform/macos/matroska_sample_builder.hpp"
 #include "platform/macos/mpegts_sample_builder.hpp"
 #include "platform/macos/software_vp8_decoder.hpp"
+#include "platform/macos/software_wmv3_decoder.hpp"
 
 // matroska_sample_builder.mm gates its VP8 branch on a RUNTIME call rather than
 // on WAM_ENABLE_SOFTWARE_VP8, so the symbol is referenced whatever the build
@@ -57,8 +58,12 @@
 // not a divergent stub. The observable result is that VP8-in-WebM gets no
 // format description, the provider replies with an error, and Finder keeps its
 // generic icon -- the same graceful path every other unsupported input takes.
+//
+// core_media_carriage.mm asks SoftwareWmv3Decoder::available() the same way;
+// the appex carries no WMV3 library and answers false for the same reason.
 namespace wam::macos {
 bool SoftwareVp8Decoder::available() noexcept { return false; }
+bool SoftwareWmv3Decoder::available() noexcept { return false; }
 }  // namespace wam::macos
 
 namespace {

@@ -463,6 +463,7 @@ endif()
 
 install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION share/doc/wam)
 
+
 if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
   set_property(TARGET wam APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
   set_property(TARGET wam APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")

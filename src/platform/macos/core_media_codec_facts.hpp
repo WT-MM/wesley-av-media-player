@@ -91,6 +91,10 @@ static_assert(
                ? nullptr
                : CFSTR("vpcC");
   case media::MediaCodecConfigurationKind::CodecPrivate:
+    // WMV3 states this kind and no atom: its software stage reads the record.
+    if (media::mediaCodecFacts(codec).configurationAtomName == nullptr) {
+      return nullptr;
+    }
     // MPEG-4 Part 2. The format description must carry an 'esds' -- the
     // ISO/IEC 14496-1 ES_Descriptor wrapping the VisualObjectSequence -- or
     // VTDecompressionSessionCreate fails: the raw headers in band, or an

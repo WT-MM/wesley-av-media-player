@@ -226,12 +226,11 @@ void wmv3_decoder_close(Wmv3Decoder *d)
     free(d);
 }
 
-Wmv3Decoder *wmv3_decoder_open(const uint8_t *ex, size_t exsize, int width, int height)
+/* Parses STRUCT_C (SMPTE 421M Annex J) into d. Returns 0 when this decoder
+ * implements every tool the sequence header enables. */
+static int parse_sequence(Wmv3Decoder *d, const uint8_t *ex, size_t exsize)
 {
-    if (!ex || exsize < 4 || width <= 0 || height <= 0 || width > 4096 || height > 4096) return NULL;
-    pthread_once(&vlc_once, init_vlcs);
-    Wmv3Decoder *d = calloc(1, sizeof(*d));
-    if (!d) return NULL;
+    if (!ex || exsize < 4) return -1;
     uint8_t hdr[16] = {0};
     memcpy(hdr, ex, exsize < 8 ? exsize : 8);
     Bits b = { hdr, 0, 64 };
@@ -254,12 +253,30 @@ Wmv3Decoder *wmv3_decoder_open(const uint8_t *ex, size_t exsize, int width, int 
     d->quantizer_mode = (int)get(&b, 2);
     d->finterpflag = get1(&b);
     d->res_rtm_flag = get1(&b);
-    /* Advanced profile, sprites, X8 intra and the pre-release (non-FASTTX)
-     * transform are out of scope. */
+    /* Advanced profile (the only one with interlace), sprites, X8 intra and
+     * the pre-release (non-FASTTX) transform are out of scope. Not implemented
+     * yet: in-loop deblocking, range reduction, multires and B/BI pictures. */
     if (d->profile > 1 || res_y411 || res_sprite || res_x8 || !res_fasttx || res_transtab ||
         (!d->profile && (!d->fastuvmc || d->extended_mv)) ||
-        /* Not implemented yet: in-loop deblocking, range reduction, multires. */
-        d->loop_filter || d->rangered || d->multires) {
+        d->loop_filter || d->rangered || d->multires || d->max_b_frames)
+        return -1;
+    return 0;
+}
+
+int wmv3_sequence_supported(const uint8_t *ex, size_t exsize)
+{
+    Wmv3Decoder d;
+    memset(&d, 0, sizeof(d));
+    return parse_sequence(&d, ex, exsize) == 0;
+}
+
+Wmv3Decoder *wmv3_decoder_open(const uint8_t *ex, size_t exsize, int width, int height)
+{
+    if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return NULL;
+    pthread_once(&vlc_once, init_vlcs);
+    Wmv3Decoder *d = calloc(1, sizeof(*d));
+    if (!d) return NULL;
+    if (parse_sequence(d, ex, exsize) < 0) {
         free(d);
         return NULL;
     }
@@ -477,9 +494,8 @@ static int parse_header(Wmv3Decoder *d)
     if (d->finterpflag) skip(gb, 1);
     skip(gb, 2); /* frame count */
     d->rangeredfrm = d->rangered ? get1(gb) : 0;
-    if (get1(gb)) d->pict_type = PT_P;
-    else if (d->max_b_frames && !get1(gb)) return -2; /* B / BI: not supported */
-    else d->pict_type = PT_I;
+    /* MAXBFRAMES is 0 (see parse_sequence), so PTYPE is one bit: P or I. */
+    d->pict_type = get1(gb) ? PT_P : PT_I;
     if (d->pict_type == PT_I) { skip(gb, 7); d->rnd = 1; } /* buffer fullness */
     else d->rnd ^= 1;
     if (left(gb) < 5) return -1;
@@ -1367,8 +1383,13 @@ static int decode_p_frame(Wmv3Decoder *d, const Pic *ref)
         int16_t (*row)[6][64] = d->rows + (y & 1) * d->mb_w;
         int16_t (*prev)[6][64] = y ? d->rows + ((y - 1) & 1) * d->mb_w : NULL;
         for (int x = 0; x < d->mb_w; x++) {
-            /* FFmpeg stops (and conceals) when <= 1 bit is left before a
-             * raw-plane MB, which drops a valid final skip bit; decode it. */
+            /* A Simple/Main frame is the whole packet, zero-padded to a byte
+             * (421M has no stuffing syntax for these profiles), so a final
+             * raw SKIPMBBIT can be the packet's last bit. FFmpeg stops and
+             * conceals when <= 1 bit is left before a raw-plane MB; checked on
+             * a 150k-frame WMV3 stream, all 1005 such frames end with that
+             * bit = 1 and exactly 0 bits left, while the padding of every
+             * other frame is zero, so the bit is data and is decoded. */
             if (decode_p_mb(d, ref, row[x], x, y) < 0 || left(&d->gb) < 0) return -1;
         }
         if (ovl) overlap_p_rows(d, prev, row, y);

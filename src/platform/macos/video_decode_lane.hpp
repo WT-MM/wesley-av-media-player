@@ -3,6 +3,7 @@
 #include "core_media_codec_facts.hpp"
 #include "native_video_color.hpp"
 #include "software_vp8_decoder.hpp"
+#include "software_wmv3_decoder.hpp"
 #include "video_toolbox_decoder.hpp"
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "software_avcodec_video_decoder.hpp"
@@ -74,9 +75,9 @@ namespace wam::macos {
 // Every method here is the same method the consumer already called on
 // VideoToolboxDecoder, with the same signature and the same result type, so
 // the consumer's state machine, its stats proofs and its EOS/flush/retire
-// lifecycle are the same for every backend (VideoToolbox, libvpx VP8, and
-// libavcodec when WAM_ENABLE_AVCODEC_STAGE is defined). A backend that changed
-// the seam would have to re-prove all of it.
+// lifecycle are the same for every backend (VideoToolbox, libvpx VP8, the
+// WMV3 library, and libavcodec when WAM_ENABLE_AVCODEC_STAGE is defined). A
+// backend that changed the seam would have to re-prove all of it.
 //
 // SELECTION HAPPENS ONCE, IN configure(). With the libavcodec stage built it
 // walks nativeVideoDecodePlan()'s candidates in order, and each VideoToolbox
@@ -120,6 +121,18 @@ public:
 
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
                                DecodedFrameSink &sink, std::string *error) {
+    // WMV3 has exactly one decoder on every build: no Apple codec and no
+    // libavcodec adapter decodes it.
+    if (configuration.codec == kWamVideoCodecTypeWmv3) {
+      close();
+      active_ = &videoToolbox_;
+      auto wmv3 = std::make_unique<SoftwareWmv3Decoder>(options_);
+      if (!wmv3->configure(configuration, sink, error)) {
+        return false;
+      }
+      active_ = std::move(wmv3);
+      return true;
+    }
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
     close();
     active_ = &videoToolbox_;
@@ -261,7 +274,8 @@ private:
   const VideoDecoderOptions options_;
   VideoToolboxDecoder videoToolbox_;
   // The configured backend; VideoToolbox until a software backend configures.
-  std::variant<VideoToolboxDecoder *, std::unique_ptr<SoftwareVp8Decoder>
+  std::variant<VideoToolboxDecoder *, std::unique_ptr<SoftwareVp8Decoder>,
+               std::unique_ptr<SoftwareWmv3Decoder>
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
                ,
                std::unique_ptr<SoftwareAvcodecVideoDecoder>

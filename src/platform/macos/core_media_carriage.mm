@@ -5,6 +5,7 @@
 #include "platform/macos/native_video_codec_capability.hpp"
 #include "platform/macos/native_video_color.hpp"
 #include "platform/macos/software_vp8_decoder.hpp"
+#include "platform/macos/software_wmv3_decoder.hpp"
 
 #import <CoreMedia/CoreMedia.h>
 
@@ -32,6 +33,8 @@ void assignNamedError(std::string* error, const char* name,
     // NativeVideoConsumer keys the libvpx stage on this four-character code
     // and VideoToolbox refuses it.
     return SoftwareVp8Decoder::available();
+  case media::MediaCodec::Wmv3:
+    return SoftwareWmv3Decoder::available();
   default:
     return true;
   }
@@ -107,11 +110,14 @@ CMVideoFormatDescriptionRef createVideoFormatDescription(
     return status == noErr ? description : nullptr;
   }
 
-  // VP8's record never reaches a decoder (the facts table states no atom for
-  // it), but its vpcC rides along in the description unread, as it always has.
-  const CFStringRef atomName = track.codec == media::MediaCodec::Vp8
-                                   ? CFSTR("vpcC")
-                                   : coreMediaConfigurationAtomName(track.codec);
+  // VP8's and WMV3's records never reach a decoder through the description
+  // (the facts table states no atom for them), but ride along in it unread:
+  // VP8's as vpcC, WMV3's sequence header under the AVI/ASF stream-format
+  // name.
+  const CFStringRef atomName =
+      track.codec == media::MediaCodec::Vp8    ? CFSTR("vpcC")
+      : track.codec == media::MediaCodec::Wmv3 ? CFSTR("strf")
+                                               : coreMediaConfigurationAtomName(track.codec);
   if (atomName == nullptr || track.codecConfiguration.empty() ||
       track.codecConfiguration.size() >
           static_cast<std::size_t>(std::numeric_limits<CFIndex>::max())) {

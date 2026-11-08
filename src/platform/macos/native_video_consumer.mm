@@ -463,6 +463,9 @@ std::atomic<std::uint64_t> gQuarantineRecoveries{0};
     // See the function comment: VP8 depends only on the libvpx build.
     case media::MediaCodec::Vp8:
       return SoftwareVp8Decoder::available();
+    // WMV3 depends only on the bundled WMV3 library.
+    case media::MediaCodec::Wmv3:
+      return SoftwareWmv3Decoder::available();
     default:
       return true;
   }
