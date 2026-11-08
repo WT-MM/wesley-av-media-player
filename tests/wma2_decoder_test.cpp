@@ -290,6 +290,7 @@ void print(const std::string& name, const Result& r, int bench_runs) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  av_log_set_level(AV_LOG_QUIET);
   std::string ffmpeg, scratch;
   std::vector<std::string> files;
   int bench = 0;

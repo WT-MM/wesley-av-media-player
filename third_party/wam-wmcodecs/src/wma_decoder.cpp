@@ -238,7 +238,7 @@ struct Decoder {
   int decode_superframe(const uint8_t* data, int size, float* const* out, int capacity);
   int decode_exp_vlc(int ch);
   void decode_exp_lsp(int ch);
-  int run_level_decode(const CoefTable& t, float* ptr, int num_coefs, int coef_nb_bits);
+  int run_level_decode(const CoefTable& t, float* __restrict ptr, int num_coefs, int coef_nb_bits);
   void window(float* out);
   void imdct(int bsize, const float* in);
 };
@@ -392,7 +392,7 @@ bool Decoder::init(const wam_wma_config& cfg) {
     const CoefVlcTable& src = coef_vlcs[table * 2 + t];
     std::vector<Vlc::Code> codes;
     for (int i = 0; i < src.n; i++) codes.push_back({src.huffcodes[i], src.huffbits[i], i});
-    coef[t].vlc.build(codes, 9);
+    coef[t].vlc.build(codes, 11);
     coef[t].run.assign(size_t(src.n), 0);
     coef[t].level.assign(size_t(src.n), 0);
     int i = 2, level = 1, k = 0;
@@ -484,27 +484,52 @@ int Decoder::decode_exp_vlc(int ch) {
   return 0;
 }
 
-int Decoder::run_level_decode(const CoefTable& t, float* ptr, int num_coefs, int coef_nb_bits) {
+int Decoder::run_level_decode(const CoefTable& t, float* __restrict ptr, int num_coefs,
+                              int coef_nb_bits) {
+  // Hot loop: reader state and tables in locals so stores through `ptr`
+  // cannot force reloads.
+  BitReader br = gb;
+  const Vlc& vlc = t.vlc;
+  const uint16_t* __restrict run = t.run.data();
+  const float* __restrict level = t.level.data();
   const unsigned mask = unsigned(block_len - 1);
   int offset = 0;
+  int result = 0;
+  const Vlc::Entry* __restrict root = vlc.table.data();
+  const int root_bits = vlc.bits;
   for (; offset < num_coefs; offset++) {
-    int code = t.vlc.decode(gb);
+    // Fast path: a root-table leaf and its sign bit from one 64-bit load
+    // (57 valid bits after the shift; root codes are at most 9 bits).
+    uint64_t v;
+    std::memcpy(&v, br.buf + (br.pos >> 3), 8);
+    v = __builtin_bswap64(v) << (br.pos & 7);
+    Vlc::Entry e = root[v >> (64 - root_bits)];
+    if (e.len > 0 && e.sym > 1) {
+      offset += run[e.sym];
+      float l = level[e.sym];
+      ptr[unsigned(offset) & mask] = ((v >> (63 - e.len)) & 1) ? l : -l;
+      br.skip(uint32_t(e.len) + 1);
+      continue;
+    }
+    int code = vlc.decode(br);
     if (code > 1) {
-      offset += t.run[size_t(code)];
-      float l = t.level[size_t(code)];
-      ptr[unsigned(offset) & mask] = gb.get1() ? l : -l;
+      offset += run[code];
+      float l = level[code];
+      ptr[unsigned(offset) & mask] = br.get1() ? l : -l;
     } else if (code == 1) {
       break;  // end of block
     } else if (code == 0) {
-      int level = int(gb.get(coef_nb_bits));
-      offset += int(gb.get(frame_len_bits));
-      int sign = int(gb.get1()) - 1;
-      ptr[unsigned(offset) & mask] = float((level ^ sign) - sign);
+      int lv = int(br.get(coef_nb_bits));
+      offset += int(br.get(frame_len_bits));
+      int sign = int(br.get1()) - 1;
+      ptr[unsigned(offset) & mask] = float((lv ^ sign) - sign);
     } else {
-      return -1;
+      result = -1;
+      break;
     }
   }
-  return offset > num_coefs ? -1 : 0;
+  gb = br;
+  return (result < 0 || offset > num_coefs) ? -1 : 0;
 }
 
 // Full IMDCT of block_len coefficients into output[0 .. 2*block_len), equal
