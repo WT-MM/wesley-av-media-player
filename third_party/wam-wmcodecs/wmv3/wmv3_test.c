@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later
  * Synthetic checks for the WMV3 decoder: VLC tables round-trip through the
- * table builder, and the 8x8 inverse transform matches SMPTE 421M's matrix.
+ * table builder, the 8x8 inverse transform matches SMPTE 421M's matrix, and
+ * sequence headers enabling unimplemented tools are refused.
  */
 #include "wmv3dec.c"
 
@@ -89,6 +90,13 @@ int main(void)
         check_vlc("mvdiff", vlc_mvdiff[i], 73, vc1_mv_diff_codes[i], 2, 2, vc1_mv_diff_bits[i], 1, 1);
     }
     check_transform();
+    /* Simple profile with every tool off is admitted; MAXBFRAMES = 1 is not. */
+    static const uint8_t simple[4] = { 0x00, 0x01, 0x80, 0x01 }, bframes[4] = { 0x00, 0x01, 0x80, 0x11 };
+    if (!wmv3_sequence_supported(simple, 4) || wmv3_sequence_supported(bframes, 4) ||
+        wmv3_decoder_open(bframes, 4, 16, 16)) {
+        printf("FAIL sequence header admission\n");
+        fails++;
+    }
     if (pool_pos > POOL_SIZE) { printf("FAIL VLC pool overflow %d\n", pool_pos); fails++; }
     printf("%s (VLC pool %d entries)\n", fails ? "FAILED" : "ok", pool_pos);
     return fails != 0;
