@@ -1,0 +1,15 @@
+wam-wmcodecs
+============
+
+Decoders for Windows Media formats, built as a separate shared library under
+the GNU Lesser General Public License, version 2.1 or (at your option) any
+later version (see LICENSE). WAM's MIT-licensed code links to it only
+dynamically.
+
+wmv3/ - WMV3 (SMPTE 421M VC-1 Simple/Main profile) video decoder.
+  The decoding process, DSP routines (wmv3_dsp.c) and tables (wmv3_tables.h)
+  are derived from FFmpeg's libavcodec (vc1*.c, vc1dsp.c, vc1data.c,
+  vc1acdata.h, vc1_vlc_data.h, msmpeg4_vc1_data.c, wmv2data.c),
+  Copyright (c) the FFmpeg developers, including Konstantin Shishkov and
+  others credited in those files, licensed LGPL-2.1-or-later.
+  https://ffmpeg.org/
