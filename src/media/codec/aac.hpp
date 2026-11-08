@@ -89,6 +89,18 @@ buildAacLcEsDescriptorCookie(const AacLcConfiguration &configuration) noexcept;
   return index < std::size(kRates) ? kRates[index] : 0U;
 }
 
+// Measured on AudioToolbox (macOS 26) against ffmpeg's decoder, explicit and
+// implicit SBR alike: the HE-AAC decode itself is deterministic -- 2048
+// output frames per access unit, equal to ffmpeg's output 962 frames later
+// (max error < 4e-4), with Apple's priming stated in core-rate frames (2112 =
+// 4224 output) and the final 962 frames emitted as silence. What stays
+// unproven is a seek: SBR state rebuilt from a cold start differs from the
+// continuous decode (0.06-0.25 peak, in both decoders identically) until a
+// periodic resync point in the SBR stream (every 23 access units from
+// AudioToolbox's encoder; the period is the encoder's choice, plausibly its
+// SBR header interval). No fixed preroll reproduces the continuous PCM.
+// Implicit SBR (an AOT 2 configuration at the core rate) is invisible to
+// CoreMedia, which decodes the LC core, as AVAssetReader does.
 inline constexpr const char* kHeAacDecoderDelayRefusal =
     "HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof";
 
