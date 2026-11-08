@@ -81,12 +81,42 @@ struct MpegTsAudioFrameLayout {
 // It is REQUIRED for LATM rather than rediscovered per payload: a LOAS frame
 // that reuses the established config carries none of its own, and the frame a
 // generation starts on after a seek is almost never the one that carried it.
+//
+// `partialTail`, when non-null, admits ONE trailing partial ADTS frame: an
+// access unit that commences in this PES and continues in the next, which
+// 13818-1 permits (a PES need not align to access units). Its offset is
+// stored there (payload.size() when the payload ends on a frame boundary) and
+// the frames before it are laid out as usual; the count may then be zero. The
+// remainder is only admitted as a frame PREFIX -- a header that parses with
+// the admitted format and states a length past the end, or fewer bytes than a
+// header -- so a desynchronized payload is still refused, and the caller's
+// walk over the joined bytes proves the prefix when the next PES arrives.
 [[nodiscard]] bool layOutMpegTsAudioFrames(
     std::span<const std::byte> payload, media::MediaCodec codec,
     const media::mpegts::LatmStreamMuxConfig* latmConfig,
     std::uint32_t sampleRate, std::uint32_t channels,
     std::uint32_t framesPerPacket, MpegTsAudioFrameLayout& layout,
-    std::string* error) noexcept;
+    std::string* error, std::size_t* partialTail = nullptr) noexcept;
+
+// Fixed ADTS header (protection_absent = 1) and the largest frame its 13-bit
+// frame_length can state.
+inline constexpr std::size_t kAdtsHeaderBytes{7};
+inline constexpr std::size_t kMaximumAdtsFrameBytes{8191};
+
+// Where the first ADTS access unit COMMENCING in a PES payload begins, for a
+// PES that opens with the tail of an access unit the generation never saw
+// begin (a seek lands on any PES). 13818-1 2.4.3.7 ties the PES timestamp to
+// that access unit, so this is also where the PES timestamp applies. The
+// answer is the first offset whose header states the admitted format and from
+// which whole frames chain to the end of the payload (ending, at most, in one
+// partial frame). A candidate that merely looks like a header is refused one
+// header later -- the walk over the next PES must find a header exactly where
+// the chain predicts -- rather than decoded as audio. Empty when no access
+// unit commences in the payload. `layout` is scratch.
+[[nodiscard]] std::optional<std::size_t> findAdtsAccessUnitStart(
+    std::span<const std::byte> payload, std::uint32_t sampleRate,
+    std::uint32_t channels, std::uint32_t framesPerPacket,
+    MpegTsAudioFrameLayout& layout) noexcept;
 
 struct MpegTsSampleBuildInputs {
   const media::mpegts::MpegTsPreparedAsset* asset{nullptr};
@@ -94,13 +124,15 @@ struct MpegTsSampleBuildInputs {
   CMFormatDescriptionRef format{nullptr};
   media::MediaCodec codec{media::MediaCodec::Unknown};
   bool video{true};
-  // Gather workspace for H.264/HEVC video and for audio. Annex-B to AVCC
-  // cannot size its output before the input is assembled, so the gather lands
-  // here first. See
+  // Gather workspace for H.264/HEVC video. Annex-B to AVCC cannot size its
+  // output before the input is assembled, so the gather lands here first. See
   // the note in the implementation for the copy the shape costs and why it is
   // deliberately not optimized away unmeasured.
   std::vector<std::byte>* workspace{nullptr};
-  // Audio only.
+  // Audio only: the access units to frame, already gathered by the source.
+  // Not the cursor sample's own payload, because an ADTS access unit may begin
+  // in an earlier PES; the source joins them.
+  std::span<const std::byte> audioPayload{};
   MpegTsAudioFrameLayout* audioLayout{nullptr};
   // Audio only, AAC only: non-null selects LOAS/LATM framing. See
   // layOutMpegTsAudioFrames.

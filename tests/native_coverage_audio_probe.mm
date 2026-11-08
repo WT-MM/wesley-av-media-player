@@ -100,7 +100,11 @@ int main(int argc, char **argv) {
   timeline.presentationFloor = origin ? *audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track->audio->sampleRate)) : window.presentationStart;
   timeline.startsAtStreamOrigin = window.startsAtStreamOrigin;
   timeline.presentationCeiling = track->duration;
-  timeline.trimAfterCeiling = true;
+  // A transport stream states durations on its 90 kHz clock, which is not a
+  // whole audio frame; such a track plays to EOS untrimmed.
+  timeline.trimAfterCeiling = exactAudioFrameIndex(
+      track->duration, static_cast<std::uint32_t>(track->audio->sampleRate))
+                                  .has_value();
   std::string error;
   if (!converter.configure(*track, generation, timeline, &error)) {
     std::fprintf(stderr, "configure: %s\n", error.c_str());
