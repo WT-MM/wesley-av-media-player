@@ -153,6 +153,8 @@ endif()
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
+# LGPL decoders for Windows Media formats; a separate shared library.
+add_subdirectory(third_party/wam-wmcodecs/wmv3)
 if(APPLE AND WAM_BUILD_WAMKIT)
   add_subdirectory(src/wamkit)
 endif()
