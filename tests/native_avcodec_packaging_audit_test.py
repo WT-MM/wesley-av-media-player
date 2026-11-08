@@ -67,6 +67,18 @@ class PackagingAuditTest(unittest.TestCase):
         (self.app / 'Contents/Resources/native-ffmpeg/LICENSE.md').unlink()
         self.assertFalse(audit.audit(self.app)['clean_machine_ready'])
 
+    def test_demux_stage_requires_the_wma_decoder_and_its_notices(self):
+        (self.app / 'Contents/Resources/native-ffmpeg/demux-stage-built').write_text('')
+        shutil.copyfile(self.exe, self.frameworks / audit.PINS['WAM_NATIVE_AVFORMAT_DYLIB'])
+        self.assertFalse(audit.audit(self.app)['clean_machine_ready'])
+        shutil.copyfile(self.exe, self.frameworks / audit.WM_LIBRARY)
+        self.assertFalse(audit.audit(self.app)['clean_machine_ready'])
+        wm_notices = self.app / 'Contents/Resources/wam-wmcodecs'
+        wm_notices.mkdir()
+        for name in audit.WM_NOTICES:
+            (wm_notices / name).write_text('test notice')
+        self.assertTrue(audit.audit(self.app)['clean_machine_ready'])
+
     def test_eager_native_dependency_fails_closed(self):
         source = self.root / 'main.c'
         source.write_text('extern int test_symbol(void); int main(void) { return test_symbol(); }\n')

@@ -61,7 +61,7 @@ admitAudioTrack(const media::MediaTrackDescriptor &track) noexcept {
   }
   const bool software = media::softwareAudioCodec(track.codec);
 #if !defined(WAM_ENABLE_AVCODEC_STAGE)
-  if (software) {
+  if (media::avcodecAudioCodec(track.codec)) {
     return std::nullopt;
   }
 #endif

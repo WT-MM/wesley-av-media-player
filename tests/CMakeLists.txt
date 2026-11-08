@@ -1118,6 +1118,20 @@ if(APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
   target_link_libraries(wam_ffmpeg_coexistence_test PRIVATE
     wam_avcodec_worker_test_seams wam_mpv_runtime_test_seams)
   add_test(NAME ffmpeg_coexistence COMMAND wam_ffmpeg_coexistence_test "$<TARGET_FILE:wam_fake_mpv_valid>")
+
+  # Our WMA v2 decoder against FFmpeg's on ffmpeg-encoded files.
+  add_executable(wam_wma2_decoder_test wma2_decoder_test.cpp)
+  target_include_directories(wam_wma2_decoder_test PRIVATE "${WAM_FFMPEG_LGPL_ROOT}/include")
+  target_link_libraries(wam_wma2_decoder_test PRIVATE wam_wmcodecs
+    "${WAM_FFMPEG_LGPL_ROOT}/lib/libavformat-wamnative.dylib"
+    "${WAM_FFMPEG_LGPL_ROOT}/lib/libavcodec-wamnative.dylib"
+    "${WAM_FFMPEG_LGPL_ROOT}/lib/libavutil-wamnative.dylib")
+  set_target_properties(wam_wma2_decoder_test PROPERTIES BUILD_RPATH "${WAM_FFMPEG_LGPL_ROOT}/lib")
+  file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/wma2-fixtures")
+  add_test(NAME wma2_decoder COMMAND wam_wma2_decoder_test
+    --ffmpeg "${WAM_TEST_FFMPEG}" --scratch "${PROJECT_BINARY_DIR}/wma2-fixtures")
+  add_test(NAME wma2_decoder_differential COMMAND wam_wma2_decoder_test --fuzz 100)
+  set_tests_properties(wma2_decoder wma2_decoder_differential PROPERTIES TIMEOUT 120)
 endif()
 
 if(APPLE)
@@ -1369,12 +1383,13 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
     "${WAM_AVFORMAT_FIXTURES}/reordered-asp.avi" "LibavformatExactVideoTimelineUnavailable")
   add_test(NAME libavformat_flv_audio_refusal COMMAND wam_libavformat_source_test
     "${WAM_MIXED_FIXTURES}/positive-aac.flv" "LibavformatAudioTimingUnproven: aac")
-  add_test(NAME libavformat_asf_audio_refusal COMMAND wam_libavformat_source_test
-    "${WAM_AVFORMAT_FIXTURES}/legacy.asf" "LibavformatAudioTimingUnproven: wmav2")
+  # Its WMA v2 audio is admitted; its WMV2 video is not.
+  add_test(NAME libavformat_asf_wmv2_refusal COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/legacy.asf" "LibavformatVideoCodecNotAdmitted")
   add_test(NAME libavformat_routed_avi COMMAND wam_libavformat_source_test
     "${WAM_AVFORMAT_FIXTURES}/asp.avi" ready routed)
   set_tests_properties(libavformat_avi_missing_pts libavformat_flv_audio_refusal
-    libavformat_asf_audio_refusal libavformat_routed_avi PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+    libavformat_asf_wmv2_refusal libavformat_routed_avi PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
 
   add_test(NAME libavformat_opus_audio_exact COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tests/libavformat_audio_proof.py"
@@ -1382,6 +1397,11 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
     --asset "${WAM_AVFORMAT_FIXTURES}/opus.ogg" --ffmpeg "${WAM_TEST_FFMPEG}"
     --output "${PROJECT_BINARY_DIR}/libavformat-audio-proof.json")
   set_tests_properties(libavformat_opus_audio_exact PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 60)
+
+  add_test(NAME libavformat_wma_timing_exact COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/tests/libavformat_wma_timing_proof.py"
+    --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>" --ffmpeg "${WAM_TEST_FFMPEG}")
+  set_tests_properties(libavformat_wma_timing_exact PROPERTIES TIMEOUT 240)
 
   add_test(NAME libavformat_routed_header_stripping COMMAND wam_libavformat_source_test
     "${WAM_AVFORMAT_FIXTURES}/header-stripped.mkv" ready routed)

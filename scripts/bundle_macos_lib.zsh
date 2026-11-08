@@ -1600,6 +1600,17 @@ if (( WAM_NATIVE_AVCODEC_PRESENT )); then
       return 1
     }
   done
+  # The demux stage routes WMA to the dlopened LGPL decoder library, which
+  # ships with its license and notice.
+  if [[ -f "$RESOURCES/native-ffmpeg/demux-stage-built" ]]; then
+    for wm_file in "$FRAMEWORKS/libwam-wmcodecs.dylib" \
+        "$RESOURCES/wam-wmcodecs/LICENSE" "$RESOURCES/wam-wmcodecs/NOTICE"; do
+      [[ -f "$wm_file" ]] || {
+        print -u2 "WindowsMediaDecoderMissing: ${wm_file#$APP_PATH/}"
+        return 1
+      }
+    done
+  fi
 fi
 
 if [[ ! -x "$TOOLS/ffmpeg" || ! -x "$TOOLS/whisper-cli" ]]; then

@@ -174,7 +174,8 @@ struct MediaCodecFacts {
   // converges, where the codec states more than two access units' worth.
   std::uint16_t seekPrerollFrames{0};
 
-  // Decoded by the libavcodec software stage rather than AudioToolbox.
+  // Decoded in software rather than by AudioToolbox: by the libavcodec stage,
+  // or by a WAM decoder library (avcodecAudioCodec tells them apart).
   bool softwareDecoded{false};
 
   // The codec's first access unit legitimately presents BEFORE media time
@@ -195,7 +196,7 @@ struct MediaCodecFacts {
   std::uint8_t intrinsicReorderDepth{0};
 };
 
-inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
+inline constexpr std::array<MediaCodecFacts, 26> kMediaCodecFacts{{
     {.codec = MediaCodec::Unknown, .kind = MediaCodecKind::Unknown},
     {.codec = MediaCodec::H264, .kind = MediaCodecKind::Video,
      .coreMediaType = 0x61766331U /* 'avc1' */,
@@ -384,6 +385,15 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      .softwareDecoded = true},
     {.codec = MediaCodec::Mlp, .kind = MediaCodecKind::Audio,
      .softwareDecoded = true},
+    // Decoded by libwam-wmcodecs. The library drops its first two frames and
+    // a bit-reservoir stream loses the frame straddling the first payload
+    // after every reset; the WAM backend emits those frames as silence ahead
+    // of its output, so the converter sees no lead-in, and the generation's
+    // preroll trim (or, at the origin, access unit 0 presenting that many
+    // frames before media zero) discards them. The decoder's end-of-stream
+    // overlap frame is counted on the final payload.
+    {.codec = MediaCodec::Wma2, .kind = MediaCodecKind::Audio,
+     .softwareDecoded = true, .precedesStreamOrigin = true},
 }};
 
 // CoreAudio's mono and stereo channel layout tags (kAudioChannelLayoutTag_Mono
@@ -461,9 +471,14 @@ mediaCodecFacts(MediaCodec codec) noexcept {
   return mediaCodecFacts(codec).softwareDecoded;
 }
 
+// Software audio that needs the libavcodec stage; WMA v2 has its own library.
+[[nodiscard]] constexpr bool avcodecAudioCodec(MediaCodec codec) noexcept {
+  return softwareAudioCodec(codec) && codec != MediaCodec::Wma2;
+}
+
 // The last enumerator of the frozen, append-only MediaCodec. Appending one
 // without adding its row fails the coverage assertion below.
-inline constexpr MediaCodec kLastMediaCodec = MediaCodec::Mlp;
+inline constexpr MediaCodec kLastMediaCodec = MediaCodec::Wma2;
 inline constexpr std::size_t kMediaCodecCount =
     static_cast<std::size_t>(kLastMediaCodec) + 1U;
 

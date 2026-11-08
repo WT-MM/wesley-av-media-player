@@ -738,6 +738,7 @@ CMTime fullSyncStart(AVAssetTrack* track, CMTime target,
     case MediaCodec::Dts:
     case MediaCodec::TrueHd:
     case MediaCodec::Mlp:
+    case MediaCodec::Wma2:
     case MediaCodec::Unknown:
       return std::nullopt;
   }

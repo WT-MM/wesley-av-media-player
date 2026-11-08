@@ -59,6 +59,19 @@ public:
     previousDuration_ = duration;
     return true;
   }
+  // A packet whose exact extent another codec proved (WMA v2's superframe
+  // counts); it must continue the previous packet without a gap.
+  bool appendExtent(MediaTime observed, std::int64_t start, std::int64_t duration) {
+    if (packets_.size() == 2'000'000 || !observed.valid() || duration <= 0 ||
+        start > INT64_MAX - duration ||
+        (!packets_.empty() &&
+         (compareMediaTime(observed, packets_.back().observed) != MediaTimeOrder::Greater ||
+          start != packets_.back().start + packets_.back().duration)))
+      return false;
+    packets_.push_back({observed, start, duration});
+    return true;
+  }
+  void extendLast(std::int64_t frames) { packets_.back().duration += frames; }
   bool finish(bool exactTail = true) {
     if (packets_.empty()) return false;
     const auto tail = exactTail ? exactAudioFrameIndex(previousDuration_,rate_) : std::optional<std::int64_t>(kAacFrames);

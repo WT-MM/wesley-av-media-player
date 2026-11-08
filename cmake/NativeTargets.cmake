@@ -34,6 +34,7 @@ if(APPLE OR WAM_BUILD_APP)
     src/media/audio_downmix.cpp
     src/media/codec/opus.hpp
     src/media/codec/opus.cpp
+    src/media/codec/wma.hpp
     src/media/matroska_vorbis.hpp
     src/media/matroska_vorbis.cpp
     src/media/codec/ac3.hpp
@@ -218,6 +219,8 @@ find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing REQUIRED)
       src/platform/macos/native_audio_converter.mm
       src/platform/macos/native_audio_converter_backends.hpp
       src/platform/macos/native_audio_converter_backends.mm
+      src/platform/macos/wma_decoder_library.hpp
+      src/platform/macos/wma_decoder_library.cpp
       src/platform/macos/native_audio_output.hpp
       src/platform/macos/native_audio_output.mm
       src/platform/macos/native_audio_stretch_stage.hpp
@@ -247,6 +250,11 @@ find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing REQUIRED)
       target_compile_definitions(wam_macos_native_backend PUBLIC WAM_ENABLE_AVFORMAT_STAGE=1)
     endif()
     target_include_directories(wam_macos_native_backend PUBLIC src)
+    # libwam-wmcodecs is LGPL: its header only, and the library is dlopened
+    # from the bundle (native-codecs in the build tree), never linked.
+    target_include_directories(wam_macos_native_backend PRIVATE
+      "${PROJECT_SOURCE_DIR}/third_party/wam-wmcodecs/include")
+    add_dependencies(wam_macos_native_backend wam_wmcodecs)
     target_compile_features(wam_macos_native_backend PUBLIC cxx_std_20)
     target_compile_options(wam_macos_native_backend PRIVATE
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
