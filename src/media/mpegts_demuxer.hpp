@@ -149,8 +149,15 @@ struct MpegTsCompressedSample {
   MediaTime presentationTime{};
   MediaTime decodeTime{};
   MediaTime duration{};
+  // The PES this unit commenced in (whose header carries its timestamp) and
+  // how many of that PES's payload bytes precede the unit. For a unit that is
+  // a whole PES these are firstPacketOffset and zero.
+  std::uint64_t pesPacketOffset{0};
   std::uint32_t payloadBytes{0};
-  std::uint32_t headerSkipBytes{0};  // PES header dropped from the first packet
+  // Bytes of the first packet's payload before the unit: the PES header, and
+  // for an H.264/HEVC unit that begins mid-PES, the previous unit's tail.
+  std::uint32_t headerSkipBytes{0};
+  std::uint32_t pesPayloadSkip{0};
   MediaTrackId track{0};
   std::uint16_t pid{kNullPid};
   MediaSampleKind kind{MediaSampleKind::EncodedVideo};
@@ -161,12 +168,11 @@ struct MpegTsCompressedSample {
                          const MpegTsCompressedSample&) = default;
 };
 static_assert(std::is_trivially_copyable_v<MpegTsCompressedSample>);
-// 88 bytes: 48 of exact rational time, 16 of packet-span identity, and 24 of
+// 96 bytes: 48 of exact rational time, 24 of packet-span identity, and 24 of
 // facts and padding. Against Matroska's ~4.2 KiB read result the difference is
 // entirely the 256-entry lace array Matroska must carry and Transport Stream
-// does not, so a readNext here moves 88 bytes to deliver ~48 useful ones
-// instead of 4,200.
-static_assert(sizeof(MpegTsCompressedSample) == 88);
+// does not.
+static_assert(sizeof(MpegTsCompressedSample) == 96);
 
 // ---------------------------------------------------------------------------
 // Generation planning
@@ -178,6 +184,9 @@ struct MpegTsGenerationPlan {
   MediaAudioGenerationWindow audioWindow{};
   std::uint64_t videoPacketOffset{0};
   std::uint64_t audioPacketOffset{0};
+  // H.264/HEVC: payload bytes of the PES at videoPacketOffset that precede the
+  // first access unit (a unit may begin mid-PES).
+  std::uint32_t videoUnitSkipBytes{0};
   // The exact index entry the bisection landed on, for diagnostics and
   // seek-accuracy accounting.
   std::int64_t landedTick{0};
