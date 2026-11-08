@@ -100,6 +100,10 @@ struct StreamWalk {
   TimestampUnwrapper pts;
   TimestampUnwrapper dts;
   ContinuityTracker continuity;
+  // The previous payload of this PID, to confirm a repeated counter is a
+  // true duplicate.
+  std::array<std::byte, 184> lastPayload{};
+  std::uint8_t lastPayloadSize{0};
   std::array<std::byte, kMpegTsAccessUnitProbeBytes> probe{};
   std::uint64_t firstPacketOffset{0};
   // Idle until a unit start; AwaitingHeader until its PES header is decoded;
@@ -126,6 +130,71 @@ struct StreamWalk {
   // before reaching a picture. Never cleared: beginUnit leaves it alone and
   // finishUnit only ever sets it.
   bool probeEndedBeforeSlice{false};
+
+  // ---- Access-unit mode (H.264 and HEVC) ---------------------------------
+  //
+  // 13818-1 does not require a PES packet to hold one whole access unit, and
+  // some segmenters cut PES packets at fixed sizes, so a picture can begin in
+  // the middle of one PES and end in the middle of the next. In this mode a
+  // unit is one ACCESS UNIT, cut where H.264 7.4.1.2.3 / HEVC 7.4.2.4.4 say
+  // one begins, wherever the PES boundaries fall; a stream with one access
+  // unit per PES produces exactly the samples the PES mode would.
+  //
+  // Timing follows 13818-1 2.4.3.7: a PES timestamp belongs to the FIRST
+  // access unit that commences in that PES. Any later unit commencing in the
+  // same PES has no timestamp of its own and is published untimed, which
+  // every consumer refuses.
+  bool splitsAccessUnits{false};
+  // Elementary-stream bytes seen so far (PES payload only, headers excluded).
+  std::uint64_t esPosition{0};
+  std::uint64_t unitStartEs{0};
+  // Where the walk takes up the stream. `anchorSkip` set: the first PES's
+  // payload holds this many bytes before an access unit that begins exactly
+  // there (a plan computed it). Unset: if the first PES payload opens with a
+  // start code it begins a unit (the one-unit-per-PES layout); otherwise the
+  // bytes before the first boundary are the tail of an unseen unit.
+  std::optional<std::uint32_t> anchorSkip;
+  bool synced{false};
+  std::uint64_t anchorEs{0};
+  bool awaitingAnchor{false};
+  // A unit whose start was found by guessing what came before it is dropped
+  // unless it opens with an access unit delimiter; the boundaries after it are
+  // exact because the walk then knows where the previous unit began.
+  bool unitTrusted{true};
+  bool seenVcl{false};
+  // The latest PES header's timing, until an access unit claims it.
+  struct PendingPes {
+    std::optional<std::int64_t> ptsTick;
+    std::optional<std::int64_t> dtsTick;
+    std::uint64_t packetOffset{0};
+    std::uint64_t esStart{0};
+    bool randomAccess{false};
+    bool claimed{true};
+  } pes, previousPes;
+  // Same, for the unit under construction: which PES it commenced in.
+  std::uint64_t unitPesPacketOffset{0};
+  std::uint32_t unitPesSkip{0};
+  // Start-code scanner. `zeros` counts the run of zero bytes before the
+  // current byte; after a start code, up to three bytes are collected to
+  // classify the NAL unit.
+  std::uint32_t zeros{0};
+  std::uint64_t startCodeEs{0};
+  std::array<std::uint8_t, 3> nal{};
+  std::uint8_t nalFilled{0};
+  bool inNalHeader{false};
+  // The last eight ES bytes, so a unit's probe can start at bytes the scanner
+  // consumed before it knew a unit began there (start code and NAL header).
+  std::array<std::byte, 8> recent{};
+  // Recent packets of this PID: where each one's ES bytes sit, so a cut that
+  // falls a few bytes back (a start code straddling packets) maps to a packet.
+  struct PacketSpan {
+    std::uint64_t packetOffset{0};
+    std::uint64_t esStart{0};
+    std::uint32_t esLength{0};
+    std::uint32_t payloadSkip{0};  // PES header bytes before the ES bytes
+  };
+  std::array<PacketSpan, 8> spans{};
+  std::uint32_t spanCount{0};
 
   void beginUnit(std::uint64_t offset) noexcept {
     firstPacketOffset = offset;
@@ -708,16 +777,24 @@ namespace {
 [[nodiscard]] std::optional<MpegTsCompressedSample>
 finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
            std::uint64_t scanEnd) noexcept {
+  // In access-unit mode `rawBytes` and the probe hold the unit alone and
+  // `headerSkipBytes` locates its first byte inside its first packet; in PES
+  // mode both still include the PES header.
+  const std::uint32_t probeStart =
+      walk.splitsAccessUnits ? 0U : walk.headerSkipBytes;
   if (walk.phase != StreamWalk::Phase::Collecting ||
-      walk.rawBytes <= walk.headerSkipBytes) {
+      walk.rawBytes <= probeStart) {
     walk.discardUnit();
     return std::nullopt;
   }
   MpegTsCompressedSample sample{};
   sample.firstPacketOffset = walk.firstPacketOffset;
   sample.packetScanEnd = scanEnd;
-  sample.payloadBytes = walk.rawBytes - walk.headerSkipBytes;
+  sample.payloadBytes = walk.rawBytes - probeStart;
   sample.headerSkipBytes = walk.headerSkipBytes;
+  sample.pesPacketOffset = walk.splitsAccessUnits ? walk.unitPesPacketOffset
+                                                  : walk.firstPacketOffset;
+  sample.pesPayloadSkip = walk.splitsAccessUnits ? walk.unitPesSkip : 0U;
   sample.track = track;
   sample.pid = walk.pid;
   sample.kind = walk.video ? MediaSampleKind::EncodedVideo
@@ -750,11 +827,10 @@ finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
       }
     }
     const std::size_t probeLength =
-        walk.probeFilled > walk.headerSkipBytes
-            ? static_cast<std::size_t>(walk.probeFilled - walk.headerSkipBytes)
+        walk.probeFilled > probeStart
+            ? static_cast<std::size_t>(walk.probeFilled - probeStart)
             : 0U;
-    const std::span<const std::byte> unit(walk.probe.data() +
-                                              walk.headerSkipBytes,
+    const std::span<const std::byte> unit(walk.probe.data() + probeStart,
                                           probeLength);
     const AccessUnitScan scan = scanAccessUnit(unit, walk.codec);
     // random_access_indicator is the mux's own claim; the bitstream scan is
@@ -774,6 +850,403 @@ finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
   }
   walk.discardUnit();
   return sample;
+}
+
+enum class FeedStatus : std::uint8_t { None, Unit, Failed };
+
+[[nodiscard]] bool h264StartsUnit(StreamWalk& walk, bool unitOpen,
+                                  bool& known) noexcept {
+  const std::uint8_t type = walk.nal[0] & 0x1FU;
+  if (type >= 1 && type <= 5) {
+    if (walk.nalFilled < 2) {
+      known = false;
+      return false;
+    }
+    // first_mb_in_slice is ue(v); the value 0 is the single bit '1'.
+    const bool firstSlice = (walk.nal[1] & 0x80U) != 0;
+    const bool starts = walk.seenVcl && firstSlice;
+    walk.seenVcl = true;
+    return starts;
+  }
+  if (type == 9) {  // access unit delimiter: always first in its unit
+    walk.seenVcl = false;
+    return unitOpen;
+  }
+  if (type == 6 || type == 7 || type == 8 || (type >= 14 && type <= 18)) {
+    const bool starts = walk.seenVcl;
+    walk.seenVcl = false;
+    return starts;
+  }
+  return false;
+}
+
+[[nodiscard]] bool hevcStartsUnit(StreamWalk& walk, bool unitOpen,
+                                  bool& known) noexcept {
+  if (walk.nalFilled < 2) {
+    known = false;
+    return false;
+  }
+  const std::uint8_t type = (walk.nal[0] >> 1) & 0x3FU;
+  if (type < 32) {
+    if (walk.nalFilled < 3) {
+      known = false;
+      return false;
+    }
+    const bool firstSlice = (walk.nal[2] & 0x80U) != 0;
+    const bool starts = walk.seenVcl && firstSlice;
+    walk.seenVcl = true;
+    return starts;
+  }
+  if (type == 35) {
+    walk.seenVcl = false;
+    return unitOpen;
+  }
+  if ((type >= 32 && type <= 34) || type == 39 || (type >= 41 && type <= 44) ||
+      (type >= 48 && type <= 55)) {
+    const bool starts = walk.seenVcl;
+    walk.seenVcl = false;
+    return starts;
+  }
+  return false;
+}
+
+// Opens a unit whose first byte is ES byte `startEs`, which the scanner has
+// already consumed up to `throughEs` (inclusive).
+[[nodiscard]] bool openAccessUnit(StreamWalk& walk, std::uint64_t startEs,
+                                  std::uint64_t throughEs) noexcept {
+  const StreamWalk::PacketSpan* home = nullptr;
+  for (std::uint32_t i = 0; i < walk.spanCount; ++i) {
+    const StreamWalk::PacketSpan& span = walk.spans[i];
+    if (startEs >= span.esStart && startEs < span.esStart + span.esLength) {
+      home = &span;
+      break;
+    }
+  }
+  if (home == nullptr || throughEs + 1 < startEs ||
+      throughEs + 1 - startEs > walk.recent.size()) {
+    return false;
+  }
+  walk.phase = StreamWalk::Phase::Collecting;
+  walk.firstPacketOffset = home->packetOffset;
+  walk.headerSkipBytes = home->payloadSkip +
+                         static_cast<std::uint32_t>(startEs - home->esStart);
+  walk.unitStartEs = startEs;
+  walk.packetCount = 1;
+  walk.probeFilled = 0;
+  for (std::uint64_t at = startEs; at <= throughEs; ++at) {
+    walk.probe[walk.probeFilled++] = walk.recent[at % walk.recent.size()];
+  }
+  walk.rawBytes = walk.probeFilled;
+  // The PES the unit's first byte lies in: the current one, or -- when a
+  // start code straddles a PES boundary -- the one before it.
+  StreamWalk::PendingPes& homePes =
+      startEs >= walk.pes.esStart ? walk.pes : walk.previousPes;
+  if (startEs < homePes.esStart) {
+    return false;
+  }
+  walk.unitPesPacketOffset = homePes.packetOffset;
+  walk.unitPesSkip = static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(std::numeric_limits<std::uint32_t>::max(),
+                              startEs - homePes.esStart));
+  if (!homePes.claimed) {
+    homePes.claimed = true;
+    walk.ptsTick = homePes.ptsTick;
+    if (homePes.dtsTick) {
+      walk.dtsTick = *homePes.dtsTick;
+    }
+    walk.randomAccess = homePes.randomAccess;
+  } else {
+    walk.ptsTick.reset();
+    walk.randomAccess = false;
+  }
+  return true;
+}
+
+// Appends ES bytes to the open unit (probe prefix copied, the rest counted).
+void appendAccessUnitBytes(StreamWalk& walk,
+                           std::span<const std::byte> bytes) noexcept {
+  if (walk.phase != StreamWalk::Phase::Collecting || bytes.empty()) {
+    return;
+  }
+  if (walk.probeFilled < walk.probe.size()) {
+    const std::size_t take =
+        std::min(walk.probe.size() - walk.probeFilled, bytes.size());
+    std::memcpy(walk.probe.data() + walk.probeFilled, bytes.data(), take);
+    walk.probeFilled = static_cast<std::uint32_t>(walk.probeFilled + take);
+  }
+  walk.rawBytes = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+      std::numeric_limits<std::uint32_t>::max(),
+      static_cast<std::uint64_t>(walk.rawBytes) + bytes.size()));
+}
+
+// One PID packet in access-unit mode. At most one unit completes per packet:
+// a second boundary inside the same packet is a second unit commencing in the
+// same PES, which has no timestamp of its own (13818-1 2.4.3.7).
+[[nodiscard]] FeedStatus feedAccessUnitPacket(
+    const AssetState& state, StreamWalk& walk, std::uint64_t packetOffset,
+    const TsPacketHeader& header, std::span<const std::byte> packet,
+    std::optional<MpegTsCompressedSample>& out, MpegTsCursorFailure& failure) {
+  std::span<const std::byte> payload =
+      packet.subspan(header.payloadOffset, header.payloadSize);
+  std::uint32_t payloadSkip = 0;
+  if (header.payloadUnitStart) {
+    PesHeader pesHeader{};
+    if (decodePesHeader(payload, pesHeader) != PesStatus::Ok) {
+      // Unlocatable ES bytes: drop what is open and take the stream up again
+      // at the next PES as if the walk had just started.
+      walk.discardUnit();
+      walk.synced = false;
+      walk.anchorSkip.reset();
+      return FeedStatus::None;
+    }
+    payloadSkip = pesHeader.headerBytes;
+    walk.previousPes = walk.pes;
+    walk.pes = StreamWalk::PendingPes{};
+    if (pesHeader.hasPts) {
+      walk.pes.ptsTick = walk.pts.extend(pesHeader.pts);
+    }
+    if (pesHeader.hasDts) {
+      walk.pes.dtsTick = walk.dts.extend(pesHeader.dts);
+    } else if (pesHeader.hasPts) {
+      walk.pes.dtsTick = walk.dts.extend(pesHeader.pts);
+    }
+    walk.pes.packetOffset = packetOffset;
+    walk.pes.esStart = walk.esPosition;
+    walk.pes.randomAccess = header.randomAccess;
+    walk.pes.claimed = false;
+    if (!walk.synced) {
+      walk.synced = true;
+      walk.zeros = 0;
+      walk.inNalHeader = false;
+      walk.discardUnit();
+      const std::span<const std::byte> es = payload.subspan(
+          std::min<std::size_t>(payloadSkip, payload.size()));
+      const auto byteAt = [&](std::size_t i) {
+        return std::to_integer<std::uint8_t>(es[i]);
+      };
+      const bool opensWithStartCode =
+          (es.size() >= 3 && byteAt(0) == 0 && byteAt(1) == 0 &&
+           byteAt(2) == 1) ||
+          (es.size() >= 4 && byteAt(0) == 0 && byteAt(1) == 0 &&
+           byteAt(2) == 0 && byteAt(3) == 1);
+      walk.awaitingAnchor = false;
+      if (walk.anchorSkip) {
+        walk.awaitingAnchor = true;
+        walk.anchorEs = walk.esPosition + *walk.anchorSkip;
+        walk.anchorSkip.reset();
+      } else if (opensWithStartCode) {
+        walk.awaitingAnchor = true;
+        walk.anchorEs = walk.esPosition;
+      } else {
+        // The bytes before the first boundary finish a unit this walk never
+        // saw begin; assume it held a picture so its successor's prefix
+        // NAL units are recognized, and distrust the first cut.
+        walk.seenVcl = true;
+        walk.unitTrusted = false;
+      }
+    }
+  }
+  if (!walk.synced) {
+    return FeedStatus::None;
+  }
+  if (payloadSkip > payload.size()) {
+    walk.discardUnit();
+    walk.synced = false;
+    return FeedStatus::None;
+  }
+  const std::span<const std::byte> es = payload.subspan(payloadSkip);
+  if (walk.spanCount < walk.spans.size()) {
+    ++walk.spanCount;
+  }
+  std::move_backward(walk.spans.begin(),
+                     walk.spans.begin() + walk.spanCount - 1,
+                     walk.spans.begin() + walk.spanCount);
+  walk.spans[0] = StreamWalk::PacketSpan{
+      packetOffset, walk.esPosition, static_cast<std::uint32_t>(es.size()),
+      payloadSkip};
+  if (walk.phase == StreamWalk::Phase::Collecting) {
+    if (walk.packetCount >= kMaximumMpegTsAccessUnitPackets) {
+      failure = {MediaRefusalClass::SampleLimit,
+                 "mpeg-ts access unit spans more packets than the cap admits"};
+      return FeedStatus::Failed;
+    }
+    ++walk.packetCount;
+  }
+
+  std::size_t segment = 0;  // first byte of `es` not yet given to a unit
+  std::size_t i = 0;
+  // The ES position of es[i] is base + i.
+  const std::uint64_t base = walk.esPosition;
+  while (i < es.size()) {
+    if (walk.awaitingAnchor && base + i == walk.anchorEs) {
+      walk.awaitingAnchor = false;
+      walk.zeros = 0;
+      walk.inNalHeader = false;
+      walk.seenVcl = false;
+      walk.unitTrusted = true;
+      walk.recent[(base + i) % walk.recent.size()] = es[i];
+      if (!openAccessUnit(walk, base + i, base + i)) {
+        failure = {MediaRefusalClass::InvalidContainer,
+                   "mpeg-ts access unit start is not addressable"};
+        return FeedStatus::Failed;
+      }
+      segment = i + 1;
+      // The anchor byte itself still feeds the start-code scanner below.
+    }
+    // Fast path: outside a start code and a NAL header nothing but a zero
+    // byte can matter.
+    if (walk.zeros == 0 && !walk.inNalHeader && !walk.awaitingAnchor) {
+      const void* zero = std::memchr(es.data() + i, 0, es.size() - i);
+      const std::size_t next =
+          zero == nullptr
+              ? es.size()
+              : static_cast<std::size_t>(static_cast<const std::byte*>(zero) -
+                                         es.data());
+      // Keep the lookback current for the bytes skipped over.
+      const std::size_t keep = std::min<std::size_t>(next - i, 8);
+      for (std::size_t k = next - keep; k < next; ++k) {
+        walk.recent[(base + k) % walk.recent.size()] = es[k];
+      }
+      i = next;
+      if (i == es.size()) {
+        break;
+      }
+    }
+    const auto value = std::to_integer<std::uint8_t>(es[i]);
+    walk.recent[(base + i) % walk.recent.size()] = es[i];
+    if (walk.inNalHeader) {
+      walk.nal[walk.nalFilled++] = value;
+      bool known = true;
+      // A delimiter starts a unit unless it is the first byte of the open
+      // one.
+      const bool unitOpen = walk.phase != StreamWalk::Phase::Collecting ||
+                            walk.startCodeEs > walk.unitStartEs;
+      const bool starts =
+          walk.codec == MediaCodec::Hevc
+              ? hevcStartsUnit(walk, unitOpen, known)
+              : h264StartsUnit(walk, unitOpen, known);
+      if (known || walk.nalFilled == walk.nal.size()) {
+        walk.inNalHeader = false;
+      }
+      if (known && starts && !walk.awaitingAnchor) {
+        // The old unit ends where the start code begins.
+        const bool wasOpen = walk.phase == StreamWalk::Phase::Collecting;
+        if (wasOpen) {
+          appendAccessUnitBytes(walk, es.subspan(segment, i + 1 - segment));
+          const std::uint64_t length = walk.startCodeEs - walk.unitStartEs;
+          walk.rawBytes = static_cast<std::uint32_t>(
+              std::min<std::uint64_t>(walk.rawBytes, length));
+          walk.probeFilled = static_cast<std::uint32_t>(
+              std::min<std::uint64_t>(walk.probeFilled, length));
+          const bool trusted = walk.unitTrusted;
+          std::optional<MpegTsCompressedSample> finished =
+              finishUnit(state, walk, walk.pid, packetOffset);
+          if (finished && trusted) {
+            if (out) {
+              failure = {MediaRefusalClass::InvalidTimeline,
+                         "mpeg-ts video access unit has no attributable "
+                         "timestamp"};
+              return FeedStatus::Failed;
+            }
+            out = finished;
+          }
+        }
+        // Only the first cut after a guessed start is in doubt.
+        walk.unitTrusted = wasOpen || walk.unitTrusted ||
+                           (walk.codec == MediaCodec::Hevc
+                                ? ((walk.nal[0] >> 1) & 0x3FU) == 35
+                                : (walk.nal[0] & 0x1FU) == 9);
+        if (!openAccessUnit(walk, walk.startCodeEs, base + i)) {
+          failure = {MediaRefusalClass::InvalidContainer,
+                   "mpeg-ts access unit start is not addressable"};
+          return FeedStatus::Failed;
+        }
+        segment = i + 1;
+      }
+      walk.zeros = 0;
+    } else if (value == 0) {
+      ++walk.zeros;
+    } else {
+      if (value == 1 && walk.zeros >= 2) {
+        // A three-byte start code, widened to four by a zero_byte -- except
+        // when the start code opens a PES: a unit that begins at a PES
+        // boundary begins exactly there.
+        std::uint64_t start = base + i - 2;
+        if (walk.zeros >= 3 && start != walk.pes.esStart) {
+          --start;
+        }
+        walk.startCodeEs = start;
+        walk.inNalHeader = true;
+        walk.nalFilled = 0;
+      }
+      walk.zeros = 0;
+    }
+    ++i;
+  }
+  appendAccessUnitBytes(walk, es.subspan(std::min(segment, es.size())));
+  walk.esPosition += es.size();
+  return out ? FeedStatus::Unit : FeedStatus::None;
+}
+
+// One packet of the walk's PID: a unit-start packet completes the previous
+// unit in PES mode; access-unit mode cuts wherever a unit begins.
+[[nodiscard]] FeedStatus feedPacket(
+    const AssetState& state, StreamWalk& walk, std::uint64_t packetOffset,
+    const TsPacketHeader& header, std::span<const std::byte> packet,
+    std::optional<MpegTsCompressedSample>& out, MpegTsCursorFailure& failure) {
+  out.reset();
+  if (walk.splitsAccessUnits) {
+    return feedAccessUnitPacket(state, walk, packetOffset, header, packet, out,
+                                failure);
+  }
+  // random_access_indicator is honoured ONLY on a payload-unit start, and
+  // this is not a nicety. 13818-1 2.4.3.4 says the indicator means the
+  // current or a SUBSEQUENT packet of this PID begins a random access point,
+  // so ffmpeg sets it on the last packet before a keyframe's PES as well as
+  // on the PES packet itself. Applying it to whichever unit is under
+  // construction would mark the access unit BEFORE every keyframe as a
+  // keyframe too (about 2n-1 keyframes instead of n). Restricting it to the
+  // unit-start packet makes the count exact.
+  if (header.payloadUnitStart) {
+    if (walk.collecting()) {
+      out = finishUnit(state, walk, walk.pid, packetOffset);
+    }
+    walk.beginUnit(packetOffset);
+    walk.randomAccess = header.randomAccess;
+    walk.appendPayload(
+        packet.subspan(header.payloadOffset, header.payloadSize));
+    if (!walk.tryHeader()) {
+      walk.discardUnit();
+    }
+    return out ? FeedStatus::Unit : FeedStatus::None;
+  }
+  if (!walk.collecting()) {
+    return FeedStatus::None;  // payload before the first unit start
+  }
+  if (walk.packetCount >= kMaximumMpegTsAccessUnitPackets) {
+    failure = {MediaRefusalClass::SampleLimit,
+               "mpeg-ts access unit spans more packets than the cap admits"};
+    return FeedStatus::Failed;
+  }
+  walk.appendPayload(packet.subspan(header.payloadOffset, header.payloadSize));
+  if (!walk.tryHeader()) {
+    walk.discardUnit();
+  }
+  return FeedStatus::None;
+}
+
+// The unit still open when the stream ends.
+[[nodiscard]] std::optional<MpegTsCompressedSample> finishTail(
+    const AssetState& state, StreamWalk& walk, std::uint64_t scanEnd) noexcept {
+  if (walk.splitsAccessUnits && !walk.unitTrusted) {
+    walk.discardUnit();
+    return std::nullopt;
+  }
+  return finishUnit(state, walk, walk.pid, scanEnd);
+}
+
+[[nodiscard]] bool splitsAccessUnits(MediaCodec codec) noexcept {
+  return codec == MediaCodec::H264 || codec == MediaCodec::Hevc;
 }
 
 }  // namespace
@@ -816,7 +1289,7 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
     if (status == WalkStatus::End) {
       impl_->ended = true;
       const std::optional<MpegTsCompressedSample> tail =
-          finishUnit(state, walk, walk.pid, impl_->position);
+          finishTail(state, walk, impl_->position);
       if (tail) {
         return *tail;
       }
@@ -834,11 +1307,30 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
       continue;
     }
     const ContinuityVerdict verdict = walk.continuity.observe(header);
-    if (verdict == ContinuityVerdict::Duplicate) {
+    const std::span<const std::byte> payloadBytes =
+        header.hasPayload
+            ? packet.subspan(header.payloadOffset, header.payloadSize)
+            : std::span<const std::byte>{};
+    // A repeated counter is a duplicate only when the packet repeats the
+    // previous one (13818-1 2.4.3.3). Concatenated segments restart their
+    // counters, and a restart that happens to repeat the last value is new
+    // data -- dropping it would merge two PES packets.
+    const bool duplicate =
+        verdict == ContinuityVerdict::Duplicate &&
+        payloadBytes.size() == walk.lastPayloadSize &&
+        std::equal(payloadBytes.begin(), payloadBytes.end(),
+                   walk.lastPayload.begin());
+    if (duplicate) {
       continue;
     }
-    if (verdict == ContinuityVerdict::Gap) {
+    if (verdict == ContinuityVerdict::Gap ||
+        verdict == ContinuityVerdict::Duplicate) {
       ++impl_->continuityGaps;
+    }
+    if (!payloadBytes.empty()) {
+      std::copy(payloadBytes.begin(), payloadBytes.end(),
+                walk.lastPayload.begin());
+      walk.lastPayloadSize = static_cast<std::uint8_t>(payloadBytes.size());
     }
     if (verdict == ContinuityVerdict::Discontinuous) {
       walk.pts.resynchronize();
@@ -848,51 +1340,21 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
       continue;
     }
 
-    // random_access_indicator is honoured ONLY on a payload-unit start, and
-    // this is not a nicety. 13818-1 2.4.3.4 says the indicator means the
-    // current or a SUBSEQUENT packet of this PID begins a random access point,
-    // so ffmpeg sets it on the last packet before a keyframe's PES as well as
-    // on the PES packet itself. Applying it to whichever unit is under
-    // construction would mark the access unit BEFORE every keyframe as a
-    // keyframe too (about 2n-1 keyframes instead of n). Restricting it to the
-    // unit-start packet makes the count exact.
-    if (header.payloadUnitStart) {
-      std::optional<MpegTsCompressedSample> completed;
-      if (walk.collecting()) {
-        completed = finishUnit(state, walk, walk.pid, packetOffset);
-      }
-      const bool wasRandomAccess = header.randomAccess;
-      walk.beginUnit(packetOffset);
-      walk.randomAccess = wasRandomAccess;
-      walk.appendPayload(
-          packet.subspan(header.payloadOffset, header.payloadSize));
-      if (!walk.tryHeader()) {
-        walk.discardUnit();
-      }
-      if (completed) {
-        if (completed->payloadBytes > kMaximumMpegTsAccessUnitBytes) {
-          return MpegTsCursorFailure{
-              MediaRefusalClass::SampleLimit,
-              "mpeg-ts access unit exceeds the admitted sample size"};
-        }
-        completed->track = walk.pid;
-        return *completed;
-      }
-      continue;
+    std::optional<MpegTsCompressedSample> completed;
+    MpegTsCursorFailure failure;
+    const FeedStatus fed = feedPacket(state, walk, packetOffset, header,
+                                      packet, completed, failure);
+    if (fed == FeedStatus::Failed) {
+      return failure;
     }
-
-    if (!walk.collecting()) {
-      continue;  // payload before the first unit start: not ours to keep
-    }
-    if (walk.packetCount >= kMaximumMpegTsAccessUnitPackets) {
-      return MpegTsCursorFailure{
-          MediaRefusalClass::SampleLimit,
-          "mpeg-ts access unit spans more packets than the cap admits"};
-    }
-    walk.appendPayload(
-        packet.subspan(header.payloadOffset, header.payloadSize));
-    if (!walk.tryHeader()) {
-      walk.discardUnit();
+    if (fed == FeedStatus::Unit) {
+      if (completed->payloadBytes > kMaximumMpegTsAccessUnitBytes) {
+        return MpegTsCursorFailure{
+            MediaRefusalClass::SampleLimit,
+            "mpeg-ts access unit exceeds the admitted sample size"};
+      }
+      completed->track = walk.pid;
+      return *completed;
     }
   }
 }
@@ -932,6 +1394,8 @@ bool MpegTsPreparedAsset::copyAccessUnit(const MpegTsCompressedSample& sample,
     std::uint64_t position = sample.firstPacketOffset;
     std::size_t written = 0;
     std::uint32_t skipRemaining = sample.headerSkipBytes;
+    const bool crossesPes = sample.kind == MediaSampleKind::EncodedVideo &&
+                            splitsAccessUnits(state.video.codec);
     std::uint32_t packets = 0;
     bool first = true;
 
@@ -968,16 +1432,27 @@ bool MpegTsPreparedAsset::copyAccessUnit(const MpegTsCompressedSample& sample,
           header.payloadSize == 0) {
         continue;
       }
-      // A payload-unit start after the first packet is the NEXT access unit;
-      // the gather must stop there even if the recorded byte count disagrees,
-      // because the packet stream is the authority.
-      if (header.payloadUnitStart && !first &&
-          packetOffset != sample.firstPacketOffset) {
-        break;
-      }
-      first = false;
       std::span<const std::byte> payload =
           packet.subspan(header.payloadOffset, header.payloadSize);
+      // A payload-unit start after the first packet is the NEXT PES. A unit
+      // that is a whole PES stops there even if the recorded byte count
+      // disagrees, because the packet stream is the authority; an H.264/HEVC
+      // access unit may continue into it, past its header.
+      if (header.payloadUnitStart && !first &&
+          packetOffset != sample.firstPacketOffset) {
+        if (!crossesPes) {
+          break;
+        }
+        PesHeader pesHeader{};
+        if (decodePesHeader(payload, pesHeader) != PesStatus::Ok) {
+          break;
+        }
+        payload = payload.subspan(pesHeader.headerBytes);
+        if (payload.empty()) {
+          continue;
+        }
+      }
+      first = false;
       if (skipRemaining > 0) {
         const std::uint32_t drop = static_cast<std::uint32_t>(
             std::min<std::size_t>(skipRemaining, payload.size()));
@@ -1162,6 +1637,7 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
         walk.pid = state.video.pid;
         walk.codec = state.video.codec;
         walk.video = true;
+        walk.splitsAccessUnits = splitsAccessUnits(state.video.codec);
         std::uint64_t position = alignPacketOffset(
             state.framing, entries[startIndex].packetOffset);
         const std::uint64_t scanLimit = std::min<std::uint64_t>(
@@ -1190,51 +1666,34 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
               header.payloadSize == 0) {
             continue;
           }
-          // Same unit-start-only rule as readNext; see the note there.
-          if (!header.payloadUnitStart) {
-            if (walk.collecting()) {
-              walk.appendPayload(
-                  packet.subspan(header.payloadOffset, header.payloadSize));
-              if (!walk.tryHeader()) {
-                walk.discardUnit();
-              }
-            }
+          std::optional<MpegTsCompressedSample> unit;
+          MpegTsCursorFailure failure;
+          const FeedStatus fed = feedPacket(state, walk, packetOffset, header,
+                                            packet, unit, failure);
+          if (fed == FeedStatus::Failed) {
+            result.error = failure.error;
+            result.message = std::move(failure.message);
+            return result;
+          }
+          if (fed != FeedStatus::Unit) {
             continue;
           }
-
-          bool done = false;
-          if (walk.collecting()) {
-            const std::optional<MpegTsCompressedSample> unit =
-                finishUnit(state, walk, walk.pid, packetOffset);
-            const auto unitTicks =
-                unit ? mediaTimeToTicks(unit->presentationTime, kTimestampHz,
-                                        1, TickRounding::Floor)
-                     : std::nullopt;
-            if (unit && unit->decodableFromCold && unitTicks) {
-              const std::int64_t unitTick = state.originTick + *unitTicks;
-              if (unitTick <= targetTick) {
-                atOrBefore = *unit;
-                atOrBeforeTick = unitTick;
-              } else {
-                if (!firstAfter || unitTick < firstAfterTick) {
-                  firstAfter = *unit;
-                  firstAfterTick = unitTick;
-                }
-                // Nothing later can be a better at-or-before candidate.
-                done = true;
+          const auto unitTicks =
+              mediaTimeToTicks(unit->presentationTime, kTimestampHz, 1,
+                               TickRounding::Floor);
+          if (unit->decodableFromCold && unitTicks) {
+            const std::int64_t unitTick = state.originTick + *unitTicks;
+            if (unitTick <= targetTick) {
+              atOrBefore = *unit;
+              atOrBeforeTick = unitTick;
+            } else {
+              if (!firstAfter || unitTick < firstAfterTick) {
+                firstAfter = *unit;
+                firstAfterTick = unitTick;
               }
+              // Nothing later can be a better at-or-before candidate.
+              break;
             }
-          }
-          const bool wasRandomAccess = header.randomAccess;
-          walk.beginUnit(packetOffset);
-          walk.randomAccess = wasRandomAccess;
-          walk.appendPayload(
-              packet.subspan(header.payloadOffset, header.payloadSize));
-          if (!walk.tryHeader()) {
-            walk.discardUnit();
-          }
-          if (done) {
-            break;
           }
         }
         probeEndedBeforeSlice =
@@ -1277,7 +1736,10 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
                   "scan";
         return result;
       }
-      videoStart = chosen->firstPacketOffset;
+      // The PES the unit commenced in, which carries its timestamp, and
+      // where inside that PES the unit begins.
+      videoStart = chosen->pesPacketOffset;
+      plan.videoUnitSkipBytes = chosen->pesPayloadSkip;
     }
 
     plan.videoPacketOffset = videoStart;
@@ -1330,6 +1792,8 @@ MpegTsPreparedAsset::makeVideoCursor(const MpegTsGenerationPlan& plan) const
     impl->walk.pid = state.video.pid;
     impl->walk.codec = state.video.codec;
     impl->walk.video = true;
+    impl->walk.splitsAccessUnits = splitsAccessUnits(state.video.codec);
+    impl->walk.anchorSkip = plan.videoUnitSkipBytes;
     impl->position =
         alignPacketOffset(state.framing, plan.videoPacketOffset);
     return std::unique_ptr<MpegTsCursor>(new MpegTsCursor(std::move(impl)));
@@ -1623,7 +2087,7 @@ measuredFrameDurationTicks(const FirstUnitFacts& facts) noexcept {
 [[nodiscard]] MediaRefusalClass
 scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
                std::uint16_t videoPid, MediaCodec videoCodec,
-               std::uint16_t audioPid, bool audioIsLatm,
+               std::uint16_t audioPid, bool audioIsLatm, bool audioIsAdts,
                CancellationToken cancellation, FirstUnitFacts& facts) {
   PacketWalker walker(window, framing);
   StreamWalk video{};
@@ -1706,10 +2170,37 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
             facts.hasAudioPts = true;
           }
           if (!facts.hasAudioHeader && unit.size() >= 4) {
+            // A PES need not begin on an ADTS frame. The header that states
+            // the format is the first one from which frames chain (to the next
+            // header, or past what the probe holds); the bytes before it end a
+            // frame that began before the stream did.
+            std::size_t first = 0;
+            if (audioIsAdts) {
+              for (; first + 7 <= unit.size(); ++first) {
+                AdtsHeader adts{};
+                if (!parseAdtsHeader(unit.subspan(first), adts)) {
+                  continue;
+                }
+                const std::size_t next = first + adts.frameBytes;
+                AdtsHeader following{};
+                if (next + 7 > unit.size() ||
+                    (parseAdtsHeader(unit.subspan(next), following) &&
+                     following.samplingFrequencyIndex ==
+                         adts.samplingFrequencyIndex &&
+                     following.channelConfiguration ==
+                         adts.channelConfiguration)) {
+                  break;
+                }
+              }
+              if (first + 7 > unit.size()) {
+                first = 0;  // no header: the refusal below names the stream
+              }
+            }
             const std::size_t take =
                 std::min<std::size_t>(facts.audioHeaderBytes.size(),
-                                      unit.size());
-            std::memcpy(facts.audioHeaderBytes.data(), unit.data(), take);
+                                      unit.size() - first);
+            std::memcpy(facts.audioHeaderBytes.data(), unit.data() + first,
+                        take);
             facts.audioHeaderSize = static_cast<std::uint32_t>(take);
             facts.hasAudioHeader = true;
           }
@@ -2093,6 +2584,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       const MediaRefusalClass error = scanFirstUnits(
           window, state->framing, state->video.pid, state->video.codec,
           state->hasAudio ? state->audio.pid : kNullPid, audioIsLatm,
+          state->hasAudio && state->audio.codec == MediaCodec::Aac &&
+              !audioIsLatm,
           cancellation, facts);
       if (error == MediaRefusalClass::Cancelled) {
         result.status = MediaSourceOpenStatus::Cancelled;

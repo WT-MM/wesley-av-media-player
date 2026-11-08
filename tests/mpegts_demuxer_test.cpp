@@ -71,7 +71,7 @@ static_assert(!std::is_copy_constructible_v<MpegTsPreparedAsset>);
 static_assert(!std::is_default_constructible_v<MpegTsPreparedAsset>);
 // The emitted sample owns no bytes: it is a packet span plus exact times.
 static_assert(std::is_trivially_copyable_v<MpegTsCompressedSample>);
-static_assert(sizeof(MpegTsCompressedSample) == 88);
+static_assert(sizeof(MpegTsCompressedSample) == 96);
 static_assert(sizeof(MpegTsIndexEntry) == 24);
 static_assert(std::is_trivially_copyable_v<TsPacketHeader>);
 
@@ -2517,6 +2517,101 @@ void testDurationAgainstGroundTruth() {
 
 }  // namespace
 
+// The same mux, re-cut so every video PES boundary falls inside an access
+// unit (some inside its start code), must yield exactly the access units of the
+// one-unit-per-PES original: same timestamps, keyframe verdicts and bytes, from
+// the origin and from the first unit after a seek.
+void testAccessUnitsSplitAcrossPes() {
+  const std::filesystem::path root = fixtureRoot();
+  if (root.empty()) {
+    missingFixture("split access units");
+    return;
+  }
+  struct Unit {
+    MpegTsCompressedSample sample;
+    std::vector<std::byte> bytes;
+  };
+  const auto walk = [](const MpegTsPreparedAsset& asset, std::int64_t targetMs,
+                       std::size_t limit) {
+    std::vector<Unit> units;
+    const MpegTsPlanOutcome plan = asset.planGeneration(
+        MediaTime{targetMs, 1000}, MediaSeekMode::Accurate);
+    std::unique_ptr<MpegTsCursor> cursor =
+        plan.plan ? asset.makeVideoCursor(*plan.plan) : nullptr;
+    while (cursor != nullptr && units.size() < limit) {
+      MpegTsCursorReadResult result = cursor->readNext();
+      const auto* sample = std::get_if<MpegTsCompressedSample>(&result);
+      if (sample == nullptr) {
+        break;
+      }
+      Unit unit{*sample, std::vector<std::byte>(sample->payloadBytes)};
+      if (!asset.copyAccessUnit(*sample, unit.bytes)) {
+        unit.bytes.clear();
+      }
+      units.push_back(std::move(unit));
+    }
+    return units;
+  };
+  // On the absolute 90 kHz clock: the re-cut audio starts one frame later,
+  // which moves the exported origin.
+  const auto same = [](MediaTime a, std::int64_t originA, MediaTime b,
+                       std::int64_t originB) {
+    const std::optional<std::int64_t> ta = mediaTimeToTicks(a);
+    const std::optional<std::int64_t> tb = mediaTimeToTicks(b);
+    return a.valid() == b.valid() &&
+           (!a.valid() || (ta && tb && *ta + originA == *tb + originB));
+  };
+  struct Pair {
+    const char* original;
+    const char* split;
+    std::size_t units;
+    std::vector<std::int64_t> targetsMs;
+  };
+  const Pair pairs[] = {{"h264-aac.ts", "split.ts", 75, {0, 500, 1300, 2100}},
+                        {"hevc-aac.ts", "split-hevc.ts", 500, {0, 7000, 12500}}};
+  for (const Pair& pair : pairs) {
+    const MpegTsPrepareOutcome original =
+        prepareMpegTsLocalFile(root / pair.original, {});
+    const MpegTsPrepareOutcome split =
+        prepareMpegTsLocalFile(root / pair.split, {});
+    expect(original.asset != nullptr && split.asset != nullptr,
+           "a mux and its re-cut twin both prepare");
+    if (original.asset == nullptr || split.asset == nullptr) {
+      std::cerr << "  " << pair.split << ": " << split.message << '\n';
+      continue;
+    }
+    for (const std::int64_t targetMs : pair.targetsMs) {
+      const std::size_t limit = targetMs == 0 ? pair.units + 1 : 4;
+      const std::vector<Unit> want = walk(*original.asset, targetMs, limit);
+      const std::vector<Unit> got = walk(*split.asset, targetMs, limit);
+      std::size_t matching = 0;
+      while (matching < want.size() && matching < got.size()) {
+        const Unit& a = want[matching];
+        const Unit& b = got[matching];
+        const std::int64_t oa = original.asset->originTick();
+        const std::int64_t ob = split.asset->originTick();
+        if (!same(a.sample.presentationTime, oa, b.sample.presentationTime, ob) ||
+            !same(a.sample.decodeTime, oa, b.sample.decodeTime, ob) ||
+            a.sample.keyFrame != b.sample.keyFrame ||
+            a.sample.decodableFromCold != b.sample.decodableFromCold ||
+            a.bytes.empty() || a.bytes != b.bytes) {
+          break;
+        }
+        ++matching;
+      }
+      expect(want.size() == (targetMs == 0 ? pair.units : limit) &&
+                 got.size() == want.size() && matching == want.size(),
+             "access units split across PES packets match the "
+             "one-unit-per-PES mux: timestamps, keyframes and bytes");
+      if (matching != want.size() || got.size() != want.size()) {
+        std::cerr << "  " << pair.split << " @" << targetMs << "ms: "
+                  << matching << " of " << want.size() << " match, "
+                  << got.size() << " read\n";
+      }
+    }
+  }
+}
+
 int main(int argc, char** argv) {
 #if defined(_WIN32)
   std::cerr << "[mpegts_demuxer] starting "
@@ -2553,6 +2648,7 @@ int main(int argc, char** argv) {
     testMpeg2AndAc3Admission();
     testHevcAdmission();
     testDurationAgainstGroundTruth();
+    testAccessUnitsSplitAcrossPes();
   }
   if (failures != 0) {
     std::cerr << failures << " MPEG-TS demuxer test(s) failed\n";

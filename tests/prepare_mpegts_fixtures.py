@@ -79,6 +79,118 @@ def derive(root):
     (root / 'h264-aac-corrupt.ts').write_bytes(damaged)
 
 
+def pes_list(data, pid):
+    """(pts, dts, payload) of every PES on `pid`; times are raw 33-bit ticks."""
+    units = []
+    for start, packet_pid, payload, first in packets(data):
+        if packet_pid != pid:
+            continue
+        body = data[payload:start + 188]
+        if first:
+            flags, header = body[7], 9 + body[8]
+            read = lambda at: (((body[at] >> 1) & 7) << 30) | (body[at+1] << 22) | ((body[at+2] >> 1) << 15) | (body[at+3] << 7) | (body[at+4] >> 1)
+            pts = read(9) if flags & 128 else None
+            dts = read(14) if flags & 64 else pts
+            units.append([pts, dts, bytearray(body[header:])])
+        elif units:
+            units[-1][2] += body
+    return units
+
+
+def resplit(source, target, skip=0, jump=0):
+    """Re-cut a one-unit-per-PES mux so access units straddle PES packets.
+
+    Video: every PES boundary falls a few bytes INTO an access unit (some of
+    them inside its start code), so each PES holds one unit's tail and the
+    next unit's head. Audio: ADTS frames are re-cut into odd-sized PES packets
+    after dropping `skip` bytes, so the first PES opens mid-frame. Each PES
+    carries the timestamps of the first unit commencing in it (13818-1
+    2.4.3.7), and none when no unit commences in it; `jump` ticks are added
+    to the audio timestamps of the later PES packets, a discontinuity the
+    source must refuse."""
+    data = source.read_bytes()
+    video, audio = pes_list(data, 256), pes_list(data, 257)
+    stream, starts = bytearray(), []
+    for _, _, body in video:
+        starts.append(len(stream))
+        stream += body
+    cuts = [0] + [start + (2, 3, 9, 17, 40)[k % 5] for k, start in enumerate(starts)] + [len(stream)]
+    assert all(starts[k] < cuts[k + 1] < starts[k] + len(video[k][2]) for k in range(len(starts)))
+    units = [(video[k][0], video[k][1], stream[cuts[k]:cuts[k + 1]]) if k < len(video)
+             else (None, None, stream[cuts[k]:cuts[k + 1]]) for k in range(len(cuts) - 1)]
+    elementary, frame_starts = bytearray(), []
+    for _, _, body in audio:
+        at = 0
+        while at < len(body):
+            frame_starts.append(len(elementary) + at - skip)
+            at += ((body[at+3] & 3) << 11) | (body[at+4] << 3) | (body[at+5] >> 5)
+        elementary += body
+    elementary = elementary[skip:]
+    audio_units, at = [], 0
+    while at < len(elementary):
+        end = min(at + 600 + (len(audio_units) * 97) % 400, len(elementary))
+        commencing = [i for i, f in enumerate(frame_starts) if at <= f < end]
+        pts = audio[0][0] + 1920 * commencing[0] if commencing else None  # 1024 frames at 48 kHz
+        if pts is not None and len(audio_units) >= 40:
+            pts += jump
+        audio_units.append((pts, pts, elementary[at:end]))
+        at = end
+    tables = []
+    for start, pid, _, first in packets(data):
+        if pid in (0, 4096) and first and len(tables) < 2:
+            tables.append(bytes(data[start:start + 188]))
+    counters, out = {256: 0, 257: 0}, bytearray()
+
+    def stamp(marker, value):
+        return bytes([(marker << 4) | ((value >> 29) & 14) | 1, (value >> 22) & 255,
+                      ((value >> 14) & 254) | 1, (value >> 7) & 255, ((value << 1) & 254) | 1])
+
+    def emit(pid, pts, dts, body):
+        is_video = pid == 256
+        if pts is None:
+            header = bytes([0x80, 0, 0])
+        elif is_video and dts != pts:
+            header = bytes([0x80, 0xC0, 10]) + stamp(3, pts) + stamp(1, dts)
+        else:
+            header = bytes([0x80, 0x80, 5]) + stamp(2, pts)
+        length = 0 if is_video else len(header) + len(body)
+        pes = bytes([0, 0, 1, 0xE0 if is_video else 0xC0, length >> 8, length & 255]) + header + bytes(body)
+        first = True
+        while pes:
+            fields = b''
+            if first and is_video and dts is not None:
+                pcr = max(dts - 9000, 0)
+                fields = bytes([0x10, (pcr >> 25) & 255, (pcr >> 17) & 255, (pcr >> 9) & 255,
+                                (pcr >> 1) & 255, ((pcr & 1) << 7) | 0x7E, 0])
+            room = 184 - (1 + len(fields) if fields else 0)
+            if len(pes) < room:
+                size = 183 - len(pes)  # adaptation_field_length
+                fields = fields or (bytes([0]) if size else b'')
+                adaptation = bytes([size]) + fields + b'\xff' * (size - len(fields))
+                chunk, pes = pes, b''
+            else:
+                adaptation = bytes([len(fields)]) + fields if fields else b''
+                chunk, pes = pes[:room], pes[room:]
+            control = 0x30 if adaptation else 0x10
+            out.extend(bytes([0x47, (0x40 if first else 0) | (pid >> 8), pid & 255,
+                              control | counters[pid]]) + adaptation + chunk)
+            counters[pid] = (counters[pid] + 1) & 15
+            first = False
+
+    order = []
+    for rank, (pid, entries) in enumerate([(256, units), (257, audio_units)]):
+        last = 0
+        for pts, dts, body in entries:
+            last = dts if dts is not None else last
+            order.append((last, rank, len(order), pid, pts, dts, body))
+    for index, (_, _, _, pid, pts, dts, body) in enumerate(sorted(order)):
+        if index % 40 == 0:
+            for table in tables:
+                out.extend(table)
+        emit(pid, pts, dts, body)
+    target.write_bytes(out)
+
+
 def generate(root, ffmpeg):
     def mux(name, seconds=3, rate=25, gop=25, video='libx264', audio='aac', depth=8, pq=False, hlg=False, audio_rate=48000):
         args = ['-f', 'lavfi', '-i', f'testsrc2=size=128x72:rate={rate}:duration={seconds}']
@@ -136,6 +248,9 @@ def generate(root, ffmpeg):
     (root/'multiprogram-dts-first.ts').write_bytes(incomplete)
     run(ffmpeg, '-i', root/'h264-aac.ts', '-vn', '-c:a', 'copy', '-f', 'mpegts', root/'audio.ts')
     derive(root)
+    resplit(root/'h264-aac.ts', root/'split.ts', skip=100)
+    resplit(root/'h264-aac.ts', root/'split-jump.ts', jump=9000)
+    resplit(root/'hevc-aac.ts', root/'split-hevc.ts')
     truths = []
     for name, frames, keys in [('h264-aac.ts',75,3), ('h264-only.ts',75,3),
                               ('h264-ac3.m2ts',75,3), ('video.ts',180,1),

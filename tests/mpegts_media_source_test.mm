@@ -115,6 +115,9 @@ struct Fixtures {
   std::filesystem::path rejectedAudio;
   std::filesystem::path audioOnly;
   std::filesystem::path opus;
+  std::filesystem::path recutOriginal;
+  std::filesystem::path recut;
+  std::filesystem::path recutJump;
 };
 
 // ---------------------------------------------------------------------------
@@ -676,6 +679,89 @@ void testCancellation(const Fixtures& fixtures) {
 
 }  // namespace
 
+// A mux whose ADTS frames and video access units straddle PES packets, and
+// whose first audio PES opens mid-frame, plays exactly as the
+// one-unit-per-PES mux it was cut from: same pictures at the same times, and
+// an audio timeline that is that mux's minus the one frame whose head was cut
+// off. A timestamp that then jumps by more than a frame is still refused.
+void testUnitsSplitAcrossPesPlayExactly(const Fixtures& fixtures) {
+  const auto play = [](const std::filesystem::path& path, Drained& drained) {
+    MpegTsMediaSource source;
+    const MediaSourceOpenOutcome opened =
+        openAt(source, path, 1, std::nullopt, videoOptions());
+    if (opened.status != MediaSourceOpenStatus::Ready) {
+      drained.failure = opened.error;
+      return false;
+    }
+    drained = drain(source, 1);
+    return true;
+  };
+  Drained original;
+  Drained recut;
+  expect(play(fixtures.recutOriginal, original) && original.failure.empty(),
+         "the one-unit-per-PES mux plays to its end");
+  const bool opened = play(fixtures.recut, recut);
+  expect(opened && recut.failure.empty() && recut.exhausted,
+         "a mux with units split across PES packets plays to its end");
+  if (!recut.failure.empty()) {
+    std::cerr << "  " << recut.failure << '\n';
+  }
+  const auto split = [](const Drained& drained, bool video) {
+    std::vector<Drained::Unit> units;
+    for (const Drained::Unit& unit : drained.units) {
+      if (unit.video == video) units.push_back(unit);
+    }
+    return units;
+  };
+  // x - y == u - v, exactly.
+  const auto sameOffset = [](MediaTime x, MediaTime y, MediaTime u,
+                             MediaTime v) {
+    const auto left = wam::media::addMediaTime(x, v);
+    const auto right = wam::media::addMediaTime(u, y);
+    return left && right && sameTime(*left, *right);
+  };
+  const std::vector<Drained::Unit> wantVideo = split(original, true);
+  const std::vector<Drained::Unit> gotVideo = split(recut, true);
+  bool videoSame = !wantVideo.empty() && wantVideo.size() == gotVideo.size();
+  for (std::size_t i = 0; videoSame && i < wantVideo.size(); ++i) {
+    videoSame = gotVideo[i].keyFrame == wantVideo[i].keyFrame &&
+                sameOffset(gotVideo[i].presentation, gotVideo[0].presentation,
+                           wantVideo[i].presentation,
+                           wantVideo[0].presentation);
+  }
+  expect(videoSame, "every picture is staged once, at its own time");
+
+  const std::vector<Drained::Unit> wantAudio = split(original, false);
+  const std::vector<Drained::Unit> gotAudio = split(recut, false);
+  bool contiguous = !gotAudio.empty();
+  for (std::size_t i = 1; contiguous && i < gotAudio.size(); ++i) {
+    const auto end = wam::media::addMediaTime(gotAudio[i - 1].presentation,
+                                              gotAudio[i - 1].duration);
+    contiguous = end && sameTime(*end, gotAudio[i].presentation);
+  }
+  expect(contiguous, "joined ADTS frames stay contiguous on the frame grid");
+  std::uint64_t wantFrames = 0;
+  std::uint64_t gotFrames = 0;
+  for (const auto& unit : wantAudio) wantFrames += unit.sampleCount;
+  for (const auto& unit : gotAudio) gotFrames += unit.sampleCount;
+  const MediaTime oneFrame{1024, static_cast<std::int32_t>(kFullRateAudio)};
+  const auto secondFrame =
+      wantAudio.empty()
+          ? std::nullopt
+          : wam::media::addMediaTime(wantAudio[0].presentation, oneFrame);
+  expect(!gotAudio.empty() && !gotVideo.empty() && !wantVideo.empty() &&
+             gotFrames + 1 == wantFrames && secondFrame &&
+             sameOffset(gotAudio[0].presentation, gotVideo[0].presentation,
+                        *secondFrame, wantVideo[0].presentation),
+         "the split audio is the original's from its second access unit on, "
+         "at the same times");
+
+  Drained jumped;
+  expect(play(fixtures.recutJump, jumped) &&
+             jumped.failure.find("not contiguous") != std::string::npos,
+         "a PES timestamp that jumps off the frame grid is refused");
+}
+
 int main(int argc, char** argv) {
   if (argc != 2) {
     std::cerr << "FAIL: required fixture directory was not supplied\n";
@@ -683,9 +769,11 @@ int main(int argc, char** argv) {
   }
   const std::filesystem::path root(argv[1]);
   Fixtures fixtures{root / "av.ts", root / "odd.ts", root / "leadin.ts",
-                    root / "dts-only.ts", root / "rejected-aac.ts", root / "audio.ts", root / "opus.ts"};
+                    root / "dts-only.ts", root / "rejected-aac.ts", root / "audio.ts", root / "opus.ts",
+                    root / "h264-aac.ts", root / "split.ts", root / "split-jump.ts"};
   for (const auto& path : {fixtures.audioVideo, fixtures.oddRate, fixtures.leadIn,
-                           fixtures.unroutableAudio, fixtures.rejectedAudio, fixtures.audioOnly, fixtures.opus}) {
+                           fixtures.unroutableAudio, fixtures.rejectedAudio, fixtures.audioOnly, fixtures.opus,
+                           fixtures.recutOriginal, fixtures.recut, fixtures.recutJump}) {
     if (!std::filesystem::is_regular_file(path)) {
       std::cerr << "FAIL: missing required fixture " << path << '\n';
       return 1;
@@ -701,6 +789,7 @@ int main(int argc, char** argv) {
   testAudioOnlyStreamIsRefused(fixtures);
   testAccurateSeekBothDirections(fixtures);
   testCancellation(fixtures);
+  testUnitsSplitAcrossPesPlayExactly(fixtures);
 
   if (failures == 0) {
     std::cout << "mpeg-ts media source contracts passed\n";
