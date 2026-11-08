@@ -6,8 +6,10 @@
 
 #include "media/adpcm_audio.hpp"
 #include "media/adpcm_decoder.hpp"
+#include "media/codec/wma.hpp"
 #include "media/media_codec_facts.hpp"
 #include "native_audio_channel_map.hpp"
+#include "wma_decoder_library.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
 
@@ -124,6 +126,157 @@ public:
   void close() noexcept override {
     cursor_ = available_ = 0;
     refusal_ = nullptr;
+  }
+};
+
+// WMA v2 through libwam-wmcodecs, one ASF payload per packet. Each packet
+// states the frames the source's timeline gives it; the frames a decoder reset
+// cannot reproduce (the lead, see the Wma2 facts row) are emitted as silence
+// ahead of the library's output, never ahead of the frames the consumed
+// payloads state. After every payload the library's own output must equal the
+// stated frames less the lead, which proves the timeline payload by payload.
+// Only the final payload also states the end-of-stream overlap frame the drain
+// emits.
+class WamWmaBackend final : public NativeAudioConverterBackend {
+  const WmaDecoderLibrary *library_{nullptr};
+  wam_wma_decoder *decoder_{nullptr};
+  std::size_t channels_{0}, capacity_{0}, frameLength_{0}, leadFrames_{0};
+  std::vector<float> planar_, block_;
+  std::size_t cursor_{0}, available_{0}, silence_{0};
+  std::uint64_t stated_{0}, decoded_{0}, lead_{0};
+  bool finalPayload_{false}, libraryDrained_{false};
+  const char *refusal_{nullptr};
+
+  bool refuse(const char *reason, std::string *error) {
+    refusal_ = reason;
+    assignError(error, reason);
+    return false;
+  }
+  NativeAudioBackendResult fail(const char *reason) {
+    refusal_ = reason;
+    NativeAudioBackendResult r;
+    r.failed = true;
+    return r;
+  }
+  // Interleaves n library frames into block_.
+  void stage(int n) {
+    const auto frames = static_cast<std::size_t>(n);
+    for (std::size_t i = 0; i < frames; ++i)
+      for (std::size_t c = 0; c < channels_; ++c)
+        block_[i * channels_ + c] = planar_[c * capacity_ + i];
+    cursor_ = 0;
+    available_ = frames;
+  }
+  void clearFlow() noexcept {
+    cursor_ = available_ = silence_ = 0;
+    stated_ = decoded_ = lead_ = 0;
+    finalPayload_ = libraryDrained_ = false;
+    refusal_ = nullptr;
+  }
+
+public:
+  ~WamWmaBackend() override { close(); }
+  bool configure(const NativeAudioBackendConfiguration &c,
+                 std::string *error) override {
+    close();
+    const auto format = media::codec::parseWmaWaveFormat(c.codecConfiguration);
+    if (!format || format->channels < 1 || format->channels > 2 ||
+        format->channels != c.input.channels ||
+        static_cast<double>(format->sampleRate) != c.input.sampleRate ||
+        format->blockAlign != c.input.bytesPerPacket ||
+        c.outputChannels != format->channels ||
+        c.outputSampleRate != format->sampleRate)
+      return refuse("WmaConfigurationMismatch", error);
+    library_ = wmaDecoderLibrary();
+    if (library_ == nullptr) return refuse("WmaDecoderUnavailable", error);
+    const wam_wma_config config{
+        format->channels, static_cast<int>(format->sampleRate),
+        static_cast<std::int64_t>(format->averageBytesPerSecond) * 8,
+        format->blockAlign,
+        reinterpret_cast<const std::uint8_t *>(format->codecData.data()),
+        static_cast<int>(format->codecData.size())};
+    decoder_ = library_->create(&config);
+    if (decoder_ == nullptr) return refuse("WmaConfigurationUnsupported", error);
+    channels_ = format->channels;
+    frameLength_ = static_cast<std::size_t>(library_->frameLength(decoder_));
+    capacity_ = static_cast<std::size_t>(library_->maxSamples(decoder_));
+    leadFrames_ = frameLength_ * media::codec::wmaResetLeadFrames(
+                                     media::codec::wmaUsesBitReservoir(format->codecData));
+    planar_.assign(capacity_ * channels_, 0.0F);
+    block_.assign(capacity_ * channels_, 0.0F);
+    clearFlow();
+    return true;
+  }
+  NativeAudioBackendResult convert(NativeAudioBackendInput input,
+                                   std::span<float> out) override {
+    if (decoder_ == nullptr) return fail("WmaDecoderUnavailable");
+    NativeAudioBackendResult r;
+    if (silence_ == 0 && available_ == 0) {
+      std::array<float *, 2> planes{planar_.data(),
+                                    planar_.data() + capacity_ * (channels_ - 1)};
+      if (!input.packets.empty()) {
+        const auto &p = input.packets.front();
+        if (p.startOffset < 0 ||
+            static_cast<std::uint64_t>(p.startOffset) > input.bytes.size() ||
+            p.byteSize > input.bytes.size() - static_cast<std::size_t>(p.startOffset))
+          return fail("WmaPacketBoundsInvalid");
+        if (finalPayload_) return fail("WmaPayloadFramesMismatch");
+        const int n = library_->decode(
+            decoder_,
+            reinterpret_cast<const std::uint8_t *>(input.bytes.data()) + p.startOffset,
+            static_cast<int>(p.byteSize), planes.data(), static_cast<int>(capacity_));
+        if (n < 0) return fail("WmaPayloadCorrupt");
+        stated_ += p.variableFrames;
+        decoded_ += static_cast<std::uint64_t>(n);
+        const auto beyond = [&](std::uint64_t lead) {
+          return stated_ > lead ? stated_ - lead : 0;
+        };
+        if (decoded_ != beyond(leadFrames_)) {
+          if (decoded_ != beyond(leadFrames_ + frameLength_))
+            return fail("WmaPayloadFramesMismatch");
+          finalPayload_ = true;
+        }
+        stage(n);
+        const auto lead = std::min<std::uint64_t>(stated_, leadFrames_);
+        silence_ = static_cast<std::size_t>(lead - lead_);
+        lead_ = lead;
+        r.consumedPackets = 1;
+        r.finalInputReleased = input.packets.size() == 1;
+      } else if (input.endOfStream && !libraryDrained_) {
+        stage(library_->drain(decoder_, planes.data(), static_cast<int>(capacity_)));
+        libraryDrained_ = true;
+      }
+    }
+    const std::size_t room = out.size() / channels_;
+    if (silence_ > 0) {
+      r.producedFrames = std::min(silence_, room);
+      std::fill_n(out.data(), r.producedFrames * channels_, 0.0F);
+      silence_ -= r.producedFrames;
+    } else {
+      r.producedFrames = std::min(available_, room);
+      std::copy_n(block_.data() + cursor_ * channels_,
+                  r.producedFrames * channels_, out.data());
+      cursor_ += r.producedFrames;
+      available_ -= r.producedFrames;
+    }
+    const bool idle = silence_ == 0 && available_ == 0;
+    r.needsInput = idle && r.consumedPackets == input.packets.size() &&
+                   !input.endOfStream;
+    r.drained = input.endOfStream && idle && libraryDrained_ &&
+                r.producedFrames == 0;
+    return r;
+  }
+  const char *failureReason() const noexcept override { return refusal_; }
+  bool reset(std::string *) override {
+    if (decoder_ == nullptr) return false;
+    library_->flush(decoder_);
+    clearFlow();
+    return true;
+  }
+  void close() noexcept override {
+    if (decoder_ != nullptr) library_->destroy(decoder_);
+    decoder_ = nullptr;
+    clearFlow();
   }
 };
 
@@ -482,6 +635,8 @@ makeNativeAudioConverterBackend(media::MediaCodec codec,
   case media::MediaCodec::AdpcmIma:
   case media::MediaCodec::AdpcmMs:
     return std::make_unique<WamAdpcmBackend>();
+  case media::MediaCodec::Wma2:
+    return std::make_unique<WamWmaBackend>();
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   case media::MediaCodec::Dts:
     return std::make_unique<SoftwareAvcodecAudioBackend>(

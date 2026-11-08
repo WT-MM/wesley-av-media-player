@@ -133,6 +133,8 @@ enum class MediaCodec : std::uint8_t {
   Dts,
   TrueHd,
   Mlp,
+  // Windows Media Audio v2, decoded by WAM's own LGPL library.
+  Wma2,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {

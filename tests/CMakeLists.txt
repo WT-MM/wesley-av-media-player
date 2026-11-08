@@ -1383,12 +1383,13 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
     "${WAM_AVFORMAT_FIXTURES}/reordered-asp.avi" "LibavformatExactVideoTimelineUnavailable")
   add_test(NAME libavformat_flv_audio_refusal COMMAND wam_libavformat_source_test
     "${WAM_MIXED_FIXTURES}/positive-aac.flv" "LibavformatAudioTimingUnproven: aac")
-  add_test(NAME libavformat_asf_audio_refusal COMMAND wam_libavformat_source_test
-    "${WAM_AVFORMAT_FIXTURES}/legacy.asf" "LibavformatAudioTimingUnproven: wmav2")
+  # Its WMA v2 audio is admitted; its WMV2 video is not.
+  add_test(NAME libavformat_asf_wmv2_refusal COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/legacy.asf" "LibavformatVideoCodecNotAdmitted")
   add_test(NAME libavformat_routed_avi COMMAND wam_libavformat_source_test
     "${WAM_AVFORMAT_FIXTURES}/asp.avi" ready routed)
   set_tests_properties(libavformat_avi_missing_pts libavformat_flv_audio_refusal
-    libavformat_asf_audio_refusal libavformat_routed_avi PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+    libavformat_asf_wmv2_refusal libavformat_routed_avi PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
 
   add_test(NAME libavformat_opus_audio_exact COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tests/libavformat_audio_proof.py"
@@ -1396,6 +1397,11 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
     --asset "${WAM_AVFORMAT_FIXTURES}/opus.ogg" --ffmpeg "${WAM_TEST_FFMPEG}"
     --output "${PROJECT_BINARY_DIR}/libavformat-audio-proof.json")
   set_tests_properties(libavformat_opus_audio_exact PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 60)
+
+  add_test(NAME libavformat_wma_timing_exact COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/tests/libavformat_wma_timing_proof.py"
+    --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>" --ffmpeg "${WAM_TEST_FFMPEG}")
+  set_tests_properties(libavformat_wma_timing_exact PROPERTIES TIMEOUT 240)
 
   add_test(NAME libavformat_routed_header_stripping COMMAND wam_libavformat_source_test
     "${WAM_AVFORMAT_FIXTURES}/header-stripped.mkv" ready routed)

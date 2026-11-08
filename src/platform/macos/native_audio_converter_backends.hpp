@@ -7,7 +7,7 @@
 namespace wam::macos {
 
 // The production decoder for one admitted audio codec: the WAM ADPCM decoder
-// for IMA/MS ADPCM, libavcodec for the software codecs when
+// for IMA/MS ADPCM, libwam-wmcodecs for WMA v2, libavcodec for the software codecs when
 // WAM_ENABLE_AVCODEC_STAGE is built, AudioToolbox for everything else. Empty
 // for a software codec in a build without that stage. The wake reaches only a
 // backend that decodes asynchronously.
