@@ -1135,7 +1135,26 @@ struct NativeVideoConsumer::Impl {
       ++discardedLateFrames;
       return PumpStatus::Progress;
     }
-    if (*startAgainstClock == MediaTimeOrder::Greater) {
+    bool fromTarget = false;
+    if (*startAgainstClock == MediaTimeOrder::Greater && exactPaused &&
+        submittedGeneration != generation) {
+      // A paused target before the generation's first picture: the target
+      // precedes the video origin (a leading empty edit, composition offsets
+      // without an edit list, video that starts after audio). Nothing else
+      // can ever cover it, so -- like the preroll bridge above, backwards --
+      // the first picture is presented from the target.
+      const CMTime target =
+          CMTimeMake(currentClock->exactPausedTarget.value,
+                     currentClock->exactPausedTarget.timescale);
+      const CMTime end = CMTimeMake(intervalEnd->value, intervalEnd->timescale);
+      const CMTime stretched = CMTimeSubtract(end, target);
+      if (exactMediaTime(stretched)) {
+        heldFrame->setPresentationTime(target);
+        heldFrame->setDuration(stretched);
+        fromTarget = true;
+      }
+    }
+    if (*startAgainstClock == MediaTimeOrder::Greater && !fromTarget) {
       setDueHint(*presentation);
       return PumpStatus::Blocked;
     }
@@ -1186,6 +1205,7 @@ struct NativeVideoConsumer::Impl {
     awaitingDraw = AwaitingDraw{submittedSequence, timing};
     heldFrame.reset();
     ++submittedFrames;
+    submittedGeneration = generation;
     nextFrameSequence =
         submittedSequence.value == std::numeric_limits<std::uint64_t>::max()
             ? NativeTrackedFrameSequence{}
@@ -1311,6 +1331,8 @@ struct NativeVideoConsumer::Impl {
   std::optional<DueHint> nextDue;
   std::uint64_t lastOutputEventSequence{0};
   std::uint64_t submittedFrames{0};
+  // The generation of the last submitted frame.
+  std::uint64_t submittedGeneration{0};
   std::uint64_t drawnFrames{0};
   media::MediaTime firstDrawPts{};
   std::uint64_t discardedPrerollFrames{0};

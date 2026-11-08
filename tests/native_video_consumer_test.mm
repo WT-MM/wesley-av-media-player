@@ -793,6 +793,32 @@ void testRationalPausedBoundary() {
   expect(fixture.consumer->facts().submittedFrames == 1, "exact paused T admits a frame whose start rounds above display seconds");
 }
 
+// A paused commit target before the generation's first picture (a leading
+// empty edit, or composition offsets without an edit list) used to block
+// forever: the first frame starts after the paused clock and nothing earlier
+// exists to cover the target. It is presented from the target instead.
+void testPausedTargetBeforeFirstPicture() {
+  Fixture fixture;
+  fixture.clock.snapshot.mediaSeconds = 0.0;
+  fixture.clock.snapshot.exactPausedTarget = {0, 1};
+  expect(fixture.consumer->armFirstGeneration(7) == NativeVideoConsumerArmProgress::Done,
+         "paused origin scheduler arms");
+  expect(NativeVideoConsumerTestAccess::installSchedulerGeneration(*fixture.consumer, timeline(7, {0, 1})),
+         "paused origin scheduler installs");
+  std::vector<std::byte> pixels;
+  expect(NativeVideoConsumerTestAccess::injectDecodedFrame(*fixture.consumer, frame(7, 1000, 1000, &pixels, 15000)),
+         "a first picture after the origin queues");
+  static_cast<void>(NativeVideoConsumerTestAccess::pumpScheduler(*fixture.consumer));
+  expect(fixture.consumer->facts().submittedFrames == 1,
+         "a paused target before the first picture presents that picture");
+  fixture.output->draw();
+  const auto event = fixture.consumer->takeOutputEvent();
+  expect(event && event->kind == NativeTrackedVideoEventKind::FrameDrawn &&
+             CMTimeCompare(event->timing.presentationTime, kCMTimeZero) == 0 &&
+             CMTimeCompare(event->timing.duration, CMTimeMake(2000, 15000)) == 0,
+         "the first picture is drawn from the target to its own end");
+}
+
 void testDrawAckGatesNextFrame() {
   Fixture fixture;
   expect(fixture.consumer->armFirstGeneration(7) ==
@@ -1302,6 +1328,7 @@ void testDoneOutputMayNotStillClaimAnAdmittedFrame() {
 
 int main() {
   testRationalPausedBoundary();
+  testPausedTargetBeforeFirstPicture();
   testPresentationBackstop();
   testArmContract();
   testCloseRetiresQuiescingArm();
