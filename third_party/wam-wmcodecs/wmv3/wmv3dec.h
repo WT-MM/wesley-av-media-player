@@ -11,6 +11,10 @@
 extern "C" {
 #endif
 
+#ifndef WMV3_API
+#define WMV3_API
+#endif
+
 typedef struct Wmv3Decoder Wmv3Decoder;
 
 typedef struct Wmv3Frame {
@@ -22,14 +26,14 @@ typedef struct Wmv3Frame {
 
 /* extradata: the 4+ byte STRUCT_C sequence header from the ASF/AVI
  * BITMAPINFOHEADER. Returns NULL on unsupported/invalid input. */
-Wmv3Decoder *wmv3_decoder_open(const uint8_t *extradata, size_t extradata_size,
+WMV3_API Wmv3Decoder *wmv3_decoder_open(const uint8_t *extradata, size_t extradata_size,
                                int width, int height);
-void wmv3_decoder_close(Wmv3Decoder *dec);
+WMV3_API void wmv3_decoder_close(Wmv3Decoder *dec);
 
 /* Decodes one packet. Returns 1 if *out holds a picture, 0 if the packet is a
  * skipped frame (the previous picture repeats), negative on error. The frame
  * stays valid until the next call. */
-int wmv3_decode(Wmv3Decoder *dec, const uint8_t *packet, size_t size, Wmv3Frame *out);
+WMV3_API int wmv3_decode(Wmv3Decoder *dec, const uint8_t *packet, size_t size, Wmv3Frame *out);
 
 #ifdef __cplusplus
 }
