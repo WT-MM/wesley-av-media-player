@@ -48,24 +48,28 @@ enum class VorbisAdmissionError : std::uint8_t {
   UnsupportedChannelCount,
   UnsupportedSampleRate,
   InvalidBlockSize,
-  // The one admission this source makes that the format itself does not
-  // require. See kUniformBlockSizeRationale in the .cpp.
-  VariableBlockSize,
+  // Unequal block sizes need each packet's mode, and so the setup header's
+  // mode table; a table that cannot be located is refused.
+  UnreadableModeTable,
   MissingFramingBit,
 };
 
 struct VorbisConfiguration {
   std::uint8_t channelCount{0};
   std::uint32_t sampleRate{0};
-  // Both block sizes, equal by admission. Retained separately so a future
-  // variable-duration implementation can relax the gate without changing the
-  // shape of this struct.
   std::uint32_t blockSize0{0};
   std::uint32_t blockSize1{0};
+  // Read from the setup header only when the block sizes differ: bit m is set
+  // when mode m uses the long block.
+  std::uint8_t modeCount{0};
+  std::uint64_t longModes{0};
 
+  [[nodiscard]] constexpr bool variableBlockSize() const noexcept {
+    return blockSize0 != blockSize1;
+  }
   // With equal block sizes every packet decodes to exactly blockSize/2 frames,
-  // which is what makes the constant-frames-per-access-unit timeline the rest
-  // of this demuxer is built on legitimate for Vorbis.
+  // which is what makes the constant-frames-per-access-unit timeline legitimate
+  // for Vorbis. With unequal sizes it is the largest packet.
   [[nodiscard]] constexpr std::uint32_t samplesPerAccessUnit() const noexcept {
     return blockSize1 / 2U;
   }
@@ -90,5 +94,13 @@ struct VorbisAdmission {
 // or over-long blob is refused rather than handed to AudioToolbox.
 [[nodiscard]] VorbisAdmission
 parseVorbisCodecPrivate(std::span<const std::byte> bytes) noexcept;
+
+// The block size of one audio packet, from its first byte: the packet-type bit
+// and the mode number (Vorbis I 4.3.1). Empty for a header packet or an
+// undeclared mode. A packet decodes to (previous + this) / 4 frames, and the
+// first packet of a decode to none (4.3.8).
+[[nodiscard]] std::optional<std::uint32_t>
+vorbisPacketBlockSize(const VorbisConfiguration &configuration,
+                      std::byte first) noexcept;
 
 } // namespace wam::media::matroska

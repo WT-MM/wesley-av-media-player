@@ -267,13 +267,10 @@ void testBlockSizeGate() {
   expect(blockSizes(0xDDU) == VorbisAdmissionError::None,
          "equal 8192-frame block sizes are admitted");
 
-  // 0xB8 = blocksize0 256, blocksize1 2048 -- exactly what reference libvorbis
-  // emits at every quality setting. This is a DELIBERATE refusal, not a parse
-  // failure: variable packet durations cannot be placed on this demuxer's
-  // constant frames-per-access-unit grid, so the file falls back to mpv.
-  expect(blockSizes(0xB8U) == VorbisAdmissionError::VariableBlockSize,
-         "libvorbis' 256/2048 block sizes are refused as variable, not "
-         "misparsed");
+  // 0xB8 = blocksize0 256, blocksize1 2048 -- what reference libvorbis emits.
+  // Unequal sizes need the setup header's mode table, which filler lacks.
+  expect(blockSizes(0xB8U) == VorbisAdmissionError::UnreadableModeTable,
+         "unequal block sizes with no locatable mode table are refused");
 
   // 0x55 = 32/32, below the 64-frame floor.
   expect(blockSizes(0x55U) == VorbisAdmissionError::InvalidBlockSize,
@@ -284,6 +281,56 @@ void testBlockSizeGate() {
   // 0x8B = blocksize0 2048, blocksize1 256 -- the spec requires bs0 <= bs1.
   expect(blockSizes(0x8BU) == VorbisAdmissionError::InvalidBlockSize,
          "blocksize0 larger than blocksize1 is refused");
+}
+
+// A setup header ending in a two-mode table (Vorbis I 4.2.4): mode_count - 1,
+// then per mode blockflag, windowtype, transformtype, mapping, then framing.
+[[nodiscard]] std::vector<std::byte> twoModeSetupHeader() {
+  std::vector<std::byte> header = namedHeader(5U, 32U);
+  std::vector<bool> bits;
+  const auto push = [&bits](std::uint32_t value, unsigned width) {
+    for (unsigned index = 0; index < width; ++index) {
+      bits.push_back(((value >> index) & 1U) != 0U);
+    }
+  };
+  push(1U, 6U);
+  push(0U, 1U);  // mode 0: short block
+  push(0U, 40U);
+  push(1U, 1U);  // mode 1: long block
+  push(0U, 32U);
+  push(1U, 8U);  // mapping 1
+  push(1U, 1U);  // framing
+  std::vector<std::byte> tail((bits.size() + 7U) / 8U, std::byte{0});
+  for (std::size_t index = 0; index < bits.size(); ++index) {
+    if (bits[index]) {
+      tail[index / 8U] |= static_cast<std::byte>(1U << (index % 8U));
+    }
+  }
+  // Clear the filler's final byte so no stray bit precedes the table, then
+  // append the table on a byte boundary.
+  header.back() = std::byte{0};
+  header.insert(header.end(), tail.begin(), tail.end());
+  return header;
+}
+
+void testModeTable() {
+  const VorbisAdmission admission = parseVorbisCodecPrivate(
+      codecPrivate(identificationHeader(1U, 44'100U, 0xB8U),
+                   namedHeader(3U, 16U), twoModeSetupHeader()));
+  expect(admission.admitted(), "a 256/2048 track with a mode table is admitted");
+  if (!admission.admitted()) {
+    return;
+  }
+  const VorbisConfiguration &configuration = *admission.configuration;
+  expect(configuration.variableBlockSize() && configuration.modeCount == 2U &&
+             configuration.longModes == 2U,
+         "the two modes are read back from the end of the setup header");
+  // Byte 0: audio packet, mode bit 0 -> mode 0. Bit 0 set is a header packet.
+  expect(vorbisPacketBlockSize(configuration, std::byte{0x00}) == 256U &&
+             vorbisPacketBlockSize(configuration, std::byte{0x02}) == 2048U &&
+             vorbisPacketBlockSize(configuration, std::byte{0xFC}) == 256U &&
+             !vorbisPacketBlockSize(configuration, std::byte{0x01}),
+         "each packet's block size follows its mode");
 }
 
 // The identity the whole Vorbis trim rests on, checked against the numbers
@@ -372,6 +419,7 @@ int main() {
   testCanonicalAdmission();
   testMalformedInputs();
   testBlockSizeGate();
+  testModeTable();
   testTrimArithmetic();
   testDiscardPaddingFrames();
 

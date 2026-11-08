@@ -201,9 +201,15 @@ bool buildCompressedSampleBuffer(CMBlockBufferRef block,
                                  const char* name, ScopedSampleBuffer* out,
                                  std::string* error) {
   CMSampleBufferRef created = nullptr;
-  const OSStatus status = CMSampleBufferCreateReady(
-      kCFAllocatorDefault, block, format, shape.sampleCount, 1, &shape.timing,
-      shape.sizeEntryCount, shape.sizes, &created);
+  const OSStatus status =
+      shape.packets != nullptr
+          ? CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+                kCFAllocatorDefault, block, format, shape.sampleCount,
+                shape.timing.presentationTimeStamp, shape.packets, &created)
+          : CMSampleBufferCreateReady(kCFAllocatorDefault, block, format,
+                                      shape.sampleCount, 1, &shape.timing,
+                                      shape.sizeEntryCount, shape.sizes,
+                                      &created);
   CFRelease(block);
   if (status != noErr || created == nullptr) {
     if (created != nullptr) {

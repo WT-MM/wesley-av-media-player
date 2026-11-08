@@ -309,6 +309,10 @@ struct MediaAudioFormat {
   // appended after interleaved so existing aggregate initialization cannot
   // silently reinterpret its final boolean as layout presence.
   bool channelLayoutPresent{false};
+  // Packets decode to differing frame counts (Vorbis with unequal block
+  // sizes). framesPerPacket is then the largest, CoreMedia's description
+  // states zero, and every packet states its own count.
+  bool variableFramesPerPacket{false};
 
   friend bool operator==(const MediaAudioFormat&, const MediaAudioFormat&) =
       default;

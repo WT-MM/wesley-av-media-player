@@ -74,7 +74,9 @@ static_assert(kMaximumMatroskaEncodedBlockBytes ==
 // with no owned payload storage of any kind.
 static_assert(std::is_trivially_copyable_v<MatroskaCompressedSample>);
 static_assert(sizeof(MatroskaCompressedSample) <=
-              sizeof(FrameRange) * ParseOptions::kHardMaximumLaceFrames + 128U);
+              (sizeof(FrameRange) + sizeof(std::uint16_t)) *
+                      ParseOptions::kHardMaximumLaceFrames +
+                  128U);
 
 
 // ---------------------------------------------------------------------------
@@ -2318,19 +2320,18 @@ void testCodecAdmissionAndSelection() {
         "a Vorbis track with no CodecDelay at all falls back");
   }
   {
-    // The variable-block-size refusal, at the demuxer level. 0xB8 is
-    // blocksize0 256 / blocksize1 2048 -- exactly what reference libvorbis
-    // emits -- whose per-packet duration this demuxer's constant-rate grid
-    // cannot represent. It falls back deliberately, with a correct CodecDelay
-    // present, so the refusal is provably the block-size gate and nothing else.
+    // 0xB8 is blocksize0 256 / blocksize1 2048, what reference libvorbis
+    // emits. Each packet's duration then comes from its mode, and this
+    // fixture's setup header has no mode table to read it from, so it falls
+    // back. tests/vorbis_variable_block_proof.py plays real ones.
     FixtureSpec spec;
     spec.audioCodecId = "A_VORBIS";
     spec.audioCodecPrivate = vorbisCodecPrivate(0xB8U);
     spec.audioCodecDelayNanoseconds = 21'333'333;
     expectPrepareError(
         spec, MediaRefusalClass::CodecConfiguration,
-        "a Vorbis track with unequal block sizes falls back rather than "
-        "being placed on a constant-duration grid");
+        "a Vorbis track with unequal block sizes and no readable mode table "
+        "falls back");
   }
   {
     FixtureSpec spec;
