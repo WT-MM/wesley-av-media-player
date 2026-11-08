@@ -522,7 +522,12 @@ LibavformatCursor::Stream LibavformatCursor::stream(unsigned i) const noexcept {
        p.sample_aspect_ratio.num != p.sample_aspect_ratio.den) ||
       (p.field_order != AV_FIELD_UNKNOWN &&
        p.field_order != AV_FIELD_PROGRESSIVE) ||
-      p.nb_coded_side_data != 0 || impl_->format->nb_chapters != 0;
+      p.nb_coded_side_data != 0 ||
+      // MP4/QuickTime chapters (a chapter text track or Nero chpl) only
+      // navigate; elsewhere (Matroska ordered editions) chapters can change
+      // the presentation, which libavformat does not apply.
+      (impl_->format->nb_chapters != 0 &&
+       !std::strstr(impl_->format->iformat->name, "mov"));
   out.primaries = p.color_primaries;
   out.transfer = p.color_trc;
   out.matrix = p.color_space;

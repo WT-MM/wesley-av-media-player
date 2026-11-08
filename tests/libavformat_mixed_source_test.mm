@@ -2,10 +2,12 @@
 #include "platform/macos/libavformat_media_source.hpp"
 #include <cstdio>
 #include <set>
+#include <string>
 #include "support/expect.hpp"
 int main(int argc,char** argv) {
   using namespace wam::media;
-  REQUIRE(argc==2);
+  REQUIRE(argc==2 || argc==4);
+  const unsigned wantVideo=argc==4?std::stoul(argv[2]):48,wantAudio=argc==4?std::stoul(argv[3]):90;
   auto source=wam::macos::createRoutedMediaSource();
   MediaSourceOpenOptions options;
   REQUIRE(source->armOperation(1));
@@ -26,7 +28,7 @@ int main(int argc,char** argv) {
     else if(std::holds_alternative<MediaSourceExhausted>(read))break;
     else REQUIRE(false);
   }
-  EXPECT(video==48 && audio==90 && ended.size()==2);
+  EXPECT(video==wantVideo && audio==wantAudio && ended.size()==2);
   for(unsigned epoch=2;epoch<6;++epoch) {
     const MediaTime target=epoch%2?MediaTime{1,7}:MediaTime{1,1};
     EXPECT(source->armOperation(epoch));
@@ -39,6 +41,6 @@ int main(int argc,char** argv) {
   source->requestCancel(5);
   EXPECT(std::holds_alternative<MediaSourceCancelled>(source->readNext(5)));
   source->close();EXPECT(source->stats().stagedPayloadBytes==0);
-  std::puts("routed mixed: video=48 audio=90 EOS=2; exact seeks, cancellation, zero staged payload");
+  std::printf("routed mixed: video=%u audio=%u EOS=2; exact seeks, cancellation, zero staged payload\n",video,audio);
   return failures == 0 ? 0 : 1;
 }
