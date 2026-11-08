@@ -112,6 +112,10 @@ struct MatroskaCompressedSample {
   MediaSampleKind kind{MediaSampleKind::EncodedVideo};
   std::array<FrameRange, ParseOptions::kHardMaximumLaceFrames> frames{};
   std::uint16_t frameCount{0};
+  // Audio packets that differ in length state each one's frame count; zero
+  // when every packet is the track's framesPerPacket.
+  std::array<std::uint16_t, ParseOptions::kHardMaximumLaceFrames>
+      audioPacketFrames{};
   std::size_t aggregateBytes{0};
   MediaTime presentationTime{};
   MediaTime decodeTime{};

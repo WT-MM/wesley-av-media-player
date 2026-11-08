@@ -158,6 +158,16 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
       timing.duration = CMTimeMake(1, inputs.audioSampleRate);
     }
   }
+  std::array<AudioStreamPacketDescription, kMaximumLaceFrames> packets;
+  const bool variablePackets = !inputs.video && sample.audioPacketFrames[0] != 0;
+  if (variablePackets) {
+    std::int64_t offset = 0;
+    for (std::size_t index = 0; index < frameCount; ++index) {
+      packets[index] = {offset, sample.audioPacketFrames[index],
+                        static_cast<UInt32>(sizes[index])};
+      offset += static_cast<std::int64_t>(sizes[index]);
+    }
+  }
   // Video only: Matroska states every audio block as non-key by convention,
   // not because the unit depends on another one.
   CompressedSampleShape shape;
@@ -165,6 +175,9 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
   shape.sampleCount = numSamples;
   shape.sizeEntryCount = sizeEntries;
   shape.sizes = sizes.data();
+  if (variablePackets) {
+    shape.packets = packets.data();
+  }
   if (inputs.video) {
     shape.videoKeyFrame = sample.keyFrame;
   }

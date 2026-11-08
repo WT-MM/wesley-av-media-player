@@ -222,6 +222,41 @@ struct CollectedDocument final : Visitor {
   bool stopAtFirstCluster{false};
 };
 
+// Exact extents of an audio track whose packets differ in length (Vorbis with
+// unequal block sizes), proved at preparation against every Block timestamp.
+// Ordinal k presents [starts[k], starts[k + 1]) in track-rate frames. Blocks
+// are named by their file offset rather than by tick: short packets lie under
+// three ticks apart, too close for a millisecond tick to name one.
+struct AudioPacketTimeline {
+  struct Block {
+    std::uint64_t offset;
+    std::uint64_t ordinal;
+  };
+  std::vector<std::int64_t> starts;
+  std::vector<Block> blocks;
+
+  [[nodiscard]] std::optional<AacTickGridProjection> project(
+      std::uint64_t blockOffset) const noexcept {
+    const auto found = std::lower_bound(
+        blocks.begin(), blocks.end(), blockOffset,
+        [](const Block& block, std::uint64_t offset) {
+          return block.offset < offset;
+        });
+    if (found == blocks.end() || found->offset != blockOffset) {
+      return std::nullopt;
+    }
+    return AacTickGridProjection{found->ordinal, {}, 0, 0, true};
+  }
+  [[nodiscard]] std::optional<std::uint64_t> ordinalContaining(
+      std::int64_t frame) const noexcept {
+    const auto after = std::upper_bound(starts.begin(), starts.end() - 1, frame);
+    if (after == starts.begin()) {
+      return std::nullopt;
+    }
+    return static_cast<std::uint64_t>(after - starts.begin() - 1);
+  }
+};
+
 struct TrackRuntime {
   TrackEntry entry;
   MediaTrackId id{0};
@@ -256,6 +291,9 @@ struct TrackRuntime {
   bool audioTailBlockKnown{false};
   std::uint64_t audioTailBlockOffset{0};
   std::int64_t audioTailDiscardPaddingNanoseconds{0};
+  // Set only for a track whose packets differ in length; it then replaces the
+  // constant grid above for every tick projection and presentation time.
+  std::shared_ptr<const AudioPacketTimeline> audioPacketTimeline;
 };
 
 struct AssetState {
@@ -1135,6 +1173,46 @@ struct OpusPacketGridProbe {
   bool found{false};
 };
 
+// Serves a whole-file walk from one sequential window instead of a pread per
+// Block header and payload byte: the walk visits every Block of every track in
+// file order. Reads larger than the window go straight to the file.
+class WindowedReader final : public SeekableByteReader {
+ public:
+  explicit WindowedReader(SeekableByteReader& file) : file_(file) {}
+  [[nodiscard]] std::uint64_t size() const noexcept override {
+    return file_.size();
+  }
+  [[nodiscard]] bool readAt(std::uint64_t offset,
+                            std::span<std::byte> destination) noexcept override {
+    if (destination.size() > window_.size()) {
+      return file_.readAt(offset, destination);
+    }
+    if (offset < start_ || offset - start_ > length_ ||
+        destination.size() > length_ - (offset - start_)) {
+      const std::uint64_t size = file_.size();
+      if (offset > size || destination.size() > size - offset) {
+        return false;
+      }
+      length_ = static_cast<std::size_t>(
+          std::min<std::uint64_t>(window_.size(), size - offset));
+      start_ = offset;
+      if (!file_.readAt(offset, std::span(window_).first(length_))) {
+        length_ = 0;
+        return false;
+      }
+    }
+    std::copy_n(window_.begin() + static_cast<std::ptrdiff_t>(offset - start_),
+                destination.size(), destination.begin());
+    return true;
+  }
+
+ private:
+  SeekableByteReader& file_;
+  std::vector<std::byte> window_ = std::vector<std::byte>(1U << 20U);
+  std::uint64_t start_{0};
+  std::size_t length_{0};
+};
+
 // Visits every Block belonging to one track inside one cluster. Shared by the
 // Opus and Vorbis probes so the tail search below has exactly one
 // implementation.
@@ -1772,6 +1850,199 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   return true;
 }
 
+// The descriptor and runtime fields both Vorbis timelines share.
+void fillVorbisDescriptor(const TrackEntry& entry, MediaTrackId id,
+                          const VorbisConfiguration& configuration,
+                          std::span<const std::byte> header,
+                          MediaTime exactDuration, MediaTime origin,
+                          MediaTrackDescriptor* result, TrackRuntime* runtime) {
+  const std::uint32_t sampleRate = configuration.sampleRate;
+  const std::uint32_t samplesPerAccessUnit =
+      configuration.samplesPerAccessUnit();
+  result->id = id;
+  result->kind = MediaTrackKind::Audio;
+  result->codec = MediaCodec::Vorbis;
+  result->timeBase = MediaTime{1, static_cast<std::int32_t>(sampleRate)};
+  // As with Opus, this is the exact decoded sample count after both trims, not
+  // the container's declared Duration: the audio consumer uses it as the
+  // tail-trim ceiling.
+  result->duration = exactDuration;
+  result->language = inlineString(entry.language);
+  result->codecConfigurationKind = MediaCodecConfigurationKind::AudioMagicCookie;
+  result->codecConfiguration.assign(header.begin(), header.end());
+  MediaAudioFormat format;
+  format.sampleRate = sampleRate;
+  format.channels = configuration.channelCount;
+  format.formatTag = mediaCodecFacts(MediaCodec::Vorbis).coreAudioFormatTag;
+  format.framesPerPacket = samplesPerAccessUnit;
+  format.variableFramesPerPacket = configuration.variableBlockSize();
+  applyChannelLayoutTag(&format, configuration.channelCount);
+  result->audio = format;
+  runtime->entry = entry;
+  runtime->id = id;
+  runtime->kind = MediaTrackKind::Audio;
+  runtime->codec = MediaCodec::Vorbis;
+  runtime->audioSampleRate = sampleRate;
+  runtime->audioSamplesPerAccessUnit = samplesPerAccessUnit;
+  runtime->audioPresentationOrigin = origin;
+}
+
+// Unequal block sizes: packet k decodes to (blocksize[k-1] + blocksize[k]) / 4
+// frames and packet 0 to none (Vorbis I 4.3.8), so the extents are read from
+// every packet's mode and accumulated rather than placed on a constant grid.
+// Packet 0 is given its notional blocksize[0] / 2 frames ending at the first
+// decoded frame, which is exactly the one-packet lead-in the decoder
+// swallows; every later packet's extent is its decoded output.
+//
+// Muxers stamp the Blocks one of two ways, both measured: at the packet's
+// first decoded frame plus CodecDelay (current ffmpeg, the Matroska rule), or
+// at its last decoded frame, the Ogg granule position (ffmpeg 4.x's libvorbis
+// wrapper). Every Block must fit one of them within a tick; the two differ by
+// a whole packet per Block, so no real stream fits both. Either way the
+// decoded stream is contiguous from the first Block's stamp; a player that
+// reads granule stamps as start times presents the audio one packet late.
+[[nodiscard]] bool makeVariableVorbisDescriptor(
+    SeekableByteReader& reader, const TrackEntry& entry,
+    const VorbisConfiguration& configuration,
+    std::span<const std::byte> header, const MediaSourceLimits& limits,
+    std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints,
+    std::uint64_t timestampScaleNanoseconds, CancellationToken cancellation,
+    MediaTrackDescriptor* result, TrackRuntime* runtime) {
+  constexpr std::int64_t kTolerance = kMaximumAacGridTickResidual;
+  const std::uint32_t rate = configuration.sampleRate;
+  const auto id = trackId(entry.number);
+  if (!id || timestampScaleNanoseconds == 0 ||
+      entry.codecDelayNanoseconds >
+          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const auto codecDelay =
+      entry.codecDelayNanoseconds == 0
+          ? std::optional<std::uint32_t>(0)
+          : matroskaFramesFromNanoseconds(
+                static_cast<std::int64_t>(entry.codecDelayNanoseconds), rate,
+                kMaximumVorbisPacketFrames);
+  if (!codecDelay) {
+    return false;
+  }
+  auto timeline = std::make_shared<AudioPacketTimeline>();
+  // Relative extents first: packet 1 starts at frame zero, packet 0 ends there.
+  std::vector<std::int64_t>& starts = timeline->starts;
+  std::int64_t end = 0, firstTickFrame = 0;
+  std::uint32_t previousBlock = 0;
+  bool startStamped = true, endStamped = true, tail = false, valid = true;
+  std::uint64_t tailOffset = 0;
+  std::int64_t padding = 0;
+  std::optional<std::uint32_t> trim(0);
+  const auto fits = [&](std::int64_t tick, std::int64_t frame) {
+    const auto quantized = nearestMatroskaTick(
+        {MediaTime{frame, static_cast<std::int32_t>(rate)}, 0, rate, 1U},
+        timestampScaleNanoseconds);
+    return quantized && tick - *quantized >= -kTolerance &&
+           tick - *quantized <= kTolerance;
+  };
+  const auto options = parserOptions(limits, constraints);
+  WindowedReader window(reader);
+  for (std::size_t ci = 0; ci < clusters.size(); ++ci) {
+    if (cancellation.cancelled() || !clusters[ci].timestamp) return false;
+    if (!visitTrackBlocksInCluster(
+            window, clusters[ci], options, entry.number, cancellation, ci,
+            [&](std::size_t, const CapturedBlockVisitor& block) {
+              const auto tick = signedBlockTick(*clusters[ci].timestamp,
+                                                block.header.relativeTimestamp);
+              valid = tick && block.frameCount != 0 && !tail &&
+                      starts.size() + block.frameCount <=
+                          kMaximumAudioIndexScanPackets &&
+                      (timeline->blocks.empty() ||
+                       block.header.containerEncoded.offset >
+                           timeline->blocks.back().offset);
+              const std::size_t first = starts.size();
+              if (valid) {
+                timeline->blocks.push_back(
+                    {block.header.containerEncoded.offset, first});
+              }
+              for (std::uint16_t i = 0; valid && i < block.frameCount; ++i) {
+                std::array<std::byte, 1> byte{};
+                const ByteRange range = block.frames[i].bytes;
+                const auto blockSize =
+                    range.size != 0 && window.readAt(range.offset, byte)
+                        ? vorbisPacketBlockSize(configuration, byte[0])
+                        : std::nullopt;
+                if (!blockSize) {
+                  valid = false;
+                  break;
+                }
+                const std::int64_t frames =
+                    previousBlock == 0 ? *blockSize / 2U
+                                       : (previousBlock + *blockSize) / 4U;
+                previousBlock = *blockSize;
+                starts.push_back(first == 0 && i == 0 ? -frames : end);
+                end = starts.back() + frames;
+              }
+              if (!valid) return false;
+              if (first == 0) {
+                const auto time =
+                    timeFromSignedTick(*tick, timestampScaleNanoseconds);
+                const auto frame =
+                    time ? exactAudioFrameIndex(*time, rate) : std::nullopt;
+                if (!frame) return valid = false;
+                firstTickFrame = *frame;
+              }
+              if (block.group.discardPaddingNanoseconds) {
+                padding = *block.group.discardPaddingNanoseconds;
+                tailOffset = block.header.containerEncoded.offset;
+                tail = true;
+                trim = matroskaFramesFromNanoseconds(
+                    padding, rate, kMaximumVorbisPacketFrames);
+                if (!trim) return valid = false;
+              }
+              // A granule position is the last frame kept, after the trim.
+              const std::int64_t packetEnd =
+                  first + 1U < starts.size()
+                      ? starts[first + 1U]
+                      : end - static_cast<std::int64_t>(*trim);
+              startStamped = startStamped &&
+                  fits(*tick, starts[first] + firstTickFrame - starts[0]);
+              endStamped = endStamped && fits(*tick, packetEnd + firstTickFrame);
+              return startStamped || endStamped;
+            }) ||
+        !valid || !(startStamped || endStamped)) {
+      return false;
+    }
+  }
+  // A granule-stamped mux states no CodecDelay; one that did would be
+  // describing a shift this path has not reasoned about.
+  if (starts.empty() || startStamped == endStamped ||
+      (endStamped && *codecDelay != 0)) {
+    return false;
+  }
+  const std::int64_t base = startStamped
+                                ? firstTickFrame - starts[0] - *codecDelay
+                                : firstTickFrame;
+  for (std::int64_t& start : starts) start += base;
+  starts.push_back(end + base);
+  if (*trim >= starts.back() - starts[starts.size() - 2U] ||
+      starts.back() - *trim <= 0) {
+    return false;
+  }
+  const auto exactDuration = mediaTimeFromTicks(starts.back() - *trim, rate);
+  const auto origin = mediaTimeFromTicks(starts[0], rate);
+  if (!exactDuration || !origin) {
+    return false;
+  }
+  fillVorbisDescriptor(entry, *id, configuration, header, *exactDuration,
+                       *origin, result, runtime);
+  runtime->audioTickResidualTolerance = kTolerance;
+  runtime->audioGridOffsetFrames = -starts[0];
+  runtime->audioPrimingAccessUnits = kAudioPrimingAccessUnits;
+  runtime->audioTailBlockKnown = tail;
+  runtime->audioTailBlockOffset = tailOffset;
+  runtime->audioTailDiscardPaddingNanoseconds = padding;
+  runtime->audioPacketTimeline = std::move(timeline);
+  return true;
+}
+
 [[nodiscard]] bool makeVorbisAudioDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
     const MediaSourceLimits& limits, std::span<const Cluster> clusters,
@@ -1810,6 +2081,11 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
       configuration.channelCount > limits.maximumAudioChannels ||
       samplesPerAccessUnit == 0U) {
     return false;
+  }
+  if (configuration.variableBlockSize()) {
+    return makeVariableVorbisDescriptor(
+        reader, entry, configuration, header, limits, clusters, constraints,
+        timestampScaleNanoseconds, cancellation, result, runtime);
   }
 
   // THE identity that makes the Vorbis trim exact: the offset of the
@@ -1867,31 +2143,8 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   }
   const MediaTime exactDuration = exact.duration;
 
-  result->id = *id;
-  result->kind = MediaTrackKind::Audio;
-  result->codec = MediaCodec::Vorbis;
-  result->timeBase = MediaTime{1, static_cast<std::int32_t>(sampleRate)};
-  // As with Opus, this is the exact decoded sample count after both trims, not
-  // the container's declared Duration: the audio consumer uses it as the
-  // tail-trim ceiling.
-  result->duration = exactDuration;
-  result->language = inlineString(entry.language);
-  result->codecConfigurationKind = MediaCodecConfigurationKind::AudioMagicCookie;
-  result->codecConfiguration.assign(header.begin(), header.end());
-  MediaAudioFormat format;
-  format.sampleRate = sampleRate;
-  format.channels = configuration.channelCount;
-  format.formatTag = mediaCodecFacts(MediaCodec::Vorbis).coreAudioFormatTag;
-  format.framesPerPacket = samplesPerAccessUnit;
-  applyChannelLayoutTag(&format, configuration.channelCount);
-  result->audio = format;
-  runtime->entry = entry;
-  runtime->id = *id;
-  runtime->kind = MediaTrackKind::Audio;
-  runtime->codec = MediaCodec::Vorbis;
-  runtime->audioSampleRate = sampleRate;
-  runtime->audioSamplesPerAccessUnit = samplesPerAccessUnit;
-  runtime->audioPresentationOrigin = origin;
+  fillVorbisDescriptor(entry, *id, configuration, header, exactDuration,
+                       origin, result, runtime);
   // Measured worst residual on an ffmpeg mux is 0.72 ticks, which the AAC
   // tolerance of 1 would already pass. Two is kept because the residual is a
   // cluster-timestamp rounding artefact whose sign varies, and two ticks is
@@ -2910,7 +3163,11 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
           const std::uint32_t samplesPerAccessUnit =
               state.audio->audioSamplesPerAccessUnit;
           const bool softwareAudio = softwareAudioCodec(state.audio->codec);
-          const auto projection = softwareAudio
+          const AudioPacketTimeline* timeline =
+              state.audio->audioPacketTimeline.get();
+          const auto projection = timeline
+              ? timeline->project(visitor.header.containerEncoded.offset)
+              : softwareAudio
               ? (softwareAudioTickAdmitted(*tick, impl_->expectedAudioOrdinal, samplesPerAccessUnit,
                                    state.timestampScaleNanoseconds)
                   ? std::optional<AacTickGridProjection>(AacTickGridProjection{impl_->expectedAudioOrdinal})
@@ -3066,10 +3323,18 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             bytes += static_cast<std::size_t>(frameBytes);
           }
           sample.aggregateBytes = bytes;
-          const auto presentation = audioPacketGridTime(
-              {state.audio->audioPresentationOrigin,
-               impl_->expectedAudioOrdinal, state.audio->audioSampleRate,
-               samplesPerAccessUnit});
+          const std::uint64_t ordinal = impl_->expectedAudioOrdinal;
+          if (timeline != nullptr &&
+              ordinal + sample.frameCount >= timeline->starts.size()) {
+            return MatroskaCursorFailure{MediaRefusalClass::InvalidTimeline,
+                                         "audio packet outside its timeline"};
+          }
+          const auto presentation = timeline
+              ? mediaTimeFromTicks(timeline->starts[ordinal],
+                                   state.audio->audioSampleRate)
+              : audioPacketGridTime(
+                    {state.audio->audioPresentationOrigin, ordinal,
+                     state.audio->audioSampleRate, samplesPerAccessUnit});
           const auto duration = timeFromNanosecondsUnsigned(
               (static_cast<std::uint64_t>(sample.frameCount) *
                samplesPerAccessUnit * UINT64_C(1'000'000'000)) /
@@ -3081,6 +3346,16 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
           sample.presentationTime = *presentation;
           std::uint64_t frameCount =
               static_cast<std::uint64_t>(sample.frameCount) * samplesPerAccessUnit;
+          if (timeline != nullptr) {
+            for (std::uint16_t index = 0; index < sample.frameCount; ++index) {
+              sample.audioPacketFrames[index] = static_cast<std::uint16_t>(
+                  timeline->starts[ordinal + index + 1U] -
+                  timeline->starts[ordinal + index]);
+            }
+            frameCount = static_cast<std::uint64_t>(
+                timeline->starts[ordinal + sample.frameCount] -
+                timeline->starts[ordinal]);
+          }
           if (state.audio->codec == MediaCodec::Pcm) {
             const auto* descriptor = findMediaTrack(*state.descriptor, state.audio->id);
             if (!descriptor || !descriptor->audio || descriptor->audio->bytesPerFrame == 0 ||
@@ -3390,7 +3665,17 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       const std::uint64_t priming = state.audio->audioPrimingAccessUnits;
       // Software audio starts at the proven origin major sync; preroll is streamed.
       const bool softwareAudio = softwareAudioCodec(state.audio->codec);
+      const AudioPacketTimeline* timeline =
+          state.audio->audioPacketTimeline.get();
+      // Packets of differing length are primed by frames: the packet holding
+      // the frame audioPrimingFrames ahead of the target, at least two
+      // packets back because none exceeds framesPerPacket.
+      const auto primedOrdinal = timeline
+          ? timeline->ordinalContaining(*pcmFrame - audioPrimingFrames(
+                state.audio->codec, samplesPerAccessUnit))
+          : std::optional<std::uint64_t>();
       const std::uint64_t startOrdinal = softwareAudio ? 0 :
+          timeline ? primedOrdinal.value_or(0) :
           std::max(state.audio->audioFirstOrdinal,
                    desiredOrdinal >= priming ? desiredOrdinal - priming : 0);
       // One Cluster of backoff covers the priming access units, which are tens
@@ -3405,7 +3690,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       const ScanResult audioBlock = scanTrack(
           state, state.audio->id, static_cast<std::uint32_t>(searchStart),
           kMaximumMatroskaSeekClusters,
-          [&state, &passedTarget, startOrdinal, samplesPerAccessUnit, tickTolerance](
+          [&state, &passedTarget, startOrdinal, samplesPerAccessUnit, tickTolerance, timeline](
               std::uint32_t clusterIndex, const CapturedBlockVisitor& block) {
             const auto tick = signedBlockTick(
                 state.clusters[clusterIndex].timestampTick,
@@ -3414,9 +3699,11 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
               passedTarget = true;
               return false;
             }
-            const auto projection = nearestAudioPacketForMatroskaTick(
-                *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
-                state.timestampScaleNanoseconds, samplesPerAccessUnit);
+            const auto projection = timeline
+                ? timeline->project(block.header.containerEncoded.offset)
+                : nearestAudioPacketForMatroskaTick(
+                      *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
+                      state.timestampScaleNanoseconds, samplesPerAccessUnit);
             passedTarget = !aacProjectionOnGrid(projection,tickTolerance) ||
                            projection->accessUnitOrdinal > startOrdinal;
             return aacProjectionOnGrid(projection, tickTolerance) &&
@@ -3435,9 +3722,11 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       const auto audioTick = signedBlockTick(
           state.clusters[audioBlock.clusterIndex].timestampTick,
           audioBlock.block->header.relativeTimestamp);
-      const auto projection = nearestAudioPacketForMatroskaTick(
-          *audioTick, MediaTime{0, 1}, state.audio->audioSampleRate,
-          state.timestampScaleNanoseconds, samplesPerAccessUnit);
+      const auto projection = timeline
+          ? timeline->project(audioBlock.block->header.containerEncoded.offset)
+          : nearestAudioPacketForMatroskaTick(
+                *audioTick, MediaTime{0, 1}, state.audio->audioSampleRate,
+                state.timestampScaleNanoseconds, samplesPerAccessUnit);
       plan.audioClusterIndex = audioBlock.clusterIndex;
       plan.audioBlockOffset = audioBlock.block->header.containerEncoded.offset;
       plan.audioFrameIndex = static_cast<std::uint16_t>(
@@ -3447,15 +3736,23 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       // emits, which is startOrdinal -- not the first AU of the Block that
       // contains it. Naming the Block's first AU would disagree with the
       // cursor whenever the seek lands mid-Block.
-      const auto decode = audioPacketGridTime(
-          {presentationOrigin, startOrdinal, state.audio->audioSampleRate,
-           samplesPerAccessUnit});
+      const auto ordinalTime = [&](std::uint64_t ordinal) {
+        return timeline
+            ? mediaTimeFromTicks(timeline->starts[ordinal],
+                                 state.audio->audioSampleRate)
+            : audioPacketGridTime({presentationOrigin, ordinal,
+                                   state.audio->audioSampleRate,
+                                   samplesPerAccessUnit});
+      };
+      const auto decode = ordinalTime(startOrdinal);
       if (!decode) {
         outcome.error = MediaRefusalClass::InvalidTimeline;
         return outcome;
       }
-      const auto gridStart = audioPacketGridTime({presentationOrigin,
-          state.audio->audioFirstOrdinal, state.audio->audioSampleRate, samplesPerAccessUnit});
+      // The first packet decodes to nothing, so with packets of differing
+      // length the first decodable frame is where the second one starts.
+      const auto gridStart = ordinalTime(state.audio->audioFirstOrdinal +
+                                         (timeline ? 1U : 0U));
       const auto mediaStart = gridStart ? firstDecodableAudioTime(*gridStart,
           state.audio->codec, samplesPerAccessUnit, state.audio->audioSampleRate)
           : std::nullopt;

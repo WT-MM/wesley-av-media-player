@@ -22,8 +22,8 @@ inline constexpr std::uint16_t kAc3Syncword{0x0B77};
 // Both flavours decode 6 blocks of 256 frames. AC-3 has no other option;
 // E-AC-3 does (1, 2, 3 or 6 blocks) and Matroska admits only the 6-block
 // form, because a variable block count is a variable access-unit duration and
-// the Matroska demuxer's affine ordinal grid cannot represent one -- the same
-// reasoning that gates Vorbis to equal block sizes.
+// the Matroska demuxer's affine ordinal grid cannot represent one. (Vorbis with
+// unequal block sizes has a per-packet timeline of its own.)
 inline constexpr std::uint32_t kAc3SamplesPerAccessUnit{1'536};
 inline constexpr std::uint32_t kAc3BlocksPerSyncframe{6};
 inline constexpr std::uint32_t kAc3FramesPerBlock{256};
