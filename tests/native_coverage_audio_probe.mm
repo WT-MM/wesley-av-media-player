@@ -180,10 +180,12 @@ int main(int argc, char **argv) {
               targetFrame ==
           frames;
   std::fprintf(stderr,
-               "track=%u rate=%.0f frames=%llu first=%lld decoded=%llu "
-               "trim=%llu silence=%llu exact=%d drained=%d error=%s\n",
+               "track=%u rate=%.0f frames=%llu first=%lld floor=%lld "
+               "decoded=%llu trim=%llu silence=%llu exact=%d drained=%d "
+               "error=%s\n",
                track->id, track->audio->sampleRate, frames,
-               stats.firstPublishedFrame, stats.decodedPcmFrames,
+               stats.firstPublishedFrame, static_cast<long long>(targetFrame),
+               stats.decodedPcmFrames,
                stats.discardedTrimFrames, stats.insertedSilenceFrames, exact, drained, error.c_str());
   std::fclose(out);
   converter.close();

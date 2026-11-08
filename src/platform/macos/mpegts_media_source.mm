@@ -3,6 +3,7 @@
 #include "platform/macos/mpegts_sample_builder.hpp"
 #include "platform/macos/native_custom_source_core.hpp"
 
+#include "media/audio_codec_timing.hpp"
 #include "media/media_codec_facts.hpp"
 
 #import <CoreMedia/CoreMedia.h>
@@ -32,18 +33,18 @@ using media::mpegts::MpegTsCompressedSample;
 using media::mpegts::MpegTsGenerationPlan;
 
 // Frames Apple's decoder swallows at the head of a track before it emits its
-// first PCM frame: media::decoderLeadInFrames, the same function the converter
-// uses. The session proves the generation by checking that the converter's
-// first published frame lands exactly on the presentation floor: the source
-// states the decode start, the converter adds its lead-in, and the two meet.
+// first PCM frame. The session proves the generation by checking that the
+// converter's first published frame lands exactly on the presentation floor:
+// the source states the decode start, the converter adds its lead-in, and the
+// two meet.
 //
-// Matroska gets this for free -- it carries CodecDelay, and its demuxer places
-// access unit 0 that many frames before the presentation origin. A transport
-// stream states nothing of the kind: a PES header carries a presentation time
-// and no delay field at all, so the shift has to be applied here or the first
-// published frame lands `leadIn` frames late and the whole generation is
-// refused. AAC swallows nothing -- its encoder priming is real audio at the
-// head of the elementary stream that the PES timestamps already describe.
+// A PES header carries a presentation time and no delay field, and for AC-3
+// and E-AC-3 that time is where ffmpeg and mpv present the decoder's very first
+// output -- the frames Apple's decoder swallows are presented media. So the
+// anchor stays on the PES stamp and the stream-origin generation declares the
+// swallowed span as silence (media::firstDecodableAudioTime). Only a lead-in
+// that is NOT presented media would move the anchor
+// (media::unstatedDecoderLeadInShiftFrames). AAC swallows nothing.
 
 // Nearest audio frame ordinal to a container timestamp, computed in 128 bits.
 //
@@ -122,8 +123,8 @@ struct MpegTsMediaSource::Impl final
   // first audio unit anchors it.
   std::optional<std::int64_t> audioNextFrame;
 
-  [[nodiscard]] std::int64_t audioLeadInFrames() const noexcept {
-    return media::decoderLeadInFrames(
+  [[nodiscard]] std::int64_t audioAnchorShiftFrames() const noexcept {
+    return media::unstatedDecoderLeadInShiftFrames(
         audioCodec, static_cast<std::uint32_t>(audioFramesPerPacket));
   }
 
@@ -176,17 +177,16 @@ struct MpegTsMediaSource::Impl final
         return std::nullopt;
       }
       if (!audioNextFrame) {
-        // The anchor is the PES timestamp MINUS the decoder lead-in, so that
-        // once the converter has swallowed that lead-in its first published
-        // frame lands exactly on the presentation floor.
-        audioNextFrame = *pesFrame - audioLeadInFrames();
+        // The anchor is the PES timestamp, less any lead-in that is not
+        // presented media (see the note at the top of this file).
+        audioNextFrame = *pesFrame - audioAnchorShiftFrames();
       } else {
         // Tolerance is one whole access unit. Anything larger is a dropped or
         // duplicated PES rather than muxer rounding, and continuing past it
         // would publish audio the converter's exact-contiguity check would
         // reject one sample later with a far less useful message.
         const std::int64_t drift =
-            *pesFrame - audioLeadInFrames() - *audioNextFrame;
+            *pesFrame - audioAnchorShiftFrames() - *audioNextFrame;
         if (drift > audioFramesPerPacket || drift < -audioFramesPerPacket) {
           assignError(error,
                       "mpeg-ts audio access units are not contiguous on the "
@@ -382,6 +382,27 @@ struct MpegTsMediaSource::Impl final
       return false;
     }
     window.presentationStart = *floor;
+    // The stream-origin generation can publish nothing before the decoder's
+    // first output; the span up to it is declared silence.
+    const auto decodeAgainstZero =
+        media::compareMediaTime(window.decodeStart, MediaTime{0, 1});
+    if (decodeAgainstZero && *decodeAgainstZero != MediaTimeOrder::Greater) {
+      const auto decodable = media::firstDecodableAudioTime(
+          window.decodeStart, audioCodec,
+          static_cast<std::uint32_t>(audioFramesPerPacket),
+          static_cast<std::uint32_t>(audioSampleRate));
+      if (!decodable) {
+        assignError(error, "mpeg-ts audio decoder lead-in is not exact");
+        return false;
+      }
+      if (decodable->value > 0) {
+        window.mediaStart = *decodable;
+        if (media::compareMediaTime(*decodable, window.presentationStart) ==
+            MediaTimeOrder::Greater) {
+          window.presentationStart = *decodable;
+        }
+      }
+    }
     const auto decodeAgainstFloor =
         media::compareMediaTime(window.decodeStart, window.presentationStart);
     if (!decodeAgainstFloor ||

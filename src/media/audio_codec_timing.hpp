@@ -106,6 +106,46 @@ audioCodecPrecedesStreamOrigin(MediaCodec codec) noexcept {
   return mediaCodecFacts(codec).precedesStreamOrigin;
 }
 
+// The lead-in shift a route applies itself when its container states no delay
+// (an MPEG-TS PES, a bare elementary stream): the decoder's whole lead-in,
+// unless that lead-in is presented media, in which case nothing moves and
+// firstDecodableAudioTime declares the gap as silence instead.
+[[nodiscard]] constexpr std::uint32_t
+unstatedDecoderLeadInShiftFrames(MediaCodec codec,
+                                 std::uint32_t framesPerPacket) noexcept {
+  return mediaCodecFacts(codec).decoderLeadInIsPresentedMedia
+             ? 0U
+             : decoderLeadInFrames(codec, framesPerPacket);
+}
+
+// The earliest movie time a generation that starts at the stream's first
+// access unit can publish, given that unit's presentation time. Where the
+// decoder's swallowed lead-in is presented media (AC-3, E-AC-3) its first
+// output lands leadIn frames after that unit and no decode can return the
+// frames before it, so every route declares [media start, this) as silence.
+// For every other codec it is the access unit itself. Measured on AC-3 and
+// E-AC-3 against ffmpeg's full decode in Matroska (CodecDelay 0 and 256),
+// MPEG-TS, and MP4 (edits of 240 and 256 frames): every frame after it is
+// exact.
+[[nodiscard]] constexpr std::optional<MediaTime>
+firstDecodableAudioTime(MediaTime firstAccessUnit, MediaCodec codec,
+                        std::uint32_t framesPerPacket,
+                        std::uint32_t sampleRate) noexcept {
+  if (!mediaCodecFacts(codec).decoderLeadInIsPresentedMedia) {
+    return firstAccessUnit.valid() ? std::optional{firstAccessUnit}
+                                   : std::nullopt;
+  }
+  if (sampleRate == 0U ||
+      sampleRate > static_cast<std::uint32_t>(
+                       std::numeric_limits<std::int32_t>::max())) {
+    return std::nullopt;
+  }
+  return addMediaTime(
+      firstAccessUnit,
+      {static_cast<std::int64_t>(decoderLeadInFrames(codec, framesPerPacket)),
+       static_cast<std::int32_t>(sampleRate)});
+}
+
 // Recovers an exact frame count from a Matroska duration stated in
 // nanoseconds (CodecDelay, DiscardPadding).
 //
