@@ -463,14 +463,6 @@ endif()
 
 install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION share/doc/wam)
 
-if(APPLE)
-  # Loaded with dlopen by the WMV3 stage, never linked.
-  add_dependencies(wam wam_wmv3)
-  add_custom_command(TARGET wam POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:wam>/Contents/Frameworks"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:wam_wmv3>"
-      "$<TARGET_BUNDLE_DIR:wam>/Contents/Frameworks/$<TARGET_FILE_NAME:wam_wmv3>")
-endif()
 
 if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
   set_property(TARGET wam APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
@@ -510,6 +502,21 @@ if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
   add_custom_command(TARGET wam POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${WAM_NATIVE_FFMPEG_SOURCE_NOTICE}"
     "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/SOURCE_DISTRIBUTION.md")
+endif()
+
+# The LGPL Windows Media decoders: lazily dlopened from Frameworks, shipped
+# with their license and notice.
+if(WAM_ENABLE_AVFORMAT_STAGE)
+  add_dependencies(wam wam_wmcodecs)
+  add_custom_command(TARGET wam POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:wam>/Contents/Frameworks"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:wam_wmcodecs>"
+      "$<TARGET_BUNDLE_DIR:wam>/Contents/Frameworks/$<TARGET_FILE_NAME:wam_wmcodecs>"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/wam-wmcodecs"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_SOURCE_DIR}/third_party/wam-wmcodecs/LICENSE"
+      "${CMAKE_SOURCE_DIR}/third_party/wam-wmcodecs/NOTICE"
+      "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/wam-wmcodecs/")
 endif()
 
 set(CPACK_PACKAGE_NAME "WAM")

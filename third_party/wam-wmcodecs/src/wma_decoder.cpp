@@ -910,4 +910,13 @@ void wam_wma_flush(wam_wma_decoder* decoder) {
   decoder->d.skip = 2 * decoder->d.frame_len;
 }
 
+int wam_wma_superframe_frames(const wam_wma_decoder* decoder, const uint8_t* data, int size) {
+  if (!decoder || !data || size < decoder->d.block_align) return -1;
+  return decoder->d.use_bit_reservoir ? data[0] & 15 : 1;
+}
+
+int wam_wma_uses_noise_coding(const wam_wma_decoder* decoder) {
+  return decoder && decoder->d.use_noise_coding;
+}
+
 }  // extern "C"

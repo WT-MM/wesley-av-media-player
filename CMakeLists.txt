@@ -143,12 +143,10 @@ target_link_libraries(wam_app_core PUBLIC wam_caption_runtime)
 include(cmake/NativeTargets.cmake)
 if(APPLE)
   add_subdirectory(third_party/wam-wmcodecs)
-  # LGPL decoders for Windows Media formats; separate shared libraries.
   add_subdirectory(third_party/wam-wmcodecs/wmv3)
-  # The WMV3 stage dlopens the library from the image's private library
-  # directory (avcodec::libraryDirectory): build/native-codecs for build-tree
-  # executables, Contents/Frameworks in the bundle (cmake/WamApp.cmake).
-  set_target_properties(wam_wmv3 PROPERTIES
+  # WAM dlopens it from the app's Frameworks; native-codecs is the build
+  # tree's equivalent (media::avcodec::libraryDirectory).
+  set_target_properties(wam_wmcodecs PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/native-codecs")
 endif()
 if(WAM_BUILD_APP)

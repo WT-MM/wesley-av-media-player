@@ -13,6 +13,9 @@ NATIVE_NAMES = [PINS['WAM_NATIVE_AVCODEC_DYLIB'], PINS['WAM_NATIVE_AVUTIL_DYLIB'
 FLOOR = PINS['WAM_MACOS_DEPLOYMENT_TARGET']
 NOTICES = ['FFMPEG_NOTICES.md', 'COPYING.LGPLv2.1', 'LICENSE.md',
            'configure-command.txt', 'build-receipt.txt', 'SOURCE_DISTRIBUTION.md']
+# The demux stage's WMA decoder: dlopened from Frameworks, with its notices.
+WM_LIBRARY = 'libwam-wmcodecs.dylib'
+WM_NOTICES = ['LICENSE', 'NOTICE']
 MAGICS = {bytes.fromhex(value) for value in
           ['feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']}
 
@@ -89,10 +92,14 @@ def audit(app):
                 candidates = [pathlib.Path(expand(dep, owner))] if dep.startswith(('@loader_path/', '@executable_path/')) else []
             if not any(str(p.resolve()) in by_path and p.resolve().is_relative_to(app) for p in candidates):
                 unresolved.append(dict(owner=row['path'], dependency=dep))
-    names = NATIVE_NAMES + ([PINS['WAM_NATIVE_AVFORMAT_DYLIB']] if (notices / 'demux-stage-built').exists() else [])
+    demux = (notices / 'demux-stage-built').exists()
+    names = NATIVE_NAMES + ([PINS['WAM_NATIVE_AVFORMAT_DYLIB'], WM_LIBRARY] if demux else [])
     native = [by_path[str((frameworks / name).resolve())] for name in names if str((frameworks / name).resolve()) in by_path]
-    notice_state = {name: (notices / name).is_file() and (notices / name).resolve().is_relative_to(app) for name in NOTICES}
-    eager = bool(main and any('libavcodec' in p or 'libavutil' in p or 'libavformat' in p for p in main['loads']))
+    notice_paths = {name: notices / name for name in NOTICES}
+    if demux:
+        notice_paths.update({'wam-wmcodecs/' + name: app / 'Contents/Resources/wam-wmcodecs' / name for name in WM_NOTICES})
+    notice_state = {name: path.is_file() and path.resolve().is_relative_to(app) for name, path in notice_paths.items()}
+    eager = bool(main and any(lib in p for p in main['loads'] for lib in ('libavcodec', 'libavutil', 'libavformat', 'libwam-wmcodecs')))
     floor_pass = bool(inventory) and all(row['at_or_below_floor'] for row in inventory)
     relocatable = not errors and not external and not unresolved and len(native) == len(names)
     return dict(native=native, main=main, bundled_machos=inventory,

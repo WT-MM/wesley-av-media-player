@@ -29,6 +29,8 @@ public:
     unsigned primaries{}, transfer{}, matrix{};
     bool fullRange{}, rangeSpecified{};
     unsigned width{}, height{}, rate{}, channels{}, frameSize{};
+    unsigned blockAlign{};
+    std::int64_t bitRate{};
     MediaTime timeBase{}, duration{}, start{};
     std::span<const std::byte> extradata{};
   };

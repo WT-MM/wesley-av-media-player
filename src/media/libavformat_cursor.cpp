@@ -538,6 +538,8 @@ LibavformatCursor::Stream LibavformatCursor::stream(unsigned i) const noexcept {
   out.rate = std::max(0, p.sample_rate);
   out.channels = std::max(0, p.ch_layout.nb_channels);
   out.frameSize = std::max(0, p.frame_size);
+  out.blockAlign = static_cast<unsigned>(std::max(0, p.block_align));
+  out.bitRate = std::max<std::int64_t>(0, p.bit_rate);
   out.timeBase = avcodecExactTime(1, s.time_base.num, s.time_base.den)
                      .value_or(MediaTime{});
   out.start = avcodecExactTime(s.start_time, s.time_base.num, s.time_base.den)

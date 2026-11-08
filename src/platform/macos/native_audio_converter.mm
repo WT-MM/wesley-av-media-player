@@ -1293,7 +1293,7 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
                                      std::string *error) {
   auto &state = *impl_;
 #if !defined(WAM_ENABLE_AVCODEC_STAGE)
-  if (media::softwareAudioCodec(track.codec)) {
+  if (media::avcodecAudioCodec(track.codec)) {
     return state.fail(error, "SoftwareAudioStageNotBuilt");
   }
 #endif

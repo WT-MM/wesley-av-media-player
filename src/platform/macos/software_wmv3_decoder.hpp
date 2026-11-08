@@ -23,9 +23,9 @@ inline constexpr CMVideoCodecType kWamVideoCodecTypeWmv3 =
 // Software WMV3 decode stage, one implementation of the backend contract in
 // video_decoder_contract.hpp behind VideoDecodeLane.
 //
-// The decoder is WAM's LGPL wam-wmcodecs WMV3 library, loaded with dlopen from
-// the bundle's private Frameworks directory (the libavcodec stage's rule) so
-// the MIT application never links it. It decodes synchronously on the calling
+// The decoder is the WMV3 half of WAM's LGPL libwam-wmcodecs, loaded with
+// dlopen from the bundle's private Frameworks directory (the libavcodec
+// stage's rule) so the MIT application never links it. It decodes synchronously on the calling
 // dispatcher worker; like the VP8 stage it owns at most one converted frame
 // waiting for drainPresentation(), so it draws from the shared
 // SoftwarePresentationPool at the depth VP8 established.

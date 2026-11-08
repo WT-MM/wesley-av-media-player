@@ -33,7 +33,8 @@ struct Wmv3Api {
   int (*decode)(void *, const std::uint8_t *, std::size_t, Wmv3Frame *){};
 };
 
-constexpr const char *kWmv3Library = "libwam_wmv3.dylib";
+// The WMV3 decoder ships inside libwam-wmcodecs (kWmaDecoderLibraryName).
+constexpr const char *kWmv3Library = "libwam-wmcodecs.dylib";
 
 // Loaded once and never unloaded. Like the libavformat stage, the library must
 // sit in this image's own private library directory.

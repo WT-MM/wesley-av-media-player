@@ -16,7 +16,8 @@ src/ - WMA v2 audio decoder (libwam-wmcodecs.dylib).
   from those files; the decoder in src/wma_decoder.cpp is a C++ rewrite of
   their algorithm.
 
-wmv3/ - WMV3 (SMPTE 421M VC-1 Simple/Main profile) video decoder.
+wmv3/ - WMV3 (SMPTE 421M VC-1 Simple/Main profile) video decoder (also in
+  libwam-wmcodecs.dylib).
   The decoding process, DSP routines (wmv3_dsp.c) and tables (wmv3_tables.h)
   are derived from FFmpeg's libavcodec (vc1*.c, vc1dsp.c, vc1data.c,
   vc1acdata.h, vc1_vlc_data.h, msmpeg4_vc1_data.c, wmv2data.c),
