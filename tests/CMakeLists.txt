@@ -1442,7 +1442,7 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
     --ffmpeg "${WAM_TEST_FFMPEG}" --ffprobe "${WAM_TEST_FFPROBE}"
     --output "${PROJECT_BINARY_DIR}/mixed-proof.json" --equal-endpoints
     --asset "${WAM_MIXED_FIXTURES}/mixed-fragmented.mp4" --asset "${WAM_MIXED_FIXTURES}/mixed.flv"
-    --asset "${WAM_MIXED_FIXTURES}/mixed-opus.mkv")
+    --asset "${WAM_MIXED_FIXTURES}/mixed-opus.mkv" --asset "${WAM_MIXED_FIXTURES}/hev1-chapters.mp4")
   set_tests_properties(libavformat_mixed_exact PROPERTIES FIXTURES_REQUIRED mixed_media TIMEOUT 120)
   set_tests_properties(libavformat_flv_audio_refusal PROPERTIES FIXTURES_REQUIRED mixed_media)
   add_test(NAME libavformat_flv_audio_exact COMMAND "${Python3_EXECUTABLE}"
@@ -1454,7 +1454,10 @@ if(WAM_ENABLE_AVFORMAT_STAGE)
   set_tests_properties(libavformat_flv_audio_exact PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
   add_test(NAME libavformat_mixed_routed COMMAND wam_libavformat_mixed_source_test "${WAM_MIXED_FIXTURES}/mixed-fragmented.mp4")
   add_test(NAME libavformat_opus_mode_refusal COMMAND wam_libavformat_source_test "${WAM_MIXED_FIXTURES}/mixed-hybrid.mkv" "LibavformatOpusModeUnqualified")
-  set_tests_properties(libavformat_mixed_routed libavformat_opus_mode_refusal PROPERTIES FIXTURES_REQUIRED mixed_media TIMEOUT 30)
+  add_test(NAME libavformat_hev1_chapters_routed COMMAND wam_libavformat_mixed_source_test "${WAM_MIXED_FIXTURES}/hev1-chapters.mp4" 75 142)
+  add_test(NAME libavformat_matroska_chapters_refusal COMMAND wam_libavformat_source_test "${WAM_MIXED_FIXTURES}/chapters.mkv" "LibavformatPresentationMetadataUnsupported")
+  set_tests_properties(libavformat_mixed_routed libavformat_opus_mode_refusal libavformat_hev1_chapters_routed
+    libavformat_matroska_chapters_refusal PROPERTIES FIXTURES_REQUIRED mixed_media TIMEOUT 30)
 
   add_executable(wam_libavformat_aac_oracle libavformat_aac_oracle.mm)
   target_compile_options(wam_libavformat_aac_oracle PRIVATE -fobjc-arc)
