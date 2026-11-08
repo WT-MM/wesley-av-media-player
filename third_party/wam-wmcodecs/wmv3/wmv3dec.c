@@ -124,7 +124,7 @@ static inline int getvlc(Bits *b, Vlc v)
 }
 
 static Vlc vlc_mb_i, vlc_dc[2][2], vlc_ac[AC_MODES];
-static Vlc vlc_imode, vlc_norm2, vlc_norm6, vlc_cbpcy[4], vlc_mvdiff[4], vlc_ttmb[3], vlc_ttblk[3], vlc_subblk[3], vlc_4mvbp[4];
+static Vlc vlc_imode, vlc_norm2, vlc_norm6, vlc_cbpcy[4], vlc_mvdiff[4], vlc_ttmb[3], vlc_ttblk[3], vlc_subblk[3];
 
 static void init_vlcs(void)
 {
@@ -143,7 +143,6 @@ static void init_vlcs(void)
         vlc_subblk[i] = mkvlc(15, 6, vc1_subblkpat_codes[i], 1, 1, vc1_subblkpat_bits[i], 1, 1);
     }
     for (int i = 0; i < 4; i++) {
-        vlc_4mvbp[i] = mkvlc(16, 6, vc1_4mv_block_pattern_codes[i], 1, 1, vc1_4mv_block_pattern_bits[i], 1, 1);
         vlc_cbpcy[i] = mkvlc(64, 9, vc1_cbpcy_p_codes[i], 2, 2, vc1_cbpcy_p_bits[i], 1, 1);
         vlc_mvdiff[i] = mkvlc(73, 9, vc1_mv_diff_codes[i], 2, 2, vc1_mv_diff_bits[i], 1, 1);
     }
