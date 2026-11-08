@@ -470,13 +470,20 @@ void testAudioTimelineIsAnExactFrameOrdinal(const Fixtures& fixtures) {
          "so it is the source's ordinal rather than the muxer's stamp");
 }
 
-// A PES header states no CodecDelay, so the anchor carries the lead-in.
-void testDecoderLeadInShiftsTheAnchor(const Fixtures& fixtures) {
-  const auto firstAudioTime =
-      [](const std::filesystem::path& path) -> std::optional<MediaTime> {
+// A PES header states no delay, and for AC-3 it stamps the decoder's very
+// first output (where ffmpeg and mpv present it). The anchor therefore stays on
+// the stamp, and the frames Apple's decoder swallows are declared silence: the
+// stream-origin window's media start sits exactly the lead-in after it.
+void testPresentedLeadInIsDeclaredSilence(const Fixtures& fixtures) {
+  struct FirstAudio {
+    MediaTime time;
+    wam::media::MediaAudioGenerationWindow window;
+  };
+  const auto firstAudio =
+      [](const std::filesystem::path& path) -> std::optional<FirstAudio> {
     MpegTsMediaSource source;
-    if (openAt(source, path, 1, std::nullopt, videoOptions()).status !=
-        MediaSourceOpenStatus::Ready) {
+    const auto opened = openAt(source, path, 1, std::nullopt, videoOptions());
+    if (opened.status != MediaSourceOpenStatus::Ready) {
       return std::nullopt;
     }
     for (int step = 0; step < 16; ++step) {
@@ -486,29 +493,34 @@ void testDecoderLeadInShiftsTheAnchor(const Fixtures& fixtures) {
         return std::nullopt;
       }
       if (sample->kind == MediaSampleKind::EncodedAudio) {
-        return sample->presentationTime;
+        return FirstAudio{sample->presentationTime, opened.audioWindow};
       }
     }
     return std::nullopt;
   };
 
-  const auto withoutLeadIn = firstAudioTime(fixtures.audioVideo);
-  const auto withLeadIn = firstAudioTime(fixtures.leadIn);
+  const auto withoutLeadIn = firstAudio(fixtures.audioVideo);
+  const auto withLeadIn = firstAudio(fixtures.leadIn);
   expect(withoutLeadIn.has_value() && withLeadIn.has_value(),
          "both lead-in fixtures stage a first audio access unit");
   if (!withoutLeadIn || !withLeadIn) {
     return;
   }
-  expect(sameTime(*withoutLeadIn, MediaTime{0, 1}),
-         "a codec with no decoder lead-in anchors on the container stamp");
+  expect(sameTime(withoutLeadIn->time, MediaTime{0, 1}) &&
+             sameTime(withoutLeadIn->window.mediaStart, MediaTime{0, 1}),
+         "a codec with no decoder lead-in anchors on the container stamp and "
+         "declares no silence");
   const std::int64_t leadIn =
       static_cast<std::int64_t>(wam::media::codec::kAc3DecoderDelayFrames);
   expect(leadIn > 0, "the shared lead-in constant is not vacuous");
-  expect(sameTime(*withLeadIn,
-                  MediaTime{-leadIn, static_cast<std::int32_t>(kFullRateAudio)}),
-         "a lead-in codec anchors exactly that many frames before the "
-         "container stamp so the converter's first published frame lands on "
-         "the presentation floor");
+  const MediaTime decodable{leadIn, static_cast<std::int32_t>(kFullRateAudio)};
+  expect(sameTime(withLeadIn->time, MediaTime{0, 1}),
+         "an AC-3 access unit anchors on its container stamp, not before it");
+  expect(sameTime(withLeadIn->window.mediaStart, decodable) &&
+             sameTime(withLeadIn->window.presentationStart, decodable) &&
+             withLeadIn->window.startsAtStreamOrigin,
+         "the frames the decoder swallows are declared silence, so the first "
+         "published frame lands exactly the lead-in after the stamp");
 }
 
 // The audio-refusal rule this backend does not share with Matroska.
@@ -772,7 +784,7 @@ int main(int argc, char** argv) {
   testEntryRefusalsAndPublication(fixtures);
   testMergeKeysOnRealDecodeTimestamps(fixtures);
   testAudioTimelineIsAnExactFrameOrdinal(fixtures);
-  testDecoderLeadInShiftsTheAnchor(fixtures);
+  testPresentedLeadInIsDeclaredSilence(fixtures);
   testUnroutableAudioRefuses(fixtures);
   testAudioOnlyStreamIsRefused(fixtures);
   testAccurateSeekBothDirections(fixtures);
